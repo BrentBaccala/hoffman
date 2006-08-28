@@ -29,6 +29,16 @@
  * Feed this program an XML control file on the command line.
  */
 
+/* Maximum number of mobile pieces; used to simplify various arrays
+ *
+ * "8" may seem absurd, but it's probably about right.  "4" is easily
+ * doable in memory.  "5" requires sweeping passes across a file on
+ * disk.  "6" and "7" are worse than "5", but doable with severe
+ * restrictions on the movements of the pieces.  So "8" is enough.
+ */
+
+#define MAX_MOBILES 8
+
 typedef struct {
 } tablebase_description;
 
@@ -81,41 +91,47 @@ bool check_legality_of_index(static_configuration *config, int32 index)
 }
 
 /* How about if "position" is a structure containing an 8x8 char array
- * with ASCII characters representing each piece?
+ * with ASCII characters representing each piece?  No.  Too slow.
+ * Position manipulation is at the core of this program.  It has
+ * to be fast.
  *
- * Also need a flag to indicate which side is to move.
+ * So we use a 64-bit vector with one bit for each board position, in
+ * addition to a flag to indicate which side is to move and four
+ * numbers (0-63) indicating the positions of the mobile pieces.  That
+ * way, we can easily check if possible moves are legal by looking for
+ * pieces that block our moving piece.
  *
- * The problem is we don't want to hunt through the whole thing just
- * to find a mobile piece.
- *
- * So how about an array as described, plus a flag, plus four numbers
- * (0-63) indicating the positions of the mobile pieces?  That way, we
- * can easily check if possible moves are legal by looking for pieces
- * that block our moving piece.
- *
- * Also, if we're not interested in massive speed optimization, we
- * don't need to worry about moving a piece that's pinned on our king,
- * for example.  The resulting position will already have been flagged
+ * We don't worry about moving a piece that's pinned on our king, for
+ * example.  The resulting position will already have been flagged
  * illegal in the table.
  *
  * We actually need to call this function a lot, so we want it to be
  * fast, but I don't want to optimize to the point where bugs can
  * creep in.
  *
- * So how about a static ASCII char array that contains the frozen
- * pieces and not the mobiles?  Everytime we call index_to_position,
- * we memcpy from the static array into the array in the position
- * structure.  Then we compute the positions of the mobile pieces and
- * plug their ASCII chars into the dynamic array at the right places.
+ * So how about a static 64-bit vector with bits set for the frozen
+ * pieces but not the mobiles?  Everytime we call index_to_position,
+ * copy from the static vector into the position structure.  Then we
+ * compute the positions of the mobile pieces and plug their bits into
+ * the structure's vector at the right places.
  *
  */
 
-int index_to_position(static_configuration *config, int32 index, int piece)
+typedef struct {
+    int64 board_vector;
+    short side_to_move;
+    short mobile_piece_position[MAX_MOBILES];
+} position;
+
+/* any reason to do this?  just for one mobile? */
+int index_to_mobile_position(static_configuration *config, int32 index, int piece)
+{}
+
+boolean index_to_position(static_configuration *config, int32 index)
 {
-    /* Given an index and a mobile piece number (from 1 to 4)
-     * returns the board position (1 to 64, or 0 to 63) where that
-     * piece is in the index.  Obviously has to correspond to
-     * position_to_index() and it's a big bug if it doesn't.
+    /* Given an index, returns the board position.  Obviously has to
+     * correspond to position_to_index() and it's a big bug if it
+     * doesn't.
      */
 }
 
@@ -147,6 +163,328 @@ add_one_to_white_draws(table, int32 position)
 
 add_one_to_black_draws(table, int32 position)
 {
+}
+
+/***** MOVEMENTS *****/
+
+/* The idea here is to calculate piece movements, and to do it FAST.
+ *
+ * We build a table of "movements" organized into "directions".  Each
+ * direction is just that - the direction that a piece (like a queen)
+ * moves.  When we want to check for what movements are possible in a
+ * given direction, we run through the direction until we "hit"
+ * another pieces - until the bit in the vector matches something
+ * already in the position vector.  At the end of the direction, an
+ * all-ones vector will "hit" the end of the board and end the
+ * direction.  I know, kinda confusing.  It's because it's designed to
+ * be fast; we have to do this a lot.
+ */
+
+struct movement {
+    int64 vector;
+    short square;
+};
+
+/* seven possible pieces: KQRBNP, plus pawn that can be captured en passant
+ * 64 possible squares, up to 8 directions per piece, up to 7 movements
+ * in one direction
+ */
+
+#define NUM_PIECES 7
+#define NUM_SQUARES 64
+#define NUM_DIR 8
+#define NUM_MOVEMENTS 7
+
+#define KING 0
+#define QUEEN 1
+#define ROOK 2
+#define BISHOP 3
+#define KNIGHT 4
+#define PAWN 5
+#define PAWNep 6
+
+/* we add one to NUM_MOVEMENTS to leave space at the end for the
+ * all-ones bitmask that signals the end of the list
+ */
+
+struct movement movements[NUM_PIECES][NUM_SQUARES][NUM_DIR][NUM_MOVEMENTS+1];
+
+/* How many different directions can each piece move in?
+ * Knights have 8 directions because they can't be blocked
+ * in any of them.
+ */
+
+int number_of_movement_directions[7] = {8,8,4,4,8,1,1};
+int maximum_movements_in_one_direction[7] = {1,7,7,7,1,2,1};
+
+int64 bitvector[64];
+int64 allones_bitvector = 0xffffffff;  /* hehehe */
+
+void init_movements()
+{
+    int square, piece, dir, mvmt;
+
+    /* XXX This won't work for a 64-bit shift, but this is the idea */
+
+    for (square=0; square < NUM_SQUARES; square++) {
+	bitvector = 1 << square;
+    }
+
+    for (square=0; square < NUM_SQUARES; square++) {
+	for (piece=0; piece < NUM_DIR; piece++) {
+
+	    int current_square = square;
+	    int knight_mvmt=0;
+
+	    for (dir=0; dir < number_of_movement_directions[piece]; dir++) {
+
+		for (mvmt=0;
+		     mvmt < maximum_movements_in_one_direction[piece];
+		     mvmt++) {
+
+#define RIGHT_MOVEMENT_POSSIBLE ((current_square%8)<7)
+#define RIGHT2_MOVEMENT_POSSIBLE ((current_square%8)<6)
+#define LEFT_MOVEMENT_POSSIBLE ((current_square%8)>0)
+#define LEFT_MOVEMENT_POSSIBLE ((current_square%8)>1)
+#define UP_MOVEMENT_POSSIBLE (current_square<56)
+#define UP2_MOVEMENT_POSSIBLE (current_square<48)
+#define DOWN_MOVEMENT_POSSIBLE (current_square>7)
+#define DOWN2_MOVEMENT_POSSIBLE (current_square>15)
+
+		    switch (movementdir[piece][dir]) {
+		    case RIGHT:
+			if (RIGHT_MOVEMENT_POSSIBLE) {
+			    current_square++;
+			    movements[piece][square][dir][mvmt].square
+				= current_square;
+			    movements[piece][square][dir][mvmt].vector
+				= bitvector[current_square];
+			} else {
+			    movements[piece][square][dir][mvmt].vector
+				= allones_bitvector;
+			}
+			break;
+		    case LEFT:
+			if (LEFT_MOVEMENT_POSSIBLE) {
+			    current_square--;
+			    movements[piece][square][dir][mvmt].square
+				= current_square;
+			    movements[piece][square][dir][mvmt].vector
+				= bitvector[current_square];
+			} else {
+			    movements[piece][square][dir][mvmt].vector
+				= allones_bitvector;
+			}
+			break;
+		    case UP:
+			if (UP_MOVEMENT_POSSIBLE) {
+			    current_square+=8;
+			    movements[piece][square][dir][mvmt].square
+				= current_square;
+			    movements[piece][square][dir][mvmt].vector
+				= bitvector[current_square];
+			} else {
+			    movements[piece][square][dir][mvmt].vector
+				= allones_bitvector;
+			}
+			break;
+		    case DOWN:
+			if (DOWN_MOVEMENT_POSSIBLE) {
+			    current_square-=8;
+			    movements[piece][square][dir][mvmt].square
+				= current_square;
+			    movements[piece][square][dir][mvmt].vector
+				= bitvector[current_square];
+			} else {
+			    movements[piece][square][dir][mvmt].vector
+				= allones_bitvector;
+			}
+			break;
+		    case DIAG_UL:
+			if (LEFT_MOVEMENT_POSSIBLE
+			    && UP_MOVEMENT_POSSIBLE) {
+			    current_square+=8;
+			    current_square--;
+			    movements[piece][square][dir][mvmt].square
+				= current_square;
+			    movements[piece][square][dir][mvmt].vector
+				= bitvector[current_square];
+			} else {
+			    movements[piece][square][dir][mvmt].vector
+				= allones_bitvector;
+			}
+			break;
+		    case DIAG_UR:
+			if (RIGHT_MOVEMENT_POSSIBLE
+			    && UP_MOVEMENT_POSSIBLE) {
+			    current_square+=8;
+			    current_square++;
+			    movements[piece][square][dir][mvmt].square
+				= current_square;
+			    movements[piece][square][dir][mvmt].vector
+				= bitvector[current_square];
+			} else {
+			    movements[piece][square][dir][mvmt].vector
+				= allones_bitvector;
+			}
+			break;
+		    case DIAG_DL:
+			if (LEFT_MOVEMENT_POSSIBLE
+			    && DOWN_MOVEMENT_POSSIBLE) {
+			    current_square-=8;
+			    current_square--;
+			    movements[piece][square][dir][mvmt].square
+				= current_square;
+			    movements[piece][square][dir][mvmt].vector
+				= bitvector[current_square];
+			} else {
+			    movements[piece][square][dir][mvmt].vector
+				= allones_bitvector;
+			}
+			break;
+		    case DIAG_DR:
+			if (RIGHT_MOVEMENT_POSSIBLE
+			    && DOWN_MOVEMENT_POSSIBLE) {
+			    current_square-=8;
+			    current_square++;
+			    movements[piece][square][dir][mvmt].square
+				= current_square;
+			    movements[piece][square][dir][mvmt].vector
+				= bitvector[current_square];
+			} else {
+			    movements[piece][square][dir][mvmt].vector
+				= allones_bitvector;
+			}
+			break;
+		    case KNIGHT:
+			current_square=square;
+			switch (mvmt) {
+			case 0:
+			    if (RIGHT2_MOVEMENT_POSSIBLE
+				&& UP_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square
+				    = square + 2 + 8;
+				movements[piece][square][dir][0].vector
+				    = bitvector[square + 2 + 8];
+				movements[piece][square][dir][1].vector
+				    = allones_bitvector;
+			    } else {
+				movements[piece][square][dir][0].vector
+				    = allones_bitvector;
+			    }
+			    break;
+			case 1:
+			    if (RIGHT2_MOVEMENT_POSSIBLE
+				&& DOWN_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square
+				    = square + 2 - 8;
+				movements[piece][square][dir][0].vector
+				    = bitvector[square + 2 - 8];
+				movements[piece][square][dir][1].vector
+				    = allones_bitvector;
+			    } else {
+				movements[piece][square][dir][0].vector
+				    = allones_bitvector;
+			    }
+			    break;
+			case 2:
+			    if (LEFT2_MOVEMENT_POSSIBLE
+				&& UP_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square
+				    = square - 2 + 8;
+				movements[piece][square][dir][0].vector
+				    = bitvector[square - 2 + 8];
+				movements[piece][square][dir][1].vector
+				    = allones_bitvector;
+			    } else {
+				movements[piece][square][dir][0].vector
+				    = allones_bitvector;
+			    }
+			    break;
+			case 3:
+			    if (LEFT2_MOVEMENT_POSSIBLE
+				&& DOWN_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square
+				    = square - 2 - 8;
+				movements[piece][square][dir][0].vector
+				    = bitvector[square - 2 - 8];
+				movements[piece][square][dir][1].vector
+				    = allones_bitvector;
+			    } else {
+				movements[piece][square][dir][0].vector
+				    = allones_bitvector;
+			    }
+			    break;
+			case 4:
+			    if (RIGHT_MOVEMENT_POSSIBLE
+				&& UP2_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square
+				    = square + 1 + 16;
+				movements[piece][square][dir][0].vector
+				    = bitvector[square + 1 + 16];
+				movements[piece][square][dir][1].vector
+				    = allones_bitvector;
+			    } else {
+				movements[piece][square][dir][0].vector
+				    = allones_bitvector;
+			    }
+			    break;
+			case 5:
+			    if (RIGHT_MOVEMENT_POSSIBLE
+				&& DOWN2_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square
+				    = square + 1 - 16;
+				movements[piece][square][dir][0].vector
+				    = bitvector[square + 1 - 16];
+				movements[piece][square][dir][1].vector
+				    = allones_bitvector;
+			    } else {
+				movements[piece][square][dir][0].vector
+				    = allones_bitvector;
+			    }
+			    break;
+			case 6:
+			    if (LEFT_MOVEMENT_POSSIBLE
+				&& UP2_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square
+				    = square - 1 + 16;
+				movements[piece][square][dir][0].vector
+				    = bitvector[square - 1 + 16];
+				movements[piece][square][dir][1].vector
+				    = allones_bitvector;
+			    } else {
+				movements[piece][square][dir][0].vector
+				    = allones_bitvector;
+			    }
+			    break;
+			case 7:
+			    if (LEFT_MOVEMENT_POSSIBLE
+				&& DOWN2_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square
+				    = square - 1 - 16;
+				movements[piece][square][dir][0].vector
+				    = bitvector[square - 1 - 16];
+				movements[piece][square][dir][1].vector
+				    = allones_bitvector;
+			    } else {
+				movements[piece][square][dir][0].vector
+				    = allones_bitvector;
+			    }
+			    break;
+			}
+			break;
+
+		    case PAWN:
+		    case PAWNep:
+			/* Oh, we need to distinguish between white and
+			 * black pawns...
+			 */
+			break;
+		    }
+		}
+	    }
+	}
+    }
 }
 
 calculate_all_possible_futuremoves()
@@ -313,27 +651,6 @@ propagate_move_within_table(table, index)
      * we're considering, not the next move.
      */
 
-    /* How about if "position" is just an 8x8 unsigned char array
-     * with ASCII characters representing each pieces and the
-     * high order bit set if the piece is "mobile"?
-     *
-     * Also need a flag to indicate which side is to move.
-     *
-     * The problem is we don't want to hunt through the whole thing
-     * just to find a mobile piece.
-     *
-     * So how about an array as described, plus a flag, plus four
-     * numbers (0-63) indicating the positions of the mobile pieces?
-     * That way, we can easily check if possible moves are legal
-     * by looking for pieces that block our moving piece.
-     *
-     * Also, if we're not interested in massive speed optimization,
-     * we don't need to worry about moving a piece that's pinned
-     * on our king, for example.  The resulting position will
-     * already have been flagged illegal in the table.
-     *
-     */
-
     index_to_position(table, index);
 
     foreach (mobile piece of player NOT TO PLAY) {
@@ -351,9 +668,49 @@ propagate_move_within_table(table, index)
 	 * piece "through" another piece.
 	 */
 
-	possible_moves(current_position[piece], type_of[piece]);
+	/* possible_moves(current_position[piece], type_of[piece]); */
 
-	foreach (new position) {
+	foreach (dir = number_of_movement_directions[type_of[piece]]) {
+
+	    current_position = parent_position;
+
+	    for (movementptr = &movements[type_of[piece]][piece position][dir];
+		 (movementptr->vector & current_position.board_vector) == 0;
+		 movementptr++) {
+
+		current_position.mobile_piece_position[piece]
+		    = movementptr->square;
+
+		position_to_index();
+
+		/* Parent position is the FUTURE position */
+
+		/* all of these subroutines have to propagate if changed */
+
+		if (parent position is WHITE TO MOVE) {
+		    /* ...then this position is BLACK TO MOVE */
+		    if (parent position is WHITE MOVES AND WINS) {
+			add_one_to_white_wins();
+		    } else if (parent position is WHITE MOVES AND BLACK WINS) {
+			black_wins();
+		    } else if (parent position is WHITE MOVES AND DRAWS) {
+			add_one_to_white_draws();
+		    } else if (parent position is WHITE MOVES AND BLACK DRAWS) {
+			black_draws();
+		    }
+		} else {
+		    /* or this position is WHITE TO MOVE */
+		    if (parent position is BLACK MOVES AND WINS) {
+			add_one_to_black_wins();
+		    } else if (parent position is BLACK MOVES AND WHITE WINS) {
+			white_wins();
+		    } else if (parent position is BLACK MOVES AND DRAWS) {
+			add_one_to_black_draws();
+		    } else if (parent position is BLACK MOVES AND WHITE DRAWS) {
+			black_draws();
+		    }
+		}
+	    }
 
 	}
     }
@@ -399,6 +756,8 @@ initialize_table(table)
 mainloop()
 {
     create_data_structure_from_control_file();
+
+    init_movements();
 
     initialize_table();
 
