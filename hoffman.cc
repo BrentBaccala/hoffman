@@ -1,33 +1,36 @@
-/*
+/* -*- mode: C; eval: (c-set-style "stroustrup"); fill-column: 100 -*-
+ *
  * HOFFMAN - a chess endgame tablebase builder
  *
  * by Brent Baccala
  *
  * August, 2006
  *
- * no rights reserved; you may freely copy, modify, or distribute
- * HOFFMAN
+ * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
  * written in C for speed
  *
- * For those not up on Americana, the program is named after Trevor
- * Hoffman, an All Star baseball pitcher who specializes in "closing"
- * games.  It was written specifically for The World vs. Arno Nickel
- * game.
+ * This program is formated for a (minimum) 100 character wide display.
  *
- * This program will calculate a tablebase for up to four pieces
- * (called the 'mobile' pieces) in a static configuration of other
- * 'frozen' pieces.  The mobile pieces could possibly be pawns.  The
+ * For those not up on Americana, the program is named after Trevor Hoffman, an All Star baseball
+ * pitcher who specializes in "closing" games.  It was written specifically for The World vs. Arno
+ * Nickel game.
+ *
+ * This program will calculate a tablebase for up to four pieces (called the 'mobile' pieces) in a
+ * static configuration of other 'frozen' pieces.  The mobile pieces could possibly be pawns.  The
  * frozen pieces could possibly be kings.
  *
- * Three piece tablebases with no frozen pieces can also be built.
- * These are the only tablebases that are completely self contained
- * and don't depend on other tablebases (the 'futurebases').
+ * Three piece tablebases with no frozen pieces can also be built.  These are the only tablebases
+ * that are completely self contained and don't depend on other tablebases (the 'futurebases').
  *
  * Feed this program a list of futurebases on the command line.
  *
  * Feed this program an XML control file on the command line.
  */
+
+#include <stdio.h>
+#include <stdint.h>
+#include <stdlib.h>
 
 /* Maximum number of mobile pieces; used to simplify various arrays
  *
@@ -40,11 +43,15 @@
 #define MAX_MOBILES 8
 
 typedef struct {
+    int num_mobiles;
 } tablebase_description;
 
 tablebase_description parse_XML()
 {
 }
+
+typedef tablebase_description static_configuration;
+typedef tablebase_description tablebase;
 
 int32 max_position(static_configuration *config)
 {
@@ -101,6 +108,9 @@ bool check_legality_of_index(static_configuration *config, int32 index)
  * way, we can easily check if possible moves are legal by looking for
  * pieces that block our moving piece.
  *
+ * Also need a quick way to check captures.  Do this using a
+ * black_vector and a white_vector.
+ *
  * We don't worry about moving a piece that's pinned on our king, for
  * example.  The resulting position will already have been flagged
  * illegal in the table.
@@ -119,6 +129,8 @@ bool check_legality_of_index(static_configuration *config, int32 index)
 
 typedef struct {
     int64 board_vector;
+    int64 white_vector;
+    int64 black_vector;
     short side_to_move;
     short mobile_piece_position[MAX_MOBILES];
 } position;
@@ -149,19 +161,19 @@ boolean index_to_position(static_configuration *config, int32 index)
  * count of zero) if the total move count goes to zero.
  */
 
-add_one_to_white_wins(table, int32 position)
+void add_one_to_white_wins(table, int32 position)
 {
 }
 
-add_one_to_black_wins(table, int32 position)
+void add_one_to_black_wins(table, int32 position)
 {
 }
 
-add_one_to_white_draws(table, int32 position)
+void add_one_to_white_draws(table, int32 position)
 {
 }
 
-add_one_to_black_draws(table, int32 position)
+void add_one_to_black_draws(table, int32 position)
 {
 }
 
@@ -487,6 +499,8 @@ void init_movements()
     }
 }
 
+#ifdef FUTUREBASES
+
 calculate_all_possible_futuremoves()
 {
     consider all possible captures;
@@ -634,10 +648,12 @@ propagate_moves_from_futurebases()
     }
 }
 
-propagate_move_within_table(table, index)
+#endif
+
+void propagate_move_within_table(tablebase tb, int index)
 {
 
-    ASSERT (table,index) == WIN/LOSS IN x MOVES or DRAW;
+    /* ASSERT (table,index) == WIN/LOSS IN x MOVES or DRAW; */
 
     /* We want to check to make sure the mate-in number of the
      * position in the database matches a mate-in variable in this
@@ -646,14 +662,18 @@ propagate_move_within_table(table, index)
      * want to make sure we go through them in order.
      */
 
-    /* We've moving BACKWARDS in the game, so we want the pieces of
-     * the player who is NOT TO PLAY here - this is the LAST move
-     * we're considering, not the next move.
-     */
+    parent_position = index_to_position(tb, index);
 
-    index_to_position(table, index);
+    /* foreach (mobile piece of player NOT TO PLAY) { */
 
-    foreach (mobile piece of player NOT TO PLAY) {
+    for (piece = 0; piece < tb.num_mobiles; piece++) {
+
+	/* We've moving BACKWARDS in the game, so we want the pieces of the player who is NOT TO
+	 * PLAY here - this is the LAST move we're considering, not the next move.
+	 */
+
+	if (color_of_mobile_piece(piece) == parent_position.side_to_move)
+	    continue;
 
 	/* current_position[piece] is a number from 0 to 63 corresponding
 	 * to the different squares on the chess board
@@ -670,9 +690,14 @@ propagate_move_within_table(table, index)
 
 	/* possible_moves(current_position[piece], type_of[piece]); */
 
-	foreach (dir = number_of_movement_directions[type_of[piece]]) {
+	for (dir = 0; dir < number_of_movement_directions[type_of[piece]]; dir++) {
 
 	    current_position = parent_position;
+
+	    /* This code IGNORES ALL CAPTURES because that board_vector
+	     * check stops when we hit another piece.  Need to check
+	     * that other piece's color.
+	     */
 
 	    for (movementptr = &movements[type_of[piece]][piece position][dir];
 		 (movementptr->vector & current_position.board_vector) == 0;
@@ -687,26 +712,34 @@ propagate_move_within_table(table, index)
 
 		/* all of these subroutines have to propagate if changed */
 
-		if (parent position is WHITE TO MOVE) {
+		if (is_white_to_move(parent_position)) {
 		    /* ...then this position is BLACK TO MOVE */
-		    if (parent position is WHITE MOVES AND WINS) {
+		    if (does_white_win(parent_position)) {
+			/* parent position is WHITE MOVES AND WINS */
 			add_one_to_white_wins();
-		    } else if (parent position is WHITE MOVES AND BLACK WINS) {
+		    } else if (does_black_win(parent_position)) {
+			/* parent position is WHITE MOVES AND BLACK WINS */
 			black_wins();
-		    } else if (parent position is WHITE MOVES AND DRAWS) {
+		    } else if (does_white_draw(parent_position)) {
+			/* parent position is WHITE MOVES AND DRAWS */
 			add_one_to_white_draws();
-		    } else if (parent position is WHITE MOVES AND BLACK DRAWS) {
+		    } else if (does_black_draw(parent_position)) {
+			/* parent position is WHITE MOVES AND BLACK DRAWS */
 			black_draws();
 		    }
 		} else {
 		    /* or this position is WHITE TO MOVE */
-		    if (parent position is BLACK MOVES AND WINS) {
+		    if (does_black_win(parent_position)) {
+			/* parent position is BLACK MOVES AND WINS */
 			add_one_to_black_wins();
-		    } else if (parent position is BLACK MOVES AND WHITE WINS) {
+		    } else if (does_white_win(parent_position)) {
+		        /* parent position is BLACK MOVES AND WHITE WINS */
 			white_wins();
-		    } else if (parent position is BLACK MOVES AND DRAWS) {
+		    } else if (does_black_draw(parent_position)) {
+			/* parent position is BLACK MOVES AND DRAWS */
 			add_one_to_black_draws();
-		    } else if (parent position is BLACK MOVES AND WHITE DRAWS) {
+		    } else if (does_white_draw(parent_position)) {
+			/* parent position is BLACK MOVES AND WHITE DRAWS */
 			black_draws();
 		    }
 		}
@@ -716,7 +749,7 @@ propagate_move_within_table(table, index)
     }
 }
 
-initialize_table(table)
+initialize_tablebase(tablebase tb)
 {
     /* This is here because we don't want to be calling max_index()
      * everytime through the loop below
@@ -725,30 +758,83 @@ initialize_table(table)
     int32 max_index_static = max_index(table);
 
     for (int32 index=0; index < max_index_static; index++) {
-	/* check_legality_of_index() might not work yet */
-	if (! check_legality_of_index(table, index)) {
-	    flag position as illegal;
-	}
-    }
 
-    for (int32 index=0; index < max_index_static; index++) {
-	if (check_legality_of_index(table, index)) {
-	    if (is_checkmate(table,index)) {
-		initialize_index_with_checkmate(index, movecnt);
-	    } else if (is_stalemate(table,index)) {
-		initialize_index_with_stalemate(index, movecnt);
-	    } else {
-		int movecnt;
-		for (piece=0; piece<=3; piece++) {
-		    forall (possible moves of this mobile piece) movecnt++;
+	/* check_legality_of_index() might not work yet */
+
+	if (! check_legality_of_index(tb, index)) {
+
+	    initialize_index_as_illegal(tb, index);
+
+	} else {
+
+	    /* Now we need to count moves.  FORWARD moves. */
+	    int movecnt = 0;
+
+	    for (piece = 0; piece < tb.num_mobiles; piece++) {
+
+		for (dir = 0; dir < number_of_movement_directions[type_of[piece]]; dir++) {
+
+		    current_position = parent_position;
+
+		    for (movementptr = &movements[type_of[piece]][piece position][dir];
+			 (movementptr->vector & current_position.board_vector) == 0;
+			 movementptr++) {
+
+			movecnt ++;
+		    }
+
+		    /* Now check to see if the movement ended
+		     * because we hit against another piece of the
+		     * opposite color.  If so, add another move
+		     * for the capture.
+		     *
+		     * Actually, we check to see that we DIDN'T
+		     * hit a piece of our OWN color.  The
+		     * difference is that this way we don't register
+		     * a capture if we hit the end of the list
+		     * of movements in a given direction.
+		     *
+		     * We also check to see if the capture was
+		     * against the enemy king! in which case this
+		     * position is a "mate in 0" (i.e, illegal)
+		     *
+		     * XXX ASSUMES THAT THE ENEMY KING IS ONE OF
+		     * THE MOBILE PIECES XXX
+		     */
+
+		    if (current_position.side_to_move == WHITE) {
+			if ((movementptr->vector & current_position.white_vector) == 0) {
+			    movecnt ++;
+			    if (movementptr->square ==
+				current_position.mobile_piece_position[BLACK_KING]) {
+				initialize_index_with_mated(index);
+				goto mated;
+			    }
+			}
+		    } else {
+			if ((movementptr->vector & current_position.black_vector) == 0) {
+			    movecnt ++;
+			    if (movementptr->square ==
+				current_position.mobile_piece_position[WHITE_KING]) {
+				initialize_index_with_mated(index);
+				goto mated;
+			    }
+			}
+		    }
+
 		}
+
+#ifdef FROZEN_PIECES
 		for (;;) {
 		    forall (possible moves of frozen pieces) movecnt++;
 		}
-		initialize_index_with_movecnt(index, movecnt);
+#endif
+		if (movecnt == 0) initialize_index_with_stalemated(index);
+		else initialize_index_with_movecnt(index, movecnt);
+
+	    mated:
+				
 	    }
-	} else {
-	    flag position as illegal;
 	}
     }
 }
@@ -759,7 +845,7 @@ mainloop()
 
     init_movements();
 
-    initialize_table();
+    initialize_tablebase(tb);
 
     max_moves_to_win_or_draw = propagate_moves_from_futurebases();
 
