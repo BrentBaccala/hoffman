@@ -32,6 +32,9 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+
+/***** GLOBAL CONSTANTS *****/
+
 /* Maximum number of mobile pieces; used to simplify various arrays
  *
  * "8" may seem absurd, but it's probably about right.  "4" is easily doable in memory.  "5"
@@ -41,7 +44,23 @@
 
 #define MAX_MOBILES 8
 
-#define STALEMATE_COUNT 50
+/* Why 100?  Well, I just think it's less likely to introduce bugs into this code if I count
+ * half-moves instead of moves.  So it takes 100 half-moves to stalemate.
+ */
+
+#define STALEMATE_COUNT 100
+
+/* seven possible pieces: KQRBNP, plus pawn that can be captured en passant 64 possible squares, up
+ * to 8 directions per piece, up to 7 movements in one direction
+ */
+
+#define NUM_PIECES 7
+#define NUM_SQUARES 64
+#define NUM_DIR 8
+#define NUM_MOVEMENTS 7
+
+
+/***** DATA STRUCTURES *****/
 
 /* position - the data structure that represents a board position
  *
@@ -69,6 +88,11 @@
  *
  */
 
+/* Where are the kings located in the mobile piece list? */
+
+#define WHITE_KING 0
+#define BLACK_KING 1
+
 typedef struct {
     int64 board_vector;
     int64 white_vector;
@@ -78,11 +102,31 @@ typedef struct {
 } position;
 
 
+/* tablebase - the data structure used to hold tablebases
+ *
+ * WHITE and BLACK are also used for the side_to_move variable in the position type above
+ */
+
+#define KING 0
+#define QUEEN 1
+#define ROOK 2
+#define BISHOP 3
+#define KNIGHT 4
+#define PAWN 5
+#define PAWNep 6
+
+char * piece_name[NUM_PIECES] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", "PAWNep"};
+
+#define WHITE 0
+#define BLACK 1
+
 typedef struct {
     int num_mobiles;
     short mobile_piece_type[MAX_MOBILES];
     short mobile_piece_color[MAX_MOBILES];
 } tablebase;
+
+
 
 tablebase parse_XML()
 {
@@ -131,9 +175,10 @@ int index_to_mobile_position(tablebase *config, int32 index, int piece)
 
 boolean index_to_position(tablebase *tb, int32 index, position *p)
 {
-    /* Given an index, returns the board position.  Obviously has to
-     * correspond to position_to_index() and it's a big bug if it
-     * doesn't.
+    /* Given an index, fill in a board position.  Obviously has to correspond to position_to_index()
+     * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
+     * succeeded (the index is at least minimally valid) and FALSE if the index is so blatantly
+     * illegal (two piece on the same square) that we can't even fill in the position.
      */
 }
 
@@ -165,6 +210,14 @@ inline short does_black_win(tablebase *tb, int32 index)
 inline short does_black_draw(tablebase *tb, int32 index)
 {
 }
+
+inline boolean needs_propagation(tablebase *tb, int32 index)
+{
+}
+
+/* get_mate_in_count() is also used as basically (does_white_win() || does_black_win()), so it has
+ * to return -1 if there is no mate from this position
+ */
 
 inline int get_mate_in_count(tablebase *tb, int32 index)
 {
@@ -253,25 +306,6 @@ struct movement {
     int64 vector;
     short square;
 };
-
-/* seven possible pieces: KQRBNP, plus pawn that can be captured en passant 64 possible squares, up
- * to 8 directions per piece, up to 7 movements in one direction
- */
-
-#define NUM_PIECES 7
-#define NUM_SQUARES 64
-#define NUM_DIR 8
-#define NUM_MOVEMENTS 7
-
-#define KING 0
-#define QUEEN 1
-#define ROOK 2
-#define BISHOP 3
-#define KNIGHT 4
-#define PAWN 5
-#define PAWNep 6
-
-char * piece_name[NUM_PIECES] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", "PAWNep"};
 
 /* we add one to NUM_MOVEMENTS to leave space at the end for the all-ones bitmask that signals the
  * end of the list
@@ -729,6 +763,13 @@ propagate_moves_from_futurebases()
 
 #endif
 
+/* Intra-table move propagation.
+ *
+ * This is the guts of the program here.  We've got a move that needs to be propagated,
+ * so we back out one half-moves to all of the positions that could have gotten us
+ * here and update their counters in various obscure ways.
+ */
+
 void propagate_move_within_table(tablebase *tb, int parent_index)
 {
     position parent_position;
@@ -812,8 +853,11 @@ void propagate_move_within_table(tablebase *tb, int parent_index)
 		/* these stalemate and mate counts increment by one every HALF MOVE */
 
 		if (parent_position.side_to_move == WHITE) {
+
 		    /* ...then this position is BLACK TO MOVE */
+
 		    if (does_white_win(tb, parent_index)) {
+
 			/* parent position is WHITE MOVES AND WINS */
 			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
 			    add_one_to_white_wins(tb, current_index,
@@ -822,7 +866,9 @@ void propagate_move_within_table(tablebase *tb, int parent_index)
 			} else {
 			    add_one_to_white_draws(tb, current_index);
 			}
+
 		    } else if (does_black_win(tb, parent_index)) {
+
 			/* parent position is WHITE MOVES AND BLACK WINS */
 			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
 			    black_wins(tb, current_index,
@@ -831,16 +877,25 @@ void propagate_move_within_table(tablebase *tb, int parent_index)
 			} else {
 			    add_one_to_black_draws(tb, current_index);
 			}
+
 		    } else if (does_white_draw(tb, parent_index)) {
+
 			/* parent position is WHITE MOVES AND DRAWS */
 			add_one_to_white_draws(tb, current_index);
+
 		    } else if (does_black_draw(tb, parent_index)) {
+
 			/* parent position is WHITE MOVES AND BLACK DRAWS */
 			black_draws(tb, current_index);
+
 		    }
+
 		} else {
+
 		    /* or this position is WHITE TO MOVE */
+
 		    if (does_black_win(tb, parent_index)) {
+
 			/* parent position is BLACK MOVES AND WINS */
 			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
 			    add_one_to_black_wins(tb, current_index,
@@ -849,7 +904,9 @@ void propagate_move_within_table(tablebase *tb, int parent_index)
 			} else {
 			    add_one_to_black_draws(tb, current_index);
 			}
+
 		    } else if (does_white_win(tb, parent_index)) {
+
 		        /* parent position is BLACK MOVES AND WHITE WINS */
 			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
 			    white_wins(tb, current_index,
@@ -858,12 +915,17 @@ void propagate_move_within_table(tablebase *tb, int parent_index)
 			} else {
 			    add_one_to_black_draws(tb, current_index);
 			}
+
 		    } else if (does_black_draw(tb, parent_index)) {
+
 			/* parent position is BLACK MOVES AND DRAWS */
 			add_one_to_black_draws(tb, current_index);
+
 		    } else if (does_white_draw(tb, parent_index)) {
+
 			/* parent position is BLACK MOVES AND WHITE DRAWS */
 			black_draws(tb, current_index);
+
 		    }
 		}
 	    }
@@ -883,9 +945,7 @@ initialize_tablebase(tablebase *tb)
 
     for (int32 index=0; index < max_index_static; index++) {
 
-	/* check_legality_of_index() might not work yet */
-
-	if (! check_legality_of_index(tb, index)) {
+	if (! index_to_position(tb, index, &parent_position)) {
 
 	    initialize_index_as_illegal(tb, index);
 
@@ -893,8 +953,6 @@ initialize_tablebase(tablebase *tb)
 
 	    /* Now we need to count moves.  FORWARD moves. */
 	    int movecnt = 0;
-
-	    index_to_position(tb, index, &parent_position);
 
 	    for (piece = 0; piece < tb.num_mobiles; piece++) {
 
@@ -961,6 +1019,9 @@ initialize_tablebase(tablebase *tb)
 
 mainloop()
 {
+    int max_moves_to_win_or_draw;
+    int progress_made;
+
     /* create_data_structure_from_control_file(); */
 
     init_movements();
@@ -969,19 +1030,52 @@ mainloop()
 
     initialize_tablebase(tb);
 
-    max_moves_to_win_or_draw = propagate_moves_from_futurebases();
+#ifdef FUTUREBASE
+    max_moves_to_win = propagate_moves_from_futurebases();
+#else
+    max_moves_to_win = 1;
+#endif
 
-    moves_to_win_or_draw = 0;
-    while (progress_made || moves_to_win_or_draw < max_moves_to_win_or_draw) {
+    /* First we look for forced mates... */
+
+    moves_to_win = 0;
+    progress_made = 1;
+
+    while (progress_made || moves_to_win < max_moves_to_win) {
 	for (int32 index=0; index < max_index_static; index++) {
-	    if (needs_propagation(table, index)
-		&& moves_to_win_or_draw(table, index) == moves_to_win_or_draw){
+	    if (needs_propagation(table, index) && get_mate_in_count(table, index) == moves_to_win) {
 		propagate_move_within_table(table, index);
 		progress_made = 1;
 	    }
 	}
 	moves_to_win_or_draw ++;
     }
+
+    /* ...then we look for forced draws */
+
+    progress_made = 1;
+
+    while (progress_made) {
+	for (int32 index=0; index < max_index_static; index++) {
+	    if (needs_propagation(table, index)
+		&& (does_white_draw(table, index) || does_black_draw(table, index))) {
+		propagate_move_within_table(table, index);
+		progress_made = 1;
+	    }
+	}
+    }
+
+    /* Everything else allows both sides to draw with best play.
+     *
+     * Perhaps this seems a bit strange.  After all, if white can force a draw but not a win, then
+     * can't black force a draw, too?  So what's the difference between the forced draws we
+     * calculated above and a draw by repetitions?  You have to keep movement restrictions in mind.
+     * If your pieces are restricted in how they can move, then the computer might only be able to
+     * tell you that you can force a draw, even though you might be able to force a win.
+     *
+     * Actually, even this doesn't make complete sense.  Maybe we don't need that forced
+     * draw code at all.  Maybe this is all we need.
+     */
 
     flag_everything_else_drawn_by_repetition();
 
