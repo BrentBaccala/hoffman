@@ -16,9 +16,9 @@
  * pitcher who specializes in "closing" games.  It was written specifically for The World vs. Arno
  * Nickel game.
  *
- * This program will calculate a tablebase for up to four pieces (called the 'mobile' pieces) in a
- * static configuration of other 'frozen' pieces.  The mobile pieces could possibly be pawns.  The
- * frozen pieces could possibly be kings.
+ * This program will calculate a tablebase for chess pieces (called the 'mobile' pieces) in a static
+ * configuration of other 'frozen' pieces.  The mobile pieces could possibly be pawns.  The frozen
+ * pieces could possibly be kings.
  *
  * Three piece tablebases with no frozen pieces can also be built.  These are the only tablebases
  * that are completely self contained and don't depend on other tablebases (the 'futurebases').
@@ -162,7 +162,8 @@ void add_one_to_black_draws(table, int32 position)
 {
 }
 
-/***** MOVEMENTS *****/
+
+/***** MOVEMENT VECTORS *****/
 
 /* The idea here is to calculate piece movements, and to do it FAST.
  *
@@ -195,6 +196,8 @@ struct movement {
 #define KNIGHT 4
 #define PAWN 5
 #define PAWNep 6
+
+char * piece_name[NUM_PIECES] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", "PAWNep"};
 
 /* we add one to NUM_MOVEMENTS to leave space at the end for the all-ones bitmask that signals the
  * end of the list
@@ -230,9 +233,7 @@ void init_movements()
 
 	    for (dir=0; dir < number_of_movement_directions[piece]; dir++) {
 
-		for (mvmt=0;
-		     mvmt < maximum_movements_in_one_direction[piece];
-		     mvmt++) {
+		for (mvmt=0; mvmt < maximum_movements_in_one_direction[piece]; mvmt ++) {
 
 #define RIGHT_MOVEMENT_POSSIBLE ((current_square%8)<7)
 #define RIGHT2_MOVEMENT_POSSIBLE ((current_square%8)<6)
@@ -247,220 +248,176 @@ void init_movements()
 		    case RIGHT:
 			if (RIGHT_MOVEMENT_POSSIBLE) {
 			    current_square++;
-			    movements[piece][square][dir][mvmt].square
-				= current_square;
-			    movements[piece][square][dir][mvmt].vector
-				= bitvector[current_square];
+			    movements[piece][square][dir][mvmt].square = current_square;
+			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
 			} else {
-			    movements[piece][square][dir][mvmt].vector
-				= allones_bitvector;
+			    movements[piece][square][dir][mvmt].square = -1;
+			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
 			}
 			break;
 		    case LEFT:
 			if (LEFT_MOVEMENT_POSSIBLE) {
 			    current_square--;
-			    movements[piece][square][dir][mvmt].square
-				= current_square;
-			    movements[piece][square][dir][mvmt].vector
-				= bitvector[current_square];
+			    movements[piece][square][dir][mvmt].square = current_square;
+			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
 			} else {
-			    movements[piece][square][dir][mvmt].vector
-				= allones_bitvector;
+			    movements[piece][square][dir][mvmt].square = -1;
+			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
 			}
 			break;
 		    case UP:
 			if (UP_MOVEMENT_POSSIBLE) {
 			    current_square+=8;
-			    movements[piece][square][dir][mvmt].square
-				= current_square;
-			    movements[piece][square][dir][mvmt].vector
-				= bitvector[current_square];
+			    movements[piece][square][dir][mvmt].square = current_square;
+			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
 			} else {
-			    movements[piece][square][dir][mvmt].vector
-				= allones_bitvector;
+			    movements[piece][square][dir][mvmt].square = -1;
+			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
 			}
 			break;
 		    case DOWN:
 			if (DOWN_MOVEMENT_POSSIBLE) {
 			    current_square-=8;
-			    movements[piece][square][dir][mvmt].square
-				= current_square;
-			    movements[piece][square][dir][mvmt].vector
-				= bitvector[current_square];
+			    movements[piece][square][dir][mvmt].square = current_square;
+			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
 			} else {
-			    movements[piece][square][dir][mvmt].vector
-				= allones_bitvector;
+			    movements[piece][square][dir][mvmt].square = -1;
+			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
 			}
 			break;
 		    case DIAG_UL:
-			if (LEFT_MOVEMENT_POSSIBLE
-			    && UP_MOVEMENT_POSSIBLE) {
+			if (LEFT_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
 			    current_square+=8;
 			    current_square--;
-			    movements[piece][square][dir][mvmt].square
-				= current_square;
-			    movements[piece][square][dir][mvmt].vector
-				= bitvector[current_square];
+			    movements[piece][square][dir][mvmt].square = current_square;
+			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
 			} else {
-			    movements[piece][square][dir][mvmt].vector
-				= allones_bitvector;
+			    movements[piece][square][dir][mvmt].square = -1;
+			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
 			}
 			break;
 		    case DIAG_UR:
-			if (RIGHT_MOVEMENT_POSSIBLE
-			    && UP_MOVEMENT_POSSIBLE) {
+			if (RIGHT_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
 			    current_square+=8;
 			    current_square++;
-			    movements[piece][square][dir][mvmt].square
-				= current_square;
-			    movements[piece][square][dir][mvmt].vector
-				= bitvector[current_square];
+			    movements[piece][square][dir][mvmt].square = current_square;
+			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
 			} else {
-			    movements[piece][square][dir][mvmt].vector
-				= allones_bitvector;
+			    movements[piece][square][dir][mvmt].square = -1;
+			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
 			}
 			break;
 		    case DIAG_DL:
-			if (LEFT_MOVEMENT_POSSIBLE
-			    && DOWN_MOVEMENT_POSSIBLE) {
+			if (LEFT_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
 			    current_square-=8;
 			    current_square--;
-			    movements[piece][square][dir][mvmt].square
-				= current_square;
-			    movements[piece][square][dir][mvmt].vector
-				= bitvector[current_square];
+			    movements[piece][square][dir][mvmt].square = current_square;
+			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
 			} else {
-			    movements[piece][square][dir][mvmt].vector
-				= allones_bitvector;
+			    movements[piece][square][dir][mvmt].square = -1;
+			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
 			}
 			break;
 		    case DIAG_DR:
-			if (RIGHT_MOVEMENT_POSSIBLE
-			    && DOWN_MOVEMENT_POSSIBLE) {
+			if (RIGHT_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
 			    current_square-=8;
 			    current_square++;
-			    movements[piece][square][dir][mvmt].square
-				= current_square;
-			    movements[piece][square][dir][mvmt].vector
-				= bitvector[current_square];
+			    movements[piece][square][dir][mvmt].square = current_square;
+			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
 			} else {
-			    movements[piece][square][dir][mvmt].vector
-				= allones_bitvector;
+			    movements[piece][square][dir][mvmt].square = -1;
+			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
 			}
 			break;
 		    case KNIGHT:
 			current_square=square;
 			switch (mvmt) {
 			case 0:
-			    if (RIGHT2_MOVEMENT_POSSIBLE
-				&& UP_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square
-				    = square + 2 + 8;
-				movements[piece][square][dir][0].vector
-				    = bitvector[square + 2 + 8];
-				movements[piece][square][dir][1].vector
-				    = allones_bitvector;
+			    if (RIGHT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square = square + 2 + 8;
+				movements[piece][square][dir][0].vector = bitvector[square + 2 + 8];
+				movements[piece][square][dir][1].square = -1;
+				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
-				movements[piece][square][dir][0].vector
-				    = allones_bitvector;
+				movements[piece][square][dir][0].square = -1;
+				movements[piece][square][dir][0].vector = allones_bitvector;
 			    }
 			    break;
 			case 1:
-			    if (RIGHT2_MOVEMENT_POSSIBLE
-				&& DOWN_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square
-				    = square + 2 - 8;
-				movements[piece][square][dir][0].vector
-				    = bitvector[square + 2 - 8];
-				movements[piece][square][dir][1].vector
-				    = allones_bitvector;
+			    if (RIGHT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square = square + 2 - 8;
+				movements[piece][square][dir][0].vector = bitvector[square + 2 - 8];
+				movements[piece][square][dir][1].square = -1;
+				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
-				movements[piece][square][dir][0].vector
-				    = allones_bitvector;
+				movements[piece][square][dir][0].square = -1;
+				movements[piece][square][dir][0].vector = allones_bitvector;
 			    }
 			    break;
 			case 2:
-			    if (LEFT2_MOVEMENT_POSSIBLE
-				&& UP_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square
-				    = square - 2 + 8;
-				movements[piece][square][dir][0].vector
-				    = bitvector[square - 2 + 8];
-				movements[piece][square][dir][1].vector
-				    = allones_bitvector;
+			    if (LEFT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square = square - 2 + 8;
+				movements[piece][square][dir][0].vector = bitvector[square - 2 + 8];
+				movements[piece][square][dir][1].square = -1;
+				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
-				movements[piece][square][dir][0].vector
-				    = allones_bitvector;
+				movements[piece][square][dir][0].square = -1;
+				movements[piece][square][dir][0].vector = allones_bitvector;
 			    }
 			    break;
 			case 3:
-			    if (LEFT2_MOVEMENT_POSSIBLE
-				&& DOWN_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square
-				    = square - 2 - 8;
-				movements[piece][square][dir][0].vector
-				    = bitvector[square - 2 - 8];
-				movements[piece][square][dir][1].vector
-				    = allones_bitvector;
+			    if (LEFT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square = square - 2 - 8;
+				movements[piece][square][dir][0].vector = bitvector[square - 2 - 8];
+				movements[piece][square][dir][1].square = -1;
+				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
-				movements[piece][square][dir][0].vector
-				    = allones_bitvector;
+				movements[piece][square][dir][0].square = -1;
+				movements[piece][square][dir][0].vector = allones_bitvector;
 			    }
 			    break;
 			case 4:
-			    if (RIGHT_MOVEMENT_POSSIBLE
-				&& UP2_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square
-				    = square + 1 + 16;
-				movements[piece][square][dir][0].vector
-				    = bitvector[square + 1 + 16];
-				movements[piece][square][dir][1].vector
-				    = allones_bitvector;
+			    if (RIGHT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square = square + 1 + 16;
+				movements[piece][square][dir][0].vector = bitvector[square + 1 + 16];
+				movements[piece][square][dir][1].square = -1;
+				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
-				movements[piece][square][dir][0].vector
-				    = allones_bitvector;
+				movements[piece][square][dir][0].square = -1;
+				movements[piece][square][dir][0].vector = allones_bitvector;
 			    }
 			    break;
 			case 5:
-			    if (RIGHT_MOVEMENT_POSSIBLE
-				&& DOWN2_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square
-				    = square + 1 - 16;
-				movements[piece][square][dir][0].vector
-				    = bitvector[square + 1 - 16];
-				movements[piece][square][dir][1].vector
-				    = allones_bitvector;
+			    if (RIGHT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square = square + 1 - 16;
+				movements[piece][square][dir][0].vector = bitvector[square + 1 - 16];
+				movements[piece][square][dir][1].square = -1;
+				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
-				movements[piece][square][dir][0].vector
-				    = allones_bitvector;
+				movements[piece][square][dir][0].square = -1;
+				movements[piece][square][dir][0].vector = allones_bitvector;
 			    }
 			    break;
 			case 6:
-			    if (LEFT_MOVEMENT_POSSIBLE
-				&& UP2_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square
-				    = square - 1 + 16;
-				movements[piece][square][dir][0].vector
-				    = bitvector[square - 1 + 16];
-				movements[piece][square][dir][1].vector
-				    = allones_bitvector;
+			    if (LEFT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square = square - 1 + 16;
+				movements[piece][square][dir][0].vector = bitvector[square - 1 + 16];
+				movements[piece][square][dir][1].square = -1;
+				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
-				movements[piece][square][dir][0].vector
-				    = allones_bitvector;
+				movements[piece][square][dir][0].square = -1;
+				movements[piece][square][dir][0].vector = allones_bitvector;
 			    }
 			    break;
 			case 7:
-			    if (LEFT_MOVEMENT_POSSIBLE
-				&& DOWN2_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square
-				    = square - 1 - 16;
-				movements[piece][square][dir][0].vector
-				    = bitvector[square - 1 - 16];
-				movements[piece][square][dir][1].vector
-				    = allones_bitvector;
+			    if (LEFT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
+				movements[piece][square][dir][0].square = square - 1 - 16;
+				movements[piece][square][dir][0].vector = bitvector[square - 1 - 16];
+				movements[piece][square][dir][1].square = -1;
+				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
-				movements[piece][square][dir][0].vector
-				    = allones_bitvector;
+				movements[piece][square][dir][0].square = -1;
+				movements[piece][square][dir][0].vector = allones_bitvector;
 			    }
 			    break;
 			}
@@ -478,6 +435,88 @@ void init_movements()
 	}
     }
 }
+
+/* I don't plan to call this routine every time the program runs, but it has to be used after any
+ * changes to the code above to verify that those complex movement vectors are correct, or at least
+ * consistent.  We're using this in a game situation.  We can't afford bugs in this code.
+ */
+
+void verify_movements()
+{
+    int piece;
+
+    /* For everything except pawns, if it can move from A to B, then it better be able to move from
+     * B to A...
+     */
+
+    for (piece=KING; piece <= KNIGHT; piece ++) {
+
+	for (squareA=0; squareA < NUM_SQUARES; squareA ++) {
+
+	    for (squareB=0; squareB < NUM_SQUARES; squareB ++) {
+
+		int movement_possible = 0;
+		int reverse_movement_possible = 0;
+
+		for (dir = 0; dir < number_of_movement_directions[type_of[piece]]; dir++) {
+
+		    for (movementptr = &movements[type_of[piece]][squareA][dir];
+			 (movementptr->vector & bitvector[squareB]) == 0;
+			 movementptr++) {
+			if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
+			    fprintf(STDERR, "Bad movement square: %s %d %d\n",
+				    piece_name[piece], squareA, squareB);
+			}
+		    }
+
+		    if (movementptr->square == -1) {
+			if (movementptr->vector != allones_bitvector) {
+			    fprintf(STDERR, "-1 movement lacks allones_bitvector: %s %d %d\n",
+				    piece_name[piece], squareA, squareB);
+			}
+		    } else if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
+			fprintf(STDERR, "Bad movement square: %s %d %d\n",
+				piece_name[piece], squareA, squareB);
+		    } else {
+			if (movementptr->square != squareB) {
+			    fprintf(STDERR, "bitvector does not match destination square: %s %d %d\n",
+				    piece_name[piece], squareA, squareB);
+			}
+			if (movement_possible) {
+			    fprintf(STDERR, "multiple idential destinations from same origin: %s %d %d\n",
+				    piece_name[piece], squareA, squareB);
+			}
+			movement_possible = 1;
+			if (movementptr->vector == allones_bitvector) {
+			    fprintf(STDERR, "allones_bitvector on a legal movement: %s %d %d\n",
+				    piece_name[piece], squareA, squareB);
+			}
+		    }
+		}
+
+
+		for (dir = 0; dir < number_of_movement_directions[type_of[piece]]; dir++) {
+
+		    for (movementptr = &movements[type_of[piece]][squareB][dir];
+			 (movementptr->vector & bitvector[squareA]) == 0;
+			 movementptr++) ;
+
+		    if (movementptr->square != -1) reverse_movement_possible=1;
+		}
+
+
+		if (movement_possible && !reverse_movement_possible) {
+		    fprintf(STDERR, "reverse movement impossible: %s %d %d\n",
+			    piece_name[piece], squareA, squareB);
+		}
+
+	    }
+	}
+    }
+}
+
+
+/***** FUTUREBASES *****/
 
 #ifdef FUTUREBASES
 
@@ -657,8 +696,12 @@ void propagate_move_within_table(tablebase tb, int index)
 
 	    current_position = parent_position;
 
-	    /* This code IGNORES ALL CAPTURES because that board_vector check stops when we hit
-	     * another piece.  Need to check that other piece's color.
+	    /* What about captures?  Well, first of all, there are no captures here!  We're moving
+	     * BACKWARDS in the game... and pieces don't appear out of thin air.  Captures are
+	     * handled by back-propagation from futurebases, not here in the movement code.  The
+	     * piece moving had to come from somewhere, and that somewhere will now be an empty
+	     * square, so once we've hit another piece along a movement vector, there's absolutely
+	     * no need to consider anything further.
 	     */
 
 	    for (movementptr = &movements[type_of[piece]][piece position][dir];
@@ -707,9 +750,6 @@ void propagate_move_within_table(tablebase tb, int index)
 		}
 	    }
 	}
-
-	/* Check for captures */
-
 
     }
 }
