@@ -29,8 +29,12 @@
  */
 
 #include <stdio.h>
-#include <stdint.h>
+/* #include <stdint.h> */
 #include <stdlib.h>
+
+typedef unsigned long long int int64;
+typedef unsigned int int32;
+typedef short boolean;
 
 
 /***** GLOBAL CONSTANTS *****/
@@ -126,9 +130,7 @@ typedef struct {
     short mobile_piece_color[MAX_MOBILES];
 } tablebase;
 
-
-
-tablebase parse_XML()
+tablebase * parse_XML()
 {
 }
 
@@ -165,7 +167,7 @@ int32 position_to_index(tablebase *tb, position *pos)
  * legal!)
  */
 
-bool check_legality_of_index(tablebase *config, int32 index)
+boolean check_legality_of_index(tablebase *config, int32 index)
 {
 }
 
@@ -285,7 +287,7 @@ void initialize_index_with_stalemate(tablebase *tb, int32 index)
 {
 }
 
-void initialize_index_with_movecnt(tablebase *tb, int32 index)
+void initialize_index_with_movecnt(tablebase *tb, int32 index, int movecnt)
 {
 }
 
@@ -320,6 +322,19 @@ struct movement movements[NUM_PIECES][NUM_SQUARES][NUM_DIR][NUM_MOVEMENTS+1];
 int number_of_movement_directions[7] = {8,8,4,4,8,1,1};
 int maximum_movements_in_one_direction[7] = {1,7,7,7,1,2,1};
 
+enum {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR, KNIGHTmove, PAWNmove, PAWN2move}
+movementdir[7][8] = {
+    {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},	/* King */
+    {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},	/* Queen */
+    {RIGHT, LEFT, UP, DOWN},						/* Rook */
+    {DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},				/* Bishop */
+    {KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove},	/* Knights are special... */
+    {PAWNmove, PAWN2move},						/* Pawns need more work */
+    {PAWNmove},								/* en passant pawns */
+};
+
+
+
 int64 bitvector[64];
 int64 allones_bitvector = 0xffffffff;  /* hehehe */
 
@@ -330,7 +345,7 @@ void init_movements()
     /* XXX This won't work for a 64-bit shift, but this is the idea */
 
     for (square=0; square < NUM_SQUARES; square++) {
-	bitvector = 1 << square;
+	bitvector[square] = 1ULL << square;
     }
 
     for (square=0; square < NUM_SQUARES; square++) {
@@ -346,7 +361,7 @@ void init_movements()
 #define RIGHT_MOVEMENT_POSSIBLE ((current_square%8)<7)
 #define RIGHT2_MOVEMENT_POSSIBLE ((current_square%8)<6)
 #define LEFT_MOVEMENT_POSSIBLE ((current_square%8)>0)
-#define LEFT_MOVEMENT_POSSIBLE ((current_square%8)>1)
+#define LEFT2_MOVEMENT_POSSIBLE ((current_square%8)>1)
 #define UP_MOVEMENT_POSSIBLE (current_square<56)
 #define UP2_MOVEMENT_POSSIBLE (current_square<48)
 #define DOWN_MOVEMENT_POSSIBLE (current_square>7)
@@ -437,7 +452,7 @@ void init_movements()
 			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
 			}
 			break;
-		    case KNIGHT:
+		    case KNIGHTmove:
 			current_square=square;
 			switch (mvmt) {
 			case 0:
@@ -531,8 +546,8 @@ void init_movements()
 			}
 			break;
 
-		    case PAWN:
-		    case PAWNep:
+		    case PAWNmove:
+		    case PAWN2move:
 			/* Oh, we need to distinguish between forward/backward here as well as white
 			 * and black pawns...
 			 */
@@ -552,6 +567,9 @@ void init_movements()
 void verify_movements()
 {
     int piece;
+    int squareA, squareB;
+    int dir;
+    struct movement * movementptr;
 
     /* For everything except pawns, if it can move from A to B, then it better be able to move from
      * B to A...
@@ -566,46 +584,46 @@ void verify_movements()
 		int movement_possible = 0;
 		int reverse_movement_possible = 0;
 
-		for (dir = 0; dir < number_of_movement_directions[type_of[piece]]; dir++) {
+		for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
 
-		    for (movementptr = &movements[type_of[piece]][squareA][dir];
+		    for (movementptr = movements[piece][squareA][dir];
 			 (movementptr->vector & bitvector[squareB]) == 0;
 			 movementptr++) {
 			if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
-			    fprintf(STDERR, "Bad movement square: %s %d %d\n",
+			    fprintf(stderr, "Bad movement square: %s %d %d\n",
 				    piece_name[piece], squareA, squareB);
 			}
 		    }
 
 		    if (movementptr->square == -1) {
 			if (movementptr->vector != allones_bitvector) {
-			    fprintf(STDERR, "-1 movement lacks allones_bitvector: %s %d %d\n",
+			    fprintf(stderr, "-1 movement lacks allones_bitvector: %s %d %d\n",
 				    piece_name[piece], squareA, squareB);
 			}
 		    } else if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
-			fprintf(STDERR, "Bad movement square: %s %d %d\n",
+			fprintf(stderr, "Bad movement square: %s %d %d\n",
 				piece_name[piece], squareA, squareB);
 		    } else {
 			if (movementptr->square != squareB) {
-			    fprintf(STDERR, "bitvector does not match destination square: %s %d %d\n",
+			    fprintf(stderr, "bitvector does not match destination square: %s %d %d\n",
 				    piece_name[piece], squareA, squareB);
 			}
 			if (movement_possible) {
-			    fprintf(STDERR, "multiple idential destinations from same origin: %s %d %d\n",
+			    fprintf(stderr, "multiple idential destinations from same origin: %s %d %d\n",
 				    piece_name[piece], squareA, squareB);
 			}
 			movement_possible = 1;
 			if (movementptr->vector == allones_bitvector) {
-			    fprintf(STDERR, "allones_bitvector on a legal movement: %s %d %d\n",
+			    fprintf(stderr, "allones_bitvector on a legal movement: %s %d %d\n",
 				    piece_name[piece], squareA, squareB);
 			}
 		    }
 		}
 
 
-		for (dir = 0; dir < number_of_movement_directions[type_of[piece]]; dir++) {
+		for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
 
-		    for (movementptr = &movements[type_of[piece]][squareB][dir];
+		    for (movementptr = movements[piece][squareB][dir];
 			 (movementptr->vector & bitvector[squareA]) == 0;
 			 movementptr++) ;
 
@@ -614,7 +632,7 @@ void verify_movements()
 
 
 		if (movement_possible && !reverse_movement_possible) {
-		    fprintf(STDERR, "reverse movement impossible: %s %d %d\n",
+		    fprintf(stderr, "reverse movement impossible: %s %d %d\n",
 			    piece_name[piece], squareA, squareB);
 		}
 
@@ -770,10 +788,14 @@ propagate_moves_from_futurebases()
  * here and update their counters in various obscure ways.
  */
 
-void propagate_move_within_table(tablebase *tb, int parent_index)
+void propagate_move_within_table(tablebase *tb, int32 parent_index)
 {
     position parent_position;
     position current_position; /* i.e, last position that moved to parent_position */
+    int piece;
+    int dir;
+    struct movement *movementptr;
+    int32 current_index;
 
     /* ASSERT (table,index) == WIN/LOSS IN x MOVES or DRAW; */
 
@@ -787,13 +809,13 @@ void propagate_move_within_table(tablebase *tb, int parent_index)
 
     /* foreach (mobile piece of player NOT TO PLAY) { */
 
-    for (piece = 0; piece < tb.num_mobiles; piece++) {
+    for (piece = 0; piece < tb->num_mobiles; piece++) {
 
 	/* We've moving BACKWARDS in the game, so we want the pieces of the player who is NOT TO
 	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	if (tb.mobile_piece_color[piece] == parent_position.side_to_move)
+	if (tb->mobile_piece_color[piece] == parent_position.side_to_move)
 	    continue;
 
 	/* current_position[piece] is a number from 0 to 63 corresponding to the different squares
@@ -809,7 +831,7 @@ void propagate_move_within_table(tablebase *tb, int parent_index)
 
 	/* possible_moves(current_position[piece], type_of[piece]); */
 
-	for (dir = 0; dir < number_of_movement_directions[tb.mobile_piece_type[piece]]; dir++) {
+	for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
 	    /* What about captures?  Well, first of all, there are no captures here!  We're moving
 	     * BACKWARDS in the game... and pieces don't appear out of thin air.  Captures are
@@ -820,7 +842,7 @@ void propagate_move_within_table(tablebase *tb, int parent_index)
 	     */
 
 	    for (movementptr
-		     = &movements[tb.mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
+		     = movements[tb->mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
 		 (movementptr->vector & parent_position.board_vector) == 0;
 		 movementptr++) {
 
@@ -833,7 +855,7 @@ void propagate_move_within_table(tablebase *tb, int parent_index)
 #if NEEDED
 		current_position.board_vector &= ~bitvector[parent_position.mobile_piece_position[piece]];
 		current_position.board_vector |= bitvector[movementptr->square];
-		if (tb.mobile_piece_color[piece] == WHITE) {
+		if (tb->mobile_piece_color[piece] == WHITE) {
 		    current_position.white_vector &= ~bitvector[parent_position.mobile_piece_position[piece]];
 		    current_position.white_vector |= bitvector[movementptr->square];
 		} else {
@@ -938,12 +960,16 @@ initialize_tablebase(tablebase *tb)
 {
     position parent_position;
     position current_position;
+    int32 index;
+    int piece;
+    int dir;
+    struct movement *movementptr;
 
     /* This is here because we don't want to be calling max_index() everytime through the loop below */
 
     int32 max_index_static = max_index(tb);
 
-    for (int32 index=0; index < max_index_static; index++) {
+    for (index=0; index < max_index_static; index++) {
 
 	if (! index_to_position(tb, index, &parent_position)) {
 
@@ -954,13 +980,13 @@ initialize_tablebase(tablebase *tb)
 	    /* Now we need to count moves.  FORWARD moves. */
 	    int movecnt = 0;
 
-	    for (piece = 0; piece < tb.num_mobiles; piece++) {
+	    for (piece = 0; piece < tb->num_mobiles; piece++) {
 
-		for (dir = 0; dir < number_of_movement_directions[type_of[piece]]; dir++) {
+		for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
 		    current_position = parent_position;
 
-		    for (movementptr = &movements[type_of[piece]][piece position][dir];
+		    for (movementptr = movements[tb->mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
 			 (movementptr->vector & current_position.board_vector) == 0;
 			 movementptr++) {
 
@@ -1007,20 +1033,25 @@ initialize_tablebase(tablebase *tb)
 		    forall (possible moves of frozen pieces) movecnt++;
 		}
 #endif
-		if (movecnt == 0) initialize_index_with_stalemated(index);
-		else initialize_index_with_movecnt(index, movecnt);
-
-	    mated:
-				
 	    }
+
+	    if (movecnt == 0) initialize_index_with_stalemate(tb, index);
+	    else initialize_index_with_movecnt(tb, index, movecnt);
+
+	mated: ;
+				
 	}
     }
 }
 
-mainloop()
+main()
 {
-    int max_moves_to_win_or_draw;
+    tablebase *tb;
+    int max_moves_to_win;
+    int moves_to_win;
     int progress_made;
+    int32 max_index_static;
+    int32 index;
 
     /* create_data_structure_from_control_file(); */
 
@@ -1040,15 +1071,16 @@ mainloop()
 
     moves_to_win = 0;
     progress_made = 1;
+    max_index_static = max_index(tb);
 
     while (progress_made || moves_to_win < max_moves_to_win) {
-	for (int32 index=0; index < max_index_static; index++) {
-	    if (needs_propagation(table, index) && get_mate_in_count(table, index) == moves_to_win) {
-		propagate_move_within_table(table, index);
+	for (index=0; index < max_index_static; index++) {
+	    if (needs_propagation(tb, index) && get_mate_in_count(tb, index) == moves_to_win) {
+		propagate_move_within_table(tb, index);
 		progress_made = 1;
 	    }
 	}
-	moves_to_win_or_draw ++;
+	moves_to_win ++;
     }
 
     /* ...then we look for forced draws */
@@ -1056,10 +1088,10 @@ mainloop()
     progress_made = 1;
 
     while (progress_made) {
-	for (int32 index=0; index < max_index_static; index++) {
-	    if (needs_propagation(table, index)
-		&& (does_white_draw(table, index) || does_black_draw(table, index))) {
-		propagate_move_within_table(table, index);
+	for (index=0; index < max_index_static; index++) {
+	    if (needs_propagation(tb, index)
+		&& (does_white_draw(tb, index) || does_black_draw(tb, index))) {
+		propagate_move_within_table(tb, index);
 		progress_made = 1;
 	    }
 	}
@@ -1077,7 +1109,7 @@ mainloop()
      * draw code at all.  Maybe this is all we need.
      */
 
-    flag_everything_else_drawn_by_repetition();
+    /* flag_everything_else_drawn_by_repetition(); */
 
-    write_output_tablebase();
+    /* write_output_tablebase(); */
 }
