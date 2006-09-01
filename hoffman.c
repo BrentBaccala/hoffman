@@ -41,56 +41,11 @@
 
 #define MAX_MOBILES 8
 
-typedef struct {
-    int num_mobiles;
-} tablebase_description;
+#define STALEMATE_COUNT 50
 
-tablebase_description parse_XML()
-{
-}
-
-typedef tablebase_description static_configuration;
-typedef tablebase_description tablebase;
-
-int32 max_position(static_configuration *config)
-{
-}
-
-int32 position_to_index(static_configuration *config, int side_to_move,
-			int mobile1, int mobile2, int mobile3, int mobile4)
-{
-    /* This function, given a list of board positions for the mobile pieces and an indication of
-     * which side is to move, returns an index into the table.
-     *
-     * The reason we pass the static configuration in explicitly is that we will need to use this
-     * function to calculate not only indices into our own table, but also into future tables with
-     * different static configs.  Actually, I'm not sure about this.  Maybe it's only the matching
-     * function index_to_position() that we need for future tables.  In any event, we'll need this
-     * function to probe tables when we want to actually use them.
-     *
-     * Initially, this function can be very simple (multiplying numbers together), but to build
-     * smaller tables it can be more precise.
-     *
-     * For example, two kings can never be next to each other.  Pieces can never be on top of each
-     * other, or on top of static pieces.  The side to move can not be in check.
-     *
-     * Returns either an index into the table, or -1 (probably) if the position is illegal.
-     *
-     * Let's just ASSERT right now that this function can be used to check for illegal positions.
-     * In fact, it is our primary function to check for illegal positions.  We call it and see if it
-     * returns -1.
-     */
-}
-
-/* OK, maybe not.  Maybe need to check index numbers, too. (Unless all positions in the table are
- * legal!)
- */
-
-bool check_legality_of_index(static_configuration *config, int32 index)
-{
-}
-
-/* How about if "position" is a structure containing an 8x8 char array with ASCII characters
+/* position - the data structure that represents a board position
+ *
+ * How about if "position" is a structure containing an 8x8 char array with ASCII characters
  * representing each piece?  No.  Too slow.  Position manipulation is at the core of this program.
  * It has to be fast.
  *
@@ -122,17 +77,66 @@ typedef struct {
     short mobile_piece_position[MAX_MOBILES];
 } position;
 
+
+typedef struct {
+    int num_mobiles;
+    short mobile_piece_type[MAX_MOBILES];
+    short mobile_piece_color[MAX_MOBILES];
+} tablebase;
+
+tablebase parse_XML()
+{
+}
+
+int32 max_index(tablebase *tb)
+{
+}
+
+int32 position_to_index(tablebase *tb, position *pos)
+{
+    /* This function, given a list of board positions for the mobile pieces and an indication of
+     * which side is to move, returns an index into the table.
+     *
+     * The reason we pass the tablebase in explicitly is that we will need to use this function to
+     * calculate not only indices into our own table, but also into future tables with different
+     * static configs.  Actually, I'm not sure about this.  Maybe it's only the matching function
+     * index_to_position() that we need for future tables.  In any event, we'll need this function
+     * to probe tables when we want to actually use them.
+     *
+     * Initially, this function can be very simple (multiplying numbers together), but to build
+     * smaller tables it can be more precise.
+     *
+     * For example, two kings can never be next to each other.  Pieces can never be on top of each
+     * other, or on top of static pieces.  The side to move can not be in check.
+     *
+     * Returns either an index into the table, or -1 (probably) if the position is illegal.
+     *
+     * Let's just ASSERT right now that this function can be used to check for illegal positions.
+     * In fact, it is our primary function to check for illegal positions.  We call it and see if it
+     * returns -1.
+     */
+}
+
+/* OK, maybe not.  Maybe need to check index numbers, too. (Unless all positions in the table are
+ * legal!)
+ */
+
+bool check_legality_of_index(tablebase *config, int32 index)
+{
+}
+
 /* any reason to do this?  just for one mobile? */
-int index_to_mobile_position(static_configuration *config, int32 index, int piece)
+int index_to_mobile_position(tablebase *config, int32 index, int piece)
 {}
 
-boolean index_to_position(static_configuration *config, int32 index)
+boolean index_to_position(tablebase *tb, int32 index, position *p)
 {
     /* Given an index, returns the board position.  Obviously has to
      * correspond to position_to_index() and it's a big bug if it
      * doesn't.
      */
 }
+
 
 /**** TABLE OPERATIONS ****/
 
@@ -146,19 +150,89 @@ boolean index_to_position(static_configuration *config, int32 index)
  * count of zero) if the total move count goes to zero.
  */
 
-void add_one_to_white_wins(table, int32 position)
+inline short does_white_win(tablebase *tb, int32 index)
 {
 }
 
-void add_one_to_black_wins(table, int32 position)
+inline short does_white_draw(tablebase *tb, int32 index)
 {
 }
 
-void add_one_to_white_draws(table, int32 position)
+inline short does_black_win(tablebase *tb, int32 index)
 {
 }
 
-void add_one_to_black_draws(table, int32 position)
+inline short does_black_draw(tablebase *tb, int32 index)
+{
+}
+
+inline int get_mate_in_count(tablebase *tb, int32 index)
+{
+}
+
+inline int get_stalemate_count(tablebase *tb, int32 index)
+{
+}
+
+inline void white_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
+{
+}
+
+inline void white_draws(tablebase *tb, int32 index)
+{
+}
+
+inline void black_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
+{
+}
+
+inline void black_draws(tablebase *tb, int32 index)
+{
+}
+
+inline void add_one_to_white_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
+{
+}
+
+inline void add_one_to_black_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
+{
+}
+
+inline void add_one_to_white_draws(tablebase *tb, int32 index)
+{
+}
+
+inline void add_one_to_black_draws(tablebase *tb, int32 index)
+{
+}
+
+/* Five possible ways we can initialize an index for a position:
+ *  - it's illegal
+ *  - white's mated (black is to move)
+ *  - black's mated (white is to move)
+ *  - stalemate
+ *  - any other position, with 'movecnt' possible moves out the position
+ */
+
+void initialize_index_as_illegal(tablebase *tb, int32 index)
+{
+}
+
+void initialize_index_with_white_mated(tablebase *tb, int32 index)
+{
+    black_wins(tb, index, 0, 0);
+}
+
+void initialize_index_with_black_mated(tablebase *tb, int32 index)
+{
+    white_wins(tb, index, 0, 0);
+}
+
+void initialize_index_with_stalemate(tablebase *tb, int32 index)
+{
+}
+
+void initialize_index_with_movecnt(tablebase *tb, int32 index)
 {
 }
 
@@ -655,8 +729,10 @@ propagate_moves_from_futurebases()
 
 #endif
 
-void propagate_move_within_table(tablebase tb, int index)
+void propagate_move_within_table(tablebase *tb, int parent_index)
 {
+    position parent_position;
+    position current_position; /* i.e, last position that moved to parent_position */
 
     /* ASSERT (table,index) == WIN/LOSS IN x MOVES or DRAW; */
 
@@ -666,7 +742,7 @@ void propagate_move_within_table(tablebase tb, int index)
      * in order.
      */
 
-    parent_position = index_to_position(tb, index);
+    index_to_position(tb, parent_index, &parent_position);
 
     /* foreach (mobile piece of player NOT TO PLAY) { */
 
@@ -676,7 +752,7 @@ void propagate_move_within_table(tablebase tb, int index)
 	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	if (color_of_mobile_piece(piece) == parent_position.side_to_move)
+	if (tb.mobile_piece_color[piece] == parent_position.side_to_move)
 	    continue;
 
 	/* current_position[piece] is a number from 0 to 63 corresponding to the different squares
@@ -692,9 +768,7 @@ void propagate_move_within_table(tablebase tb, int index)
 
 	/* possible_moves(current_position[piece], type_of[piece]); */
 
-	for (dir = 0; dir < number_of_movement_directions[type_of[piece]]; dir++) {
-
-	    current_position = parent_position;
+	for (dir = 0; dir < number_of_movement_directions[tb.mobile_piece_type[piece]]; dir++) {
 
 	    /* What about captures?  Well, first of all, there are no captures here!  We're moving
 	     * BACKWARDS in the game... and pieces don't appear out of thin air.  Captures are
@@ -704,48 +778,92 @@ void propagate_move_within_table(tablebase tb, int index)
 	     * no need to consider anything further.
 	     */
 
-	    for (movementptr = &movements[type_of[piece]][piece position][dir];
-		 (movementptr->vector & current_position.board_vector) == 0;
+	    for (movementptr
+		     = &movements[tb.mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
+		 (movementptr->vector & parent_position.board_vector) == 0;
 		 movementptr++) {
 
-		current_position.mobile_piece_position[piece]
-		    = movementptr->square;
+		current_position = parent_position;
 
-		position_to_index();
+		/* This code makes perfect sense... but I doubt it will be needed!  The
+		 * position_to_index function will probably only require the square numbers, not the
+		 * board vectors.
+		 */
+#if NEEDED
+		current_position.board_vector &= ~bitvector[parent_position.mobile_piece_position[piece]];
+		current_position.board_vector |= bitvector[movementptr->square];
+		if (tb.mobile_piece_color[piece] == WHITE) {
+		    current_position.white_vector &= ~bitvector[parent_position.mobile_piece_position[piece]];
+		    current_position.white_vector |= bitvector[movementptr->square];
+		} else {
+		    current_position.black_vector &= ~bitvector[parent_position.mobile_piece_position[piece]];
+		    current_position.black_vector |= bitvector[movementptr->square];
+		}
+#endif
+
+		current_position.mobile_piece_position[piece] = movementptr->square;
+
+		current_index = position_to_index(tb, &current_position);
 
 		/* Parent position is the FUTURE position */
 
 		/* all of these subroutines have to propagate if changed */
 
-		if (is_white_to_move(parent_position)) {
+		/* these stalemate and mate counts increment by one every HALF MOVE */
+
+		if (parent_position.side_to_move == WHITE) {
 		    /* ...then this position is BLACK TO MOVE */
-		    if (does_white_win(parent_position)) {
+		    if (does_white_win(tb, parent_index)) {
 			/* parent position is WHITE MOVES AND WINS */
-			add_one_to_white_wins();
-		    } else if (does_black_win(parent_position)) {
+			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+			    add_one_to_white_wins(tb, current_index,
+						  get_mate_in_count(tb, parent_index)+1,
+						  get_stalemate_count(tb, parent_index)+1);
+			} else {
+			    add_one_to_white_draws(tb, current_index);
+			}
+		    } else if (does_black_win(tb, parent_index)) {
 			/* parent position is WHITE MOVES AND BLACK WINS */
-			black_wins();
-		    } else if (does_white_draw(parent_position)) {
+			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+			    black_wins(tb, current_index,
+				       get_mate_in_count(tb, parent_index)+1,
+				       get_stalemate_count(tb, parent_index)+1);
+			} else {
+			    add_one_to_black_draws(tb, current_index);
+			}
+		    } else if (does_white_draw(tb, parent_index)) {
 			/* parent position is WHITE MOVES AND DRAWS */
-			add_one_to_white_draws();
-		    } else if (does_black_draw(parent_position)) {
+			add_one_to_white_draws(tb, current_index);
+		    } else if (does_black_draw(tb, parent_index)) {
 			/* parent position is WHITE MOVES AND BLACK DRAWS */
-			black_draws();
+			black_draws(tb, current_index);
 		    }
 		} else {
 		    /* or this position is WHITE TO MOVE */
-		    if (does_black_win(parent_position)) {
+		    if (does_black_win(tb, parent_index)) {
 			/* parent position is BLACK MOVES AND WINS */
-			add_one_to_black_wins();
-		    } else if (does_white_win(parent_position)) {
+			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+			    add_one_to_black_wins(tb, current_index,
+						  get_mate_in_count(tb, parent_index)+1,
+						  get_stalemate_count(tb, parent_index)+1);
+			} else {
+			    add_one_to_black_draws(tb, current_index);
+			}
+		    } else if (does_white_win(tb, parent_index)) {
 		        /* parent position is BLACK MOVES AND WHITE WINS */
-			white_wins();
-		    } else if (does_black_draw(parent_position)) {
+			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+			    white_wins(tb, current_index,
+				       get_mate_in_count(tb, parent_index)+1,
+				       get_stalemate_count(tb, parent_index)+1);
+			} else {
+			    add_one_to_black_draws(tb, current_index);
+			}
+		    } else if (does_black_draw(tb, parent_index)) {
 			/* parent position is BLACK MOVES AND DRAWS */
-			add_one_to_black_draws();
-		    } else if (does_white_draw(parent_position)) {
+			add_one_to_black_draws(tb, current_index);
+		    } else if (does_white_draw(tb, parent_index)) {
 			/* parent position is BLACK MOVES AND WHITE DRAWS */
-			black_draws();
+			black_draws(tb, current_index);
 		    }
 		}
 	    }
@@ -754,12 +872,14 @@ void propagate_move_within_table(tablebase tb, int index)
     }
 }
 
-initialize_tablebase(tablebase tb)
+initialize_tablebase(tablebase *tb)
 {
-    /* This is here because we don't want to be calling max_index() everytime through the loop below
-     */
+    position parent_position;
+    position current_position;
 
-    int32 max_index_static = max_index(table);
+    /* This is here because we don't want to be calling max_index() everytime through the loop below */
+
+    int32 max_index_static = max_index(tb);
 
     for (int32 index=0; index < max_index_static; index++) {
 
@@ -773,6 +893,8 @@ initialize_tablebase(tablebase tb)
 
 	    /* Now we need to count moves.  FORWARD moves. */
 	    int movecnt = 0;
+
+	    index_to_position(tb, index, &parent_position);
 
 	    for (piece = 0; piece < tb.num_mobiles; piece++) {
 
@@ -805,7 +927,7 @@ initialize_tablebase(tablebase tb)
 			    movecnt ++;
 			    if (movementptr->square ==
 				current_position.mobile_piece_position[BLACK_KING]) {
-				initialize_index_with_mated(index);
+				initialize_index_with_black_mated(tb, index);
 				goto mated;
 			    }
 			}
@@ -814,7 +936,7 @@ initialize_tablebase(tablebase tb)
 			    movecnt ++;
 			    if (movementptr->square ==
 				current_position.mobile_piece_position[WHITE_KING]) {
-				initialize_index_with_mated(index);
+				initialize_index_with_white_mated(tb, index);
 				goto mated;
 			    }
 			}
@@ -839,9 +961,11 @@ initialize_tablebase(tablebase tb)
 
 mainloop()
 {
-    create_data_structure_from_control_file();
+    /* create_data_structure_from_control_file(); */
 
     init_movements();
+
+    verify_movements();
 
     initialize_tablebase(tb);
 
