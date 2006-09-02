@@ -311,10 +311,6 @@ inline short does_white_win(tablebase *tb, int32 index)
     }
 }
 
-inline short does_white_draw(tablebase *tb, int32 index)
-{
-}
-
 inline short does_black_win(tablebase *tb, int32 index)
 {
     if (BLACK_TO_MOVE(index)) {
@@ -324,10 +320,6 @@ inline short does_black_win(tablebase *tb, int32 index)
 	return (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
 	    || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE);
     }
-}
-
-inline short does_black_draw(tablebase *tb, int32 index)
-{
 }
 
 inline boolean needs_propagation(tablebase *tb, int32 index)
@@ -388,10 +380,6 @@ inline void white_wins(tablebase *tb, int32 index, int mate_in_count, int stalem
     }
 }
 
-inline void white_draws(tablebase *tb, int32 index)
-{
-}
-
 inline void black_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
     if (BLACK_TO_MOVE(index)) {
@@ -424,10 +412,6 @@ inline void black_wins(tablebase *tb, int32 index, int mate_in_count, int stalem
 	    tb->entries[index].stalemate_cnt = stalemate_count;
 	}
     }
-}
-
-inline void black_draws(tablebase *tb, int32 index)
-{
 }
 
 inline void add_one_to_white_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
@@ -478,14 +462,6 @@ inline void add_one_to_black_wins(tablebase *tb, int32 index, int mate_in_count,
 	    }
 	}
     }
-}
-
-inline void add_one_to_white_draws(tablebase *tb, int32 index)
-{
-}
-
-inline void add_one_to_black_draws(tablebase *tb, int32 index)
-{
 }
 
 /* Five possible ways we can initialize an index for a position:
@@ -1147,8 +1123,6 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index)
 			    add_one_to_white_wins(tb, current_index,
 						  get_mate_in_count(tb, parent_index)+1,
 						  get_stalemate_count(tb, parent_index)+1);
-			} else {
-			    add_one_to_white_draws(tb, current_index);
 			}
 
 		    } else if (does_black_win(tb, parent_index)) {
@@ -1158,19 +1132,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index)
 			    black_wins(tb, current_index,
 				       get_mate_in_count(tb, parent_index)+1,
 				       get_stalemate_count(tb, parent_index)+1);
-			} else {
-			    add_one_to_black_draws(tb, current_index);
 			}
-
-		    } else if (does_white_draw(tb, parent_index)) {
-
-			/* parent position is WHITE MOVES AND DRAWS */
-			add_one_to_white_draws(tb, current_index);
-
-		    } else if (does_black_draw(tb, parent_index)) {
-
-			/* parent position is WHITE MOVES AND BLACK DRAWS */
-			black_draws(tb, current_index);
 
 		    }
 
@@ -1185,8 +1147,6 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index)
 			    add_one_to_black_wins(tb, current_index,
 						  get_mate_in_count(tb, parent_index)+1,
 						  get_stalemate_count(tb, parent_index)+1);
-			} else {
-			    add_one_to_black_draws(tb, current_index);
 			}
 
 		    } else if (does_white_win(tb, parent_index)) {
@@ -1196,19 +1156,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index)
 			    white_wins(tb, current_index,
 				       get_mate_in_count(tb, parent_index)+1,
 				       get_stalemate_count(tb, parent_index)+1);
-			} else {
-			    add_one_to_black_draws(tb, current_index);
 			}
-
-		    } else if (does_black_draw(tb, parent_index)) {
-
-			/* parent position is BLACK MOVES AND DRAWS */
-			add_one_to_black_draws(tb, current_index);
-
-		    } else if (does_white_draw(tb, parent_index)) {
-
-			/* parent position is BLACK MOVES AND WHITE DRAWS */
-			black_draws(tb, current_index);
 
 		    }
 		}
