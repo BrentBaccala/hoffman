@@ -106,6 +106,11 @@ typedef struct {
 } position;
 
 
+/* bitvector get initialized in init_movements() */
+
+int64 bitvector[64];
+int64 allones_bitvector = 0xffffffffffffffffLL;
+
 /* tablebase - the data structure used to hold tablebases
  *
  * WHITE and BLACK are also used for the side_to_move variable in the position type above
@@ -124,10 +129,21 @@ char * piece_name[NUM_PIECES] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "P
 #define WHITE 0
 #define BLACK 1
 
+
+/**** TABLEBASE STRUCTURE AND OPERATIONS ****/
+
+struct fourbyte_entry {
+    unsigned char movecnt;
+    unsigned char white_wins_moves;
+    unsigned char black_wins_moves;
+    unsigned char draw_moves;
+};
+
 typedef struct {
     int num_mobiles;
     short mobile_piece_type[MAX_MOBILES];
     short mobile_piece_color[MAX_MOBILES];
+    struct fourbyte_entry *index_entries;
 } tablebase;
 
 tablebase * parse_XML()
@@ -136,12 +152,12 @@ tablebase * parse_XML()
 
 int32 max_index(tablebase *tb)
 {
+    return (2<<(6*tb->num_mobiles)) - 1;
 }
 
 int32 position_to_index(tablebase *tb, position *pos)
 {
-    /* This function, given a list of board positions for the mobile pieces and an indication of
-     * which side is to move, returns an index into the table.
+    /* This function, given a board position, returns an index into the tablebase.
      *
      * The reason we pass the tablebase in explicitly is that we will need to use this function to
      * calculate not only indices into our own table, but also into future tables with different
@@ -161,6 +177,19 @@ int32 position_to_index(tablebase *tb, position *pos)
      * In fact, it is our primary function to check for illegal positions.  We call it and see if it
      * returns -1.
      */
+
+    /* Keep it simple, for now */
+
+    int shift_count = 1;
+    int32 index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+    int piece;
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	index |= pos->mobile_piece_position[piece] << shift_count;
+	shift_count += 6;  /* because 2^6=64 */
+    }
+
+    return index;
 }
 
 /* OK, maybe not.  Maybe need to check index numbers, too. (Unless all positions in the table are
@@ -182,10 +211,28 @@ boolean index_to_position(tablebase *tb, int32 index, position *p)
      * succeeded (the index is at least minimally valid) and FALSE if the index is so blatantly
      * illegal (two piece on the same square) that we can't even fill in the position.
      */
+
+    int piece;
+
+    p->side_to_move = index & 1;
+    index >>= 1;
+
+    for (piece = 0; piece < tb->num_mobiles; piece++) {
+	p->mobile_piece_position[piece] = index & 63;
+	if (p->board_vector & bitvector[index & 63]) {
+	    return 0;
+	}
+	p->board_vector |= bitvector[index & 63];
+	if (tb->mobile_piece_color[piece] == WHITE) {
+	    p->white_vector |= bitvector[index & 63];
+	} else {
+	    p->black_vector |= bitvector[index & 63];
+	}
+	index >>= 6;
+    }
+    return 1;
 }
 
-
-/**** TABLE OPERATIONS ****/
 
 /* "Designed to multi-thread"
  *
@@ -335,26 +382,20 @@ movementdir[7][8] = {
 
 
 
-int64 bitvector[64];
-int64 allones_bitvector = 0xffffffff;  /* hehehe */
-
 void init_movements()
 {
     int square, piece, dir, mvmt;
-
-    /* XXX This won't work for a 64-bit shift, but this is the idea */
 
     for (square=0; square < NUM_SQUARES; square++) {
 	bitvector[square] = 1ULL << square;
     }
 
-    for (square=0; square < NUM_SQUARES; square++) {
-	for (piece=0; piece < NUM_DIR; piece++) {
-
-	    int current_square = square;
-	    int knight_mvmt=0;
+    for (piece=0; piece < NUM_PIECES; piece++) {
+	for (square=0; square < NUM_SQUARES; square++) {
 
 	    for (dir=0; dir < number_of_movement_directions[piece]; dir++) {
+
+		int current_square = square;
 
 		for (mvmt=0; mvmt < maximum_movements_in_one_direction[piece]; mvmt ++) {
 
@@ -454,7 +495,7 @@ void init_movements()
 			break;
 		    case KNIGHTmove:
 			current_square=square;
-			switch (mvmt) {
+			switch (dir) {
 			case 0:
 			    if (RIGHT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
 				movements[piece][square][dir][0].square = square + 2 + 8;
@@ -554,6 +595,14 @@ void init_movements()
 			break;
 		    }
 		}
+
+		/* Always put an allones_bitvector at the end of the movement vector
+		 * to make sure we stop!
+		 */
+
+		movements[piece][square][dir][mvmt].square = -1;
+		movements[piece][square][dir][mvmt].vector = allones_bitvector;
+
 	    }
 	}
     }
@@ -584,14 +633,27 @@ void verify_movements()
 		int movement_possible = 0;
 		int reverse_movement_possible = 0;
 
+		if (squareA == squareB) {
+		    for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
+			for (movementptr = movements[piece][squareA][dir];
+			     (movementptr->vector & bitvector[squareB]) == 0;
+			     movementptr++) ;
+			if ((movementptr->square != -1) || (movementptr->vector != allones_bitvector)) {
+			    fprintf(stderr, "Self movement possible!? %s %d %d\n",
+				    piece_name[piece], squareA, movementptr->square);
+			}
+		    }
+		    continue;
+		}
+
 		for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
 
 		    for (movementptr = movements[piece][squareA][dir];
 			 (movementptr->vector & bitvector[squareB]) == 0;
 			 movementptr++) {
 			if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
-			    fprintf(stderr, "Bad movement square: %s %d %d\n",
-				    piece_name[piece], squareA, squareB);
+			    fprintf(stderr, "Bad movement square: %s %d %d %d\n",
+				    piece_name[piece], squareA, squareB, movementptr->square);
 			}
 		    }
 
@@ -1058,6 +1120,8 @@ main()
     init_movements();
 
     verify_movements();
+
+    exit(1);
 
     initialize_tablebase(tb);
 
