@@ -132,11 +132,31 @@ char * piece_name[NUM_PIECES] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "P
 
 /**** TABLEBASE STRUCTURE AND OPERATIONS ****/
 
+/* movecnt - 0 if this entry is ready to propagate; 255 if it has been propagated
+ *
+ * While movecnt is > 0, it is the number of moves FORWARD from this position
+ * that haven't been analyzed yet.  The other three numbers are the number
+ * of moves out of this position for which white wins, for which black wins,
+ * for which
+ * once the entry is marked ready to propagate, white_wins_moves
+ *
+ * 0 - outcome still uncertain
+ * 1 - opponent wins
+ * 2 - player wins
+ * 3 - draw
+ * 4 - propagation done
+ * 8 - illegal position
+ */
+
+#define MAX_MOVECNT 254
+
 struct fourbyte_entry {
     unsigned char movecnt;
     unsigned char white_wins_moves;
     unsigned char black_wins_moves;
     unsigned char draw_moves;
+    unsigned char mate_in_cnt;
+    unsigned char stalemate_cnt;
 };
 
 typedef struct {
