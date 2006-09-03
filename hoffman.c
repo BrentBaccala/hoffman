@@ -31,6 +31,7 @@
 #include <stdio.h>
 /* #include <stdint.h> */
 #include <stdlib.h>
+#include <string.h>
 
 typedef unsigned long long int int64;
 typedef unsigned int int32;
@@ -203,6 +204,35 @@ tablebase * parse_XML()
 {
 }
 
+/* Simple initialization for a K+Q vs K endgame. */
+
+tablebase * create_tablebase(void)
+{
+    tablebase *tb;
+
+    tb = (tablebase *) malloc(sizeof(tablebase));
+    if (tb == NULL) {
+	fprintf(stderr, "Can't malloc tablebase header\n");
+    }
+
+    /* The "2" is because side-to-play is part of the position */
+
+    tb->entries = (struct fourbyte_entry *) calloc(2*64*64*64, sizeof(struct fourbyte_entry));
+    if (tb->entries == NULL) {
+	fprintf(stderr, "Can't malloc tablebase entries\n");
+    }
+
+    tb->num_mobiles = 3;
+    tb->mobile_piece_type[0] = KING;
+    tb->mobile_piece_type[1] = KING;
+    tb->mobile_piece_type[2] = QUEEN;
+    tb->mobile_piece_color[0] = WHITE;
+    tb->mobile_piece_color[1] = BLACK;
+    tb->mobile_piece_color[2] = WHITE;
+
+    return tb;
+}
+
 int32 max_index(tablebase *tb)
 {
     return (2<<(6*tb->num_mobiles)) - 1;
@@ -267,6 +297,8 @@ boolean index_to_position(tablebase *tb, int32 index, position *p)
 
     int piece;
 
+    bzero(p, sizeof(position));
+
     p->side_to_move = index & 1;
     index >>= 1;
 
@@ -297,8 +329,8 @@ boolean index_to_position(tablebase *tb, int32 index, position *p)
  * count of zero) if the total move count goes to zero.
  */
 
-#define WHITE_TO_MOVE(index) ((index)&1==WHITE)
-#define BLACK_TO_MOVE(index) ((index)&1==BLACK)
+#define WHITE_TO_MOVE(index) (((index)&1)==WHITE)
+#define BLACK_TO_MOVE(index) (((index)&1)==BLACK)
 
 inline short does_white_win(tablebase *tb, int32 index)
 {
@@ -326,6 +358,17 @@ inline boolean needs_propagation(tablebase *tb, int32 index)
 {
     return (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
 	|| (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED);
+}
+
+inline void mark_propagated(tablebase *tb, int32 index)
+{
+    if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) {
+	tb->entries[index].movecnt = PTM_WINS_PROPAGATION_DONE;
+    } else if (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED) {
+	tb->entries[index].movecnt = PNTM_WINS_PROPAGATION_DONE;
+    } else {
+	fprintf(stderr, "Propagation attempt on a completed or unresolved position\n");
+    }
 }
 
 /* get_mate_in_count() is also used as basically (does_white_win() || does_black_win()), so it has
@@ -419,7 +462,10 @@ inline void add_one_to_white_wins(tablebase *tb, int32 index, int mate_in_count,
     if (WHITE_TO_MOVE(index)) {
 	fprintf(stderr, "add_one_to_white_wins in a white to move position\n");
     } else {
-	if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
+	if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) ||
+	    (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
+	    /* This is OK.  Black is to move and already found a way to win.  Do nothing. */
+	} else if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
 	    fprintf(stderr, "add_one_to_white_wins in an already won position!?\n");
 	} else {
 	    /* since PNTM_WIN_PROPAGATION_NEEDED is 0, this decrements right into the special flag,
@@ -427,7 +473,8 @@ inline void add_one_to_white_wins(tablebase *tb, int32 index, int mate_in_count,
 	     */
 	    tb->entries[index].movecnt --;
 	    if (mate_in_count < tb->entries[index].mate_in_cnt) {
-		fprintf(stderr, "mate-in count dropped in add_one_to_white_wins?\n");
+		if (tb->entries[index].mate_in_cnt != 255)
+		    fprintf(stderr, "mate-in count dropped in add_one_to_white_wins?\n");
 	    }
 	    tb->entries[index].mate_in_cnt = mate_in_count;
 
@@ -444,7 +491,10 @@ inline void add_one_to_black_wins(tablebase *tb, int32 index, int mate_in_count,
     if (BLACK_TO_MOVE(index)) {
 	fprintf(stderr, "add_one_to_black_wins in a black to move position\n");
     } else {
-	if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
+	if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) ||
+	    (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
+	    /* This is OK.  White is to move and already found a way to win.  Do nothing. */
+	} else if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
 	    fprintf(stderr, "add_one_to_black_wins in an already won position!?\n");
 	} else {
 	    /* since PNTM_WIN_PROPAGATION_NEEDED is 0, this decrements right into the special flag,
@@ -452,7 +502,8 @@ inline void add_one_to_black_wins(tablebase *tb, int32 index, int mate_in_count,
 	     */
 	    tb->entries[index].movecnt --;
 	    if (mate_in_count < tb->entries[index].mate_in_cnt) {
-		fprintf(stderr, "mate-in count dropped in add_one_to_black_wins?\n");
+		if (tb->entries[index].mate_in_cnt != 255)
+		    fprintf(stderr, "mate-in count dropped in add_one_to_black_wins?\n");
 	    }
 	    tb->entries[index].mate_in_cnt = mate_in_count;
 
@@ -1026,7 +1077,7 @@ propagate_moves_from_futurebases()
  * here and update their counters in various obscure ways.
  */
 
-void propagate_move_within_table(tablebase *tb, int32 parent_index)
+void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_count)
 {
     position parent_position;
     position current_position; /* i.e, last position that moved to parent_position */
@@ -1036,12 +1087,22 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index)
     int32 current_index;
 
     /* ASSERT (table,index) == WIN/LOSS IN x MOVES or DRAW; */
+    if (get_mate_in_count(tb, parent_index) != mate_in_count) {
+	fprintf(stderr, "Mate-in counts don't match: %d %d\n",
+		mate_in_count, get_mate_in_count(tb, parent_index));
+    }
+
+    if (!does_white_win(tb, parent_index) && !does_black_win(tb, parent_index)) {
+	fprintf(stderr, "Propagating position %d where neither side wins?!\n", parent_index);
+    }
 
     /* We want to check to make sure the mate-in number of the position in the database matches a
      * mate-in variable in this routine.  If we're propagating moves from a future table, we might
      * get tables with a whole range of mate-in counts, so we want to make sure we go through them
      * in order.
      */
+
+    mark_propagated(tb, parent_index);
 
     index_to_position(tb, parent_index, &parent_position);
 
@@ -1085,6 +1146,11 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index)
 		 movementptr++) {
 
 		current_position = parent_position;
+
+		if (parent_position.side_to_move == WHITE)
+		    current_position.side_to_move = BLACK;
+		else
+		    current_position.side_to_move = WHITE;
 
 		/* This code makes perfect sense... but I doubt it will be needed!  The
 		 * position_to_index function will probably only require the square numbers, not the
@@ -1192,6 +1258,11 @@ initialize_tablebase(tablebase *tb)
 
 	    for (piece = 0; piece < tb->num_mobiles; piece++) {
 
+		/* We only want to consider pieces of the side which is to move... */
+
+		if (tb->mobile_piece_color[piece] != parent_position.side_to_move)
+		    continue;
+
 		for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
 		    current_position = parent_position;
@@ -1269,7 +1340,9 @@ main()
 
     verify_movements();
 
-    exit(1);
+    /* exit(1); */
+
+    tb = create_tablebase();
 
     initialize_tablebase(tb);
 
@@ -1286,17 +1359,22 @@ main()
     max_index_static = max_index(tb);
 
     while (progress_made || moves_to_win < max_moves_to_win) {
+	progress_made = 0;
 	for (index=0; index < max_index_static; index++) {
 	    if (needs_propagation(tb, index) && get_mate_in_count(tb, index) == moves_to_win) {
-		propagate_move_within_table(tb, index);
-		progress_made = 1;
+		if (!progress_made)
+		    fprintf(stderr, "Pass %d starts with %d\n", moves_to_win, index);
+		propagate_move_within_table(tb, index, moves_to_win);
+		progress_made ++;
 	    }
 	}
+	fprintf(stderr, "Pass %d complete; %d positions processed\n", moves_to_win, progress_made);
 	moves_to_win ++;
     }
 
     /* ...then we look for forced draws */
 
+#if 0
     progress_made = 1;
 
     while (progress_made) {
@@ -1308,6 +1386,7 @@ main()
 	    }
 	}
     }
+#endif
 
     /* Everything else allows both sides to draw with best play.
      *
