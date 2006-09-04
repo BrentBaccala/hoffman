@@ -1,4 +1,4 @@
-/* -*- mode: C; eval: (c-set-style "stroustrup"); fill-column: 100 -*-
+/* -*- mode: C; fill-column: 100; eval: (c-set-style "stroustrup"); -*-
  *
  * HOFFMAN - a chess endgame tablebase builder
  *
@@ -29,9 +29,13 @@
  */
 
 #include <stdio.h>
-/* #include <stdint.h> */
 #include <stdlib.h>
 #include <string.h>
+
+/* According the GCC documentation, "long long" ints are supported by the C99 standard as well as
+ * the GCC compiler.  In any event, since chess boards have 64 squares, being able to use 64 bit
+ * integers makes a bunch of stuff a lot easier.  Might have to be careful with this if porting.
+ */
 
 typedef unsigned long long int int64;
 typedef unsigned int int32;
@@ -222,6 +226,11 @@ tablebase * create_tablebase(void)
 	fprintf(stderr, "Can't malloc tablebase entries\n");
     }
 
+    /* Remember above, I defined WHITE_KING as 0 and BLACK_KING as 1, so we have to make sure
+     * that these two pieces are where we want them in this list.  Other than that, it's
+     * pretty flexible.
+     */
+
     tb->num_mobiles = 3;
     tb->mobile_piece_type[0] = KING;
     tb->mobile_piece_type[1] = KING;
@@ -277,6 +286,10 @@ int32 position_to_index(tablebase *tb, position *pos)
 
 /* OK, maybe not.  Maybe need to check index numbers, too. (Unless all positions in the table are
  * legal!)
+ *
+ * It's starting to look like we won't need this function, because the only time we want to check
+ * the legality of an index is when we want to convert it to a position right after that,
+ * so both functions get wrapped together into index_to_position().
  */
 
 boolean check_legality_of_index(tablebase *config, int32 index)
@@ -389,8 +402,21 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
     return tb->entries[index].stalemate_cnt;
 }
 
+/* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
+ * doing to process a single move.
+ */
+
+/* #define DEBUG_MOVE 206376 */
+
 inline void white_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	printf("white_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
+	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
+#endif
+
     if (WHITE_TO_MOVE(index)) {
 	if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
 	    || (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
@@ -425,6 +451,13 @@ inline void white_wins(tablebase *tb, int32 index, int mate_in_count, int stalem
 
 inline void black_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	printf("black_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
+	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
+#endif
+
     if (BLACK_TO_MOVE(index)) {
 	if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
 	    || (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
@@ -459,6 +492,13 @@ inline void black_wins(tablebase *tb, int32 index, int mate_in_count, int stalem
 
 inline void add_one_to_white_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	printf("add_one_to_white_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
+	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
+#endif
+
     if (WHITE_TO_MOVE(index)) {
 	fprintf(stderr, "add_one_to_white_wins in a white to move position\n");
     } else {
@@ -488,6 +528,13 @@ inline void add_one_to_white_wins(tablebase *tb, int32 index, int mate_in_count,
 
 inline void add_one_to_black_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	printf("add_one_to_black_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
+	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
+#endif
+
     if (BLACK_TO_MOVE(index)) {
 	fprintf(stderr, "add_one_to_black_wins in a black to move position\n");
     } else {
@@ -532,6 +579,11 @@ void initialize_index_as_illegal(tablebase *tb, int32 index)
 
 void initialize_index_with_white_mated(tablebase *tb, int32 index)
 {
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) printf("initialize_index_with_white_mated; index=%d\n", index);
+#endif
+
     if (WHITE_TO_MOVE(index)) {
 	fprintf(stderr, "initialize_index_with_white_mated in a white to move position!\n");
     }
@@ -543,6 +595,11 @@ void initialize_index_with_white_mated(tablebase *tb, int32 index)
 
 void initialize_index_with_black_mated(tablebase *tb, int32 index)
 {
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) printf("initialize_index_with_black_mated; index=%d\n", index);
+#endif
+
     if (BLACK_TO_MOVE(index)) {
 	fprintf(stderr, "initialize_index_with_black_mated in a black to move position!\n");
     }
@@ -553,6 +610,11 @@ void initialize_index_with_black_mated(tablebase *tb, int32 index)
 
 void initialize_index_with_stalemate(tablebase *tb, int32 index)
 {
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) printf("initialize_index_with_stalemate; index=%d\n", index);
+#endif
+
     tb->entries[index].movecnt = 251; /* use this as stalemate for now */
     tb->entries[index].mate_in_cnt = 255;
     tb->entries[index].stalemate_cnt = 0;
@@ -560,6 +622,11 @@ void initialize_index_with_stalemate(tablebase *tb, int32 index)
 
 void initialize_index_with_movecnt(tablebase *tb, int32 index, int movecnt)
 {
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) printf("initialize_index_with_movecnt; index=%d movecnt=%d\n", index, movecnt);
+#endif
+
     tb->entries[index].movecnt = movecnt;
     tb->entries[index].mate_in_cnt = 255;
     tb->entries[index].stalemate_cnt = 255;
@@ -1073,7 +1140,7 @@ propagate_moves_from_futurebases()
 /* Intra-table move propagation.
  *
  * This is the guts of the program here.  We've got a move that needs to be propagated,
- * so we back out one half-moves to all of the positions that could have gotten us
+ * so we back out one half-move to all of the positions that could have gotten us
  * here and update their counters in various obscure ways.
  */
 
@@ -1086,7 +1153,12 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
     struct movement *movementptr;
     int32 current_index;
 
-    /* ASSERT (table,index) == WIN/LOSS IN x MOVES or DRAW; */
+    /* We want to check to make sure the mate-in number of the position in the database matches a
+     * mate-in variable in this routine.  If we're propagating moves from a future table, we might
+     * get tables with a whole range of mate-in counts, so we want to make sure we go through them
+     * in order.
+     */
+
     if (get_mate_in_count(tb, parent_index) != mate_in_count) {
 	fprintf(stderr, "Mate-in counts don't match: %d %d\n",
 		mate_in_count, get_mate_in_count(tb, parent_index));
@@ -1095,12 +1167,6 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
     if (!does_white_win(tb, parent_index) && !does_black_win(tb, parent_index)) {
 	fprintf(stderr, "Propagating position %d where neither side wins?!\n", parent_index);
     }
-
-    /* We want to check to make sure the mate-in number of the position in the database matches a
-     * mate-in variable in this routine.  If we're propagating moves from a future table, we might
-     * get tables with a whole range of mate-in counts, so we want to make sure we go through them
-     * in order.
-     */
 
     mark_propagated(tb, parent_index);
 
@@ -1117,18 +1183,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 	if (tb->mobile_piece_color[piece] == parent_position.side_to_move)
 	    continue;
 
-	/* current_position[piece] is a number from 0 to 63 corresponding to the different squares
-	 * on the chess board
-	 */
-
-	/* possible_moves returns a pointer to an array of possible new position numbers for this
-	 * piece.  These are BACKWARDS moves in the game.  The positions returned are legal.
-	 *
-	 * possible_moves has to look at the entire current position to build this array, because
-	 * otherwise it might move a piece "through" another piece.
-	 */
-
-	/* possible_moves(current_position[piece], type_of[piece]); */
+	/* forall possible_moves(current_position, piece) { */
 
 	for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
@@ -1325,7 +1380,7 @@ initialize_tablebase(tablebase *tb)
     }
 }
 
-main()
+tablebase * mainloop()
 {
     tablebase *tb;
     int max_moves_to_win;
@@ -1362,8 +1417,10 @@ main()
 	progress_made = 0;
 	for (index=0; index < max_index_static; index++) {
 	    if (needs_propagation(tb, index) && get_mate_in_count(tb, index) == moves_to_win) {
+#if 0
 		if (!progress_made)
 		    fprintf(stderr, "Pass %d starts with %d\n", moves_to_win, index);
+#endif
 		propagate_move_within_table(tb, index, moves_to_win);
 		progress_made ++;
 	    }
@@ -1403,4 +1460,246 @@ main()
     /* flag_everything_else_drawn_by_repetition(); */
 
     /* write_output_tablebase(); */
+
+    return tb;
+}
+
+
+/***** PARSING FEN INTO POSITION STRUCTURES *****/
+
+boolean place_piece_in_position(tablebase *tb, position *pos, int row, int col, int color, int type)
+{
+    int piece;
+    int square;
+
+    square = col + row*8;
+
+    if (pos->board_vector & bitvector[square]) return 0;
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	if ((tb->mobile_piece_type[piece] == type) && (tb->mobile_piece_color[piece] == color)) {
+	    pos->mobile_piece_position[piece] = square;
+	    pos->board_vector |= bitvector[square];
+	    if (color == WHITE) pos->white_vector |= bitvector[square];
+	    else pos->black_vector |= bitvector[square];
+	    return 1;
+	}
+    }
+
+    return 0;
+}
+
+boolean parse_FEN(char *FEN_string, tablebase *tb, position *pos)
+{
+    int row, col;
+
+    bzero(pos, sizeof(position));
+
+    for (row=7; row>=0; row--) {
+	for (col=0; col<=7; col++) {
+	    switch (*FEN_string) {
+	    case '1':
+	    case '2':
+	    case '3':
+	    case '4':
+	    case '5':
+	    case '6':
+	    case '7':
+	    case '8':
+		/* subtract one here since the 'for' loop will bump col by one */
+		col += *FEN_string - '0' - 1;
+		if (col > 7) return 0;
+		break;
+
+	    case 'k':
+		if (!place_piece_in_position(tb, pos, row, col, BLACK, KING)) return 0;
+		break;
+	    case 'K':
+		if (!place_piece_in_position(tb, pos, row, col, WHITE, KING)) return 0;
+		break;
+
+	    case 'q':
+		if (!place_piece_in_position(tb, pos, row, col, BLACK, QUEEN)) return 0;
+		break;
+	    case 'Q':
+		if (!place_piece_in_position(tb, pos, row, col, WHITE, QUEEN)) return 0;
+		break;
+
+	    case 'r':
+		if (!place_piece_in_position(tb, pos, row, col, BLACK, ROOK)) return 0;
+		break;
+	    case 'R':
+		if (!place_piece_in_position(tb, pos, row, col, WHITE, ROOK)) return 0;
+		break;
+
+	    case 'b':
+		if (!place_piece_in_position(tb, pos, row, col, BLACK, BISHOP)) return 0;
+		break;
+	    case 'B':
+		if (!place_piece_in_position(tb, pos, row, col, WHITE, BISHOP)) return 0;
+		break;
+
+	    case 'n':
+		if (!place_piece_in_position(tb, pos, row, col, BLACK, KNIGHT)) return 0;
+		break;
+	    case 'N':
+		if (!place_piece_in_position(tb, pos, row, col, WHITE, KNIGHT)) return 0;
+		break;
+
+	    case 'p':
+		if (!place_piece_in_position(tb, pos, row, col, BLACK, PAWN)) return 0;
+		break;
+	    case 'P':
+		if (!place_piece_in_position(tb, pos, row, col, WHITE, PAWN)) return 0;
+		break;
+	    }
+	    FEN_string++;
+	}
+	if (row > 0) {
+	  if (*FEN_string != '/') return 0;
+	  else FEN_string++;
+	}
+    }
+
+    if (*FEN_string != ' ') return 0;
+    while (*FEN_string == ' ') FEN_string ++;
+
+    if (*FEN_string == 'w') {
+      pos->side_to_move = WHITE;
+    } else if (*FEN_string == 'b') {
+      pos->side_to_move = BLACK;
+    } else {
+      return 0;
+    }
+
+    return 1;
+}
+
+main()
+{
+    tablebase *tb;
+
+    tb = mainloop();
+
+    while (1) {
+	char buffer[256];
+	position pos;
+	position nextpos;
+	int piece, dir;
+	struct movement * movementptr;
+
+	printf("FEN? ");
+	fgets(buffer, sizeof(buffer), stdin);
+
+	if (!parse_FEN(buffer, tb, &pos)) {
+	    printf("Bad FEN\n\n");
+	} else {
+	    int32 index;
+
+	    index = position_to_index(tb, &pos);
+	    printf("Index %d\n", index);
+
+	    if (index == -1) {
+		printf("Bad FEN??\n\n");
+	    } else {
+		switch (tb->entries[index].movecnt) {
+		case ILLEGAL_POSITION:
+		    printf("Illegal position\n\n");
+		    break;
+		case PTM_WINS_PROPAGATION_DONE:
+		    printf("PTM wins in %d\n\n", tb->entries[index].mate_in_cnt);
+		    break;
+		case PNTM_WINS_PROPAGATION_DONE:
+		    printf("PNTM wins in %d\n\n", tb->entries[index].mate_in_cnt);
+		    break;
+		case PTM_WINS_PROPAGATION_NEEDED:
+		case PNTM_WINS_PROPAGATION_NEEDED:
+		    printf("Propagation needed!?\n\n");
+		    break;
+		default:
+		    printf("Draw\n\n");
+		    break;
+		}
+
+		for (piece = 0; piece < tb->num_mobiles; piece++) {
+
+		    /* We only want to consider pieces of the side which is to move... */
+
+		    if (tb->mobile_piece_color[piece] != pos.side_to_move)
+			continue;
+
+		    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+
+			parse_FEN(buffer, tb, &pos);
+
+			nextpos = pos;
+
+			if (pos.side_to_move == WHITE)
+			    nextpos.side_to_move = BLACK;
+			else
+			    nextpos.side_to_move = WHITE;
+
+			for (movementptr = movements[tb->mobile_piece_type[piece]][pos.mobile_piece_position[piece]][dir];
+			     (movementptr->vector & pos.board_vector) == 0;
+			     movementptr++) {
+
+			    printf("   %d -> %d ", pos.mobile_piece_position[piece], movementptr->square);
+
+			    nextpos.mobile_piece_position[piece] = movementptr->square;
+
+			    index = position_to_index(tb, &nextpos);
+
+			    switch (tb->entries[index].movecnt) {
+			    case ILLEGAL_POSITION:
+				printf("Illegal position\n");
+				break;
+			    case PTM_WINS_PROPAGATION_DONE:
+				printf("PTM wins in %d\n", tb->entries[index].mate_in_cnt);
+				break;
+			    case PNTM_WINS_PROPAGATION_DONE:
+				printf("PNTM wins in %d\n", tb->entries[index].mate_in_cnt);
+				break;
+			    case PTM_WINS_PROPAGATION_NEEDED:
+			    case PNTM_WINS_PROPAGATION_NEEDED:
+				printf("Propagation needed!?\n");
+				break;
+			    default:
+				printf("Draw\n");
+				break;
+			    }
+
+			}
+
+			if (pos.side_to_move == WHITE) {
+			    if ((movementptr->vector & pos.white_vector) == 0) {
+
+				printf ("   %d x %d ", pos.mobile_piece_position[piece], movementptr->square);
+				if (movementptr->square ==
+				    pos.mobile_piece_position[BLACK_KING]) {
+				    printf("MATE\n");
+				}
+			    }
+			} else {
+			    if ((movementptr->vector & pos.black_vector) == 0) {
+
+				printf ("   %d x %d ", pos.mobile_piece_position[piece], movementptr->square);
+				if (movementptr->square ==
+				    pos.mobile_piece_position[WHITE_KING]) {
+				    printf("MATE\n");
+				} else {
+				    /* XXX really special code here - if black can capture anything
+				     * other than the white king, it's either a mate (if the
+				     * piece is protected) or a draw
+				     */
+				    printf("MATE or DRAW\n");
+				}
+			    }
+			}
+		    }
+
+		}
+
+	    }
+	}
+    }
 }
