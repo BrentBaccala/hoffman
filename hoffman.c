@@ -340,31 +340,41 @@ boolean index_to_position(tablebase *tb, int32 index, position *p)
  * These "add one" functions (atomically) add one to the count in question, subtract one from the
  * total move count, and flag the position as 'ready for propagation' (maybe this is just a move
  * count of zero) if the total move count goes to zero.
+ *
+ * PTM = Player to Move
+ * PNTM = Player not to Move
+ *
  */
 
 #define WHITE_TO_MOVE(index) (((index)&1)==WHITE)
 #define BLACK_TO_MOVE(index) (((index)&1)==BLACK)
 
+inline short does_PTM_win(tablebase *tb, int32 index)
+{
+    return (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
+	|| (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE);
+}
+
+inline short does_PNTM_win(tablebase *tb, int32 index)
+{
+    return (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
+	|| (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE);
+}
+
 inline short does_white_win(tablebase *tb, int32 index)
 {
-    if (WHITE_TO_MOVE(index)) {
-	return (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
-	    || (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE);
-    } else {
-	return (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-	    || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE);
-    }
+    if (WHITE_TO_MOVE(index))
+	return does_PTM_win(tb, index);
+    else
+	return does_PNTM_win(tb,index);
 }
 
 inline short does_black_win(tablebase *tb, int32 index)
 {
-    if (BLACK_TO_MOVE(index)) {
-	return (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
-	    || (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE);
-    } else {
-	return (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-	    || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE);
-    }
+    if (BLACK_TO_MOVE(index))
+	return does_PTM_win(tb, index);
+    else
+	return does_PNTM_win(tb,index);
 }
 
 inline boolean needs_propagation(tablebase *tb, int32 index)
@@ -407,8 +417,6 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
  */
 
 /* #define DEBUG_MOVE 206376 */
-
-/* PTM = Player to Move; PNTM = Player not to Move */
 
 inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
@@ -1130,60 +1138,35 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 		current_index = position_to_index(tb, &current_position);
 
-		/* Parent position is the FUTURE position */
+		/* Parent position is the FUTURE position.  We now back-propagate to
+		 * the current position, which is the PAST position.
+		 *
+		 * If the player to move in the FUTURE position wins, then we add one to that
+		 * player's win count in the PAST position.  On other other hand, if the player not
+		 * to move in the FUTURE position wins, then the player to move in the PAST position
+		 * has a winning move (the one we're considering).
+		 *
+		 * These stalemate and mate counts increment by one every HALF MOVE.
+		 */
 
-		/* all of these subroutines have to propagate if changed */
+		if (does_PTM_win(tb, parent_index)) {
 
-		/* these stalemate and mate counts increment by one every HALF MOVE */
-
-		if (parent_position.side_to_move == WHITE) {
-
-		    /* ...then this position is BLACK TO MOVE */
-
-		    if (does_white_win(tb, parent_index)) {
-
-			/* parent position is WHITE MOVES AND WINS */
-			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			    add_one_to_PNTM_wins(tb, current_index,
-						 get_mate_in_count(tb, parent_index)+1,
-						 get_stalemate_count(tb, parent_index)+1);
-			}
-
-		    } else if (does_black_win(tb, parent_index)) {
-
-			/* parent position is WHITE MOVES AND BLACK WINS */
-			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			    PTM_wins(tb, current_index,
-				     get_mate_in_count(tb, parent_index)+1,
-				     get_stalemate_count(tb, parent_index)+1);
-			}
-
+		    if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+			add_one_to_PNTM_wins(tb, current_index,
+					     get_mate_in_count(tb, parent_index)+1,
+					     get_stalemate_count(tb, parent_index)+1);
 		    }
 
-		} else {
+		} else if (does_PNTM_win(tb, parent_index)) {
 
-		    /* or this position is WHITE TO MOVE */
-
-		    if (does_black_win(tb, parent_index)) {
-
-			/* parent position is BLACK MOVES AND WINS */
-			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			    add_one_to_PNTM_wins(tb, current_index,
-						 get_mate_in_count(tb, parent_index)+1,
-						 get_stalemate_count(tb, parent_index)+1);
-			}
-
-		    } else if (does_white_win(tb, parent_index)) {
-
-		        /* parent position is BLACK MOVES AND WHITE WINS */
-			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			    PTM_wins(tb, current_index,
-				     get_mate_in_count(tb, parent_index)+1,
-				     get_stalemate_count(tb, parent_index)+1);
-			}
-
+		    if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+			PTM_wins(tb, current_index,
+				 get_mate_in_count(tb, parent_index)+1,
+				 get_stalemate_count(tb, parent_index)+1);
 		    }
+
 		}
+
 	    }
 	}
 
