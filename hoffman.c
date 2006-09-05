@@ -408,156 +408,60 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
 
 /* #define DEBUG_MOVE 206376 */
 
-inline void white_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
+/* PTM = Player to Move; PNTM = Player not to Move */
+
+inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("white_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
+	printf("PTM_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
 	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
 #endif
 
-    if (WHITE_TO_MOVE(index)) {
-	if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
-	    || (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
-	    if (mate_in_count < tb->entries[index].mate_in_cnt) {
-		fprintf(stderr, "Mate in count dropped in white_wins!?\n");
-	    }
-	} else if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-		   || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE)) {
-	    fprintf(stderr, "White_wins in a position where black already won?!\n");
-	} else {
-	    tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
-	    tb->entries[index].mate_in_cnt = mate_in_count;
-	    tb->entries[index].stalemate_cnt = stalemate_count;
+    if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
+	|| (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
+	if (mate_in_count < tb->entries[index].mate_in_cnt) {
+	    fprintf(stderr, "Mate in count dropped in PTM_wins!?\n");
 	}
+    } else if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
+	       || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE)) {
+	fprintf(stderr, "PTM_wins in a position where PNTM already won?!\n");
     } else {
-	fprintf(stderr, "White_wins in a black to move position...\n");
-	if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-	    || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE)) {
-	    if (mate_in_count < tb->entries[index].mate_in_cnt) {
-		fprintf(stderr, "Mate in count dropped in white_wins!?\n");
-	    }
-	} else if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
-		   || (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
-	    fprintf(stderr, "White_wins in a position where black already won?!\n");
-	} else {
-	    tb->entries[index].movecnt = PNTM_WINS_PROPAGATION_NEEDED;
-	    tb->entries[index].mate_in_cnt = mate_in_count;
-	    tb->entries[index].stalemate_cnt = stalemate_count;
-	}
+	tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
+	tb->entries[index].mate_in_cnt = mate_in_count;
+	tb->entries[index].stalemate_cnt = stalemate_count;
     }
 }
 
-inline void black_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
+inline void add_one_to_PNTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("black_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
+	printf("add_one_to_PNTM_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
 	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
 #endif
 
-    if (BLACK_TO_MOVE(index)) {
-	if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
-	    || (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
-	    if (mate_in_count < tb->entries[index].mate_in_cnt) {
-		fprintf(stderr, "Mate in count dropped in black_wins!?\n");
-	    }
-	} else if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-		   || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE)) {
-	    fprintf(stderr, "Black_wins in a position where white already won?!\n");
-	} else {
-	    tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
-	    tb->entries[index].mate_in_cnt = mate_in_count;
+    if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) ||
+	(tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
+	/* This is OK.  PTM already found a way to win.  Do nothing. */
+    } else if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
+	fprintf(stderr, "add_one_to_PNTM_wins in an already won position!?\n");
+    } else {
+	/* since PNTM_WIN_PROPAGATION_NEEDED is 0, this decrements right into the special flag,
+	 * no extra check needed here
+	 */
+	tb->entries[index].movecnt --;
+	if (mate_in_count < tb->entries[index].mate_in_cnt) {
+	    if (tb->entries[index].mate_in_cnt != 255)
+		fprintf(stderr, "mate-in count dropped in add_one_to_white_wins?\n");
+	}
+	tb->entries[index].mate_in_cnt = mate_in_count;
+
+	/* XXX not sure about this stalemate code */
+	if (stalemate_count < tb->entries[index].stalemate_cnt) {
 	    tb->entries[index].stalemate_cnt = stalemate_count;
-	}
-    } else {
-	fprintf(stderr, "Black_wins in a white to move position...\n");
-	if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-	    || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE)) {
-	    if (mate_in_count < tb->entries[index].mate_in_cnt) {
-		fprintf(stderr, "Mate in count dropped in black_wins!?\n");
-	    }
-	} else if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
-		   || (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
-	    fprintf(stderr, "Black_wins in a position where white already won?!\n");
-	} else {
-	    tb->entries[index].movecnt = PNTM_WINS_PROPAGATION_NEEDED;
-	    tb->entries[index].mate_in_cnt = mate_in_count;
-	    tb->entries[index].stalemate_cnt = stalemate_count;
-	}
-    }
-}
-
-inline void add_one_to_white_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
-{
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	printf("add_one_to_white_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
-	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
-#endif
-
-    if (WHITE_TO_MOVE(index)) {
-	fprintf(stderr, "add_one_to_white_wins in a white to move position\n");
-    } else {
-	if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) ||
-	    (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
-	    /* This is OK.  Black is to move and already found a way to win.  Do nothing. */
-	} else if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
-	    fprintf(stderr, "add_one_to_white_wins in an already won position!?\n");
-	} else {
-	    /* since PNTM_WIN_PROPAGATION_NEEDED is 0, this decrements right into the special flag,
-	     * no extra check needed here
-	     */
-	    tb->entries[index].movecnt --;
-	    if (mate_in_count < tb->entries[index].mate_in_cnt) {
-		if (tb->entries[index].mate_in_cnt != 255)
-		    fprintf(stderr, "mate-in count dropped in add_one_to_white_wins?\n");
-	    }
-	    tb->entries[index].mate_in_cnt = mate_in_count;
-
-	    /* XXX not sure about this stalemate code */
-	    if (stalemate_count < tb->entries[index].stalemate_cnt) {
-		tb->entries[index].stalemate_cnt = stalemate_count;
-	    }
-	}
-    }
-}
-
-inline void add_one_to_black_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
-{
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	printf("add_one_to_black_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
-	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
-#endif
-
-    if (BLACK_TO_MOVE(index)) {
-	fprintf(stderr, "add_one_to_black_wins in a black to move position\n");
-    } else {
-	if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) ||
-	    (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
-	    /* This is OK.  White is to move and already found a way to win.  Do nothing. */
-	} else if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
-	    fprintf(stderr, "add_one_to_black_wins in an already won position!?\n");
-	} else {
-	    /* since PNTM_WIN_PROPAGATION_NEEDED is 0, this decrements right into the special flag,
-	     * no extra check needed here
-	     */
-	    tb->entries[index].movecnt --;
-	    if (mate_in_count < tb->entries[index].mate_in_cnt) {
-		if (tb->entries[index].mate_in_cnt != 255)
-		    fprintf(stderr, "mate-in count dropped in add_one_to_black_wins?\n");
-	    }
-	    tb->entries[index].mate_in_cnt = mate_in_count;
-
-	    /* XXX not sure about this stalemate code */
-	    if (stalemate_count < tb->entries[index].stalemate_cnt) {
-		tb->entries[index].stalemate_cnt = stalemate_count;
-	    }
 	}
     }
 }
@@ -590,7 +494,6 @@ void initialize_index_with_white_mated(tablebase *tb, int32 index)
     tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
     tb->entries[index].mate_in_cnt = 0;
     tb->entries[index].stalemate_cnt = 0;
-    black_wins(tb, index, 0, 0);
 }
 
 void initialize_index_with_black_mated(tablebase *tb, int32 index)
@@ -1241,18 +1144,18 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 			/* parent position is WHITE MOVES AND WINS */
 			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			    add_one_to_white_wins(tb, current_index,
-						  get_mate_in_count(tb, parent_index)+1,
-						  get_stalemate_count(tb, parent_index)+1);
+			    add_one_to_PNTM_wins(tb, current_index,
+						 get_mate_in_count(tb, parent_index)+1,
+						 get_stalemate_count(tb, parent_index)+1);
 			}
 
 		    } else if (does_black_win(tb, parent_index)) {
 
 			/* parent position is WHITE MOVES AND BLACK WINS */
 			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			    black_wins(tb, current_index,
-				       get_mate_in_count(tb, parent_index)+1,
-				       get_stalemate_count(tb, parent_index)+1);
+			    PTM_wins(tb, current_index,
+				     get_mate_in_count(tb, parent_index)+1,
+				     get_stalemate_count(tb, parent_index)+1);
 			}
 
 		    }
@@ -1265,18 +1168,18 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 			/* parent position is BLACK MOVES AND WINS */
 			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			    add_one_to_black_wins(tb, current_index,
-						  get_mate_in_count(tb, parent_index)+1,
-						  get_stalemate_count(tb, parent_index)+1);
+			    add_one_to_PNTM_wins(tb, current_index,
+						 get_mate_in_count(tb, parent_index)+1,
+						 get_stalemate_count(tb, parent_index)+1);
 			}
 
 		    } else if (does_white_win(tb, parent_index)) {
 
 		        /* parent position is BLACK MOVES AND WHITE WINS */
 			if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			    white_wins(tb, current_index,
-				       get_mate_in_count(tb, parent_index)+1,
-				       get_stalemate_count(tb, parent_index)+1);
+			    PTM_wins(tb, current_index,
+				     get_mate_in_count(tb, parent_index)+1,
+				     get_stalemate_count(tb, parent_index)+1);
 			}
 
 		    }
