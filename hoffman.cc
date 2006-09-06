@@ -91,7 +91,7 @@ typedef short boolean;
  * optimize to the point where bugs can creep in.
  *
  * So how about a static 64-bit vector with bits set for the frozen pieces but not the mobiles?
- * Everytime we call index_to_position, copy from the static vector into the position structure.
+ * Everytime we call index_to_local_position, copy from the static vector into the position structure.
  * Then we compute the positions of the mobile pieces and plug their bits into the structure's
  * vector at the right places.
  *
@@ -205,7 +205,7 @@ typedef struct tablebase {
     struct fourbyte_entry *entries;
 } tablebase;
 
-boolean place_piece_in_position(tablebase *tb, local_position_t *pos, int square, int color, int type);
+boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int square, int color, int type);
 
 tablebase * parse_XML()
 {
@@ -250,14 +250,14 @@ int32 max_index(tablebase *tb)
     return (2<<(6*tb->num_mobiles)) - 1;
 }
 
-int32 position_to_index(tablebase *tb, local_position_t *pos)
+int32 local_position_to_index(tablebase *tb, local_position_t *pos)
 {
     /* This function, given a board position, returns an index into the tablebase.
      *
      * The reason we pass the tablebase in explicitly is that we will need to use this function to
      * calculate not only indices into our own table, but also into future tables with different
      * static configs.  Actually, I'm not sure about this.  Maybe it's only the matching function
-     * index_to_position() that we need for future tables.  In any event, we'll need this function
+     * index_to_local_position() that we need for future tables.  In any event, we'll need this function
      * to probe tables when we want to actually use them.
      *
      * Initially, this function can be very simple (multiplying numbers together), but to build
@@ -292,7 +292,7 @@ int32 position_to_index(tablebase *tb, local_position_t *pos)
  *
  * It's starting to look like we won't need this function, because the only time we want to check
  * the legality of an index is when we want to convert it to a position right after that,
- * so both functions get wrapped together into index_to_position().
+ * so both functions get wrapped together into index_to_local_position().
  */
 
 boolean check_legality_of_index(tablebase *config, int32 index)
@@ -303,9 +303,9 @@ boolean check_legality_of_index(tablebase *config, int32 index)
 int index_to_mobile_position(tablebase *config, int32 index, int piece)
 {}
 
-boolean index_to_position(tablebase *tb, int32 index, local_position_t *p)
+boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 {
-    /* Given an index, fill in a board position.  Obviously has to correspond to position_to_index()
+    /* Given an index, fill in a board position.  Obviously has to correspond to local_position_to_index()
      * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
      * succeeded (the index is at least minimally valid) and FALSE if the index is so blatantly
      * illegal (two piece on the same square) that we can't even fill in the position.
@@ -1068,7 +1068,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
-	if (index_to_position(futurebase, future_index, &future_position)) {
+	if (index_to_local_position(futurebase, future_index, &future_position)) {
 
 	    /* Since the position resulted from a capture, we only want to consider future positions
 	     * where the side to move is not the side that captured.
@@ -1109,15 +1109,15 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			 * the moving piece started (i.e, ended) its move.
 			 */
 
-			place_piece_in_position(tb, &current_position,
-						future_position.mobile_piece_position[piece],
-						tb->mobile_piece_color[captured_piece],
-						tb->mobile_piece_type[captured_piece]);
+			place_piece_in_local_position(tb, &current_position,
+						      future_position.mobile_piece_position[piece],
+						      tb->mobile_piece_color[captured_piece],
+						      tb->mobile_piece_type[captured_piece]);
 
 
 			/* Look up the position in the current tablebase... */
 
-			current_index = position_to_index(tb, &current_position);
+			current_index = local_position_to_index(tb, &current_position);
 
 			if (current_index == -1) {
 			    fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
@@ -1181,7 +1181,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
     mark_propagated(tb, parent_index);
 
-    index_to_position(tb, parent_index, &parent_position);
+    index_to_local_position(tb, parent_index, &parent_position);
 
     /* foreach (mobile piece of player NOT TO PLAY) { */
 
@@ -1219,7 +1219,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		    current_position.side_to_move = WHITE;
 
 		/* This code makes perfect sense... but I doubt it will be needed!  The
-		 * position_to_index function will probably only require the square numbers, not the
+		 * local_position_to_index function will probably only require the square numbers, not the
 		 * board vectors.
 		 */
 #if NEEDED
@@ -1236,7 +1236,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 		current_position.mobile_piece_position[piece] = movementptr->square;
 
-		current_index = position_to_index(tb, &current_position);
+		current_index = local_position_to_index(tb, &current_position);
 
 		/* Parent position is the FUTURE position.  We now back-propagate to
 		 * the current position, which is the PAST position.
@@ -1288,7 +1288,7 @@ initialize_tablebase(tablebase *tb)
 
     for (index=0; index < max_index_static; index++) {
 
-	if (! index_to_position(tb, index, &parent_position)) {
+	if (! index_to_local_position(tb, index, &parent_position)) {
 
 	    initialize_index_as_illegal(tb, index);
 
@@ -1453,7 +1453,7 @@ tablebase * mainloop()
 
 /***** PARSING FEN INTO POSITION STRUCTURES *****/
 
-boolean place_piece_in_position(tablebase *tb, local_position_t *pos, int square, int color, int type)
+boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int square, int color, int type)
 {
     int piece;
 
@@ -1500,45 +1500,45 @@ boolean parse_FEN(char *FEN_string, tablebase *tb, local_position_t *pos)
 		break;
 
 	    case 'k':
-		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, KING)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, KING)) return 0;
 		break;
 	    case 'K':
-		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, KING)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, KING)) return 0;
 		break;
 
 	    case 'q':
-		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, QUEEN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, QUEEN)) return 0;
 		break;
 	    case 'Q':
-		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, QUEEN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, QUEEN)) return 0;
 		break;
 
 	    case 'r':
-		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, ROOK)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, ROOK)) return 0;
 		break;
 	    case 'R':
-		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, ROOK)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, ROOK)) return 0;
 		break;
 
 	    case 'b':
-		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, BISHOP)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, BISHOP)) return 0;
 		break;
 	    case 'B':
-		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, BISHOP)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, BISHOP)) return 0;
 		break;
 
 	    case 'n':
-		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, KNIGHT)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, KNIGHT)) return 0;
 		break;
 	    case 'N':
-		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, KNIGHT)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, KNIGHT)) return 0;
 		break;
 
 	    case 'p':
-		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, PAWN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, PAWN)) return 0;
 		break;
 	    case 'P':
-		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, PAWN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, PAWN)) return 0;
 		break;
 	    }
 	    FEN_string++;
@@ -1584,7 +1584,7 @@ main()
 	} else {
 	    int32 index;
 
-	    index = position_to_index(tb, &pos);
+	    index = local_position_to_index(tb, &pos);
 	    printf("Index %d\n", index);
 
 	    if (index == -1) {
@@ -1635,7 +1635,7 @@ main()
 
 			    nextpos.mobile_piece_position[piece] = movementptr->square;
 
-			    index = position_to_index(tb, &nextpos);
+			    index = local_position_to_index(tb, &nextpos);
 
 			    switch (tb->entries[index].movecnt) {
 			    case ILLEGAL_POSITION:
