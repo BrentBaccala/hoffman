@@ -111,6 +111,18 @@ typedef struct {
     short mobile_piece_position[MAX_MOBILES];
 } local_position_t;
 
+/* This is a global position, that doesn't depend on a particular tablebase.  It's slower to
+ * manipulate, but is suitable for translating positions between tablebases.  Each char in the array
+ * is either 0 or ' ' for an empty square, and one of the FEN characters for a chess piece.  We can
+ * use 'e' or 'E' for a pawn than can be captured en passant.
+ */
+
+typedef struct {
+    unsigned char board[64];
+    int64 board_vector;
+    short side_to_move;
+} global_position_t;
+
 
 /* bitvector gets initialized in init_movements() */
 
@@ -131,6 +143,9 @@ int64 allones_bitvector = 0xffffffffffffffffLL;
 #define PAWNep 6
 
 char * piece_name[NUM_PIECES] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", "PAWNep"};
+
+unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P', 'E'},
+					      {'k', 'q', 'r', 'b', 'n', 'p', 'e'}};
 
 #define WHITE 0
 #define BLACK 1
@@ -211,9 +226,41 @@ tablebase * parse_XML()
 {
 }
 
+/* Simple initialization for a K vs K endgame. */
+
+tablebase * create_2piece_tablebase(void)
+{
+    tablebase *tb;
+
+    tb = (tablebase *) malloc(sizeof(tablebase));
+    if (tb == NULL) {
+	fprintf(stderr, "Can't malloc tablebase header\n");
+    }
+
+    /* The "2" is because side-to-play is part of the position */
+
+    tb->entries = (struct fourbyte_entry *) calloc(2*64*64, sizeof(struct fourbyte_entry));
+    if (tb->entries == NULL) {
+	fprintf(stderr, "Can't malloc tablebase entries\n");
+    }
+
+    /* Remember above, I defined WHITE_KING as 0 and BLACK_KING as 1, so we have to make sure
+     * that these two pieces are where we want them in this list.  Other than that, it's
+     * pretty flexible.
+     */
+
+    tb->num_mobiles = 2;
+    tb->mobile_piece_type[0] = KING;
+    tb->mobile_piece_type[1] = KING;
+    tb->mobile_piece_color[0] = WHITE;
+    tb->mobile_piece_color[1] = BLACK;
+
+    return tb;
+}
+
 /* Simple initialization for a K+Q vs K endgame. */
 
-tablebase * create_tablebase(void)
+tablebase * create_3piece_tablebase(void)
 {
     tablebase *tb;
 
@@ -280,8 +327,44 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
     int piece;
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	if (pos->mobile_piece_position[piece] < 0)
+	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");
 	index |= pos->mobile_piece_position[piece] << shift_count;
 	shift_count += 6;  /* because 2^6=64 */
+    }
+
+    return index;
+}
+
+int32 global_position_to_index(tablebase *tb, global_position_t *position)
+{
+    int32 index = position->side_to_move;  /* WHITE is 0; BLACK is 1 */
+    int piece;
+    int square;
+    short pieces_processed_bitvector = 0;
+
+    for (square = 0; square < NUM_SQUARES; square ++) {
+	if ((position->board[square] != 0) && (position->board[square] != ' ')) {
+	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		if ((position->board[square]
+		     == global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]])
+		    && !(pieces_processed_bitvector & (1 << piece))) {
+		    index |= square << (1 + 6*piece);
+		    pieces_processed_bitvector |= (1 << piece);
+		    break;
+		}
+	    }
+	    /* If we didn't find a suitable matching piece... */
+	    if (piece == tb->num_mobiles) return -1;
+	}
+    }
+
+
+    /* Make sure all the pieces have been accounted for */
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	if (!(pieces_processed_bitvector & (1 << piece)))
+	    return -1;
     }
 
     return index;
@@ -331,6 +414,87 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 	}
 	index >>= 6;
     }
+    return 1;
+}
+
+boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *position)
+{
+    int piece;
+
+    bzero(position, sizeof(global_position_t));
+
+    position->side_to_move = index & 1;
+    index >>= 1;
+
+    for (piece = 0; piece < tb->num_mobiles; piece++) {
+
+	if (position->board[index & 63] != 0) {
+	    return 0;
+	}
+
+	position->board[index & 63]
+	    = global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]];
+
+	position->board_vector |= bitvector[index & 63];
+
+	index >>= 6;
+    }
+
+    return 1;
+}
+
+boolean global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
+{
+    int piece;
+    int square;
+    short pieces_processed_bitvector = 0;
+
+    bzero(local, sizeof(local_position_t));
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++)
+	local->mobile_piece_position[piece] = -1;
+
+    local->side_to_move = global->side_to_move;
+
+    for (square = 0; square < NUM_SQUARES; square ++) {
+	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
+	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		if ((global->board[square]
+		     == global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]])
+		    && !(pieces_processed_bitvector & (1 << piece))) {
+
+		    local->mobile_piece_position[piece] = square;
+		    local->board_vector |= bitvector[square];
+		    if (tb->mobile_piece_color[piece] == WHITE)
+			local->white_vector |= bitvector[square];
+		    else
+			local->black_vector |= bitvector[square];
+		    pieces_processed_bitvector |= (1 << piece);
+		    break;
+		}
+	    }
+	    /* If we didn't find a suitable matching piece... */
+	    if (piece == tb->num_mobiles) return 0;
+	}
+    }
+
+
+    /* Right now, it seems that we actually don't want to do this.  When we back-propagate
+     * from a futurebase, one piece in the current tablebase will be missing from the
+     * futurebase (since it was captured), so we leave its value at -1.  Obviously,
+     * this will have to be corrected by the calling routine before this local position
+     * can be converted to an index.
+     */
+
+#if 0
+    /* Make sure all the pieces have been accounted for */
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	if (!(pieces_processed_bitvector & (1 << piece)))
+	    return 0;
+    }
+#endif
+
     return 1;
 }
 
@@ -1060,7 +1224,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
     int32 current_index;
-    local_position_t future_position;
+    global_position_t future_position;
     local_position_t current_position;
     int piece;
     int dir;
@@ -1068,7 +1232,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
-	if (index_to_local_position(futurebase, future_index, &future_position)) {
+	if (index_to_global_position(futurebase, future_index, &future_position)) {
 
 	    /* Since the position resulted from a capture, we only want to consider future positions
 	     * where the side to move is not the side that captured.
@@ -1086,34 +1250,40 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		if (tb->mobile_piece_color[piece] == tb->mobile_piece_color[captured_piece])
 		    continue;
 
-		current_position = future_position;
+		global_position_to_local_position(tb, &future_position, &current_position);
 
 		if (future_position.side_to_move == WHITE)
 		    current_position.side_to_move = BLACK;
 		else
 		    current_position.side_to_move = WHITE;
 
+
+		if (current_position.mobile_piece_position[captured_piece] != -1)
+		    fprintf(stderr, "Captured piece position specified too soon during back-prop\n");
+
+		/* Place the captured piece back into the position on the square from which
+		 * the moving piece started (i.e, ended) its move.
+		 */
+
+		current_position.mobile_piece_position[captured_piece]
+		    = current_position.mobile_piece_position[piece];
+
 		/* We consider all possible backwards movements of the piece which captured. */
 
 		for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
-		    for (movementptr = movements[tb->mobile_piece_type[piece]][future_position.mobile_piece_position[piece]][dir];
+		    /* Make sure we start each movement of the capturing piece from the capture square */
+
+		    current_position.mobile_piece_position[piece]
+			= current_position.mobile_piece_position[captured_piece];
+
+		    for (movementptr = movements[tb->mobile_piece_type[piece]][current_position.mobile_piece_position[piece]][dir];
 			 (movementptr->vector & future_position.board_vector) == 0;
 			 movementptr++) {
 
 			/* Move the capturing piece... */
 
 			current_position.mobile_piece_position[piece] = movementptr->square;
-
-			/* Place the captured piece back into the position on the square from which
-			 * the moving piece started (i.e, ended) its move.
-			 */
-
-			place_piece_in_local_position(tb, &current_position,
-						      future_position.mobile_piece_position[piece],
-						      tb->mobile_piece_color[captured_piece],
-						      tb->mobile_piece_type[captured_piece]);
-
 
 			/* Look up the position in the current tablebase... */
 
@@ -1366,9 +1536,8 @@ initialize_tablebase(tablebase *tb)
     }
 }
 
-tablebase * mainloop()
+void mainloop(tablebase *tb)
 {
-    tablebase *tb;
     int max_moves_to_win;
     int moves_to_win;
     int progress_made;
@@ -1376,16 +1545,6 @@ tablebase * mainloop()
     int32 index;
 
     /* create_data_structure_from_control_file(); */
-
-    init_movements();
-
-    verify_movements();
-
-    /* exit(1); */
-
-    tb = create_tablebase();
-
-    initialize_tablebase(tb);
 
 #ifdef FUTUREBASE
     max_moves_to_win = propagate_moves_from_futurebases();
@@ -1447,7 +1606,6 @@ tablebase * mainloop()
 
     /* write_output_tablebase(); */
 
-    return tb;
 }
 
 
@@ -1565,9 +1723,23 @@ boolean parse_FEN(char *FEN_string, tablebase *tb, local_position_t *pos)
 
 main()
 {
-    tablebase *tb;
+    tablebase *tb2, *tb3, *tb;
 
-    tb = mainloop();
+    init_movements();
+    verify_movements();
+
+    tb2 = create_2piece_tablebase();
+    initialize_tablebase(tb2);
+
+    tb3 = create_3piece_tablebase();
+    initialize_tablebase(tb3);
+
+    mainloop(tb2);
+    /* The White Queen is hard-wired in here as piece #2 */
+    propagate_moves_from_mobile_capture_futurebase(tb3, tb2, 2);
+    mainloop(tb3);
+
+    tb = tb3;
 
     while (1) {
 	char buffer[256];
