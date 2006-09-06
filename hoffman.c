@@ -1609,6 +1609,18 @@ void mainloop(tablebase *tb)
 }
 
 
+/***** PROBING NALIMOV TABLEBASES *****/
+
+int EGTBProbe(int wtm, int WhiteKingSQ, int BlackKingSQ, int WhiteQueenSQ, int *score);
+
+int IInitializeTb(char *pszPath);
+
+int FTbSetCacheSize(void    *pv, unsigned long   cbSize );
+
+#define EGTB_CACHE_DEFAULT (1024*1024)
+
+void *EGTB_cache;
+
 /***** PARSING FEN INTO POSITION STRUCTURES *****/
 
 boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int square, int color, int type)
@@ -1730,6 +1742,7 @@ boolean parse_FEN(char *FEN_string, tablebase *tb, local_position_t *pos)
 main()
 {
     tablebase *tb2, *tb3, *tb;
+    int nalimov_num;
 
     init_movements();
     verify_movements();
@@ -1747,6 +1760,11 @@ main()
 
     tb = tb3;
 
+    nalimov_num = IInitializeTb(".");
+    printf("%d piece Nalimov tablebases found\n", nalimov_num);
+    EGTB_cache = malloc(EGTB_CACHE_DEFAULT);
+    FTbSetCacheSize(EGTB_cache, EGTB_CACHE_DEFAULT);
+
     while (1) {
 	char buffer[256];
 	local_position_t pos;
@@ -1754,6 +1772,7 @@ main()
 	int piece, dir;
 	struct movement * movementptr;
 	global_position_t global_position;
+	int score;
 
 	printf("FEN? ");
 	fgets(buffer, sizeof(buffer), stdin);
@@ -1786,6 +1805,23 @@ main()
 		default:
 		    printf("Draw\n\n");
 		    break;
+		}
+
+		printf("Nalimov score: ");
+		if (EGTBProbe(pos.side_to_move == WHITE,
+			      pos.mobile_piece_position[WHITE_KING],
+			      pos.mobile_piece_position[BLACK_KING],
+			      pos.mobile_piece_position[2], &score) == 1) {
+
+		    if (score > 0) {
+			printf("PTM wins in %d\n", ((65536-4)/2)-score);
+		    } else if (score < 0) {
+			printf("PNTM wins in %d\n", ((65536-4)/2)+score);
+		    } else {
+			printf("DRAW\n");
+		    }
+		} else {
+		    printf("ILLEGAL POSITION\n");
 		}
 
 		for (piece = 0; piece < tb->num_mobiles; piece++) {
