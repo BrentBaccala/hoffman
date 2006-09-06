@@ -1630,6 +1630,12 @@ boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int 
     return 0;
 }
 
+boolean place_piece_in_global_position(global_position_t *position, int square, int color, int type)
+{
+    position->board[square] = global_pieces[color][type];
+    return 1;
+}
+
 inline int square(int row, int col)
 {
     return (col + row*8);
@@ -1747,6 +1753,7 @@ main()
 	local_position_t nextpos;
 	int piece, dir;
 	struct movement * movementptr;
+	global_position_t global_position;
 
 	printf("FEN? ");
 	fgets(buffer, sizeof(buffer), stdin);
@@ -1830,6 +1837,8 @@ main()
 
 			}
 
+			index_to_global_position(tb, index, &global_position);
+
 			if (pos.side_to_move == WHITE) {
 			    if ((movementptr->vector & pos.white_vector) == 0) {
 
@@ -1847,11 +1856,16 @@ main()
 				    pos.mobile_piece_position[WHITE_KING]) {
 				    printf("MATE\n");
 				} else {
-				    /* XXX really special code here - if black can capture anything
-				     * other than the white king, it's either a mate (if the
-				     * piece is protected) or a draw
-				     */
-				    printf("MATE or DRAW\n");
+				    int32 index2;
+				    global_position.board[pos.mobile_piece_position[piece]] = 0;
+				    place_piece_in_global_position(&global_position, movementptr->square,
+								   tb->mobile_piece_color[piece],
+								   tb->mobile_piece_type[piece]);
+				    index2 = global_position_to_index(tb2, &global_position);
+				    if (index2 == -1)
+					printf("!!?!\n");
+				    else
+					printf("[%d]\n", tb2->entries[index2].movecnt);
 				}
 			    }
 			}
