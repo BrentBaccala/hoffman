@@ -103,12 +103,13 @@ typedef short boolean;
 #define BLACK_KING 1
 
 typedef struct {
+    struct tablebase *tb;
     int64 board_vector;
     int64 white_vector;
     int64 black_vector;
     short side_to_move;
     short mobile_piece_position[MAX_MOBILES];
-} position;
+} local_position_t;
 
 
 /* bitvector gets initialized in init_movements() */
@@ -197,14 +198,14 @@ struct fourbyte_entry {
     unsigned char reserved;
 };
 
-typedef struct {
+typedef struct tablebase {
     int num_mobiles;
     short mobile_piece_type[MAX_MOBILES];
     short mobile_piece_color[MAX_MOBILES];
     struct fourbyte_entry *entries;
 } tablebase;
 
-boolean place_piece_in_position(tablebase *tb, position *pos, int square, int color, int type);
+boolean place_piece_in_position(tablebase *tb, local_position_t *pos, int square, int color, int type);
 
 tablebase * parse_XML()
 {
@@ -249,7 +250,7 @@ int32 max_index(tablebase *tb)
     return (2<<(6*tb->num_mobiles)) - 1;
 }
 
-int32 position_to_index(tablebase *tb, position *pos)
+int32 position_to_index(tablebase *tb, local_position_t *pos)
 {
     /* This function, given a board position, returns an index into the tablebase.
      *
@@ -302,7 +303,7 @@ boolean check_legality_of_index(tablebase *config, int32 index)
 int index_to_mobile_position(tablebase *config, int32 index, int piece)
 {}
 
-boolean index_to_position(tablebase *tb, int32 index, position *p)
+boolean index_to_position(tablebase *tb, int32 index, local_position_t *p)
 {
     /* Given an index, fill in a board position.  Obviously has to correspond to position_to_index()
      * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
@@ -312,7 +313,7 @@ boolean index_to_position(tablebase *tb, int32 index, position *p)
 
     int piece;
 
-    bzero(p, sizeof(position));
+    bzero(p, sizeof(local_position_t));
 
     p->side_to_move = index & 1;
     index >>= 1;
@@ -1059,8 +1060,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
     int32 current_index;
-    position future_position;
-    position current_position;
+    local_position_t future_position;
+    local_position_t current_position;
     int piece;
     int dir;
     struct movement *movementptr;
@@ -1156,8 +1157,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_count)
 {
-    position parent_position;
-    position current_position; /* i.e, last position that moved to parent_position */
+    local_position_t parent_position;
+    local_position_t current_position; /* i.e, last position that moved to parent_position */
     int piece;
     int dir;
     struct movement *movementptr;
@@ -1274,8 +1275,8 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 initialize_tablebase(tablebase *tb)
 {
-    position parent_position;
-    position current_position;
+    local_position_t parent_position;
+    local_position_t current_position;
     int32 index;
     int piece;
     int dir;
@@ -1452,7 +1453,7 @@ tablebase * mainloop()
 
 /***** PARSING FEN INTO POSITION STRUCTURES *****/
 
-boolean place_piece_in_position(tablebase *tb, position *pos, int square, int color, int type)
+boolean place_piece_in_position(tablebase *tb, local_position_t *pos, int square, int color, int type)
 {
     int piece;
 
@@ -1476,11 +1477,11 @@ inline int square(int row, int col)
     return (col + row*8);
 }
 
-boolean parse_FEN(char *FEN_string, tablebase *tb, position *pos)
+boolean parse_FEN(char *FEN_string, tablebase *tb, local_position_t *pos)
 {
     int row, col;
 
-    bzero(pos, sizeof(position));
+    bzero(pos, sizeof(local_position_t));
 
     for (row=7; row>=0; row--) {
 	for (col=0; col<=7; col++) {
@@ -1570,8 +1571,8 @@ main()
 
     while (1) {
 	char buffer[256];
-	position pos;
-	position nextpos;
+	local_position_t pos;
+	local_position_t nextpos;
 	int piece, dir;
 	struct movement * movementptr;
 
