@@ -78,9 +78,9 @@ typedef short boolean;
  * It has to be fast.
  *
  * So we use a 64-bit vector with one bit for each board position, in addition to a flag to indicate
- * which side is to move and four numbers (0-63) indicating the positions of the mobile pieces.
- * That way, we can easily check if possible moves are legal by looking for pieces that block our
- * moving piece.
+ * which side is to move and numbers (0-63) indicating the positions of the mobile pieces.  That
+ * way, we can easily check if possible moves are legal by looking for pieces that block our moving
+ * piece.
  *
  * Also need a quick way to check captures.  Do this using a black_vector and a white_vector.
  *
@@ -111,7 +111,7 @@ typedef struct {
 } position;
 
 
-/* bitvector get initialized in init_movements() */
+/* bitvector gets initialized in init_movements() */
 
 int64 bitvector[64];
 int64 allones_bitvector = 0xffffffffffffffffLL;
@@ -203,6 +203,8 @@ typedef struct {
     short mobile_piece_color[MAX_MOBILES];
     struct fourbyte_entry *entries;
 } tablebase;
+
+boolean place_piece_in_position(tablebase *tb, position *pos, int square, int color, int type);
 
 tablebase * parse_XML()
 {
@@ -1048,9 +1050,106 @@ propagate_moves_from_futurebases()
 
 #endif
 
-/* Intra-table move propagation.
- *
- * This is the guts of the program here.  We've got a move that needs to be propagated,
+/* Propagate moves from a futurebase that resulted from capturing one of the mobile
+ * pieces in the current tablebase.
+ */
+
+void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase, int captured_piece)
+{
+    int32 future_index;
+    int32 max_future_index_static = max_index(futurebase);
+    int32 current_index;
+    position future_position;
+    position current_position;
+    int piece;
+    int dir;
+    struct movement *movementptr;
+
+    for (future_index = 0; future_index < max_future_index_static; future_index ++) {
+
+	if (index_to_position(futurebase, future_index, &future_position)) {
+
+	    /* Since the position resulted from a capture, we only want to consider future positions
+	     * where the side to move is not the side that captured.
+	     */
+
+	    if (future_position.side_to_move != tb->mobile_piece_color[captured_piece])
+		continue;
+
+	    for (piece = 0; piece < tb->num_mobiles; piece++) {
+
+		/* Now this is the piece that actually did the capturing.  We only want to consider
+		 * pieces of the side which captured...
+		 */
+
+		if (tb->mobile_piece_color[piece] == tb->mobile_piece_color[captured_piece])
+		    continue;
+
+		current_position = future_position;
+
+		if (future_position.side_to_move == WHITE)
+		    current_position.side_to_move = BLACK;
+		else
+		    current_position.side_to_move = WHITE;
+
+		/* We consider all possible backwards movements of the piece which captured. */
+
+		for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+
+		    for (movementptr = movements[tb->mobile_piece_type[piece]][future_position.mobile_piece_position[piece]][dir];
+			 (movementptr->vector & future_position.board_vector) == 0;
+			 movementptr++) {
+
+			/* Move the capturing piece... */
+
+			current_position.mobile_piece_position[piece] = movementptr->square;
+
+			/* Place the captured piece back into the position on the square from which
+			 * the moving piece started (i.e, ended) its move.
+			 */
+
+			place_piece_in_position(tb, &current_position,
+						future_position.mobile_piece_position[piece],
+						tb->mobile_piece_color[captured_piece],
+						tb->mobile_piece_type[captured_piece]);
+
+
+			/* Look up the position in the current tablebase... */
+
+			current_index = position_to_index(tb, &current_position);
+
+			if (current_index == -1) {
+			    fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
+			}
+
+			/* and propagate the win */
+
+			/* XXX might want to look more closely at the stalemate options here */
+
+			if (does_PTM_win(futurebase, future_index)) {
+
+			    add_one_to_PNTM_wins(tb, current_index,
+						 get_mate_in_count(futurebase, future_index)+1, 0);
+
+			} else if (does_PNTM_win(futurebase, future_index)) {
+
+			    PTM_wins(tb, current_index,
+				     get_mate_in_count(futurebase, future_index)+1, 0);
+
+			}
+
+		    }
+		}
+	    }
+
+	}
+    }
+}
+
+
+/***** INTRA-TABLE MOVE PROPAGATION *****/
+
+/* This is the guts of the program here.  We've got a move that needs to be propagated,
  * so we back out one half-move to all of the positions that could have gotten us
  * here and update their counters in various obscure ways.
  */
@@ -1353,12 +1452,9 @@ tablebase * mainloop()
 
 /***** PARSING FEN INTO POSITION STRUCTURES *****/
 
-boolean place_piece_in_position(tablebase *tb, position *pos, int row, int col, int color, int type)
+boolean place_piece_in_position(tablebase *tb, position *pos, int square, int color, int type)
 {
     int piece;
-    int square;
-
-    square = col + row*8;
 
     if (pos->board_vector & bitvector[square]) return 0;
 
@@ -1373,6 +1469,11 @@ boolean place_piece_in_position(tablebase *tb, position *pos, int row, int col, 
     }
 
     return 0;
+}
+
+inline int square(int row, int col)
+{
+    return (col + row*8);
 }
 
 boolean parse_FEN(char *FEN_string, tablebase *tb, position *pos)
@@ -1398,45 +1499,45 @@ boolean parse_FEN(char *FEN_string, tablebase *tb, position *pos)
 		break;
 
 	    case 'k':
-		if (!place_piece_in_position(tb, pos, row, col, BLACK, KING)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, KING)) return 0;
 		break;
 	    case 'K':
-		if (!place_piece_in_position(tb, pos, row, col, WHITE, KING)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, KING)) return 0;
 		break;
 
 	    case 'q':
-		if (!place_piece_in_position(tb, pos, row, col, BLACK, QUEEN)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, QUEEN)) return 0;
 		break;
 	    case 'Q':
-		if (!place_piece_in_position(tb, pos, row, col, WHITE, QUEEN)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, QUEEN)) return 0;
 		break;
 
 	    case 'r':
-		if (!place_piece_in_position(tb, pos, row, col, BLACK, ROOK)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, ROOK)) return 0;
 		break;
 	    case 'R':
-		if (!place_piece_in_position(tb, pos, row, col, WHITE, ROOK)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, ROOK)) return 0;
 		break;
 
 	    case 'b':
-		if (!place_piece_in_position(tb, pos, row, col, BLACK, BISHOP)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, BISHOP)) return 0;
 		break;
 	    case 'B':
-		if (!place_piece_in_position(tb, pos, row, col, WHITE, BISHOP)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, BISHOP)) return 0;
 		break;
 
 	    case 'n':
-		if (!place_piece_in_position(tb, pos, row, col, BLACK, KNIGHT)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, KNIGHT)) return 0;
 		break;
 	    case 'N':
-		if (!place_piece_in_position(tb, pos, row, col, WHITE, KNIGHT)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, KNIGHT)) return 0;
 		break;
 
 	    case 'p':
-		if (!place_piece_in_position(tb, pos, row, col, BLACK, PAWN)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), BLACK, PAWN)) return 0;
 		break;
 	    case 'P':
-		if (!place_piece_in_position(tb, pos, row, col, WHITE, PAWN)) return 0;
+		if (!place_piece_in_position(tb, pos, square(row, col), WHITE, PAWN)) return 0;
 		break;
 	    }
 	    FEN_string++;
