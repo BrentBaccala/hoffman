@@ -583,7 +583,7 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 206376 */
+/* #define DEBUG_MOVE 42923 */
 
 inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
@@ -630,9 +630,25 @@ inline void add_one_to_PNTM_wins(tablebase *tb, int32 index, int mate_in_count, 
 	tb->entries[index].movecnt --;
 	if (mate_in_count < tb->entries[index].mate_in_cnt) {
 	    if (tb->entries[index].mate_in_cnt != 255)
-		fprintf(stderr, "mate-in count dropped in add_one_to_white_wins?\n");
+		fprintf(stderr, "mate-in count dropped in add_one_to_PNTM_wins?\n");
 	}
 	tb->entries[index].mate_in_cnt = mate_in_count;
+
+	if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
+	    && (tb->entries[index].mate_in_cnt == 1)) {
+	    /* In this case, the only moves at PTM's disposal move him into check (mate_in_cnt is
+	     * now one, so it would drop to zero on next move).  So we need to distinguish here
+	     * between being in check (it's checkmate) and not being in check (stalemate).  The
+	     * simplest way to do this is to flip the side-to-move flag and look at the position
+	     * with the other side to move.  If the king can be taken, then that other position
+	     * will be PTM_WINS (of either flavor) with a zero mate_in_cnt.
+	     */
+	    /* XXX assumes that flipping lowest bit in index flips side-to-move flag */
+	    if (does_PTM_win(tb, index^1) && (tb->entries[index^1].mate_in_cnt == 0)) {
+	    } else {
+		initialize_index_with_stalemate(tb, index);
+	    }
+	}
 
 	/* XXX not sure about this stalemate code */
 	if (stalemate_count < tb->entries[index].stalemate_cnt) {
@@ -1621,6 +1637,126 @@ int FTbSetCacheSize(void    *pv, unsigned long   cbSize );
 
 void *EGTB_cache;
 
+void init_nalimov_code(void)
+{
+    int nalimov_num;
+
+    nalimov_num = IInitializeTb(".");
+    printf("%d piece Nalimov tablebases found\n", nalimov_num);
+    EGTB_cache = malloc(EGTB_CACHE_DEFAULT);
+    if (EGTB_cache == NULL) {
+	fprintf(stderr, "Can't malloc EGTB cache\n");
+    } else {
+	FTbSetCacheSize(EGTB_cache, EGTB_CACHE_DEFAULT);
+    }
+}
+
+/* Note that the buffer in this function is static... */
+
+char * global_position_to_FEN(global_position_t *position)
+{
+    static char buffer[256];
+    char *ptr = buffer;
+    int empty_squares;
+    int row, col;
+
+    for (row=7; row>=0; row--) {
+	empty_squares=0;
+	for (col=0; col<=7; col++) {
+	    if ((position->board[square(row, col)] == ' ') || (position->board[square(row,col)] == 0)) {
+		empty_squares++;
+	    } else {
+		if (empty_squares > 0) {
+		    *(ptr++) = '0' + empty_squares;
+		    empty_squares = 0;
+		}
+		*(ptr++) = position->board[square(row,col)];
+	    }
+	}
+	if (empty_squares > 0) {
+	    *(ptr++) = '0' + empty_squares;
+	}
+	if (row > 0) *(ptr++) = '/';
+    }
+
+    *(ptr++) = ' ';
+
+    *(ptr++) = (position->side_to_move == WHITE) ? 'w' : 'b';
+
+    *(ptr++) = '\0';
+
+    return buffer;
+}
+
+void verify_tablebase_against_nalimov(tablebase *tb)
+{
+    int32 index;
+    int32 max_index_static = max_index(tb);
+    local_position_t pos;
+    global_position_t global;
+    int score;
+
+    for (index = 0; index < max_index_static; index++) {
+	if (index_to_local_position(tb, index, &pos)) {
+	    if ((pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] + 1)
+		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] - 1)
+		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] + 8)
+		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] - 8)
+		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] + 9)
+		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] - 9)
+		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] + 7)
+		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] - 7)) {
+
+		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
+
+	    } else if (EGTBProbe(pos.side_to_move == WHITE,
+			  pos.mobile_piece_position[WHITE_KING],
+			  pos.mobile_piece_position[BLACK_KING],
+			  pos.mobile_piece_position[2], &score) == 1) {
+		if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
+		    /* Make sure mate_in_cnt is greater than zero here, since the Nalimov tablebase
+		     * doesn't appear to handle illegal positions.  PTM wins in 0 would mean that
+		     * PNTM is in check, so the king can just be captured.
+		     */
+		    if (tb->entries[index].mate_in_cnt > 0) {
+			if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)-score+1) {
+			    index_to_global_position(tb, index, &global);
+			    printf("%s (%d): Nalimov says %d (mate in %d), but we say mate in %d\n",
+				   global_position_to_FEN(&global), index,
+				   score, ((65536-4)/2)-score+1, tb->entries[index].mate_in_cnt/2);
+			}
+		    }
+		} else if (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE) {
+		    if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)+score) {
+			index_to_global_position(tb, index, &global);
+			printf("%s (%d): Nalimov says %d (%d), but we say mated in %d\n",
+			       global_position_to_FEN(&global), index,
+			       score, ((65536-4)/2)+score, tb->entries[index].mate_in_cnt/2);
+		    }
+		} else {
+		    if (score != 0) {
+			index_to_global_position(tb, index, &global);
+			printf("%s (%d): Nalimov says %d (%d), but we say draw\n",
+			       global_position_to_FEN(&global), index,
+			       score, ((65536-4)/2)+score);
+		    }
+		}
+	    } else {
+		if (((tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE)
+		     && (tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE))
+		    || tb->entries[index].mate_in_cnt != 0) {
+		    index_to_global_position(tb, index, &global);
+		    fprintf(stderr, "%s (%d): Nalimov says illegal, but we say %d %d\n",
+			    global_position_to_FEN(&global), index,
+			    tb->entries[index].movecnt, tb->entries[index].mate_in_cnt);
+		} else {
+		    /* printf("Illegal OK\n"); */
+		}
+	    }
+	}
+    }
+}
+
 /***** PARSING FEN INTO POSITION STRUCTURES *****/
 
 boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int square, int color, int type)
@@ -1742,7 +1878,8 @@ boolean parse_FEN(char *FEN_string, tablebase *tb, local_position_t *pos)
 main()
 {
     tablebase *tb2, *tb3, *tb;
-    int nalimov_num;
+
+    init_nalimov_code();
 
     init_movements();
     verify_movements();
@@ -1760,10 +1897,7 @@ main()
 
     tb = tb3;
 
-    nalimov_num = IInitializeTb(".");
-    printf("%d piece Nalimov tablebases found\n", nalimov_num);
-    EGTB_cache = malloc(EGTB_CACHE_DEFAULT);
-    FTbSetCacheSize(EGTB_cache, EGTB_CACHE_DEFAULT);
+    verify_tablebase_against_nalimov(tb3);
 
     while (1) {
 	char buffer[256];
@@ -1793,10 +1927,10 @@ main()
 		    printf("Illegal position\n\n");
 		    break;
 		case PTM_WINS_PROPAGATION_DONE:
-		    printf("PTM wins in %d\n\n", tb->entries[index].mate_in_cnt);
+		    printf("PTM wins in %d\n\n", tb->entries[index].mate_in_cnt/2);
 		    break;
 		case PNTM_WINS_PROPAGATION_DONE:
-		    printf("PNTM wins in %d\n\n", tb->entries[index].mate_in_cnt);
+		    printf("PNTM wins in %d\n\n", tb->entries[index].mate_in_cnt/2);
 		    break;
 		case PTM_WINS_PROPAGATION_NEEDED:
 		case PNTM_WINS_PROPAGATION_NEEDED:
@@ -1814,7 +1948,7 @@ main()
 			      pos.mobile_piece_position[2], &score) == 1) {
 
 		    if (score > 0) {
-			printf("PTM wins in %d\n", ((65536-4)/2)-score);
+			printf("PTM wins in %d\n", ((65536-4)/2)-score+1);
 		    } else if (score < 0) {
 			printf("PNTM wins in %d\n", ((65536-4)/2)+score);
 		    } else {
@@ -1857,10 +1991,10 @@ main()
 				printf("Illegal position\n");
 				break;
 			    case PTM_WINS_PROPAGATION_DONE:
-				printf("PTM wins in %d\n", tb->entries[index].mate_in_cnt);
+				printf("PTM wins in %d\n", tb->entries[index].mate_in_cnt/2);
 				break;
 			    case PNTM_WINS_PROPAGATION_DONE:
-				printf("PNTM wins in %d\n", tb->entries[index].mate_in_cnt);
+				printf("PNTM wins in %d\n", tb->entries[index].mate_in_cnt/2);
 				break;
 			    case PTM_WINS_PROPAGATION_NEEDED:
 			    case PNTM_WINS_PROPAGATION_NEEDED:
