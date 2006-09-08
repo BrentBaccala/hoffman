@@ -284,7 +284,7 @@ tablebase * create_3piece_tablebase(void)
     tb->num_mobiles = 3;
     tb->mobile_piece_type[0] = KING;
     tb->mobile_piece_type[1] = KING;
-    tb->mobile_piece_type[2] = QUEEN;
+    tb->mobile_piece_type[2] = ROOK;
     tb->mobile_piece_color[0] = WHITE;
     tb->mobile_piece_color[1] = BLACK;
     tb->mobile_piece_color[2] = WHITE;
@@ -1627,7 +1627,8 @@ void mainloop(tablebase *tb)
 
 /***** PROBING NALIMOV TABLEBASES *****/
 
-int EGTBProbe(int wtm, int WhiteKingSQ, int BlackKingSQ, int WhiteQueenSQ, int *score);
+int EGTBProbe(int wtm, int WhiteKingSQ, int BlackKingSQ, int WhiteQueenSQ, int WhiteRookSQ, int BlackRookSQ,
+	      int *score);
 
 int IInitializeTb(char *pszPath);
 
@@ -1712,7 +1713,7 @@ void verify_tablebase_against_nalimov(tablebase *tb)
 	    } else if (EGTBProbe(pos.side_to_move == WHITE,
 			  pos.mobile_piece_position[WHITE_KING],
 			  pos.mobile_piece_position[BLACK_KING],
-			  pos.mobile_piece_position[2], &score) == 1) {
+			  -1, pos.mobile_piece_position[2], -1, &score) == 1) {
 		if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
 		    /* Make sure mate_in_cnt is greater than zero here, since the Nalimov tablebase
 		     * doesn't appear to handle illegal positions.  PTM wins in 0 would mean that
@@ -1945,7 +1946,7 @@ main()
 		if (EGTBProbe(pos.side_to_move == WHITE,
 			      pos.mobile_piece_position[WHITE_KING],
 			      pos.mobile_piece_position[BLACK_KING],
-			      pos.mobile_piece_position[2], &score) == 1) {
+			      -1, pos.mobile_piece_position[2], -1, &score) == 1) {
 
 		    if (score > 0) {
 			printf("PTM wins in %d\n", ((65536-4)/2)-score+1);
