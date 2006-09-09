@@ -32,6 +32,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#define READLINE_LIBRARY
+#include "readline.h"
+
 /* According the GCC documentation, "long long" ints are supported by the C99 standard as well as
  * the GCC compiler.  In any event, since chess boards have 64 squares, being able to use 64 bit
  * integers makes a bunch of stuff a lot easier.  Might have to be careful with this if porting.
@@ -260,7 +263,7 @@ tablebase * create_2piece_tablebase(void)
 
 /* Simple initialization for a K+Q vs K endgame. */
 
-tablebase * create_3piece_tablebase(void)
+tablebase * create_KRK_tablebase(void)
 {
     tablebase *tb;
 
@@ -288,6 +291,72 @@ tablebase * create_3piece_tablebase(void)
     tb->mobile_piece_color[0] = WHITE;
     tb->mobile_piece_color[1] = BLACK;
     tb->mobile_piece_color[2] = WHITE;
+
+    return tb;
+}
+
+tablebase * create_KQK_tablebase(void)
+{
+    tablebase *tb;
+
+    tb = (tablebase *) malloc(sizeof(tablebase));
+    if (tb == NULL) {
+	fprintf(stderr, "Can't malloc tablebase header\n");
+    }
+
+    /* The "2" is because side-to-play is part of the position */
+
+    tb->entries = (struct fourbyte_entry *) calloc(2*64*64*64, sizeof(struct fourbyte_entry));
+    if (tb->entries == NULL) {
+	fprintf(stderr, "Can't malloc tablebase entries\n");
+    }
+
+    /* Remember above, I defined WHITE_KING as 0 and BLACK_KING as 1, so we have to make sure
+     * that these two pieces are where we want them in this list.  Other than that, it's
+     * pretty flexible.
+     */
+
+    tb->num_mobiles = 3;
+    tb->mobile_piece_type[0] = KING;
+    tb->mobile_piece_type[1] = KING;
+    tb->mobile_piece_type[2] = QUEEN;
+    tb->mobile_piece_color[0] = WHITE;
+    tb->mobile_piece_color[1] = BLACK;
+    tb->mobile_piece_color[2] = WHITE;
+
+    return tb;
+}
+
+tablebase * create_KQKR_tablebase(void)
+{
+    tablebase *tb;
+
+    tb = (tablebase *) malloc(sizeof(tablebase));
+    if (tb == NULL) {
+	fprintf(stderr, "Can't malloc tablebase header\n");
+    }
+
+    /* The "2" is because side-to-play is part of the position */
+
+    tb->entries = (struct fourbyte_entry *) calloc(2*64*64*64*64, sizeof(struct fourbyte_entry));
+    if (tb->entries == NULL) {
+	fprintf(stderr, "Can't malloc tablebase entries\n");
+    }
+
+    /* Remember above, I defined WHITE_KING as 0 and BLACK_KING as 1, so we have to make sure
+     * that these two pieces are where we want them in this list.  Other than that, it's
+     * pretty flexible.
+     */
+
+    tb->num_mobiles = 4;
+    tb->mobile_piece_type[0] = KING;
+    tb->mobile_piece_type[1] = KING;
+    tb->mobile_piece_type[2] = QUEEN;
+    tb->mobile_piece_type[3] = ROOK;
+    tb->mobile_piece_color[0] = WHITE;
+    tb->mobile_piece_color[1] = BLACK;
+    tb->mobile_piece_color[2] = WHITE;
+    tb->mobile_piece_color[3] = BLACK;
 
     return tb;
 }
@@ -443,6 +512,23 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
     return 1;
 }
 
+void invert_colors_of_global_position(global_position_t *global)
+{
+    int square;
+
+    for (square=0; square < NUM_SQUARES; square++) {
+	if ((global->board[square] >= 'A') && (global->board[square] <= 'Z')) {
+	    global->board[square] += 'a' - 'A';
+	} else if ((global->board[square] >= 'a') && (global->board[square] <= 'z')) {
+	    global->board[square] += 'A' - 'a';
+	}
+    }
+    if (global->side_to_move == WHITE)
+	global->side_to_move = BLACK;
+    else
+	global->side_to_move = WHITE;
+}
+
 boolean global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
 {
     int piece;
@@ -594,10 +680,18 @@ inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemat
 	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
 #endif
 
-    if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
-	|| (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
+    if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
 	if (mate_in_count < tb->entries[index].mate_in_cnt) {
-	    fprintf(stderr, "Mate in count dropped in PTM_wins!?\n");
+	    fprintf(stderr, "Mate in count dropped in PTM_wins after propagation done!?\n");
+	}
+    } else if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) {
+	if (mate_in_count < tb->entries[index].mate_in_cnt) {
+	    /* This can happen if we're propagating in from a futurebase, since the propagation runs
+	     * through the futurebase in index order, not mate-in order.
+	     */
+	    /* fprintf(stderr, "Mate in count dropped in PTM_wins!?\n"); */
+	    tb->entries[index].mate_in_cnt = mate_in_count;
+	    tb->entries[index].stalemate_cnt = stalemate_count;
 	}
     } else if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
 	       || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE)) {
@@ -629,8 +723,12 @@ inline void add_one_to_PNTM_wins(tablebase *tb, int32 index, int mate_in_count, 
 	 */
 	tb->entries[index].movecnt --;
 	if (mate_in_count < tb->entries[index].mate_in_cnt) {
-	    if (tb->entries[index].mate_in_cnt != 255)
-		fprintf(stderr, "mate-in count dropped in add_one_to_PNTM_wins?\n");
+	    if (tb->entries[index].mate_in_cnt != 255) {
+		/* As above, this can happen during a futurebase back propagation */
+		/* fprintf(stderr, "mate-in count dropped in add_one_to_PNTM_wins?\n"); */
+		tb->entries[index].mate_in_cnt = mate_in_count;
+		tb->entries[index].stalemate_cnt = stalemate_count;
+	    }
 	}
 	tb->entries[index].mate_in_cnt = mate_in_count;
 
@@ -770,12 +868,17 @@ movementdir[7][8] = {
 
 
 
+char algebraic_notation[64][3];
+
 void init_movements()
 {
     int square, piece, dir, mvmt;
 
     for (square=0; square < NUM_SQUARES; square++) {
 	bitvector[square] = 1ULL << square;
+	algebraic_notation[square][0] = 'a' + square%8;
+	algebraic_notation[square][1] = '1' + square/8;
+	algebraic_notation[square][2] = '\0';
     }
 
     for (piece=0; piece < NUM_PIECES; piece++) {
@@ -1235,7 +1338,8 @@ propagate_moves_from_futurebases()
  * pieces in the current tablebase.
  */
 
-void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase, int captured_piece)
+void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
+						    int invert_colors_of_futurebase, int captured_piece)
 {
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
@@ -1249,6 +1353,9 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
 	if (index_to_global_position(futurebase, future_index, &future_position)) {
+
+	    if (invert_colors_of_futurebase)
+		invert_colors_of_global_position(&future_position);
 
 	    /* Since the position resulted from a capture, we only want to consider future positions
 	     * where the side to move is not the side that captured.
@@ -1313,6 +1420,22 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 			/* XXX might want to look more closely at the stalemate options here */
 
+#if 0
+			if ((!invert_colors_of_futurebase && does_PTM_win(futurebase, future_index))
+			    || (invert_colors_of_futurebase && does_PNTM_win(futurebase, future_index))) {
+
+			    add_one_to_PNTM_wins(tb, current_index,
+						 get_mate_in_count(futurebase, future_index)+1, 0);
+
+			} else if ((invert_colors_of_futurebase && does_PTM_win(futurebase, future_index))
+			    || (!invert_colors_of_futurebase && does_PNTM_win(futurebase, future_index))) {
+
+			    PTM_wins(tb, current_index,
+				     get_mate_in_count(futurebase, future_index)+1, 0);
+
+			}
+#else
+
 			if (does_PTM_win(futurebase, future_index)) {
 
 			    add_one_to_PNTM_wins(tb, current_index,
@@ -1324,6 +1447,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 				     get_mate_in_count(futurebase, future_index)+1, 0);
 
 			}
+
+#endif
 
 		    }
 		}
@@ -1876,32 +2001,87 @@ boolean parse_FEN(char *FEN_string, tablebase *tb, local_position_t *pos)
     return 1;
 }
 
+inline boolean is_position_valid(tablebase *tb, int32 index)
+{
+    return ((tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE) || (tb->entries[index].mate_in_cnt != 0));
+}
+
+void print_score(tablebase *tb, int32 index, char *ptm, char *pntm)
+{
+    switch (tb->entries[index].movecnt) {
+    case ILLEGAL_POSITION:
+	printf("Illegal position\n");
+	break;
+    case PTM_WINS_PROPAGATION_DONE:
+	printf("%s moves and wins in %d\n", ptm, tb->entries[index].mate_in_cnt/2);
+	break;
+    case PNTM_WINS_PROPAGATION_DONE:
+	printf("%s wins in %d\n", pntm, tb->entries[index].mate_in_cnt/2);
+	break;
+    case PTM_WINS_PROPAGATION_NEEDED:
+    case PNTM_WINS_PROPAGATION_NEEDED:
+	printf("Propagation needed!?\n");
+	break;
+    default:
+	printf("Draw\n");
+	break;
+    }
+}
+
 main()
 {
-    tablebase *tb2, *tb3, *tb;
+    /* tablebase *tb2, *tb3, *tb4, *tb5, *tb; */
+    tablebase *tb, *tbs[4];
+
+    bzero(tbs, sizeof(tbs));
 
     init_nalimov_code();
 
     init_movements();
     verify_movements();
 
-    tb2 = create_2piece_tablebase();
-    initialize_tablebase(tb2);
+    tbs[0] = create_2piece_tablebase();
+    initialize_tablebase(tbs[0]);
 
-    tb3 = create_3piece_tablebase();
-    initialize_tablebase(tb3);
+    tbs[1] = create_KQK_tablebase();
+    initialize_tablebase(tbs[1]);
 
-    mainloop(tb2);
-    /* The White Queen is hard-wired in here as piece #2 */
-    propagate_moves_from_mobile_capture_futurebase(tb3, tb2, 2);
-    mainloop(tb3);
+    tbs[2] = create_KRK_tablebase();
+    initialize_tablebase(tbs[2]);
 
-    tb = tb3;
+    mainloop(tbs[0]);
 
-    verify_tablebase_against_nalimov(tb3);
+    /* The White Queen/Rook is hard-wired in here as piece #2 */
+    propagate_moves_from_mobile_capture_futurebase(tbs[1], tbs[0], 0, 2);
+    mainloop(tbs[1]);
+
+    propagate_moves_from_mobile_capture_futurebase(tbs[2], tbs[0], 0, 2);
+    mainloop(tbs[2]);
+
+    tb = tbs[2];
+
+#if 1
+    fprintf(stderr, "Initializing KQKR endgame\n");
+    tbs[3] = create_KQKR_tablebase();
+    initialize_tablebase(tbs[3]);
+
+    fprintf(stderr, "Back propagating from KQK\n");
+    propagate_moves_from_mobile_capture_futurebase(tbs[3], tbs[1], 0, 3);
+    fprintf(stderr, "Back propagating from KRK\n");
+    propagate_moves_from_mobile_capture_futurebase(tbs[3], tbs[2], 1, 2);
+    fprintf(stderr, "Intra-table propagating\n");
+    mainloop(tbs[3]);
+
+    tb = tbs[3];
+#endif
+
+    verify_tablebase_against_nalimov(tbs[2]);
+
+    read_history(".hoffman_history");
 
     while (1) {
-	char buffer[256];
+	/* char buffer[256]; */
+	char *buffer;
 	local_position_t pos;
 	local_position_t nextpos;
 	int piece, dir;
@@ -1909,49 +2089,52 @@ main()
 	global_position_t global_position;
 	int score;
 
-	printf("FEN? ");
-	fgets(buffer, sizeof(buffer), stdin);
+	/* printf("FEN? "); */
+	/* fgets(buffer, sizeof(buffer), stdin); */
+	buffer = readline("FEN? ");
+	if (buffer == NULL) break;
+	if (*buffer == '\0') continue;
+	add_history(buffer);
 
 	if (!parse_FEN(buffer, tb, &pos)) {
 	    printf("Bad FEN\n\n");
 	} else {
 	    int32 index;
+	    int32 index2;
+	    char *ptm, *pntm;
+
+	    /* 'index' is the index of the current position; 'index2' will be the index
+	     * of the various next positions that we'll consider
+	     */
 
 	    index = local_position_to_index(tb, &pos);
 	    printf("Index %d\n", index);
 
+	    if (pos.side_to_move == WHITE) {
+		ptm = "White";
+		pntm = "Black";
+	    } else {
+		ptm = "Black";
+		pntm = "White";
+	    }
+
 	    if (index == -1) {
 		printf("Bad FEN??\n\n");
 	    } else {
-		switch (tb->entries[index].movecnt) {
-		case ILLEGAL_POSITION:
-		    printf("Illegal position\n\n");
-		    break;
-		case PTM_WINS_PROPAGATION_DONE:
-		    printf("PTM wins in %d\n\n", tb->entries[index].mate_in_cnt/2);
-		    break;
-		case PNTM_WINS_PROPAGATION_DONE:
-		    printf("PNTM wins in %d\n\n", tb->entries[index].mate_in_cnt/2);
-		    break;
-		case PTM_WINS_PROPAGATION_NEEDED:
-		case PNTM_WINS_PROPAGATION_NEEDED:
-		    printf("Propagation needed!?\n\n");
-		    break;
-		default:
-		    printf("Draw\n\n");
-		    break;
+		if (is_position_valid(tb, index)) {
+		    print_score(tb, index, ptm, pntm);
 		}
 
-		printf("Nalimov score: ");
+		printf("\nNalimov score: ");
 		if (EGTBProbe(pos.side_to_move == WHITE,
 			      pos.mobile_piece_position[WHITE_KING],
 			      pos.mobile_piece_position[BLACK_KING],
 			      -1, pos.mobile_piece_position[2], -1, &score) == 1) {
 
 		    if (score > 0) {
-			printf("PTM wins in %d\n", ((65536-4)/2)-score+1);
+			printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
 		    } else if (score < 0) {
-			printf("PNTM wins in %d\n", ((65536-4)/2)+score);
+			printf("%s wins in %d\n", pntm, ((65536-4)/2)+score);
 		    } else {
 			printf("DRAW\n");
 		    }
@@ -1968,6 +2151,8 @@ main()
 
 		    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
+			/* XXX probably could do this with 'index' ... */
+
 			parse_FEN(buffer, tb, &pos);
 
 			nextpos = pos;
@@ -1981,62 +2166,110 @@ main()
 			     (movementptr->vector & pos.board_vector) == 0;
 			     movementptr++) {
 
-			    printf("   %d -> %d ", pos.mobile_piece_position[piece], movementptr->square);
-
 			    nextpos.mobile_piece_position[piece] = movementptr->square;
 
-			    index = local_position_to_index(tb, &nextpos);
+			    index2 = local_position_to_index(tb, &nextpos);
 
-			    switch (tb->entries[index].movecnt) {
-			    case ILLEGAL_POSITION:
-				printf("Illegal position\n");
-				break;
-			    case PTM_WINS_PROPAGATION_DONE:
-				printf("PTM wins in %d\n", tb->entries[index].mate_in_cnt/2);
-				break;
-			    case PNTM_WINS_PROPAGATION_DONE:
-				printf("PNTM wins in %d\n", tb->entries[index].mate_in_cnt/2);
-				break;
-			    case PTM_WINS_PROPAGATION_NEEDED:
-			    case PNTM_WINS_PROPAGATION_NEEDED:
-				printf("Propagation needed!?\n");
-				break;
-			    default:
-				printf("Draw\n");
-				break;
+			    /* This is the next move, so we reverse the sense of PTM and PNTM */
+
+			    if (is_position_valid(tb, index2)) {
+				printf("   %s%s ",
+				       algebraic_notation[pos.mobile_piece_position[piece]],
+				       algebraic_notation[movementptr->square]);
+				print_score(tb, index2, pntm, ptm);
 			    }
 
 			}
+
+			/* Now we consider possible captures */
 
 			index_to_global_position(tb, index, &global_position);
 
 			if (pos.side_to_move == WHITE) {
 			    if ((movementptr->vector & pos.white_vector) == 0) {
 
-				printf ("   %d x %d ", pos.mobile_piece_position[piece], movementptr->square);
-				if (movementptr->square ==
-				    pos.mobile_piece_position[BLACK_KING]) {
-				    printf("MATE\n");
+				if (movementptr->square == pos.mobile_piece_position[BLACK_KING]) {
+				    /* printf("MATE\n"); */
+				} else {
+				    tablebase **tbp;
+				    global_position_t reversed_position;
+
+				    global_position.board[pos.mobile_piece_position[piece]] = 0;
+				    place_piece_in_global_position(&global_position, movementptr->square,
+								   tb->mobile_piece_color[piece],
+								   tb->mobile_piece_type[piece]);
+
+				    reversed_position = global_position;
+				    invert_colors_of_global_position(&reversed_position);
+
+				    for (tbp=tbs; tbp<tbs+(sizeof(tbs)/sizeof(tablebase *)); tbp++) {
+					if (*tbp == NULL) break;
+					index2 = global_position_to_index(*tbp, &global_position);
+					if (index2 != -1) {
+					    if (is_position_valid(*tbp, index2)) {
+						printf ("   %sx%s ",
+							algebraic_notation[pos.mobile_piece_position[piece]],
+							algebraic_notation[movementptr->square]);
+						print_score(*tbp, index2, pntm, ptm);
+					    }
+					    break;
+					}
+					index2 = global_position_to_index(*tbp, &reversed_position);
+					if (index2 != -1) {
+					    if (is_position_valid(*tbp, index2)) {
+						printf ("   %sx%s ",
+							algebraic_notation[pos.mobile_piece_position[piece]],
+							algebraic_notation[movementptr->square]);
+						print_score(*tbp, index2, pntm, ptm);
+					    }
+					    break;
+					}
+				    }
+				    if (tbp == tbs+sizeof(tbs)) printf("!!?!\n");
 				}
 			    }
 			} else {
 			    if ((movementptr->vector & pos.black_vector) == 0) {
 
-				printf ("   %d x %d ", pos.mobile_piece_position[piece], movementptr->square);
-				if (movementptr->square ==
-				    pos.mobile_piece_position[WHITE_KING]) {
-				    printf("MATE\n");
+				if (movementptr->square == pos.mobile_piece_position[WHITE_KING]) {
+				    /* printf("MATE\n"); */
 				} else {
 				    int32 index2;
+				    tablebase **tbp;
+				    global_position_t reversed_position;
+
 				    global_position.board[pos.mobile_piece_position[piece]] = 0;
 				    place_piece_in_global_position(&global_position, movementptr->square,
 								   tb->mobile_piece_color[piece],
 								   tb->mobile_piece_type[piece]);
-				    index2 = global_position_to_index(tb2, &global_position);
-				    if (index2 == -1)
-					printf("!!?!\n");
-				    else
-					printf("[%d]\n", tb2->entries[index2].movecnt);
+
+				    reversed_position = global_position;
+				    invert_colors_of_global_position(&reversed_position);
+
+				    for (tbp=tbs; tbp<tbs+(sizeof(tbs)/sizeof(tablebase *)); tbp++) {
+					if (*tbp == NULL) break;
+					index2 = global_position_to_index(*tbp, &global_position);
+					if (index2 != -1) {
+					    if (is_position_valid(*tbp, index2)) {
+						printf ("   %sx%s ",
+							algebraic_notation[pos.mobile_piece_position[piece]],
+							algebraic_notation[movementptr->square]);
+						print_score(*tbp, index2, pntm, ptm);
+					    }
+					    break;
+					}
+					index2 = global_position_to_index(*tbp, &reversed_position);
+					if (index2 != -1) {
+					    if (is_position_valid(*tbp, index2)) {
+						printf ("   %sx%s ",
+							algebraic_notation[pos.mobile_piece_position[piece]],
+							algebraic_notation[movementptr->square]);
+						print_score(*tbp, index2, pntm, ptm);
+					    }
+					    break;
+					}
+				    }
+				    if (tbp == tbs+sizeof(tbs)) printf("!!?!\n");
 				}
 			    }
 			}
@@ -2047,4 +2280,6 @@ main()
 	    }
 	}
     }
+    write_history(".hoffman_history");
+    printf("\n");
 }
