@@ -361,6 +361,11 @@ tablebase * create_KQKR_tablebase(void)
     return tb;
 }
 
+inline int square(int row, int col)
+{
+    return (col + row*8);
+}
+
 int32 max_index(tablebase *tb)
 {
     return (2<<(6*tb->num_mobiles)) - 1;
@@ -636,6 +641,11 @@ inline boolean needs_propagation(tablebase *tb, int32 index)
 	|| (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED);
 }
 
+inline boolean is_position_valid(tablebase *tb, int32 index)
+{
+    return ((tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE) || (tb->entries[index].mate_in_cnt != 0));
+}
+
 inline void mark_propagated(tablebase *tb, int32 index)
 {
     if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) {
@@ -670,6 +680,75 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
  */
 
 /* #define DEBUG_MOVE 42923 */
+
+/* Five possible ways we can initialize an index for a position:
+ *  - it's illegal
+ *  - white's mated (black is to move)
+ *  - black's mated (white is to move)
+ *  - stalemate
+ *  - any other position, with 'movecnt' possible moves out the position
+ */
+
+void initialize_index_as_illegal(tablebase *tb, int32 index)
+{
+    tb->entries[index].movecnt = ILLEGAL_POSITION;
+    tb->entries[index].mate_in_cnt = 255;
+    tb->entries[index].stalemate_cnt = 255;
+}
+
+void initialize_index_with_white_mated(tablebase *tb, int32 index)
+{
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) printf("initialize_index_with_white_mated; index=%d\n", index);
+#endif
+
+    if (WHITE_TO_MOVE(index)) {
+	fprintf(stderr, "initialize_index_with_white_mated in a white to move position!\n");
+    }
+    tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
+    tb->entries[index].mate_in_cnt = 0;
+    tb->entries[index].stalemate_cnt = 0;
+}
+
+void initialize_index_with_black_mated(tablebase *tb, int32 index)
+{
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) printf("initialize_index_with_black_mated; index=%d\n", index);
+#endif
+
+    if (BLACK_TO_MOVE(index)) {
+	fprintf(stderr, "initialize_index_with_black_mated in a black to move position!\n");
+    }
+    tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
+    tb->entries[index].mate_in_cnt = 0;
+    tb->entries[index].stalemate_cnt = 0;
+}
+
+void initialize_index_with_stalemate(tablebase *tb, int32 index)
+{
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) printf("initialize_index_with_stalemate; index=%d\n", index);
+#endif
+
+    tb->entries[index].movecnt = 251; /* use this as stalemate for now */
+    tb->entries[index].mate_in_cnt = 255;
+    tb->entries[index].stalemate_cnt = 0;
+}
+
+void initialize_index_with_movecnt(tablebase *tb, int32 index, int movecnt)
+{
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) printf("initialize_index_with_movecnt; index=%d movecnt=%d\n", index, movecnt);
+#endif
+
+    tb->entries[index].movecnt = movecnt;
+    tb->entries[index].mate_in_cnt = 255;
+    tb->entries[index].stalemate_cnt = 255;
+}
 
 inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
 {
@@ -753,75 +832,6 @@ inline void add_one_to_PNTM_wins(tablebase *tb, int32 index, int mate_in_count, 
 	    tb->entries[index].stalemate_cnt = stalemate_count;
 	}
     }
-}
-
-/* Five possible ways we can initialize an index for a position:
- *  - it's illegal
- *  - white's mated (black is to move)
- *  - black's mated (white is to move)
- *  - stalemate
- *  - any other position, with 'movecnt' possible moves out the position
- */
-
-void initialize_index_as_illegal(tablebase *tb, int32 index)
-{
-    tb->entries[index].movecnt = ILLEGAL_POSITION;
-    tb->entries[index].mate_in_cnt = 255;
-    tb->entries[index].stalemate_cnt = 255;
-}
-
-void initialize_index_with_white_mated(tablebase *tb, int32 index)
-{
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_with_white_mated; index=%d\n", index);
-#endif
-
-    if (WHITE_TO_MOVE(index)) {
-	fprintf(stderr, "initialize_index_with_white_mated in a white to move position!\n");
-    }
-    tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
-    tb->entries[index].mate_in_cnt = 0;
-    tb->entries[index].stalemate_cnt = 0;
-}
-
-void initialize_index_with_black_mated(tablebase *tb, int32 index)
-{
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_with_black_mated; index=%d\n", index);
-#endif
-
-    if (BLACK_TO_MOVE(index)) {
-	fprintf(stderr, "initialize_index_with_black_mated in a black to move position!\n");
-    }
-    tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
-    tb->entries[index].mate_in_cnt = 0;
-    tb->entries[index].stalemate_cnt = 0;
-}
-
-void initialize_index_with_stalemate(tablebase *tb, int32 index)
-{
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_with_stalemate; index=%d\n", index);
-#endif
-
-    tb->entries[index].movecnt = 251; /* use this as stalemate for now */
-    tb->entries[index].mate_in_cnt = 255;
-    tb->entries[index].stalemate_cnt = 0;
-}
-
-void initialize_index_with_movecnt(tablebase *tb, int32 index, int movecnt)
-{
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_with_movecnt; index=%d movecnt=%d\n", index, movecnt);
-#endif
-
-    tb->entries[index].movecnt = movecnt;
-    tb->entries[index].mate_in_cnt = 255;
-    tb->entries[index].stalemate_cnt = 255;
 }
 
 
@@ -1814,7 +1824,7 @@ char * global_position_to_FEN(global_position_t *position)
     return buffer;
 }
 
-void verify_tablebase_against_nalimov(tablebase *tb)
+void verify_KRK_tablebase_against_nalimov(tablebase *tb)
 {
     int32 index;
     int32 max_index_static = max_index(tb);
@@ -1824,14 +1834,7 @@ void verify_tablebase_against_nalimov(tablebase *tb)
 
     for (index = 0; index < max_index_static; index++) {
 	if (index_to_local_position(tb, index, &pos)) {
-	    if ((pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] + 1)
-		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] - 1)
-		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] + 8)
-		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] - 8)
-		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] + 9)
-		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] - 9)
-		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] + 7)
-		|| (pos.mobile_piece_position[WHITE_KING] == pos.mobile_piece_position[BLACK_KING] - 7)) {
+	    if (! is_position_valid(tb, index)) {
 
 		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
 
@@ -1839,6 +1842,68 @@ void verify_tablebase_against_nalimov(tablebase *tb)
 			  pos.mobile_piece_position[WHITE_KING],
 			  pos.mobile_piece_position[BLACK_KING],
 			  -1, pos.mobile_piece_position[2], -1, &score) == 1) {
+		if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
+		    /* Make sure mate_in_cnt is greater than zero here, since the Nalimov tablebase
+		     * doesn't appear to handle illegal positions.  PTM wins in 0 would mean that
+		     * PNTM is in check, so the king can just be captured.
+		     */
+		    if (tb->entries[index].mate_in_cnt > 0) {
+			if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)-score+1) {
+			    index_to_global_position(tb, index, &global);
+			    printf("%s (%d): Nalimov says %d (mate in %d), but we say mate in %d\n",
+				   global_position_to_FEN(&global), index,
+				   score, ((65536-4)/2)-score+1, tb->entries[index].mate_in_cnt/2);
+			}
+		    }
+		} else if (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE) {
+		    if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)+score) {
+			index_to_global_position(tb, index, &global);
+			printf("%s (%d): Nalimov says %d (%d), but we say mated in %d\n",
+			       global_position_to_FEN(&global), index,
+			       score, ((65536-4)/2)+score, tb->entries[index].mate_in_cnt/2);
+		    }
+		} else {
+		    if (score != 0) {
+			index_to_global_position(tb, index, &global);
+			printf("%s (%d): Nalimov says %d (%d), but we say draw\n",
+			       global_position_to_FEN(&global), index,
+			       score, ((65536-4)/2)+score);
+		    }
+		}
+	    } else {
+		if (((tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE)
+		     && (tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE))
+		    || tb->entries[index].mate_in_cnt != 0) {
+		    index_to_global_position(tb, index, &global);
+		    fprintf(stderr, "%s (%d): Nalimov says illegal, but we say %d %d\n",
+			    global_position_to_FEN(&global), index,
+			    tb->entries[index].movecnt, tb->entries[index].mate_in_cnt);
+		} else {
+		    /* printf("Illegal OK\n"); */
+		}
+	    }
+	}
+    }
+}
+
+void verify_KQKR_tablebase_against_nalimov(tablebase *tb)
+{
+    int32 index;
+    int32 max_index_static = max_index(tb);
+    local_position_t pos;
+    global_position_t global;
+    int score;
+
+    for (index = 0; index < max_index_static; index++) {
+	if (index_to_local_position(tb, index, &pos)) {
+	    if (! is_position_valid(tb, index)) {
+
+		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
+
+	    } else if (EGTBProbe(pos.side_to_move == WHITE,
+			  pos.mobile_piece_position[WHITE_KING],
+			  pos.mobile_piece_position[BLACK_KING],
+			  pos.mobile_piece_position[2], -1, pos.mobile_piece_position[3], &score) == 1) {
 		if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
 		    /* Make sure mate_in_cnt is greater than zero here, since the Nalimov tablebase
 		     * doesn't appear to handle illegal positions.  PTM wins in 0 would mean that
@@ -1908,11 +1973,6 @@ boolean place_piece_in_global_position(global_position_t *position, int square, 
 {
     position->board[square] = global_pieces[color][type];
     return 1;
-}
-
-inline int square(int row, int col)
-{
-    return (col + row*8);
 }
 
 boolean parse_FEN_to_local_position(char *FEN_string, tablebase *tb, local_position_t *pos)
@@ -2087,11 +2147,6 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
     return 1;
 }
 
-inline boolean is_position_valid(tablebase *tb, int32 index)
-{
-    return ((tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE) || (tb->entries[index].mate_in_cnt != 0));
-}
-
 /* Search an array of tablebases for a global position.  Array should be terminated with a NULL ptr.
  */
 
@@ -2136,7 +2191,6 @@ void print_score(tablebase *tb, int32 index, char *ptm, char *pntm)
 
 main()
 {
-    /* tablebase *tb2, *tb3, *tb4, *tb5, *tb; */
     /* Make sure this tablebase array is one bigger than we need, so it can be NULL terminated */
     tablebase *tb, *tbs[5];
 
@@ -2165,8 +2219,6 @@ main()
     propagate_moves_from_mobile_capture_futurebase(tbs[2], tbs[0], 0, 2);
     mainloop(tbs[2]);
 
-    tb = tbs[2];
-
 #if 1
     fprintf(stderr, "Initializing KQKR endgame\n");
     tbs[3] = create_KQKR_tablebase();
@@ -2178,11 +2230,10 @@ main()
     propagate_moves_from_mobile_capture_futurebase(tbs[3], tbs[2], 1, 2);
     fprintf(stderr, "Intra-table propagating\n");
     mainloop(tbs[3]);
-
-    tb = tbs[3];
 #endif
 
-    verify_tablebase_against_nalimov(tbs[2]);
+    verify_KRK_tablebase_against_nalimov(tbs[2]);
+    verify_KQKR_tablebase_against_nalimov(tbs[3]);
 
     read_history(".hoffman_history");
 
@@ -2232,24 +2283,25 @@ main()
 		print_score(tb, index, ptm, pntm);
 	    }
 
-#if 0
-	    /* XXX Change this to use global_position */
+#if 1
+	    if (tb == tbs[3]) {
+		global_position_to_local_position(tb, &global_position, &pos);
+		printf("\nNalimov score: ");
+		if (EGTBProbe(pos.side_to_move == WHITE,
+			      pos.mobile_piece_position[WHITE_KING],
+			      pos.mobile_piece_position[BLACK_KING],
+			      pos.mobile_piece_position[2], -1, pos.mobile_piece_position[3], &score) == 1) {
 
-	    printf("\nNalimov score: ");
-	    if (EGTBProbe(pos.side_to_move == WHITE,
-			  pos.mobile_piece_position[WHITE_KING],
-			  pos.mobile_piece_position[BLACK_KING],
-			  -1, pos.mobile_piece_position[2], -1, &score) == 1) {
-
-		if (score > 0) {
-		    printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
-		} else if (score < 0) {
-		    printf("%s wins in %d\n", pntm, ((65536-4)/2)+score);
+		    if (score > 0) {
+			printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
+		    } else if (score < 0) {
+			printf("%s wins in %d\n", pntm, ((65536-4)/2)+score);
+		    } else {
+			printf("DRAW\n");
+		    }
 		} else {
-		    printf("DRAW\n");
+		    printf("ILLEGAL POSITION\n");
 		}
-	    } else {
-		printf("ILLEGAL POSITION\n");
 	    }
 #endif
 
