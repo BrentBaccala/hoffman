@@ -132,6 +132,11 @@ typedef struct {
 int64 bitvector[64];
 int64 allones_bitvector = 0xffffffffffffffffLL;
 
+/* I'm not sure which one of these will be faster... */
+
+/* #define BITVECTOR(square) bitvector[square] */
+#define BITVECTOR(square) (1ULL << (square))
+
 /* tablebase - the data structure used to hold tablebases
  *
  * WHITE and BLACK are also used for the side_to_move variable in the position type above
@@ -477,14 +482,14 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 
     for (piece = 0; piece < tb->num_mobiles; piece++) {
 	p->mobile_piece_position[piece] = index & 63;
-	if (p->board_vector & bitvector[index & 63]) {
+	if (p->board_vector & BITVECTOR(index & 63)) {
 	    return 0;
 	}
-	p->board_vector |= bitvector[index & 63];
+	p->board_vector |= BITVECTOR(index & 63);
 	if (tb->mobile_piece_color[piece] == WHITE) {
-	    p->white_vector |= bitvector[index & 63];
+	    p->white_vector |= BITVECTOR(index & 63);
 	} else {
-	    p->black_vector |= bitvector[index & 63];
+	    p->black_vector |= BITVECTOR(index & 63);
 	}
 	index >>= 6;
     }
@@ -509,7 +514,7 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
 	position->board[index & 63]
 	    = global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]];
 
-	position->board_vector |= bitvector[index & 63];
+	position->board_vector |= BITVECTOR(index & 63);
 
 	index >>= 6;
     }
@@ -565,11 +570,11 @@ boolean global_position_to_local_position(tablebase *tb, global_position_t *glob
 		    && !(pieces_processed_bitvector & (1 << piece))) {
 
 		    local->mobile_piece_position[piece] = square;
-		    local->board_vector |= bitvector[square];
+		    local->board_vector |= BITVECTOR(square);
 		    if (tb->mobile_piece_color[piece] == WHITE)
-			local->white_vector |= bitvector[square];
+			local->white_vector |= BITVECTOR(square);
 		    else
-			local->black_vector |= bitvector[square];
+			local->black_vector |= BITVECTOR(square);
 		    pieces_processed_bitvector |= (1 << piece);
 		    break;
 		}
@@ -924,7 +929,7 @@ void init_movements()
 			if (RIGHT_MOVEMENT_POSSIBLE) {
 			    current_square++;
 			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
+			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
 			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
@@ -934,7 +939,7 @@ void init_movements()
 			if (LEFT_MOVEMENT_POSSIBLE) {
 			    current_square--;
 			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
+			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
 			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
@@ -944,7 +949,7 @@ void init_movements()
 			if (UP_MOVEMENT_POSSIBLE) {
 			    current_square+=8;
 			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
+			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
 			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
@@ -954,7 +959,7 @@ void init_movements()
 			if (DOWN_MOVEMENT_POSSIBLE) {
 			    current_square-=8;
 			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
+			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
 			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
@@ -965,7 +970,7 @@ void init_movements()
 			    current_square+=8;
 			    current_square--;
 			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
+			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
 			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
@@ -976,7 +981,7 @@ void init_movements()
 			    current_square+=8;
 			    current_square++;
 			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
+			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
 			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
@@ -987,7 +992,7 @@ void init_movements()
 			    current_square-=8;
 			    current_square--;
 			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
+			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
 			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
@@ -998,7 +1003,7 @@ void init_movements()
 			    current_square-=8;
 			    current_square++;
 			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = bitvector[current_square];
+			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
 			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
@@ -1010,7 +1015,7 @@ void init_movements()
 			case 0:
 			    if (RIGHT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
 				movements[piece][square][dir][0].square = square + 2 + 8;
-				movements[piece][square][dir][0].vector = bitvector[square + 2 + 8];
+				movements[piece][square][dir][0].vector = BITVECTOR(square + 2 + 8);
 				movements[piece][square][dir][1].square = -1;
 				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
@@ -1021,7 +1026,7 @@ void init_movements()
 			case 1:
 			    if (RIGHT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
 				movements[piece][square][dir][0].square = square + 2 - 8;
-				movements[piece][square][dir][0].vector = bitvector[square + 2 - 8];
+				movements[piece][square][dir][0].vector = BITVECTOR(square + 2 - 8);
 				movements[piece][square][dir][1].square = -1;
 				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
@@ -1032,7 +1037,7 @@ void init_movements()
 			case 2:
 			    if (LEFT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
 				movements[piece][square][dir][0].square = square - 2 + 8;
-				movements[piece][square][dir][0].vector = bitvector[square - 2 + 8];
+				movements[piece][square][dir][0].vector = BITVECTOR(square - 2 + 8);
 				movements[piece][square][dir][1].square = -1;
 				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
@@ -1043,7 +1048,7 @@ void init_movements()
 			case 3:
 			    if (LEFT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
 				movements[piece][square][dir][0].square = square - 2 - 8;
-				movements[piece][square][dir][0].vector = bitvector[square - 2 - 8];
+				movements[piece][square][dir][0].vector = BITVECTOR(square - 2 - 8);
 				movements[piece][square][dir][1].square = -1;
 				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
@@ -1054,7 +1059,7 @@ void init_movements()
 			case 4:
 			    if (RIGHT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
 				movements[piece][square][dir][0].square = square + 1 + 16;
-				movements[piece][square][dir][0].vector = bitvector[square + 1 + 16];
+				movements[piece][square][dir][0].vector = BITVECTOR(square + 1 + 16);
 				movements[piece][square][dir][1].square = -1;
 				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
@@ -1065,7 +1070,7 @@ void init_movements()
 			case 5:
 			    if (RIGHT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
 				movements[piece][square][dir][0].square = square + 1 - 16;
-				movements[piece][square][dir][0].vector = bitvector[square + 1 - 16];
+				movements[piece][square][dir][0].vector = BITVECTOR(square + 1 - 16);
 				movements[piece][square][dir][1].square = -1;
 				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
@@ -1076,7 +1081,7 @@ void init_movements()
 			case 6:
 			    if (LEFT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
 				movements[piece][square][dir][0].square = square - 1 + 16;
-				movements[piece][square][dir][0].vector = bitvector[square - 1 + 16];
+				movements[piece][square][dir][0].vector = BITVECTOR(square - 1 + 16);
 				movements[piece][square][dir][1].square = -1;
 				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
@@ -1087,7 +1092,7 @@ void init_movements()
 			case 7:
 			    if (LEFT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
 				movements[piece][square][dir][0].square = square - 1 - 16;
-				movements[piece][square][dir][0].vector = bitvector[square - 1 - 16];
+				movements[piece][square][dir][0].vector = BITVECTOR(square - 1 - 16);
 				movements[piece][square][dir][1].square = -1;
 				movements[piece][square][dir][1].vector = allones_bitvector;
 			    } else {
@@ -1147,7 +1152,7 @@ void verify_movements()
 		if (squareA == squareB) {
 		    for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
 			for (movementptr = movements[piece][squareA][dir];
-			     (movementptr->vector & bitvector[squareB]) == 0;
+			     (movementptr->vector & BITVECTOR(squareB)) == 0;
 			     movementptr++) ;
 			if ((movementptr->square != -1) || (movementptr->vector != allones_bitvector)) {
 			    fprintf(stderr, "Self movement possible!? %s %d %d\n",
@@ -1160,7 +1165,7 @@ void verify_movements()
 		for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
 
 		    for (movementptr = movements[piece][squareA][dir];
-			 (movementptr->vector & bitvector[squareB]) == 0;
+			 (movementptr->vector & BITVECTOR(squareB)) == 0;
 			 movementptr++) {
 			if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
 			    fprintf(stderr, "Bad movement square: %s %d %d %d\n",
@@ -1197,7 +1202,7 @@ void verify_movements()
 		for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
 
 		    for (movementptr = movements[piece][squareB][dir];
-			 (movementptr->vector & bitvector[squareA]) == 0;
+			 (movementptr->vector & BITVECTOR(squareA)) == 0;
 			 movementptr++) ;
 
 		    if (movementptr->square != -1) reverse_movement_possible=1;
@@ -1559,14 +1564,14 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		 * board vectors.
 		 */
 #if NEEDED
-		current_position.board_vector &= ~bitvector[parent_position.mobile_piece_position[piece]];
-		current_position.board_vector |= bitvector[movementptr->square];
+		current_position.board_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
+		current_position.board_vector |= BITVECTOR(movementptr->square);
 		if (tb->mobile_piece_color[piece] == WHITE) {
-		    current_position.white_vector &= ~bitvector[parent_position.mobile_piece_position[piece]];
-		    current_position.white_vector |= bitvector[movementptr->square];
+		    current_position.white_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
+		    current_position.white_vector |= BITVECTOR(movementptr->square);
 		} else {
-		    current_position.black_vector &= ~bitvector[parent_position.mobile_piece_position[piece]];
-		    current_position.black_vector |= bitvector[movementptr->square];
+		    current_position.black_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
+		    current_position.black_vector |= BITVECTOR(movementptr->square);
 		}
 #endif
 
@@ -1943,14 +1948,14 @@ boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int 
 {
     int piece;
 
-    if (pos->board_vector & bitvector[square]) return 0;
+    if (pos->board_vector & BITVECTOR(square)) return 0;
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
 	if ((tb->mobile_piece_type[piece] == type) && (tb->mobile_piece_color[piece] == color)) {
 	    pos->mobile_piece_position[piece] = square;
-	    pos->board_vector |= bitvector[square];
-	    if (color == WHITE) pos->white_vector |= bitvector[square];
-	    else pos->black_vector |= bitvector[square];
+	    pos->board_vector |= BITVECTOR(square);
+	    if (color == WHITE) pos->white_vector |= BITVECTOR(square);
+	    else pos->black_vector |= BITVECTOR(square);
 	    return 1;
 	}
     }
