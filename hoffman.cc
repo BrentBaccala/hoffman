@@ -32,6 +32,12 @@
 #include <stdlib.h>
 #include <string.h>
 
+/* The GNU readline library, used for prompting the user during the probe code.  By defining
+ * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
+ * compiler's command line, rather than a system-wide /usr/include/readline.  I use it this way
+ * simply because I don't have the readline include files installed system-wide on my machine.
+ */
+
 #define READLINE_LIBRARY
 #include "readline.h"
 
@@ -2141,6 +2147,65 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
     return 1;
 }
 
+/* This routine looks at "movestr" to try and figure out if it is a valid move from this global
+ * position.  If so, it changes the global position to reflect the move and returns true.
+ * Otherwise, it leaves the global position alone and returns false.
+ */
+
+boolean parse_move_in_global_position(char *movestr, global_position_t *global)
+{
+    int origin_square, destination_square;
+    int is_capture = 0;
+
+    if (movestr[0] >= 'a' && movestr[0] <= 'h' && movestr[1] >= '1' && movestr[1] <= '8') {
+	origin_square = movestr[0]-'a' + (movestr[1]-'1')*8;
+	movestr += 2;
+    } else {
+	return 0;
+    }
+
+    if (movestr[0] == 'x') {
+	is_capture = 1;
+	movestr ++;
+    }
+
+    if (movestr[0] >= 'a' && movestr[0] <= 'h' && movestr[1] >= '1' && movestr[1] <= '8') {
+	destination_square = movestr[0]-'a' + (movestr[1]-'1')*8;
+	movestr += 2;
+    } else {
+	return 0;
+    }
+
+    if (!(global->board[origin_square] >= 'A' && global->board[origin_square] <= 'Z')
+	&& global->side_to_move == WHITE)
+	return 0;
+
+    if (!(global->board[origin_square] >= 'a' && global->board[origin_square] <= 'z')
+	&& global->side_to_move == BLACK)
+	return 0;
+
+    if (global->board[destination_square] >= 'A' && !is_capture) return 0;
+
+    if (!(global->board[destination_square] >= 'A' && global->board[destination_square] <= 'Z')
+	&& is_capture && global->side_to_move == BLACK)
+	return 0;
+
+    if (!(global->board[destination_square] >= 'a' && global->board[destination_square] <= 'z')
+	&& is_capture && global->side_to_move == WHITE)
+	return 0;
+
+    global->board[destination_square] = global->board[origin_square];
+    global->board[origin_square] = 0;
+    if (global->side_to_move == WHITE)
+	global->side_to_move = BLACK;
+    else
+	global->side_to_move = WHITE;
+
+    /* XXX doesn't modify board vector */
+
+    return 1;
+}
+
 /* Search an array of tablebases for a global position.  Array should be terminated with a NULL ptr.
  */
 
@@ -2187,6 +2252,8 @@ main()
 {
     /* Make sure this tablebase array is one bigger than we need, so it can be NULL terminated */
     tablebase *tb, *tbs[5];
+    global_position_t global_position;
+    boolean global_position_valid = 0;
 
     bzero(tbs, sizeof(tbs));
 
@@ -2213,7 +2280,7 @@ main()
     propagate_moves_from_mobile_capture_futurebase(tbs[2], tbs[0], 0, 2);
     mainloop(tbs[2]);
 
-#if 1
+#if 0
     fprintf(stderr, "Initializing KQKR endgame\n");
     tbs[3] = create_KQKR_tablebase();
     initialize_tablebase(tbs[3]);
@@ -2232,27 +2299,27 @@ main()
     read_history(".hoffman_history");
 
     while (1) {
-	/* char buffer[256]; */
 	char *buffer;
 	local_position_t pos;
 	local_position_t nextpos;
 	int piece, dir;
 	struct movement * movementptr;
-	global_position_t global_position;
-	boolean global_position_valid = 0;
 	global_position_t global_capture_position;
 	int score;
 	int32 index;
 
-	buffer = readline("FEN? ");
+	buffer = readline(global_position_valid ? "FEN or move? " : "FEN? ");
 	if (buffer == NULL) break;
 	if (*buffer == '\0') continue;
 	add_history(buffer);
 
-	if (!parse_FEN_to_global_position(buffer, &global_position)) {
-	    printf("Bad FEN\n\n");
+	if (!(global_position_valid && parse_move_in_global_position(buffer, &global_position))
+	    && !parse_FEN_to_global_position(buffer, &global_position)) {
+	    printf(global_position_valid ? "Bad FEN or move\n\n" : "Bad FEN\n\n");
 	    continue;
 	}
+
+	global_position_valid = 1;
 
 	if (search_tablebases_for_global_position(tbs, &global_position, &tb, &index)) {
 
@@ -2263,6 +2330,7 @@ main()
 	     * of the various next positions that we'll consider
 	     */
 
+	    printf("FEN %s\n", global_position_to_FEN(&global_position));
 	    printf("Index %d\n", index);
 
 	    if (global_position.side_to_move == WHITE) {
@@ -2310,9 +2378,7 @@ main()
 
 		for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
-		    /* XXX probably could do this with 'index' ... */
-
-		    parse_FEN_to_local_position(buffer, tb, &pos);
+		    index_to_local_position(tb, index, &pos);
 
 		    nextpos = pos;
 
