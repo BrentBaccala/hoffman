@@ -517,6 +517,16 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
     return 1;
 }
 
+/* invert_colors_of_global_position - just what its name implies
+ *
+ * We use this when propagating from a futurebase built for the opposite colors, say a K+R vs K
+ * endgame that we now want to propagate into a game where the rook is black, not white.
+ *
+ * Actually, this only works (in its present form) if no pawns are present.  If there are pawns in
+ * the game, this function will also have to reflect the board around a horizontal centerline,
+ * right?
+ */
+
 void invert_colors_of_global_position(global_position_t *global)
 {
     int square;
@@ -1346,6 +1356,15 @@ propagate_moves_from_futurebases()
 
 /* Propagate moves from a futurebase that resulted from capturing one of the mobile
  * pieces in the current tablebase.
+ *
+ * We use global positions here, even though they're slower than local positions, because we're
+ * translating between two different tablebases.  The cleanest (but not necessarily fastest) way to
+ * do this is with global positions.
+ *
+ * I'm thinking of changing that "invert_colors_of_futurebase" flag to be a subroutine that gets
+ * passed in.  It could be a pointer to invert_colors_of_global_position to do what it does now.  Or
+ * it could be a "reflect board around vertical axis" to move a d4 pawn to e4.  Also see my comments
+ * on invert_colors_of_global position.
  */
 
 void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
@@ -1383,6 +1402,15 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		if (tb->mobile_piece_color[piece] == tb->mobile_piece_color[captured_piece])
 		    continue;
 
+		/* Take the global position from the futurebase and translate it into a local
+		 * position for the current tablebase.  There should be one piece missing
+		 * from the local position - the piece that was captured.
+		 *
+		 * Probably could move this code outside of the for loop, and just copy the local
+		 * position.  But we don't have that many mobile pieces, so it's probably not a huge
+		 * performance hit anyway.
+		 */
+
 		global_position_to_local_position(tb, &future_position, &current_position);
 
 		if (future_position.side_to_move == WHITE)
@@ -1396,6 +1424,11 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 		/* Place the captured piece back into the position on the square from which
 		 * the moving piece started (i.e, ended) its move.
+		 *
+		 * Probably should use place_piece_in_local_position here, but we don't.  The board
+		 * vectors don't get updated, but that doesn't matter since we're never going to
+		 * look at the square the captured piece is on as a possible origin square for the
+		 * capturing piece.
 		 */
 
 		current_position.mobile_piece_position[captured_piece]
@@ -1430,22 +1463,6 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 			/* XXX might want to look more closely at the stalemate options here */
 
-#if 0
-			if ((!invert_colors_of_futurebase && does_PTM_win(futurebase, future_index))
-			    || (invert_colors_of_futurebase && does_PNTM_win(futurebase, future_index))) {
-
-			    add_one_to_PNTM_wins(tb, current_index,
-						 get_mate_in_count(futurebase, future_index)+1, 0);
-
-			} else if ((invert_colors_of_futurebase && does_PTM_win(futurebase, future_index))
-			    || (!invert_colors_of_futurebase && does_PNTM_win(futurebase, future_index))) {
-
-			    PTM_wins(tb, current_index,
-				     get_mate_in_count(futurebase, future_index)+1, 0);
-
-			}
-#else
-
 			if (does_PTM_win(futurebase, future_index)) {
 
 			    add_one_to_PNTM_wins(tb, current_index,
@@ -1457,8 +1474,6 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 				     get_mate_in_count(futurebase, future_index)+1, 0);
 
 			}
-
-#endif
 
 		    }
 		}
@@ -1725,33 +1740,7 @@ void mainloop(tablebase *tb)
 	moves_to_win ++;
     }
 
-    /* ...then we look for forced draws */
-
-#if 0
-    progress_made = 1;
-
-    while (progress_made) {
-	for (index=0; index < max_index_static; index++) {
-	    if (needs_propagation(tb, index)
-		&& (does_white_draw(tb, index) || does_black_draw(tb, index))) {
-		propagate_move_within_table(tb, index);
-		progress_made = 1;
-	    }
-	}
-    }
-#endif
-
-    /* Everything else allows both sides to draw with best play.
-     *
-     * Perhaps this seems a bit strange.  After all, if white can force a draw but not a win, then
-     * can't black force a draw, too?  So what's the difference between the forced draws we
-     * calculated above and a draw by repetitions?  You have to keep movement restrictions in mind.
-     * If your pieces are restricted in how they can move, then the computer might only be able to
-     * tell you that you can force a draw, even though you might be able to force a win.
-     *
-     * Actually, even this doesn't make complete sense.  Maybe we don't need that forced
-     * draw code at all.  Maybe this is all we need.
-     */
+    /* Everything else allows both sides to draw with best play. */
 
     /* flag_everything_else_drawn_by_repetition(); */
 
@@ -2232,8 +2221,8 @@ main()
     mainloop(tbs[3]);
 #endif
 
-    verify_KRK_tablebase_against_nalimov(tbs[2]);
-    verify_KQKR_tablebase_against_nalimov(tbs[3]);
+    /* verify_KRK_tablebase_against_nalimov(tbs[2]); */
+    /* verify_KQKR_tablebase_against_nalimov(tbs[3]); */
 
     read_history(".hoffman_history");
 
