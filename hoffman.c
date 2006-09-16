@@ -189,17 +189,8 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P', 'E'
  *
  * We also need a mate-in count and a stalemate (conversion) count.
  *
- * movecnt
- * 255 - ILLEGAL POSITION
- * 254 - WHITE WINS; propagation done
- * 253 - BLACK WINS; propagation done
- * 252 - WHITE WINS; propagation needed
- * 0   - BLACK WINS; propagation needed
- *
- * 1 through 251 - movecnt (during run), or DRAW (after run is finished)
- *
- * or, to make this work for either white or black positions, let's adopt the notation PTM (Player
- * to move) and PNTM (Player not to move)
+ * To make this work for either white or black positions, let's adopt the notation PTM (Player to
+ * move) and PNTM (Player not to move)
  *
  * movecnt
  * 255 - ILLEGAL POSITION
@@ -224,7 +215,7 @@ struct fourbyte_entry {
     unsigned char movecnt;
     unsigned char mate_in_cnt;
     unsigned char stalemate_cnt;
-    unsigned char reserved;
+    unsigned char futuremove_cnt;
 };
 
 typedef struct tablebase {
@@ -664,7 +655,7 @@ inline boolean needs_propagation(tablebase *tb, int32 index)
 
 inline boolean is_position_valid(tablebase *tb, int32 index)
 {
-    return ((tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE) || (tb->entries[index].mate_in_cnt != 0));
+    return (! (does_PTM_win(tb, index) && (tb->entries[index].mate_in_cnt == 0)));
 }
 
 inline void mark_propagated(tablebase *tb, int32 index)
@@ -715,6 +706,7 @@ void initialize_index_as_illegal(tablebase *tb, int32 index)
     tb->entries[index].movecnt = ILLEGAL_POSITION;
     tb->entries[index].mate_in_cnt = 255;
     tb->entries[index].stalemate_cnt = 255;
+    tb->entries[index].futuremove_cnt = 0;
 }
 
 void initialize_index_with_white_mated(tablebase *tb, int32 index)
@@ -730,6 +722,7 @@ void initialize_index_with_white_mated(tablebase *tb, int32 index)
     tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
     tb->entries[index].mate_in_cnt = 0;
     tb->entries[index].stalemate_cnt = 0;
+    tb->entries[index].futuremove_cnt = 0;
 }
 
 void initialize_index_with_black_mated(tablebase *tb, int32 index)
@@ -745,6 +738,7 @@ void initialize_index_with_black_mated(tablebase *tb, int32 index)
     tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
     tb->entries[index].mate_in_cnt = 0;
     tb->entries[index].stalemate_cnt = 0;
+    tb->entries[index].futuremove_cnt = 0;
 }
 
 void initialize_index_with_stalemate(tablebase *tb, int32 index)
@@ -757,9 +751,10 @@ void initialize_index_with_stalemate(tablebase *tb, int32 index)
     tb->entries[index].movecnt = 251; /* use this as stalemate for now */
     tb->entries[index].mate_in_cnt = 255;
     tb->entries[index].stalemate_cnt = 0;
+    tb->entries[index].futuremove_cnt = 0;
 }
 
-void initialize_index_with_movecnt(tablebase *tb, int32 index, int movecnt)
+void initialize_index_with_movecnt(tablebase *tb, int32 index, int movecnt, int futuremove_cnt)
 {
 
 #ifdef DEBUG_MOVE
@@ -769,6 +764,7 @@ void initialize_index_with_movecnt(tablebase *tb, int32 index, int movecnt)
     tb->entries[index].movecnt = movecnt;
     tb->entries[index].mate_in_cnt = 255;
     tb->entries[index].stalemate_cnt = 255;
+    tb->entries[index].futuremove_cnt = futuremove_cnt;
 }
 
 inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
@@ -1392,6 +1388,11 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
+	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
+	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
+	 * the simplest way to do that is to run this loop even for draws.
+	 */
+
 	if (index_to_global_position(futurebase, future_index, &future_position)) {
 
 	    if (invert_colors_of_futurebase)
@@ -1470,7 +1471,17 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			    fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
 			}
 
-			/* and propagate the win */
+			/* Skip everything else if the position isn't valid.  In particular,
+			 * we don't track futuremove propagation for illegal positions.
+			 */
+
+			if (!is_position_valid(tb, current_index)) continue;
+
+			/* ...note that we've handled one of the futuremoves out of this position... */
+
+			tb->entries[current_index].futuremove_cnt --;
+
+			/* ...and propagate the win */
 
 			/* XXX might want to look more closely at the stalemate options here */
 
@@ -1492,6 +1503,19 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 	}
     }
+}
+
+boolean have_all_futuremoves_been_handled(tablebase *tb) {
+
+    int32 max_index_static = max_index(tb);
+    int32 index;
+
+    for (index = 0; index < max_index_static; index ++) {
+	if (tb->entries[index].futuremove_cnt != 0)
+	    return 0;
+    }
+
+    return 1;
 }
 
 
@@ -1620,6 +1644,48 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
     }
 }
 
+/* initialize_tablebase()
+ *
+ * This is another critical function; don't be deceived by the tame word 'initialize'.
+ *
+ * We determine that a position is won for the player not to move (PNTM) if all possible moves (of
+ * the player to move) lead to a won game for PNTM.  We count down this total during back
+ * propagation, so it stands to reason that we need an accurate count to start with.  Thus the
+ * importance of this function.
+ *
+ * Basically, there are two types of moves we need to consider in each position:
+ *
+ * 1. non-capture moves of the mobile pieces
+ *
+ * Normally, we just add these up and then count them down during intra-table propagation.  The only
+ * extra issue that arises is the possibility of move restrictions.  If the "good guys" are PTM,
+ * then we can just ignore any possible moves outside the restriction - we don't count them up here,
+ * and we don't count them down later.  If the "bad guys" are PTM, then any possible move outside
+ * the restriction immediately results in this routine flagging the position won for PTM...  unless
+ * we want to step forward another half move.  (How?)
+ *
+ * 2. non-capture moves of the frozen pieces and capture moves
+ *
+ * These always lead to a different tablebase (a futurebase).  The only way we handle them is
+ * through inter-table back propagation.  We keep a seperate count of these moves (the
+ * "futuremoves"), because, unlike non-capture moves of mobile pieces, we might miss some of these
+ * moves if we don't have a complete set of futurebases.  So we count futuremoves by themselves (as
+ * well as part of the standard count), and count them down normally during a single sweep through
+ * our futurebases.  If that takes care of everything fine.  Otherwise, during our first pass
+ * through the current tablebase, we'll find that some of the futuremove remain unaccounted for.  If
+ * they occur with the "good guys" as PTM, we just double-check that the restriction is OK, subtract
+ * the remaining futuremoves out from the standard count, and keep going.  But if the "bad guys" are
+ * PTM, then some more work is needed.  The position is marked won for PTM, unless we want to step
+ * forward another half move.  In this case, we compute all possible next moves (or maybe just
+ * captures), and search for them in our tablebases.  If any of them are marked drawn or won, we can
+ * safely back-propagate this.  Otherwise, the position has to be marked won for PTM, as before.
+ *
+ * There's a real serious speed penalty here, because this half-move-forward algorithm requires
+ * random access lookups in the futurebases.  A possible way to address this would be to create an
+ * intermediate tablebase for the half move following the capture.
+ *
+ */
+
 initialize_tablebase(tablebase *tb)
 {
     local_position_t parent_position;
@@ -1643,6 +1709,7 @@ initialize_tablebase(tablebase *tb)
 
 	    /* Now we need to count moves.  FORWARD moves. */
 	    int movecnt = 0;
+	    int futuremove_cnt = 0;
 
 	    for (piece = 0; piece < tb->num_mobiles; piece++) {
 
@@ -1678,6 +1745,7 @@ initialize_tablebase(tablebase *tb)
 		    if (current_position.side_to_move == WHITE) {
 			if ((movementptr->vector & current_position.white_vector) == 0) {
 			    movecnt ++;
+			    futuremove_cnt ++;
 			    if (movementptr->square ==
 				current_position.mobile_piece_position[BLACK_KING]) {
 				initialize_index_with_black_mated(tb, index);
@@ -1687,6 +1755,7 @@ initialize_tablebase(tablebase *tb)
 		    } else {
 			if ((movementptr->vector & current_position.black_vector) == 0) {
 			    movecnt ++;
+			    futuremove_cnt ++;
 			    if (movementptr->square ==
 				current_position.mobile_piece_position[WHITE_KING]) {
 				initialize_index_with_white_mated(tb, index);
@@ -1705,7 +1774,7 @@ initialize_tablebase(tablebase *tb)
 	    }
 
 	    if (movecnt == 0) initialize_index_with_stalemate(tb, index);
-	    else initialize_index_with_movecnt(tb, index, movecnt);
+	    else initialize_index_with_movecnt(tb, index, movecnt, futuremove_cnt);
 
 	mated: ;
 				
@@ -1713,7 +1782,7 @@ initialize_tablebase(tablebase *tb)
     }
 }
 
-void mainloop(tablebase *tb)
+void propagate_all_moves_within_tablebase(tablebase *tb)
 {
     int max_moves_to_win;
     int moves_to_win;
@@ -2271,16 +2340,16 @@ main()
     tbs[2] = create_KRK_tablebase();
     initialize_tablebase(tbs[2]);
 
-    mainloop(tbs[0]);
+    propagate_all_moves_within_tablebase(tbs[0]);
 
     /* The White Queen/Rook is hard-wired in here as piece #2 */
     propagate_moves_from_mobile_capture_futurebase(tbs[1], tbs[0], 0, 2);
-    mainloop(tbs[1]);
+    propagate_all_moves_within_tablebase(tbs[1]);
 
     propagate_moves_from_mobile_capture_futurebase(tbs[2], tbs[0], 0, 2);
-    mainloop(tbs[2]);
+    propagate_all_moves_within_tablebase(tbs[2]);
 
-#if 0
+#if 1
     fprintf(stderr, "Initializing KQKR endgame\n");
     tbs[3] = create_KQKR_tablebase();
     initialize_tablebase(tbs[3]);
@@ -2289,8 +2358,14 @@ main()
     propagate_moves_from_mobile_capture_futurebase(tbs[3], tbs[1], 0, 3);
     fprintf(stderr, "Back propagating from KRK\n");
     propagate_moves_from_mobile_capture_futurebase(tbs[3], tbs[2], 1, 2);
+    fprintf(stderr, "Checking futuremoves...\n");
+    if (have_all_futuremoves_been_handled(tbs[3])) {
+	fprintf(stderr, "All futuremoves handled\n");
+    } else {
+	fprintf(stderr, "Some futuremoves not handled\n");
+    }
     fprintf(stderr, "Intra-table propagating\n");
-    mainloop(tbs[3]);
+    propagate_all_moves_within_tablebase(tbs[3]);
 #endif
 
     /* verify_KRK_tablebase_against_nalimov(tbs[2]); */
