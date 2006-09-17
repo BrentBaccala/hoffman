@@ -31,6 +31,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
  * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
@@ -40,6 +41,14 @@
 
 #define READLINE_LIBRARY
 #include "readline.h"
+
+/* The GNOME XML library.  To use it, I need "-I /usr/include/libxml2" (compiler) and "-lxml2"
+ * (linker).
+ */
+
+#include <libxml/parser.h>
+#include <libxml/tree.h>
+#include <libxml/xpath.h>
 
 /* According the GCC documentation, "long long" ints are supported by the C99 standard as well as
  * the GCC compiler.  In any event, since chess boards have 64 squares, being able to use 64 bit
@@ -156,7 +165,9 @@ int64 allones_bitvector = 0xffffffffffffffffLL;
 #define PAWN 5
 #define PAWNep 6
 
-char * piece_name[NUM_PIECES] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", "PAWNep"};
+char * piece_name[NUM_PIECES+1] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", "PAWNep", NULL};
+
+char * colors[3] = {"WHITE", "BLACK", NULL};
 
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P', 'E'},
 					      {'k', 'q', 'r', 'b', 'n', 'p', 'e'}};
@@ -227,8 +238,157 @@ typedef struct tablebase {
 
 boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int square, int color, int type);
 
-tablebase * parse_XML()
+int find_name_in_array(char * name, char * array[])
 {
+    int i=0;
+
+    while (*array != NULL) {
+	if (!strcasecmp(name, *array)) return i;
+	array ++;
+	i ++;
+    }
+
+    return -1;
+}
+
+/* Parses an XML control file, creates a tablebase structure corresponding to it, and returns it.
+ *
+ * Eventually, I want to provide a DTD and validate the XML input, so there's very little error
+ * checking here.  The idea is that the validation will ultimately provide the error check.
+ */
+
+tablebase * parse_XML_control_file(char *filename)
+{
+    xmlDocPtr doc;
+    xmlNodePtr root_element;
+    tablebase *tb;
+
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+
+    doc = xmlReadFile(filename, NULL, 0);
+    if (doc == NULL) {
+	fprintf(stderr, "'%s' failed XML read\n", filename);
+	return NULL;
+    }
+
+    root_element = xmlDocGetRootElement(doc);
+
+    if (xmlStrcmp(root_element->name, (const xmlChar *) "tablebase")) {
+	fprintf(stderr, "'%s' failed XML parse\n", filename);
+	return NULL;
+    }
+
+
+    tb = malloc(sizeof(tablebase));
+    if (tb == NULL) {
+	fprintf(stderr, "Can't malloc tablebase\n");
+	return NULL;
+    }
+    bzero(tb, sizeof(tablebase));
+
+    /* Fetch the mobile pieces from the XML */
+
+    context = xmlXPathNewContext(doc);
+    result = xmlXPathEvalExpression((const xmlChar *) "//mobile", context);
+    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	fprintf(stderr, "'%s': No mobile pieces!\n", filename);
+    } else if (result->nodesetval->nodeNr < 2) {
+	fprintf(stderr, "'%s': Too few mobile pieces!\n", filename);
+    } else if (result->nodesetval->nodeNr > MAX_MOBILES) {
+	fprintf(stderr, "'%s': Too many mobile pieces!\n", filename);
+    } else {
+	int i;
+
+	tb->num_mobiles = result->nodesetval->nodeNr;
+
+	for (i=0; i < result->nodesetval->nodeNr; i++) {
+	    xmlChar * color;
+	    xmlChar * type;
+	    color = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "color");
+	    type = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "type");
+	    tb->mobile_piece_color[i] = find_name_in_array((char *) color, colors);
+	    tb->mobile_piece_type[i] = find_name_in_array((char *) type, piece_name);
+
+	    if ((tb->mobile_piece_color[i] == -1) || (tb->mobile_piece_type[i] == -1)) {
+		fprintf(stderr, "Illegal color (%s) or type (%s) in mobile\n", color, type);
+		xmlFree(color);
+	    }
+	}
+    }
+
+    if ((tb->mobile_piece_color[WHITE_KING] != WHITE) || (tb->mobile_piece_type[WHITE_KING] != KING)
+	|| (tb->mobile_piece_color[BLACK_KING] != BLACK) || (tb->mobile_piece_type[BLACK_KING] != KING)) {
+	fprintf(stderr, "Kings aren't where they need to be in mobiles!\n");
+    }
+
+    /* The "1" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
+
+    tb->entries = (struct fourbyte_entry *) calloc(1<<(1+6*tb->num_mobiles), sizeof(struct fourbyte_entry));
+    if (tb->entries == NULL) {
+	fprintf(stderr, "Can't malloc tablebase entries\n");
+    }
+
+    xmlXPathFreeContext(context);
+
+    /* Fetch the futurebases from the XML */
+
+    context = xmlXPathNewContext(doc);
+    result = xmlXPathEvalExpression((const xmlChar *) "//futurebase", context);
+    if ((tb->num_mobiles > 2) && xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	fprintf(stderr, "'%s': No futurebases!\n", filename);
+    } else {
+	int i;
+
+	for (i=0; i < result->nodesetval->nodeNr; i++) {
+	    xmlChar * filename;
+	    xmlChar * md5;
+	    filename = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "filename");
+	    md5 = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "md5");
+	}
+    }
+
+    xmlXPathFreeContext(context);
+    xmlFreeDoc(doc);
+
+    return tb;
+}
+
+/* Given a tablebase, create the XML header describing its contents and print it out.
+ */
+
+void create_XML_header(tablebase *tb)
+{
+    xmlDocPtr doc;
+    xmlNodePtr tablebase, pieces, node;
+    int piece;
+    time_t creation_time;
+
+    doc = xmlNewDoc((const xmlChar *) "1.0");
+    tablebase = xmlNewDocNode(doc, NULL, (const xmlChar *) "tablebase", NULL);
+    xmlDocSetRootElement(doc, tablebase);
+
+    pieces = xmlNewChild(tablebase, NULL, (const xmlChar *) "pieces", NULL);
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	xmlNodePtr mobile;
+
+	mobile = xmlNewChild(pieces, NULL, (const xmlChar *) "mobile", NULL);
+	xmlNewProp(mobile, (const xmlChar *) "color",
+		   (const xmlChar *) colors[tb->mobile_piece_color[piece]]);
+	xmlNewProp(mobile, (const xmlChar *) "type",
+		   (const xmlChar *) piece_name[tb->mobile_piece_type[piece]]);
+    }
+
+    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
+    xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision$");
+
+    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
+    time(&creation_time);
+    xmlNewProp(node, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
+
+    xmlSaveFile("-", doc);
 }
 
 /* Simple initialization for a K vs K endgame. */
@@ -2317,7 +2477,7 @@ void print_score(tablebase *tb, int32 index, char *ptm, char *pntm)
     }
 }
 
-main()
+int main(int argc, char *argv[])
 {
     /* Make sure this tablebase array is one bigger than we need, so it can be NULL terminated */
     tablebase *tb, *tbs[5];
@@ -2325,6 +2485,9 @@ main()
     boolean global_position_valid = 0;
 
     bzero(tbs, sizeof(tbs));
+
+    tb = parse_XML_control_file(argv[1]);
+    create_XML_header(tb);
 
     init_nalimov_code();
 
