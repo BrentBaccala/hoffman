@@ -31,7 +31,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <time.h>
+#include <time.h>	/* for putting timestamps on the output tablebases */
+#include <fcntl.h>	/* for O_RDONLY */
+#include <sys/stat.h>	/* for stat'ing the length of the tablebase file */
+#include <sys/mman.h>	/* for mmap */
 
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
  * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
@@ -49,6 +52,7 @@
 #include <libxml/parser.h>
 #include <libxml/tree.h>
 #include <libxml/xpath.h>
+#include <libxml/xmlsave.h>
 
 /* According the GCC documentation, "long long" ints are supported by the C99 standard as well as
  * the GCC compiler.  In any event, since chess boards have 64 squares, being able to use 64 bit
@@ -354,10 +358,35 @@ tablebase * parse_XML_control_file(char *filename)
     return tb;
 }
 
+tablebase * load_futurebase_from_file(char *filename)
+{
+    int fd;
+    struct stat filestat;
+    size_t length;
+    char *fileptr;
+    int xml_size;
+    xmlDocPtr doc;
+    tablebase *tb;
+
+    fd = open(filename, O_RDONLY);
+    if (fd == -1) {
+	fprintf(stderr, "Can not open futurebase '%s'\n", filename);
+	return NULL;
+    }
+
+    fstat(fd, &filestat);
+
+    fileptr = mmap(0, filestat.st_size, PROT_READ, MAP_SHARED, fd, 0);
+
+    for (xml_size = 0; fileptr[xml_size] != '\0'; xml_size ++) ;
+
+    doc = xmlReadMemory(fileptr, xml_size, NULL, NULL, 0);
+}
+
 /* Given a tablebase, create the XML header describing its contents and print it out.
  */
 
-void create_XML_header(tablebase *tb)
+xmlDocPtr create_XML_header(tablebase *tb)
 {
     xmlDocPtr doc;
     xmlNodePtr tablebase, pieces, node;
@@ -366,6 +395,7 @@ void create_XML_header(tablebase *tb)
 
     doc = xmlNewDoc((const xmlChar *) "1.0");
     tablebase = xmlNewDocNode(doc, NULL, (const xmlChar *) "tablebase", NULL);
+    xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
     xmlDocSetRootElement(doc, tablebase);
 
     pieces = xmlNewChild(tablebase, NULL, (const xmlChar *) "pieces", NULL);
@@ -382,13 +412,59 @@ void create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision$");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.33 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
     xmlNewProp(node, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
 
-    xmlSaveFile("-", doc);
+    /* xmlSaveFile("-", doc); */
+    return doc;
+}
+
+int do_write(int fd, void *ptr, int length)
+{
+    while (length > 0) {
+	int writ = write(fd, ptr, length);
+	if (writ == -1) return -1;
+	ptr += writ;
+	length -= writ;
+    }
+    return 0;
+}
+
+void write_tablebase_to_file(tablebase *tb, char *filename)
+{
+    xmlDocPtr doc;
+    xmlSaveCtxtPtr savectx;
+    int fd;
+    void *writeptr;
+
+#if 0
+    doc = create_XML_header(tb);
+    xmlSaveFile(filename, doc);
+    xmlFreeDoc(doc);
+#endif
+
+    fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd == -1) {
+	fprintf(stderr, "Can't open '%s' for writing tablebase\n", filename);
+	return;
+    }
+
+    doc = create_XML_header(tb);
+    savectx = xmlSaveToFd(fd, NULL, 0);
+    xmlSaveDoc(savectx, doc);
+    xmlSaveClose(savectx);
+    xmlFreeDoc(doc);
+
+    if (lseek(fd, 0x1000, SEEK_SET) != 0x1000) {
+	fprintf(stderr, "seek failed\n");
+    }
+
+    do_write(fd, tb->entries, sizeof(struct fourbyte_entry) << (1 + 6*tb->num_mobiles));
+
+    close(fd);
 }
 
 /* Simple initialization for a K vs K endgame. */
@@ -2486,13 +2562,15 @@ int main(int argc, char *argv[])
 
     bzero(tbs, sizeof(tbs));
 
-    tb = parse_XML_control_file(argv[1]);
-    create_XML_header(tb);
-
-    init_nalimov_code();
-
     init_movements();
     verify_movements();
+
+    tb = parse_XML_control_file(argv[1]);
+    initialize_tablebase(tb);
+    propagate_all_moves_within_tablebase(tb);
+    write_tablebase_to_file(tb, "a");
+
+    init_nalimov_code();
 
     tbs[0] = create_2piece_tablebase();
     initialize_tablebase(tbs[0]);
