@@ -428,7 +428,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.34 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.35 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -458,12 +458,6 @@ void write_tablebase_to_file(tablebase *tb, char *filename)
     int fd;
     void *writeptr;
 
-#if 0
-    doc = create_XML_header(tb);
-    xmlSaveFile(filename, doc);
-    xmlFreeDoc(doc);
-#endif
-
     fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd == -1) {
 	fprintf(stderr, "Can't open '%s' for writing tablebase\n", filename);
@@ -483,138 +477,6 @@ void write_tablebase_to_file(tablebase *tb, char *filename)
     do_write(fd, tb->entries, sizeof(struct fourbyte_entry) << (1 + 6*tb->num_mobiles));
 
     close(fd);
-}
-
-/* Simple initialization for a K vs K endgame. */
-
-tablebase * create_2piece_tablebase(void)
-{
-    tablebase *tb;
-
-    tb = (tablebase *) malloc(sizeof(tablebase));
-    if (tb == NULL) {
-	fprintf(stderr, "Can't malloc tablebase header\n");
-    }
-
-    /* The "2" is because side-to-play is part of the position */
-
-    tb->entries = (struct fourbyte_entry *) calloc(2*64*64, sizeof(struct fourbyte_entry));
-    if (tb->entries == NULL) {
-	fprintf(stderr, "Can't malloc tablebase entries\n");
-    }
-
-    /* Remember above, I defined WHITE_KING as 0 and BLACK_KING as 1, so we have to make sure
-     * that these two pieces are where we want them in this list.  Other than that, it's
-     * pretty flexible.
-     */
-
-    tb->num_mobiles = 2;
-    tb->mobile_piece_type[0] = KING;
-    tb->mobile_piece_type[1] = KING;
-    tb->mobile_piece_color[0] = WHITE;
-    tb->mobile_piece_color[1] = BLACK;
-
-    return tb;
-}
-
-/* Simple initialization for a K+Q vs K endgame. */
-
-tablebase * create_KRK_tablebase(void)
-{
-    tablebase *tb;
-
-    tb = (tablebase *) malloc(sizeof(tablebase));
-    if (tb == NULL) {
-	fprintf(stderr, "Can't malloc tablebase header\n");
-    }
-
-    /* The "2" is because side-to-play is part of the position */
-
-    tb->entries = (struct fourbyte_entry *) calloc(2*64*64*64, sizeof(struct fourbyte_entry));
-    if (tb->entries == NULL) {
-	fprintf(stderr, "Can't malloc tablebase entries\n");
-    }
-
-    /* Remember above, I defined WHITE_KING as 0 and BLACK_KING as 1, so we have to make sure
-     * that these two pieces are where we want them in this list.  Other than that, it's
-     * pretty flexible.
-     */
-
-    tb->num_mobiles = 3;
-    tb->mobile_piece_type[0] = KING;
-    tb->mobile_piece_type[1] = KING;
-    tb->mobile_piece_type[2] = ROOK;
-    tb->mobile_piece_color[0] = WHITE;
-    tb->mobile_piece_color[1] = BLACK;
-    tb->mobile_piece_color[2] = WHITE;
-
-    return tb;
-}
-
-tablebase * create_KQK_tablebase(void)
-{
-    tablebase *tb;
-
-    tb = (tablebase *) malloc(sizeof(tablebase));
-    if (tb == NULL) {
-	fprintf(stderr, "Can't malloc tablebase header\n");
-    }
-
-    /* The "2" is because side-to-play is part of the position */
-
-    tb->entries = (struct fourbyte_entry *) calloc(2*64*64*64, sizeof(struct fourbyte_entry));
-    if (tb->entries == NULL) {
-	fprintf(stderr, "Can't malloc tablebase entries\n");
-    }
-
-    /* Remember above, I defined WHITE_KING as 0 and BLACK_KING as 1, so we have to make sure
-     * that these two pieces are where we want them in this list.  Other than that, it's
-     * pretty flexible.
-     */
-
-    tb->num_mobiles = 3;
-    tb->mobile_piece_type[0] = KING;
-    tb->mobile_piece_type[1] = KING;
-    tb->mobile_piece_type[2] = QUEEN;
-    tb->mobile_piece_color[0] = WHITE;
-    tb->mobile_piece_color[1] = BLACK;
-    tb->mobile_piece_color[2] = WHITE;
-
-    return tb;
-}
-
-tablebase * create_KQKR_tablebase(void)
-{
-    tablebase *tb;
-
-    tb = (tablebase *) malloc(sizeof(tablebase));
-    if (tb == NULL) {
-	fprintf(stderr, "Can't malloc tablebase header\n");
-    }
-
-    /* The "2" is because side-to-play is part of the position */
-
-    tb->entries = (struct fourbyte_entry *) calloc(2*64*64*64*64, sizeof(struct fourbyte_entry));
-    if (tb->entries == NULL) {
-	fprintf(stderr, "Can't malloc tablebase entries\n");
-    }
-
-    /* Remember above, I defined WHITE_KING as 0 and BLACK_KING as 1, so we have to make sure
-     * that these two pieces are where we want them in this list.  Other than that, it's
-     * pretty flexible.
-     */
-
-    tb->num_mobiles = 4;
-    tb->mobile_piece_type[0] = KING;
-    tb->mobile_piece_type[1] = KING;
-    tb->mobile_piece_type[2] = QUEEN;
-    tb->mobile_piece_type[3] = ROOK;
-    tb->mobile_piece_color[0] = WHITE;
-    tb->mobile_piece_color[1] = BLACK;
-    tb->mobile_piece_color[2] = WHITE;
-    tb->mobile_piece_color[3] = BLACK;
-
-    return tb;
 }
 
 inline int square(int row, int col)
@@ -2717,10 +2579,12 @@ int main(int argc, char *argv[])
     if (generating) {
 	tb = parse_XML_control_file(argv[optind]);
 
-	fprintf(stderr, "Initializing endgame\n");
+	fprintf(stderr, "Initializing tablebase\n");
 	initialize_tablebase(tb);
 
 	propagate_all_futuremoves(tb);
+
+	fprintf(stderr, "Checking futuremoves...\n");
 	if (have_all_futuremoves_been_handled(tb)) {
 	    fprintf(stderr, "All futuremoves handled\n");
 	} else {
@@ -2749,48 +2613,6 @@ int main(int argc, char *argv[])
 #endif
 
     init_nalimov_code();
-
-#if 0
-    tbs[0] = create_2piece_tablebase();
-    initialize_tablebase(tbs[0]);
-
-    tbs[1] = create_KQK_tablebase();
-    initialize_tablebase(tbs[1]);
-
-    tbs[2] = create_KRK_tablebase();
-    initialize_tablebase(tbs[2]);
-
-    propagate_all_moves_within_tablebase(tbs[0]);
-
-    /* The White Queen/Rook is hard-wired in here as piece #2 */
-    propagate_moves_from_mobile_capture_futurebase(tbs[1], tbs[0], 0, 2);
-    propagate_all_moves_within_tablebase(tbs[1]);
-
-    propagate_moves_from_mobile_capture_futurebase(tbs[2], tbs[0], 0, 2);
-    propagate_all_moves_within_tablebase(tbs[2]);
-#endif
-
-#if 0
-    fprintf(stderr, "Initializing KQKR endgame\n");
-    tbs[3] = create_KQKR_tablebase();
-    initialize_tablebase(tbs[3]);
-
-    fprintf(stderr, "Back propagating from KQK\n");
-    propagate_moves_from_mobile_capture_futurebase(tbs[3], tbs[1], 0, 3);
-    fprintf(stderr, "Back propagating from KRK\n");
-    propagate_moves_from_mobile_capture_futurebase(tbs[3], tbs[2], 1, 2);
-    fprintf(stderr, "Checking futuremoves...\n");
-    if (have_all_futuremoves_been_handled(tbs[3])) {
-	fprintf(stderr, "All futuremoves handled\n");
-    } else {
-	fprintf(stderr, "Some futuremoves not handled\n");
-    }
-    fprintf(stderr, "Intra-table propagating\n");
-    propagate_all_moves_within_tablebase(tbs[3]);
-#endif
-
-    /* verify_KRK_tablebase_against_nalimov(tbs[2]); */
-    /* verify_KQKR_tablebase_against_nalimov(tbs[3]); */
 
     read_history(".hoffman_history");
 
