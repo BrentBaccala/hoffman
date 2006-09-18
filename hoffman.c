@@ -182,7 +182,10 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P', 'E'
 
 /**** TABLEBASE STRUCTURE AND OPERATIONS ****/
 
-/* movecnt - 0 if this entry is ready to propagate; 255 if it has been propagated
+/* The 'xml' in the tablebase is authoritative; much of the other info is extracted from it
+ * for efficiency.
+ *
+ * movecnt - 0 if this entry is ready to propagate; 255 if it has been propagated
  *
  * While movecnt is > 0, it is the number of moves FORWARD from this position that haven't been
  * analyzed yet.  The other three numbers are the number of moves out of this position for which
@@ -234,6 +237,7 @@ struct fourbyte_entry {
 };
 
 typedef struct tablebase {
+    xmlDocPtr xml;
     int num_mobiles;
     short mobile_piece_type[MAX_MOBILES];
     short mobile_piece_color[MAX_MOBILES];
@@ -255,34 +259,17 @@ int find_name_in_array(char * name, char * array[])
     return -1;
 }
 
-/* Parses an XML control file, creates a tablebase structure corresponding to it, and returns it.
+/* Parses XML, creates a tablebase structure corresponding to it, and returns it.
  *
  * Eventually, I want to provide a DTD and validate the XML input, so there's very little error
  * checking here.  The idea is that the validation will ultimately provide the error check.
  */
 
-tablebase * parse_XML_control_file(char *filename)
+tablebase * parse_XML_into_tablebase(xmlDocPtr doc)
 {
-    xmlDocPtr doc;
-    xmlNodePtr root_element;
     tablebase *tb;
-
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
-
-    doc = xmlReadFile(filename, NULL, 0);
-    if (doc == NULL) {
-	fprintf(stderr, "'%s' failed XML read\n", filename);
-	return NULL;
-    }
-
-    root_element = xmlDocGetRootElement(doc);
-
-    if (xmlStrcmp(root_element->name, (const xmlChar *) "tablebase")) {
-	fprintf(stderr, "'%s' failed XML parse\n", filename);
-	return NULL;
-    }
-
 
     tb = malloc(sizeof(tablebase));
     if (tb == NULL) {
@@ -291,16 +278,18 @@ tablebase * parse_XML_control_file(char *filename)
     }
     bzero(tb, sizeof(tablebase));
 
+    tb->xml = doc;
+
     /* Fetch the mobile pieces from the XML */
 
     context = xmlXPathNewContext(doc);
     result = xmlXPathEvalExpression((const xmlChar *) "//mobile", context);
     if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	fprintf(stderr, "'%s': No mobile pieces!\n", filename);
+	fprintf(stderr, "No mobile pieces!\n");
     } else if (result->nodesetval->nodeNr < 2) {
-	fprintf(stderr, "'%s': Too few mobile pieces!\n", filename);
+	fprintf(stderr, "Too few mobile pieces!\n");
     } else if (result->nodesetval->nodeNr > MAX_MOBILES) {
-	fprintf(stderr, "'%s': Too many mobile pieces!\n", filename);
+	fprintf(stderr, "Too many mobile pieces!\n");
     } else {
 	int i;
 
@@ -326,6 +315,27 @@ tablebase * parse_XML_control_file(char *filename)
 	fprintf(stderr, "Kings aren't where they need to be in mobiles!\n");
     }
 
+    xmlXPathFreeContext(context);
+
+    return tb;
+}
+
+/* Parses an XML control file.  This function allocates an entries array, as well.
+ */
+
+tablebase * parse_XML_control_file(char *filename)
+{
+    xmlDocPtr doc;
+    tablebase *tb;
+
+    doc = xmlReadFile(filename, NULL, 0);
+    if (doc == NULL) {
+	fprintf(stderr, "'%s' failed XML read\n", filename);
+	return NULL;
+    }
+
+    tb = parse_XML_into_tablebase(doc);
+
     /* The "1" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
 
     tb->entries = (struct fourbyte_entry *) calloc(1<<(1+6*tb->num_mobiles), sizeof(struct fourbyte_entry));
@@ -333,30 +343,14 @@ tablebase * parse_XML_control_file(char *filename)
 	fprintf(stderr, "Can't malloc tablebase entries\n");
     }
 
-    xmlXPathFreeContext(context);
-
-    /* Fetch the futurebases from the XML */
-
-    context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression((const xmlChar *) "//futurebase", context);
-    if ((tb->num_mobiles > 2) && xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	fprintf(stderr, "'%s': No futurebases!\n", filename);
-    } else {
-	int i;
-
-	for (i=0; i < result->nodesetval->nodeNr; i++) {
-	    xmlChar * filename;
-	    xmlChar * md5;
-	    filename = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "filename");
-	    md5 = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "md5");
-	}
-    }
-
-    xmlXPathFreeContext(context);
-    xmlFreeDoc(doc);
+    /* We don't free the XML doc because the tablebase struct contains a pointer to it */
 
     return tb;
 }
+
+/* Loads a futurebase, by mmap'ing it into memory, parsing the XML header, and returning a pointer
+ * to the resulting tablebase structure after setting 'entries' to point into the mmap'ed data.
+ */
 
 tablebase * load_futurebase_from_file(char *filename)
 {
@@ -366,6 +360,9 @@ tablebase * load_futurebase_from_file(char *filename)
     char *fileptr;
     int xml_size;
     xmlDocPtr doc;
+    xmlNodePtr root_element;
+    xmlChar * offsetstr;
+    long offset;
     tablebase *tb;
 
     fd = open(filename, O_RDONLY);
@@ -378,12 +375,31 @@ tablebase * load_futurebase_from_file(char *filename)
 
     fileptr = mmap(0, filestat.st_size, PROT_READ, MAP_SHARED, fd, 0);
 
+    close(fd);
+
     for (xml_size = 0; fileptr[xml_size] != '\0'; xml_size ++) ;
 
     doc = xmlReadMemory(fileptr, xml_size, NULL, NULL, 0);
+
+    tb = parse_XML_into_tablebase(doc);
+
+    root_element = xmlDocGetRootElement(doc);
+
+    if (xmlStrcmp(root_element->name, (const xmlChar *) "tablebase")) {
+	fprintf(stderr, "'%s' failed XML parse\n", filename);
+	return NULL;
+    }
+
+    offsetstr = xmlGetProp(root_element, (const xmlChar *) "offset");
+
+    offset = strtol((const char *) offsetstr, NULL, 0);
+
+    tb->entries = (struct fourbyte_entry *) (fileptr + offset);
+
+    return tb;
 }
 
-/* Given a tablebase, create the XML header describing its contents and print it out.
+/* Given a tablebase, create an XML header describing its contents and return it.
  */
 
 xmlDocPtr create_XML_header(tablebase *tb)
@@ -412,7 +428,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.33 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.34 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -421,6 +437,8 @@ xmlDocPtr create_XML_header(tablebase *tb)
     /* xmlSaveFile("-", doc); */
     return doc;
 }
+
+/* do_write() is like the system call write(), but keeps repeating until the write is complete */
 
 int do_write(int fd, void *ptr, int length)
 {
@@ -1741,6 +1759,90 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     }
 }
 
+void propagate_all_futuremoves(tablebase *tb) {
+
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+
+    /* Fetch the futurebases from the XML */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression((const xmlChar *) "//futurebase", context);
+    if ((tb->num_mobiles > 2) && xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	fprintf(stderr, "No futurebases!\n");
+    } else {
+	int i;
+
+	for (i=0; i < result->nodesetval->nodeNr; i++) {
+	    xmlChar * filename;
+	    xmlChar * colors_property;
+	    tablebase * futurebase;
+	    int invert_colors = 0;
+	    int future_piece;
+	    int piece;
+	    int piece_vector;
+
+	    filename = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "filename");
+
+	    colors_property = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "colors");
+	    if (colors_property != NULL) {
+		if (!strcasecmp((char *) colors_property, "invert")) invert_colors = 1;
+		xmlFree(colors_property);
+	    }
+
+	    futurebase = load_futurebase_from_file((char *) filename);
+
+	    /* Futurebase should have exactly one less mobile than the current tablebase.  Find it. */
+
+	    /* piece_vector - set a bit for every mobile piece in current tablebase */
+	    piece_vector = (1 << tb->num_mobiles) - 1;
+
+	    for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
+		for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		    if (! (piece_vector & (1 << piece))) continue;
+		    if ((tb->mobile_piece_type[piece] == futurebase->mobile_piece_type[future_piece])
+			&& ((!invert_colors &&
+			     (tb->mobile_piece_color[piece] == futurebase->mobile_piece_color[future_piece]))
+			    || (invert_colors &&
+				(tb->mobile_piece_color[piece] != futurebase->mobile_piece_color[future_piece])))) {
+			piece_vector ^= (1 << piece);
+			break;
+		    }
+		}
+		if (piece == tb->num_mobiles) {
+		    fprintf(stderr, "Couldn't find future piece in tablebase\n");
+		    return;
+		}
+	    }
+
+	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		if ((piece_vector & (1 << piece))) break;
+	    }
+
+	    if (piece == tb->num_mobiles) {
+		fprintf(stderr, "No extra mobile piece in futurebase\n");
+		return;
+	    }
+
+	    piece_vector ^= (1 << piece);
+
+	    if (piece_vector != 0) {
+		fprintf(stderr, "Too many extra mobile pieces in futurebase\n");
+		return;
+	    }
+
+	    fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
+
+	    /* XXX last two args - flag if we're flipping colors, piece num of mobile */
+
+	    propagate_moves_from_mobile_capture_futurebase(tb, futurebase, invert_colors, piece);
+	}
+    }
+
+    xmlXPathFreeContext(context);
+
+}
+
 boolean have_all_futuremoves_been_handled(tablebase *tb) {
 
     int32 max_index_static = max_index(tb);
@@ -2559,19 +2661,96 @@ int main(int argc, char *argv[])
     tablebase *tb, *tbs[5];
     global_position_t global_position;
     boolean global_position_valid = 0;
+    int argi;
+    int i;
+    int c;
+    int generating=0;
+    int probing=0;
+    char *output_filename = NULL;
+    extern char *optarg;
+    extern int optind;
 
     bzero(tbs, sizeof(tbs));
 
     init_movements();
     verify_movements();
 
-    tb = parse_XML_control_file(argv[1]);
-    initialize_tablebase(tb);
-    propagate_all_moves_within_tablebase(tb);
-    write_tablebase_to_file(tb, "a");
+    while (1) {
+	c = getopt(argc, argv, "gpo:");
+
+	if (c == -1) break;
+
+	switch (c) {
+
+	case 'g':
+	    generating = 1;
+	    break;
+	case 'p':
+	    probing = 1;
+	    break;
+	case 'o':
+	    output_filename = optarg;
+	    break;
+	}
+    }
+
+    if (generating && probing) {
+	fprintf(stderr, "Only one of the generating (-g) and probing (-p) options can be specified\n");
+	exit(0);
+    }
+
+    if (!generating && !probing) {
+	fprintf(stderr, "Exactly one of the generating (-g) and probing (-p) options must be specified\n");
+	exit(0);
+    }
+
+    if (generating && (output_filename == NULL)) {
+	fprintf(stderr, "An output filename must be specified to generate\n");
+	exit(0);
+    }
+
+    if (probing && (output_filename != NULL)) {
+	fprintf(stderr, "An output filename can not be specified when probing\n");
+	exit(0);
+    }
+
+    if (generating) {
+	tb = parse_XML_control_file(argv[optind]);
+
+	fprintf(stderr, "Initializing endgame\n");
+	initialize_tablebase(tb);
+
+	propagate_all_futuremoves(tb);
+	if (have_all_futuremoves_been_handled(tb)) {
+	    fprintf(stderr, "All futuremoves handled\n");
+	} else {
+	    fprintf(stderr, "Some futuremoves not handled\n");
+	}
+
+	fprintf(stderr, "Intra-table propagating\n");
+	propagate_all_moves_within_tablebase(tb);
+
+	write_tablebase_to_file(tb, output_filename);
+
+	exit(1);
+    }
+
+    /* Probing */
+
+    i = 0;
+    for (argi=optind; argi<argc; argi++) {
+	fprintf(stderr, "Loading '%s'\n", argv[argi]);
+	tbs[i++] = load_futurebase_from_file(argv[argi]);
+    }
+
+#if 0
+    init_nalimov_code();
+    verify_KRK_tablebase_against_nalimov(tb);
+#endif
 
     init_nalimov_code();
 
+#if 0
     tbs[0] = create_2piece_tablebase();
     initialize_tablebase(tbs[0]);
 
@@ -2589,8 +2768,9 @@ int main(int argc, char *argv[])
 
     propagate_moves_from_mobile_capture_futurebase(tbs[2], tbs[0], 0, 2);
     propagate_all_moves_within_tablebase(tbs[2]);
+#endif
 
-#if 1
+#if 0
     fprintf(stderr, "Initializing KQKR endgame\n");
     tbs[3] = create_KQKR_tablebase();
     initialize_tablebase(tbs[3]);
