@@ -412,6 +412,8 @@ xmlDocPtr create_XML_header(tablebase *tb)
     doc = xmlNewDoc((const xmlChar *) "1.0");
     tablebase = xmlNewDocNode(doc, NULL, (const xmlChar *) "tablebase", NULL);
     xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
+    xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "fourbyte");
+    xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive");
     xmlDocSetRootElement(doc, tablebase);
 
     pieces = xmlNewChild(tablebase, NULL, (const xmlChar *) "pieces", NULL);
@@ -428,7 +430,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.35 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.36 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -574,16 +576,12 @@ boolean check_legality_of_index(tablebase *config, int32 index)
 {
 }
 
-/* any reason to do this?  just for one mobile? */
-int index_to_mobile_position(tablebase *config, int32 index, int piece)
-{}
-
 boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 {
     /* Given an index, fill in a board position.  Obviously has to correspond to local_position_to_index()
      * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
      * succeeded (the index is at least minimally valid) and FALSE if the index is so blatantly
-     * illegal (two piece on the same square) that we can't even fill in the position.
+     * illegal (two pieces on the same square) that we can't even fill in the position.
      */
 
     int piece;
@@ -1242,9 +1240,10 @@ void init_movements()
     }
 }
 
-/* I don't plan to call this routine every time the program runs, but it has to be used after any
- * changes to the code above to verify that those complex movement vectors are correct, or at least
- * consistent.  We're using this in a game situation.  We can't afford bugs in this code.
+/* This routine is pretty fast, so I just call it once every time the program runs.  It has to be
+ * used after any changes to the code above to verify that those complex movement vectors are
+ * correct, or at least consistent.  We're using this in a game situation.  We can't afford bugs in
+ * this code.
  */
 
 void verify_movements()
@@ -1621,7 +1620,18 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     }
 }
 
-void propagate_all_futuremoves(tablebase *tb) {
+/* Back propagates from all the futurebases.
+ *
+ * Should be called after the tablebase has been initialized, but before intra-table propagation.
+ *
+ * Runs through the parsed XML control file, pulls out all the futurebases, and back-propagates each
+ * one.  Right now, only handles futurebases that resulted from captures, and that therefore have
+ * exactly one less mobile piece than the current tablebase.  Doesn't handle futurebases due to pawn
+ * promotions, nor to frozen pieces moving, nor to any configuration of mobile pieces other than
+ * that described (like one of the frozen pieces becoming mobile in the futurebase).
+ */
+
+void back_propagate_all_futurebases(tablebase *tb) {
 
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
@@ -1694,8 +1704,6 @@ void propagate_all_futuremoves(tablebase *tb) {
 	    }
 
 	    fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
-
-	    /* XXX last two args - flag if we're flipping colors, piece num of mobile */
 
 	    propagate_moves_from_mobile_capture_futurebase(tb, futurebase, invert_colors, piece);
 	}
@@ -1864,7 +1872,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
  * the restriction immediately results in this routine flagging the position won for PTM...  unless
  * we want to step forward another half move.  (How?)
  *
- * 2. non-capture moves of the frozen pieces and capture moves
+ * 2. non-capture moves of the frozen pieces and capture/promotion moves
  *
  * These always lead to a different tablebase (a futurebase).  The only way we handle them is
  * through inter-table back propagation.  We keep a seperate count of these moves (the
@@ -1872,17 +1880,22 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
  * moves if we don't have a complete set of futurebases.  So we count futuremoves by themselves (as
  * well as part of the standard count), and count them down normally during a single sweep through
  * our futurebases.  If that takes care of everything fine.  Otherwise, during our first pass
- * through the current tablebase, we'll find that some of the futuremove remain unaccounted for.  If
- * they occur with the "good guys" as PTM, we just double-check that the restriction is OK, subtract
- * the remaining futuremoves out from the standard count, and keep going.  But if the "bad guys" are
- * PTM, then some more work is needed.  The position is marked won for PTM, unless we want to step
- * forward another half move.  In this case, we compute all possible next moves (or maybe just
- * captures), and search for them in our tablebases.  If any of them are marked drawn or won, we can
- * safely back-propagate this.  Otherwise, the position has to be marked won for PTM, as before.
+ * through the current tablebase, we'll find that some of the futuremoves remain unaccounted for.
+ * If they occur with the "good guys" as PTM, we just double-check that the restriction is OK,
+ * subtract the remaining futuremoves out from the standard count, and keep going.  But if the "bad
+ * guys" are PTM, then some more work is needed.  The position is marked won for PTM, unless we want
+ * to step forward another half move.  In this case, we compute all possible next moves (or maybe
+ * just captures), and search for them in our tablebases.  If any of them are marked drawn or won,
+ * we can safely back-propagate this.  Otherwise, the position has to be marked won for PTM, as
+ * before.
  *
  * There's a real serious speed penalty here, because this half-move-forward algorithm requires
  * random access lookups in the futurebases.  A possible way to address this would be to create an
- * intermediate tablebase for the half move following the capture.
+ * intermediate tablebase for the half move following the capture/promotion.  This could be done by
+ * building a tablebase with a queen (and another one with a knight) frozen on the queening square.
+ * Any possible move of the queen or knight would result in a win for the moving side.  A similar
+ * shortcut could be done for a capture, though the only real justification (from a performance
+ * perspective) would be on promotions.
  *
  */
 
@@ -2582,7 +2595,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "Initializing tablebase\n");
 	initialize_tablebase(tb);
 
-	propagate_all_futuremoves(tb);
+	back_propagate_all_futurebases(tb);
 
 	fprintf(stderr, "Checking futuremoves...\n");
 	if (have_all_futuremoves_been_handled(tb)) {
