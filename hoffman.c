@@ -237,9 +237,16 @@ struct fourbyte_entry {
     unsigned char futuremove_cnt;
 };
 
+#define RESTRICTION_NONE 0
+#define RESTRICTION_DISCARD 1
+#define RESTRICTION_CONCEDE 2
+
+char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
+
 typedef struct tablebase {
     xmlDocPtr xml;
     int num_mobiles;
+    int move_restrictions[2];		/* one for each color */
     short mobile_piece_type[MAX_MOBILES];
     short mobile_piece_color[MAX_MOBILES];
     struct fourbyte_entry *entries;
@@ -314,6 +321,35 @@ tablebase * parse_XML_into_tablebase(xmlDocPtr doc)
     if ((tb->mobile_piece_color[WHITE_KING] != WHITE) || (tb->mobile_piece_type[WHITE_KING] != KING)
 	|| (tb->mobile_piece_color[BLACK_KING] != BLACK) || (tb->mobile_piece_type[BLACK_KING] != KING)) {
 	fprintf(stderr, "Kings aren't where they need to be in mobiles!\n");
+    }
+
+    xmlXPathFreeContext(context);
+
+    context = xmlXPathNewContext(doc);
+    result = xmlXPathEvalExpression((const xmlChar *) "//move-restriction", context);
+    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	int i;
+	for (i=0; i < result->nodesetval->nodeNr; i++) {
+	    xmlChar * color_str;
+	    xmlChar * type_str;
+	    int color;
+	    int type;
+
+	    color_str = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "color");
+	    type_str = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "type");
+
+	    color = find_name_in_array((char *) color_str, colors);
+	    type = find_name_in_array((char *) type_str, restriction_types);
+	    if ((color == -1) || (type == -1)) {
+		fprintf(stderr, "Illegal move restriction\n");
+	    } else {
+		if ((tb->move_restrictions[color] > 0) && (tb->move_restrictions[color] != type)) {
+		    fprintf(stderr, "Incompatible move restrictions\n");
+		} else {
+		    tb->move_restrictions[color] = type;
+		}
+	    }
+	}
     }
 
     xmlXPathFreeContext(context);
@@ -407,6 +443,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 {
     xmlDocPtr doc;
     xmlNodePtr tablebase, pieces, node;
+    int color;
     int piece;
     time_t creation_time;
     char hostname[256];
@@ -431,9 +468,18 @@ xmlDocPtr create_XML_header(tablebase *tb)
 		   (const xmlChar *) piece_name[tb->mobile_piece_type[piece]]);
     }
 
+    for (color = 0; color < 2; color ++) {
+	if (tb->move_restrictions[color] != RESTRICTION_NONE) {
+	    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "move-restriction", NULL);
+	    xmlNewProp(node, (const xmlChar *) "color", (const xmlChar *) colors[color]);
+	    xmlNewProp(node, (const xmlChar *) "type",
+		       (const xmlChar *) restriction_types[tb->move_restrictions[color]]);
+	}
+    }
+
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.37 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.38 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -613,6 +659,16 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 	index >>= 6;
     }
     return 1;
+}
+
+/* This function could be made a bit faster, but this simpler version is hopefully safer. */
+
+int index_to_side_to_move(tablebase *tb, int32 index)
+{
+    local_position_t position;
+
+    if (! index_to_local_position(tb, index, &position)) return -1;
+    else return position.side_to_move;
 }
 
 boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *position)
@@ -1660,6 +1716,7 @@ void back_propagate_all_futurebases(tablebase *tb) {
 	    int invert_colors = 0;
 	    int future_piece;
 	    int piece;
+	    int color;
 	    int piece_vector;
 
 	    filename = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "filename");
@@ -1671,6 +1728,16 @@ void back_propagate_all_futurebases(tablebase *tb) {
 	    }
 
 	    futurebase = load_futurebase_from_file((char *) filename);
+
+	    /* Check futurebase to make sure its move restriction(s) match our own */
+
+	    for (color = 0; color < 2; color ++) {
+		if ((futurebase->move_restrictions[color] != RESTRICTION_NONE)
+		    && (futurebase->move_restrictions[color]
+			!= tb->move_restrictions[invert_colors ? 1 - color : color])) {
+		    fprintf(stderr, "Futurebase doesn't match move restrictions!\n");
+		}
+	    }
 
 	    /* Futurebase should have exactly one less mobile than the current tablebase.  Find it. */
 
@@ -1721,17 +1788,38 @@ void back_propagate_all_futurebases(tablebase *tb) {
 
 }
 
+/* I really want to improve this function's handling of move restrictions.  I want to explicitly
+ * state in the XML config which moves are being restricted, rather than the current catch-all.
+ */
+
 boolean have_all_futuremoves_been_handled(tablebase *tb) {
 
     int32 max_index_static = max_index(tb);
     int32 index;
+    int all_futuremoves_handled = 1;
 
     for (index = 0; index < max_index_static; index ++) {
-	if (tb->entries[index].futuremove_cnt != 0)
-	    return 0;
+	if (tb->entries[index].futuremove_cnt != 0) {
+	    switch (tb->move_restrictions[index_to_side_to_move(tb, index)]) {
+
+	    case RESTRICTION_NONE:
+		all_futuremoves_handled = 0;
+		break;
+
+	    case RESTRICTION_DISCARD:
+		/* discard - we discard any unhandled futuremoves this side might have */
+		tb->entries[index].movecnt -= tb->entries[index].futuremove_cnt;
+		break;
+
+	    case RESTRICTION_CONCEDE:
+		/* concede - we treat any unhandled futuremoves as forced wins for this side */
+		PTM_wins(tb, index, 0, 0);
+		break;
+	    }
+	}
     }
 
-    return 1;
+    return all_futuremoves_handled;
 }
 
 
@@ -2607,9 +2695,9 @@ int main(int argc, char *argv[])
 
 	fprintf(stderr, "Checking futuremoves...\n");
 	if (have_all_futuremoves_been_handled(tb)) {
-	    fprintf(stderr, "All futuremoves handled\n");
+	    fprintf(stderr, "All futuremoves handled under move restrictions\n");
 	} else {
-	    fprintf(stderr, "Some futuremoves not handled\n");
+	    fprintf(stderr, "WARNING: Some futuremoves not handled under move restrictions!\n");
 	}
 
 	fprintf(stderr, "Intra-table propagating\n");
