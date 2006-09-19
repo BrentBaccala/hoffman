@@ -35,6 +35,7 @@
 #include <fcntl.h>	/* for O_RDONLY */
 #include <sys/stat.h>	/* for stat'ing the length of the tablebase file */
 #include <sys/mman.h>	/* for mmap */
+#include <netdb.h>	/* for gethostbyname() */
 
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
  * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
@@ -408,6 +409,8 @@ xmlDocPtr create_XML_header(tablebase *tb)
     xmlNodePtr tablebase, pieces, node;
     int piece;
     time_t creation_time;
+    char hostname[256];
+    struct hostent *he;
 
     doc = xmlNewDoc((const xmlChar *) "1.0");
     tablebase = xmlNewDocNode(doc, NULL, (const xmlChar *) "tablebase", NULL);
@@ -430,11 +433,16 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.36 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.37 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
     xmlNewProp(node, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
+
+    gethostname(hostname, sizeof(hostname));
+    he = gethostbyname(hostname);
+    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-host", NULL);
+    xmlNewProp(node, (const xmlChar *) "fqdn", (const xmlChar *) he->h_name);
 
     /* xmlSaveFile("-", doc); */
     return doc;
