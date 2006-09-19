@@ -479,7 +479,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.38 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.39 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1813,7 +1813,7 @@ boolean have_all_futuremoves_been_handled(tablebase *tb) {
 
 	    case RESTRICTION_CONCEDE:
 		/* concede - we treat any unhandled futuremoves as forced wins for this side */
-		PTM_wins(tb, index, 0, 0);
+		PTM_wins(tb, index, 1, 1);
 		break;
 	    }
 	}
