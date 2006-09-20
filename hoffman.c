@@ -479,7 +479,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.40 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.41 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1710,6 +1710,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 		    /* Yes, pawn captures are special */
 
+		    /* XXX probably should check to make sure nothing was on the square already */
+
 		    if ((tb->mobile_piece_color[piece] == WHITE)
 			&& ((current_position.mobile_piece_position[captured_piece] % 8) != 7)
 			&& ((current_position.mobile_piece_position[captured_piece] / 8) <= 6)) {
@@ -2020,8 +2022,6 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 	    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
-		/* XXX what about pawns? */
-
 		/* What about captures?  Well, first of all, there are no captures here!  We're
 		 * moving BACKWARDS in the game... and pieces don't appear out of thin air.
 		 * Captures are handled by back-propagation from futurebases, not here in the
@@ -2241,15 +2241,17 @@ initialize_tablebase(tablebase *tb)
 
 		    if (((current_position.mobile_piece_position[piece]) >= 0)
 			&& ((current_position.mobile_piece_position[piece]) <= 63)
-			&& (BITVECTOR(current_position.mobile_piece_position[piece])
-			    & current_position.board_vector)) {
+			&& ((BITVECTOR(current_position.mobile_piece_position[piece])
+			     & current_position.board_vector) == 0)) {
 
 			/* If the piece is a pawn and we're moving to the last rank, then this has
 			 * to be a promotion move, in fact, two promotion moves (one to queen and
 			 * one to knight).  As such, they will require back propagation from
 			 * futurebases and must therefore be flagged as futuremoves.
 			 *
-			 * Otherwise, it's just an ordinary move.
+			 * Otherwise, it's just an ordinary move... unless its a white pawn that
+			 * moved to the third rank, or a black pawn that moved to the sixth.  In
+			 * these two cases, we need to check for a possible double move as well.
 			 */
 
 			if (((current_position.mobile_piece_position[piece] % 8) == 7)
@@ -2261,6 +2263,21 @@ initialize_tablebase(tablebase *tb)
 			} else {
 
 			    movecnt ++;
+
+			    if (((tb->mobile_piece_color[piece] == WHITE)
+				 && ((current_position.mobile_piece_position[piece] / 8) == 2))
+				|| ((tb->mobile_piece_color[piece] == BLACK)
+				    && ((current_position.mobile_piece_position[piece] / 8) == 5))) {
+
+				current_position.mobile_piece_position[piece] += forwards_pawn_move;
+
+				if ((BITVECTOR(current_position.mobile_piece_position[piece])
+				     & current_position.board_vector) == 0) {
+
+				    movecnt ++;
+
+				}
+			    }
 
 			}
 
