@@ -479,7 +479,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.42 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.43 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1561,19 +1561,9 @@ propagate_moves_from_futurebases()
  * on invert_colors_of_global position.
  */
 
-void propagate_one_move_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
-						       int32 future_index, local_position_t *current_position)
+void propagate_index_from_futurebase(tablebase *tb, tablebase *futurebase,
+				      int32 future_index, int32 current_index)
 {
-    int32 current_index;
-
-    /* Look up the position in the current tablebase... */
-
-    current_index = local_position_to_index(tb, current_position);
-
-    if (current_index == -1) {
-	fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
-    }
-
     /* Skip everything else if the position isn't valid.  In particular,
      * we don't track futuremove propagation for illegal positions.
      */
@@ -1598,6 +1588,87 @@ void propagate_one_move_from_mobile_capture_futurebase(tablebase *tb, tablebase 
 	    PTM_wins(tb, current_index,
 		     get_mate_in_count(futurebase, future_index)+1, 0);
 
+	}
+    }
+}
+
+void propagate_one_move_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
+						       int32 future_index, local_position_t *current_position)
+{
+    int32 current_index;
+
+    /* Look up the position in the current tablebase... */
+
+    current_index = local_position_to_index(tb, current_position);
+
+    if (current_index == -1) {
+	fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
+    }
+
+    propagate_index_from_futurebase(tb, futurebase, future_index, current_index);
+}
+
+void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futurebase,
+					       int32 future_index, global_position_t *position)
+{
+    int32 current_index;
+
+    /* Look up the position in the current tablebase... */
+
+    current_index = global_position_to_index(tb, position);
+
+    if (current_index == -1) {
+	fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
+    }
+
+    propagate_index_from_futurebase(tb, futurebase, future_index, current_index);
+}
+
+
+/* Back propagate promotion moves
+ *
+ * Still quite primitive.  Only handles white promotions.  Really only works reliably for a single
+ * queen or knight in the futurebase.  Otherwise, just mindlessly back propagates the first
+ * queen/knight it finds on the eight rank.
+ */
+
+void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futurebase,
+					       int invert_colors_of_futurebase)
+{
+    int32 future_index;
+    int32 max_future_index_static = max_index(futurebase);
+    global_position_t future_position;
+    int square;
+
+    /* We could limit the range of future_index here */
+
+    for (future_index = 0; future_index < max_future_index_static; future_index ++) {
+
+	if (index_to_global_position(futurebase, future_index, &future_position)) {
+
+	    if (invert_colors_of_futurebase)
+		invert_colors_of_global_position(&future_position);
+
+	    /* Consider only positions with a queen or knight on the last rank, with an empty square
+	     * right behind where a pawn could have come from, and the other side to move.
+	     */
+
+	    for (square = 56; square < 64; square ++) {
+
+		if (((future_position.board[square] == 'Q') || (future_position.board[square] == 'N'))
+		    && (future_position.board[square - 8] < 'A')
+		    && (future_position.side_to_move == BLACK)) {
+
+		    /* Replace the queen/knight with a pawn on the seventh */
+
+		    future_position.board[square] = 0;
+		    future_position.board[square - 8] = 'P';
+
+		    /* Back propagate the resulting position */
+
+		    propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position);
+		}
+	    }
 	}
     }
 }
@@ -1807,6 +1878,7 @@ void back_propagate_all_futurebases(tablebase *tb) {
 	for (i=0; i < result->nodesetval->nodeNr; i++) {
 	    xmlChar * filename;
 	    xmlChar * colors_property;
+	    xmlChar * type;
 	    tablebase * futurebase;
 	    int invert_colors = 0;
 	    int future_piece;
@@ -1834,48 +1906,64 @@ void back_propagate_all_futurebases(tablebase *tb) {
 		}
 	    }
 
-	    /* Futurebase should have exactly one less mobile than the current tablebase.  Find it. */
+	    type = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "type");
 
-	    /* piece_vector - set a bit for every mobile piece in current tablebase */
-	    piece_vector = (1 << tb->num_mobiles) - 1;
+	    if ((type != NULL) && !strcasecmp((char *) type, "capture")) {
 
-	    for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
-		for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		    if (! (piece_vector & (1 << piece))) continue;
-		    if ((tb->mobile_piece_type[piece] == futurebase->mobile_piece_type[future_piece])
-			&& ((!invert_colors &&
-			     (tb->mobile_piece_color[piece] == futurebase->mobile_piece_color[future_piece]))
-			    || (invert_colors &&
-				(tb->mobile_piece_color[piece] != futurebase->mobile_piece_color[future_piece])))) {
-			piece_vector ^= (1 << piece);
-			break;
+		/* It's a capture futurebase.  Futurebase should have exactly one less mobile than
+		 * the current tablebase.  Find it.
+		 */
+
+		/* piece_vector - set a bit for every mobile piece in current tablebase */
+		piece_vector = (1 << tb->num_mobiles) - 1;
+
+		for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
+		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+			if (! (piece_vector & (1 << piece))) continue;
+			if ((tb->mobile_piece_type[piece] == futurebase->mobile_piece_type[future_piece])
+			    && ((!invert_colors &&
+				 (tb->mobile_piece_color[piece] == futurebase->mobile_piece_color[future_piece]))
+				|| (invert_colors &&
+				    (tb->mobile_piece_color[piece] != futurebase->mobile_piece_color[future_piece])))) {
+			    piece_vector ^= (1 << piece);
+			    break;
+			}
+		    }
+		    if (piece == tb->num_mobiles) {
+			fprintf(stderr, "Couldn't find future piece in tablebase\n");
+			return;
 		    }
 		}
+
+		for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		    if ((piece_vector & (1 << piece))) break;
+		}
+
 		if (piece == tb->num_mobiles) {
-		    fprintf(stderr, "Couldn't find future piece in tablebase\n");
+		    fprintf(stderr, "No extra mobile piece in futurebase\n");
 		    return;
 		}
+
+		piece_vector ^= (1 << piece);
+
+		if (piece_vector != 0) {
+		    fprintf(stderr, "Too many extra mobile pieces in futurebase\n");
+		    return;
+		}
+
+		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
+
+		propagate_moves_from_mobile_capture_futurebase(tb, futurebase, invert_colors, piece);
+
+	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion")) {
+
+		propagate_moves_from_promotion_futurebase(tb, futurebase, invert_colors);
+
+	    } else {
+
+		fprintf(stderr, "Unknown back propagation type on '%s'\n", (char *) filename);
+
 	    }
-
-	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		if ((piece_vector & (1 << piece))) break;
-	    }
-
-	    if (piece == tb->num_mobiles) {
-		fprintf(stderr, "No extra mobile piece in futurebase\n");
-		return;
-	    }
-
-	    piece_vector ^= (1 << piece);
-
-	    if (piece_vector != 0) {
-		fprintf(stderr, "Too many extra mobile pieces in futurebase\n");
-		return;
-	    }
-
-	    fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
-
-	    propagate_moves_from_mobile_capture_futurebase(tb, futurebase, invert_colors, piece);
 	}
     }
 
