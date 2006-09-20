@@ -479,7 +479,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.43 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.44 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -534,6 +534,9 @@ void write_tablebase_to_file(tablebase *tb, char *filename)
 
     close(fd);
 }
+
+#define ROW(square) ((square) / 8)
+#define COL(square) ((square) % 8)
 
 inline int square(int row, int col)
 {
@@ -671,7 +674,15 @@ int index_to_side_to_move(tablebase *tb, int32 index)
     else return position.side_to_move;
 }
 
-inline void flip_side_to_move(local_position_t *position)
+inline void flip_side_to_move_local(local_position_t *position)
+{
+    if (position->side_to_move == WHITE)
+	position->side_to_move = BLACK;
+    else
+	position->side_to_move = WHITE;
+}
+
+inline void flip_side_to_move_global(global_position_t *position)
 {
     if (position->side_to_move == WHITE)
 	position->side_to_move = BLACK;
@@ -1562,7 +1573,7 @@ propagate_moves_from_futurebases()
  */
 
 void propagate_index_from_futurebase(tablebase *tb, tablebase *futurebase,
-				      int32 future_index, int32 current_index)
+				      int32 future_index, int32 current_index, int *mate_in_limit)
 {
     /* Skip everything else if the position isn't valid.  In particular,
      * we don't track futuremove propagation for illegal positions.
@@ -1589,11 +1600,19 @@ void propagate_index_from_futurebase(tablebase *tb, tablebase *futurebase,
 		     get_mate_in_count(futurebase, future_index)+1, 0);
 
 	}
+
+	/* This is pretty primitive, but we need some way to figure how deep to look during
+	 * intra-table propagation.
+	 */
+
+	if (get_mate_in_count(futurebase, future_index) > *mate_in_limit)
+	    *mate_in_limit = get_mate_in_count(futurebase, future_index);
     }
 }
 
 void propagate_one_move_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
-						       int32 future_index, local_position_t *current_position)
+						       int32 future_index, local_position_t *current_position,
+						       int *mate_in_limit)
 {
     int32 current_index;
 
@@ -1605,11 +1624,11 @@ void propagate_one_move_from_mobile_capture_futurebase(tablebase *tb, tablebase 
 	fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
     }
 
-    propagate_index_from_futurebase(tb, futurebase, future_index, current_index);
+    propagate_index_from_futurebase(tb, futurebase, future_index, current_index, mate_in_limit);
 }
 
 void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futurebase,
-					       int32 future_index, global_position_t *position)
+					       int32 future_index, global_position_t *position, int *mate_in_limit)
 {
     int32 current_index;
 
@@ -1621,7 +1640,7 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
 	fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
     }
 
-    propagate_index_from_futurebase(tb, futurebase, future_index, current_index);
+    propagate_index_from_futurebase(tb, futurebase, future_index, current_index, mate_in_limit);
 }
 
 
@@ -1633,7 +1652,7 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
  */
 
 void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futurebase,
-					       int invert_colors_of_futurebase)
+					       int invert_colors_of_futurebase, int *mate_in_limit)
 {
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
@@ -1664,9 +1683,11 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 		    future_position.board[square] = 0;
 		    future_position.board[square - 8] = 'P';
 
+		    flip_side_to_move_global(&future_position);
+
 		    /* Back propagate the resulting position */
 
-		    propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position);
+		    propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
 		}
 	    }
 	}
@@ -1674,7 +1695,7 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 }
 
 void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
-						    int invert_colors_of_futurebase, int captured_piece)
+						    int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
 {
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
@@ -1772,7 +1793,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 			    current_position.mobile_piece_position[piece] = movementptr->square;
 
-			    propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index, &current_position);
+			    propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
 
 			}
 		    }
@@ -1795,7 +1816,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			current_position.mobile_piece_position[piece] -= 8;
 
 			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
-									  &current_position);
+									  &current_position, mate_in_limit);
 		    }
 
 		    if ((tb->mobile_piece_color[piece] == WHITE)
@@ -1810,7 +1831,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			current_position.mobile_piece_position[piece] -= 8;
 
 			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
-									  &current_position);
+									  &current_position, mate_in_limit);
 		    }
 
 		    if ((tb->mobile_piece_color[piece] == BLACK)
@@ -1825,7 +1846,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			current_position.mobile_piece_position[piece] += 8;
 
 			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
-									  &current_position);
+									  &current_position, mate_in_limit);
 		    }
 
 		    if ((tb->mobile_piece_color[piece] == BLACK)
@@ -1840,7 +1861,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			current_position.mobile_piece_position[piece] += 8;
 
 			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
-									  &current_position);
+									  &current_position, mate_in_limit);
 		    }
 
 		}
@@ -1859,12 +1880,15 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
  * exactly one less mobile piece than the current tablebase.  Doesn't handle futurebases due to pawn
  * promotions, nor to frozen pieces moving, nor to any configuration of mobile pieces other than
  * that described (like one of the frozen pieces becoming mobile in the futurebase).
+ *
+ * Returns maximum mate_in value
  */
 
-void back_propagate_all_futurebases(tablebase *tb) {
+int back_propagate_all_futurebases(tablebase *tb) {
 
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
+    int mate_in_limit = 0;
 
     /* Fetch the futurebases from the XML */
 
@@ -1953,11 +1977,13 @@ void back_propagate_all_futurebases(tablebase *tb) {
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
-		propagate_moves_from_mobile_capture_futurebase(tb, futurebase, invert_colors, piece);
+		propagate_moves_from_mobile_capture_futurebase(tb, futurebase, invert_colors, piece, &mate_in_limit);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion")) {
 
-		propagate_moves_from_promotion_futurebase(tb, futurebase, invert_colors);
+		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
+
+		propagate_moves_from_promotion_futurebase(tb, futurebase, invert_colors, &mate_in_limit);
 
 	    } else {
 
@@ -1968,6 +1994,8 @@ void back_propagate_all_futurebases(tablebase *tb) {
     }
 
     xmlXPathFreeContext(context);
+
+    return mate_in_limit;
 
 }
 
@@ -1986,7 +2014,11 @@ boolean have_all_futuremoves_been_handled(tablebase *tb) {
 	    switch (tb->move_restrictions[index_to_side_to_move(tb, index)]) {
 
 	    case RESTRICTION_NONE:
-		all_futuremoves_handled = 0;
+		{
+		    global_position_t global;
+		    index_to_global_position(tb, index, &global);
+		    all_futuremoves_handled = 0;
+		}
 		break;
 
 	    case RESTRICTION_DISCARD:
@@ -2125,7 +2157,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 		    current_position = parent_position;
 
-		    flip_side_to_move(&current_position);
+		    flip_side_to_move_local(&current_position);
 
 		    current_position.mobile_piece_position[piece] = movementptr->square;
 
@@ -2141,7 +2173,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 	    current_position = parent_position;
 
-	    flip_side_to_move(&current_position);
+	    flip_side_to_move_local(&current_position);
 
 	    current_position.mobile_piece_position[piece] += backwards_pawn_move;
 
@@ -2342,8 +2374,8 @@ initialize_tablebase(tablebase *tb)
 			 * these two cases, we need to check for a possible double move as well.
 			 */
 
-			if (((current_position.mobile_piece_position[piece] % 8) == 7)
-			    || ((current_position.mobile_piece_position[piece] % 8) == 0)) {
+			if ((ROW(current_position.mobile_piece_position[piece]) == 7)
+			    || (ROW(current_position.mobile_piece_position[piece]) == 0)) {
 
 			    futuremove_cnt += 2;
 			    movecnt += 2;
@@ -2353,9 +2385,9 @@ initialize_tablebase(tablebase *tb)
 			    movecnt ++;
 
 			    if (((tb->mobile_piece_color[piece] == WHITE)
-				 && ((current_position.mobile_piece_position[piece] / 8) == 2))
+				 && (ROW(current_position.mobile_piece_position[piece]) == 2))
 				|| ((tb->mobile_piece_color[piece] == BLACK)
-				    && ((current_position.mobile_piece_position[piece] / 8) == 5))) {
+				    && (ROW(current_position.mobile_piece_position[piece]) == 5))) {
 
 				current_position.mobile_piece_position[piece] += forwards_pawn_move;
 
@@ -2381,14 +2413,14 @@ initialize_tablebase(tablebase *tb)
 		     */
 
 		    if ((tb->mobile_piece_color[piece] == WHITE)
-			&& ((parent_position.mobile_piece_position[piece] % 8) != 0)
-			&& ((parent_position.mobile_piece_position[piece] / 8) <= 6)
+			&& (COL(parent_position.mobile_piece_position[piece]) != 0)
+			&& (ROW(parent_position.mobile_piece_position[piece]) <= 6)
 			&& (BITVECTOR(parent_position.mobile_piece_position[piece] + 8 - 1)
 			    & current_position.black_vector)) {
 
 			/* left captures with white pawn */
 
-			if ((parent_position.mobile_piece_position[piece] / 8) == 6) {
+			if (ROW(parent_position.mobile_piece_position[piece]) == 6) {
 			    movecnt += 2;
 			    futuremove_cnt += 2;
 			} else {
@@ -2490,21 +2522,12 @@ initialize_tablebase(tablebase *tb)
     }
 }
 
-void propagate_all_moves_within_tablebase(tablebase *tb)
+void propagate_all_moves_within_tablebase(tablebase *tb, int mate_in_limit)
 {
-    int max_moves_to_win;
     int moves_to_win;
     int progress_made;
     int32 max_index_static;
     int32 index;
-
-    /* create_data_structure_from_control_file(); */
-
-#ifdef FUTUREBASE
-    max_moves_to_win = propagate_moves_from_futurebases();
-#else
-    max_moves_to_win = 1;
-#endif
 
     /* First we look for forced mates... */
 
@@ -2512,7 +2535,7 @@ void propagate_all_moves_within_tablebase(tablebase *tb)
     progress_made = 1;
     max_index_static = max_index(tb);
 
-    while (progress_made || moves_to_win < max_moves_to_win) {
+    while (progress_made || moves_to_win <= mate_in_limit) {
 	progress_made = 0;
 	for (index=0; index < max_index_static; index++) {
 	    if (needs_propagation(tb, index) && get_mate_in_count(tb, index) == moves_to_win) {
@@ -3028,12 +3051,14 @@ int main(int argc, char *argv[])
     }
 
     if (generating) {
+	int mate_in_limit;
+
 	tb = parse_XML_control_file(argv[optind]);
 
 	fprintf(stderr, "Initializing tablebase\n");
 	initialize_tablebase(tb);
 
-	back_propagate_all_futurebases(tb);
+	mate_in_limit = back_propagate_all_futurebases(tb);
 
 	fprintf(stderr, "Checking futuremoves...\n");
 	if (have_all_futuremoves_been_handled(tb)) {
@@ -3043,7 +3068,7 @@ int main(int argc, char *argv[])
 	}
 
 	fprintf(stderr, "Intra-table propagating\n");
-	propagate_all_moves_within_tablebase(tb);
+	propagate_all_moves_within_tablebase(tb, mate_in_limit);
 
 	write_tablebase_to_file(tb, output_filename);
 
