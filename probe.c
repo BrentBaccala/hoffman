@@ -5,6 +5,8 @@
 #  include "data.h"
 #endif
 
+#include <strings.h>
+
 /* last modified 11/03/98 */
 /*
  *******************************************************************************
@@ -77,8 +79,7 @@ extern int TB_FASTCALL L_TbtProbeTable(int, color, INDEX);
 #  define PfnIndCalc PfnIndCalcFun
 #  define FRegistered FRegisteredFun
 
-int EGTBProbe(int wtm, int WhiteKingSQ, int BlackKingSQ, int WhiteQueenSQ, int WhiteRookSQ, int BlackRookSQ,
-	      int *score)
+int EGTBProbe(int wtm, unsigned char board[64], int *score)
 {
   int rgiCounters[10], iTb, fInvert;
   color side;
@@ -86,6 +87,7 @@ int EGTBProbe(int wtm, int WhiteKingSQ, int BlackKingSQ, int WhiteQueenSQ, int W
   squaret *psqW, *psqB, sqEnP;
   INDEX ind;
   int tbValue;
+  int square;
 
 /*
  ************************************************************
@@ -106,7 +108,8 @@ int EGTBProbe(int wtm, int WhiteKingSQ, int BlackKingSQ, int WhiteQueenSQ, int W
   VInitSqCtr(rgiCounters + 5, rgsqBlack, 2, BlackBishops);
   VInitSqCtr(rgiCounters + 5, rgsqBlack, 3, BlackRooks);
   VInitSqCtr(rgiCounters + 5, rgsqBlack, 4, BlackQueens);
-#else
+#endif
+#if 0
   /* 4=QUEEN  0=first Queen */
   if (WhiteQueenSQ != -1) rgsqWhite[4*C_PIECES+0] = WhiteQueenSQ;
   if (WhiteRookSQ != -1) rgsqWhite[3*C_PIECES+0] = WhiteRookSQ;
@@ -122,6 +125,57 @@ int EGTBProbe(int wtm, int WhiteKingSQ, int BlackKingSQ, int WhiteQueenSQ, int W
   rgiCounters[8]=BlackRookSQ != -1 ? 1 : 0;
   rgiCounters[9]=0;
 #endif
+  bzero(rgiCounters, sizeof(rgiCounters));
+  for (square=0; square<64; square++) {
+    switch (board[square]) {
+    case 'P':
+      rgsqWhite[0*C_PIECES+rgiCounters[0]] = square;
+      rgiCounters[0] ++;
+      break;
+    case 'N':
+      rgsqWhite[1*C_PIECES+rgiCounters[1]] = square;
+      rgiCounters[1] ++;
+      break;
+    case 'B':
+      rgsqWhite[2*C_PIECES+rgiCounters[2]] = square;
+      rgiCounters[2] ++;
+      break;
+    case 'R':
+      rgsqWhite[3*C_PIECES+rgiCounters[3]] = square;
+      rgiCounters[3] ++;
+      break;
+    case 'Q':
+      rgsqWhite[4*C_PIECES+rgiCounters[4]] = square;
+      rgiCounters[4] ++;
+      break;
+    case 'K':
+      rgsqWhite[5*C_PIECES] = square;
+      break;
+    case 'p':
+      rgsqBlack[0*C_PIECES+rgiCounters[5]] = square;
+      rgiCounters[5] ++;
+      break;
+    case 'n':
+      rgsqBlack[1*C_PIECES+rgiCounters[6]] = square;
+      rgiCounters[6] ++;
+      break;
+    case 'b':
+      rgsqBlack[2*C_PIECES+rgiCounters[7]] = square;
+      rgiCounters[7] ++;
+      break;
+    case 'r':
+      rgsqBlack[3*C_PIECES+rgiCounters[8]] = square;
+      rgiCounters[8] ++;
+      break;
+    case 'q':
+      rgsqBlack[4*C_PIECES+rgiCounters[9]] = square;
+      rgiCounters[9] ++;
+      break;
+    case 'k':
+      rgsqBlack[5*C_PIECES] = square;
+      break;
+    }
+  }
 /*
  ************************************************************
  *                                                          *
@@ -147,8 +201,10 @@ int EGTBProbe(int wtm, int WhiteKingSQ, int BlackKingSQ, int WhiteQueenSQ, int W
  ************************************************************
  */
 
+#if 0
   rgsqWhite[C_PIECES * 5] = WhiteKingSQ;
   rgsqBlack[C_PIECES * 5] = BlackKingSQ;
+#endif
 
   if (iTb > 0) {
     side = wtm ? x_colorWhite : x_colorBlack;
