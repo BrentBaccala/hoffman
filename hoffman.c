@@ -479,7 +479,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.41 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.42 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2451,8 +2451,7 @@ void propagate_all_moves_within_tablebase(tablebase *tb)
 
 /***** PROBING NALIMOV TABLEBASES *****/
 
-int EGTBProbe(int wtm, int WhiteKingSQ, int BlackKingSQ, int WhiteQueenSQ, int WhiteRookSQ, int BlackRookSQ,
-	      int *score);
+int EGTBProbe(int wtm, unsigned char board[64], int *score);
 
 int IInitializeTb(char *pszPath);
 
@@ -2513,24 +2512,23 @@ char * global_position_to_FEN(global_position_t *position)
     return buffer;
 }
 
-void verify_KRK_tablebase_against_nalimov(tablebase *tb)
+void verify_tablebase_against_nalimov(tablebase *tb)
 {
     int32 index;
     int32 max_index_static = max_index(tb);
-    local_position_t pos;
     global_position_t global;
     int score;
 
+    fprintf(stderr, "Verifying tablebase against Nalimov\n");
+
     for (index = 0; index < max_index_static; index++) {
-	if (index_to_local_position(tb, index, &pos)) {
+	if (index_to_global_position(tb, index, &global)) {
 	    if (! is_position_valid(tb, index)) {
 
 		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
 
-	    } else if (EGTBProbe(pos.side_to_move == WHITE,
-			  pos.mobile_piece_position[WHITE_KING],
-			  pos.mobile_piece_position[BLACK_KING],
-			  -1, pos.mobile_piece_position[2], -1, &score) == 1) {
+	    } else if (EGTBProbe(global.side_to_move == WHITE, global.board, &score) == 1) {
+
 		if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
 		    /* Make sure mate_in_cnt is greater than zero here, since the Nalimov tablebase
 		     * doesn't appear to handle illegal positions.  PTM wins in 0 would mean that
@@ -2538,7 +2536,7 @@ void verify_KRK_tablebase_against_nalimov(tablebase *tb)
 		     */
 		    if (tb->entries[index].mate_in_cnt > 0) {
 			if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)-score+1) {
-			    index_to_global_position(tb, index, &global);
+
 			    printf("%s (%d): Nalimov says %d (mate in %d), but we say mate in %d\n",
 				   global_position_to_FEN(&global), index,
 				   score, ((65536-4)/2)-score+1, tb->entries[index].mate_in_cnt/2);
@@ -2546,14 +2544,14 @@ void verify_KRK_tablebase_against_nalimov(tablebase *tb)
 		    }
 		} else if (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE) {
 		    if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)+score) {
-			index_to_global_position(tb, index, &global);
+
 			printf("%s (%d): Nalimov says %d (%d), but we say mated in %d\n",
 			       global_position_to_FEN(&global), index,
 			       score, ((65536-4)/2)+score, tb->entries[index].mate_in_cnt/2);
 		    }
 		} else {
 		    if (score != 0) {
-			index_to_global_position(tb, index, &global);
+
 			printf("%s (%d): Nalimov says %d (%d), but we say draw\n",
 			       global_position_to_FEN(&global), index,
 			       score, ((65536-4)/2)+score);
@@ -2563,7 +2561,7 @@ void verify_KRK_tablebase_against_nalimov(tablebase *tb)
 		if (((tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE)
 		     && (tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE))
 		    || tb->entries[index].mate_in_cnt != 0) {
-		    index_to_global_position(tb, index, &global);
+
 		    fprintf(stderr, "%s (%d): Nalimov says illegal, but we say %d %d\n",
 			    global_position_to_FEN(&global), index,
 			    tb->entries[index].movecnt, tb->entries[index].mate_in_cnt);
@@ -2575,67 +2573,6 @@ void verify_KRK_tablebase_against_nalimov(tablebase *tb)
     }
 }
 
-void verify_KQKR_tablebase_against_nalimov(tablebase *tb)
-{
-    int32 index;
-    int32 max_index_static = max_index(tb);
-    local_position_t pos;
-    global_position_t global;
-    int score;
-
-    for (index = 0; index < max_index_static; index++) {
-	if (index_to_local_position(tb, index, &pos)) {
-	    if (! is_position_valid(tb, index)) {
-
-		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
-
-	    } else if (EGTBProbe(pos.side_to_move == WHITE,
-			  pos.mobile_piece_position[WHITE_KING],
-			  pos.mobile_piece_position[BLACK_KING],
-			  pos.mobile_piece_position[2], -1, pos.mobile_piece_position[3], &score) == 1) {
-		if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
-		    /* Make sure mate_in_cnt is greater than zero here, since the Nalimov tablebase
-		     * doesn't appear to handle illegal positions.  PTM wins in 0 would mean that
-		     * PNTM is in check, so the king can just be captured.
-		     */
-		    if (tb->entries[index].mate_in_cnt > 0) {
-			if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)-score+1) {
-			    index_to_global_position(tb, index, &global);
-			    printf("%s (%d): Nalimov says %d (mate in %d), but we say mate in %d\n",
-				   global_position_to_FEN(&global), index,
-				   score, ((65536-4)/2)-score+1, tb->entries[index].mate_in_cnt/2);
-			}
-		    }
-		} else if (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE) {
-		    if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)+score) {
-			index_to_global_position(tb, index, &global);
-			printf("%s (%d): Nalimov says %d (%d), but we say mated in %d\n",
-			       global_position_to_FEN(&global), index,
-			       score, ((65536-4)/2)+score, tb->entries[index].mate_in_cnt/2);
-		    }
-		} else {
-		    if (score != 0) {
-			index_to_global_position(tb, index, &global);
-			printf("%s (%d): Nalimov says %d (%d), but we say draw\n",
-			       global_position_to_FEN(&global), index,
-			       score, ((65536-4)/2)+score);
-		    }
-		}
-	    } else {
-		if (((tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE)
-		     && (tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE))
-		    || tb->entries[index].mate_in_cnt != 0) {
-		    index_to_global_position(tb, index, &global);
-		    fprintf(stderr, "%s (%d): Nalimov says illegal, but we say %d %d\n",
-			    global_position_to_FEN(&global), index,
-			    tb->entries[index].movecnt, tb->entries[index].mate_in_cnt);
-		} else {
-		    /* printf("Illegal OK\n"); */
-		}
-	    }
-	}
-    }
-}
 
 /***** PARSING FEN INTO POSITION STRUCTURES *****/
 
@@ -2948,17 +2885,20 @@ int main(int argc, char *argv[])
     int c;
     int generating=0;
     int probing=0;
+    int verify=0;
     char *output_filename = NULL;
     extern char *optarg;
     extern int optind;
 
     bzero(tbs, sizeof(tbs));
 
+    init_nalimov_code();
+
     init_movements();
     verify_movements();
 
     while (1) {
-	c = getopt(argc, argv, "gpo:");
+	c = getopt(argc, argv, "gpvo:");
 
 	if (c == -1) break;
 
@@ -2969,6 +2909,9 @@ int main(int argc, char *argv[])
 	    break;
 	case 'p':
 	    probing = 1;
+	    break;
+	case 'v':
+	    verify = 1;
 	    break;
 	case 'o':
 	    output_filename = optarg;
@@ -3024,15 +2967,10 @@ int main(int argc, char *argv[])
     i = 0;
     for (argi=optind; argi<argc; argi++) {
 	fprintf(stderr, "Loading '%s'\n", argv[argi]);
-	tbs[i++] = load_futurebase_from_file(argv[argi]);
+	tbs[i] = load_futurebase_from_file(argv[argi]);
+	if (verify) verify_tablebase_against_nalimov(tbs[i]);
+	i++;
     }
-
-#if 0
-    init_nalimov_code();
-    verify_KRK_tablebase_against_nalimov(tb);
-#endif
-
-    init_nalimov_code();
 
     read_history(".hoffman_history");
 
@@ -3084,14 +3022,8 @@ int main(int argc, char *argv[])
 	    }
 
 #if 1
-	    if (tb == tbs[3]) {
-		global_position_to_local_position(tb, &global_position, &pos);
 		printf("\nNalimov score: ");
-		if (EGTBProbe(pos.side_to_move == WHITE,
-			      pos.mobile_piece_position[WHITE_KING],
-			      pos.mobile_piece_position[BLACK_KING],
-			      pos.mobile_piece_position[2], -1, pos.mobile_piece_position[3], &score) == 1) {
-
+		if (EGTBProbe(global_position.side_to_move == WHITE, global_position.board, &score) == 1) {
 		    if (score > 0) {
 			printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
 		    } else if (score < 0) {
@@ -3102,7 +3034,6 @@ int main(int argc, char *argv[])
 		} else {
 		    printf("ILLEGAL POSITION\n");
 		}
-	    }
 #endif
 
 	    /* Now we want to print a move list */
