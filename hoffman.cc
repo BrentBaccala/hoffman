@@ -479,7 +479,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.39 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.40 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -669,6 +669,14 @@ int index_to_side_to_move(tablebase *tb, int32 index)
 
     if (! index_to_local_position(tb, index, &position)) return -1;
     else return position.side_to_move;
+}
+
+inline void flip_side_to_move(local_position_t *position)
+{
+    if (position->side_to_move == WHITE)
+	position->side_to_move = BLACK;
+    else
+	position->side_to_move = WHITE;
 }
 
 boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *position)
@@ -1553,6 +1561,47 @@ propagate_moves_from_futurebases()
  * on invert_colors_of_global position.
  */
 
+void propagate_one_move_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
+						       int32 future_index, local_position_t *current_position)
+{
+    int32 current_index;
+
+    /* Look up the position in the current tablebase... */
+
+    current_index = local_position_to_index(tb, current_position);
+
+    if (current_index == -1) {
+	fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
+    }
+
+    /* Skip everything else if the position isn't valid.  In particular,
+     * we don't track futuremove propagation for illegal positions.
+     */
+
+    if (is_position_valid(tb, current_index)) {
+
+	/* ...note that we've handled one of the futuremoves out of this position... */
+
+	tb->entries[current_index].futuremove_cnt --;
+
+	/* ...and propagate the win */
+
+	/* XXX might want to look more closely at the stalemate options here */
+
+	if (does_PTM_win(futurebase, future_index)) {
+
+	    add_one_to_PNTM_wins(tb, current_index,
+				 get_mate_in_count(futurebase, future_index)+1, 0);
+
+	} else if (does_PNTM_win(futurebase, future_index)) {
+
+	    PTM_wins(tb, current_index,
+		     get_mate_in_count(futurebase, future_index)+1, 0);
+
+	}
+    }
+}
+
 void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
 						    int invert_colors_of_futurebase, int captured_piece)
 {
@@ -1600,9 +1649,15 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		 * Probably could move this code outside of the for loop, and just copy the local
 		 * position.  But we don't have that many mobile pieces, so it's probably not a huge
 		 * performance hit anyway.
+		 *
+		 * This subroutine call could fail, for example if we're back propagating from a
+		 * futurebase with a promoted queen and the current tablebase only contains a pawn.
 		 */
 
-		global_position_to_local_position(tb, &future_position, &current_position);
+		if (! global_position_to_local_position(tb, &future_position, &current_position)) {
+		    fprintf(stderr, "Can't convert global position to local during back-prop\n");
+		    continue;
+		}
 
 		if (future_position.side_to_move == WHITE)
 		    current_position.side_to_move = BLACK;
@@ -1610,8 +1665,10 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		    current_position.side_to_move = WHITE;
 
 
-		if (current_position.mobile_piece_position[captured_piece] != -1)
+		if (current_position.mobile_piece_position[captured_piece] != -1) {
 		    fprintf(stderr, "Captured piece position specified too soon during back-prop\n");
+		    continue;
+		}
 
 		/* Place the captured piece back into the position on the square from which
 		 * the moving piece started (i.e, ended) its move.
@@ -1627,56 +1684,92 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 		/* We consider all possible backwards movements of the piece which captured. */
 
-		for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+		if (tb->mobile_piece_type[piece] != PAWN) {
 
-		    /* Make sure we start each movement of the capturing piece from the capture square */
+		    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
-		    current_position.mobile_piece_position[piece]
-			= current_position.mobile_piece_position[captured_piece];
+			/* Make sure we start each movement of the capturing piece from the capture square */
 
-		    for (movementptr = movements[tb->mobile_piece_type[piece]][current_position.mobile_piece_position[piece]][dir];
-			 (movementptr->vector & future_position.board_vector) == 0;
-			 movementptr++) {
+			current_position.mobile_piece_position[piece]
+			    = current_position.mobile_piece_position[captured_piece];
 
-			/* Move the capturing piece... */
+			for (movementptr = movements[tb->mobile_piece_type[piece]][current_position.mobile_piece_position[piece]][dir];
+			     (movementptr->vector & future_position.board_vector) == 0;
+			     movementptr++) {
 
-			current_position.mobile_piece_position[piece] = movementptr->square;
+			    /* Move the capturing piece... */
 
-			/* Look up the position in the current tablebase... */
+			    current_position.mobile_piece_position[piece] = movementptr->square;
 
-			current_index = local_position_to_index(tb, &current_position);
-
-			if (current_index == -1) {
-			    fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
-			}
-
-			/* Skip everything else if the position isn't valid.  In particular,
-			 * we don't track futuremove propagation for illegal positions.
-			 */
-
-			if (!is_position_valid(tb, current_index)) continue;
-
-			/* ...note that we've handled one of the futuremoves out of this position... */
-
-			tb->entries[current_index].futuremove_cnt --;
-
-			/* ...and propagate the win */
-
-			/* XXX might want to look more closely at the stalemate options here */
-
-			if (does_PTM_win(futurebase, future_index)) {
-
-			    add_one_to_PNTM_wins(tb, current_index,
-						 get_mate_in_count(futurebase, future_index)+1, 0);
-
-			} else if (does_PNTM_win(futurebase, future_index)) {
-
-			    PTM_wins(tb, current_index,
-				     get_mate_in_count(futurebase, future_index)+1, 0);
+			    propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index, &current_position);
 
 			}
-
 		    }
+
+		} else {
+
+		    /* Yes, pawn captures are special */
+
+		    if ((tb->mobile_piece_color[piece] == WHITE)
+			&& ((current_position.mobile_piece_position[captured_piece] % 8) != 7)
+			&& ((current_position.mobile_piece_position[captured_piece] / 8) <= 6)) {
+
+			/* left non-promotion capture with white pawn */
+
+			current_position.mobile_piece_position[piece]
+			    = current_position.mobile_piece_position[captured_piece];
+			current_position.mobile_piece_position[piece] += 1;
+			current_position.mobile_piece_position[piece] -= 8;
+
+			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
+									  &current_position);
+		    }
+
+		    if ((tb->mobile_piece_color[piece] == WHITE)
+			&& ((current_position.mobile_piece_position[captured_piece] % 8) != 0)
+			&& ((current_position.mobile_piece_position[captured_piece] / 8) <= 6)) {
+
+			/* right non-promotion capture with white pawn */
+
+			current_position.mobile_piece_position[piece]
+			    = current_position.mobile_piece_position[captured_piece];
+			current_position.mobile_piece_position[piece] -= 1;
+			current_position.mobile_piece_position[piece] -= 8;
+
+			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
+									  &current_position);
+		    }
+
+		    if ((tb->mobile_piece_color[piece] == BLACK)
+			&& ((current_position.mobile_piece_position[captured_piece] % 8) != 7)
+			&& ((current_position.mobile_piece_position[captured_piece] / 8) >= 1)) {
+
+			/* right non-promotion capture with black pawn */
+
+			current_position.mobile_piece_position[piece]
+			    = current_position.mobile_piece_position[captured_piece];
+			current_position.mobile_piece_position[piece] += 1;
+			current_position.mobile_piece_position[piece] += 8;
+
+			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
+									  &current_position);
+		    }
+
+		    if ((tb->mobile_piece_color[piece] == BLACK)
+			&& ((current_position.mobile_piece_position[captured_piece] % 8) != 0)
+			&& ((current_position.mobile_piece_position[captured_piece] / 8) >= 1)) {
+
+			/* left non-promotion capture with black pawn */
+
+			current_position.mobile_piece_position[piece]
+			    = current_position.mobile_piece_position[captured_piece];
+			current_position.mobile_piece_position[piece] -= 1;
+			current_position.mobile_piece_position[piece] += 8;
+
+			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
+									  &current_position);
+		    }
+
 		}
 	    }
 
@@ -1830,6 +1923,59 @@ boolean have_all_futuremoves_been_handled(tablebase *tb) {
  * here and update their counters in various obscure ways.
  */
 
+void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_position_t *current_position)
+{
+    int32 current_index;
+
+    /* local_position_to_index() only requires the square numbers of the pieces, not the board
+     * vectors.
+     */
+
+#if NEEDED
+		current_position.board_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
+		current_position.board_vector |= BITVECTOR(movementptr->square);
+		if (tb->mobile_piece_color[piece] == WHITE) {
+		    current_position.white_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
+		    current_position.white_vector |= BITVECTOR(movementptr->square);
+		} else {
+		    current_position.black_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
+		    current_position.black_vector |= BITVECTOR(movementptr->square);
+		}
+#endif
+
+    current_index = local_position_to_index(tb, current_position);
+
+    /* Parent position is the FUTURE position.  We now back-propagate to
+     * the current position, which is the PAST position.
+     *
+     * If the player to move in the FUTURE position wins, then we add one to that
+     * player's win count in the PAST position.  On other other hand, if the player not
+     * to move in the FUTURE position wins, then the player to move in the PAST position
+     * has a winning move (the one we're considering).
+     *
+     * These stalemate and mate counts increment by one every HALF MOVE.
+     */
+
+    if (does_PTM_win(tb, parent_index)) {
+
+	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+	    add_one_to_PNTM_wins(tb, current_index,
+				 get_mate_in_count(tb, parent_index)+1,
+				 get_stalemate_count(tb, parent_index)+1);
+	}
+
+    } else if (does_PNTM_win(tb, parent_index)) {
+
+	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+	    PTM_wins(tb, current_index,
+		     get_mate_in_count(tb, parent_index)+1,
+		     get_stalemate_count(tb, parent_index)+1);
+	}
+
+    }
+
+}
+
 void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_count)
 {
     local_position_t parent_position;
@@ -1837,7 +1983,6 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
     int piece;
     int dir;
     struct movement *movementptr;
-    int32 current_index;
 
     /* We want to check to make sure the mate-in number of the position in the database matches a
      * mate-in variable in this routine.  If we're propagating moves from a future table, we might
@@ -1871,76 +2016,83 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 	/* forall possible_moves(current_position, piece) { */
 
-	for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+	if (tb->mobile_piece_type[piece] != PAWN) {
 
-	    /* What about captures?  Well, first of all, there are no captures here!  We're moving
-	     * BACKWARDS in the game... and pieces don't appear out of thin air.  Captures are
-	     * handled by back-propagation from futurebases, not here in the movement code.  The
-	     * piece moving had to come from somewhere, and that somewhere will now be an empty
-	     * square, so once we've hit another piece along a movement vector, there's absolutely
-	     * no need to consider anything further.
+	    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+
+		/* XXX what about pawns? */
+
+		/* What about captures?  Well, first of all, there are no captures here!  We're
+		 * moving BACKWARDS in the game... and pieces don't appear out of thin air.
+		 * Captures are handled by back-propagation from futurebases, not here in the
+		 * movement code.  The piece moving had to come from somewhere, and that somewhere
+		 * will now be an empty square, so once we've hit another piece along a movement
+		 * vector, there's absolutely no need to consider anything further.
+		 */
+
+		for (movementptr
+			 = movements[tb->mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
+		     (movementptr->vector & parent_position.board_vector) == 0;
+		     movementptr++) {
+
+		    current_position = parent_position;
+
+		    flip_side_to_move(&current_position);
+
+		    current_position.mobile_piece_position[piece] = movementptr->square;
+
+		    propagate_one_move_within_table(tb, parent_index, &current_position);
+		}
+	    }
+
+	} else {
+
+	    /* Usual special case for pawns */
+
+	    int backwards_pawn_move = ((tb->mobile_piece_color[piece] == WHITE) ? -8 : 8);
+
+	    current_position = parent_position;
+
+	    flip_side_to_move(&current_position);
+
+	    current_position.mobile_piece_position[piece] += backwards_pawn_move;
+
+	    /* Do we have a backwards pawn move here?
+	     *
+	     * Well, yes, if it's a white pawn and its origin is at least the second rank, or if its
+	     * a black pawn and its origin is no further than the seventh rank, and there's nothing
+	     * in that square.
 	     */
 
-	    for (movementptr
-		     = movements[tb->mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
-		 (movementptr->vector & parent_position.board_vector) == 0;
-		 movementptr++) {
+	    if ((((tb->mobile_piece_color[piece] == WHITE)
+		  && ((current_position.mobile_piece_position[piece] / 8) >= 1))
+		 || ((tb->mobile_piece_color[piece] == BLACK)
+		     && ((current_position.mobile_piece_position[piece] / 8) <= 6)))
+		&& ((BITVECTOR(current_position.mobile_piece_position[piece])
+		     & current_position.board_vector) == 0)) {
 
-		current_position = parent_position;
+		    propagate_one_move_within_table(tb, parent_index, &current_position);
 
-		if (parent_position.side_to_move == WHITE)
-		    current_position.side_to_move = BLACK;
-		else
-		    current_position.side_to_move = WHITE;
+		    /* A white pawn that back-moved to the third, or a black pawn that back-moved to
+		     * the sixth, requires a check for a possible double move.  Just back up one
+		     * more rank and see if nothing was there.
+		     */
 
-		/* This code makes perfect sense... but I doubt it will be needed!  The
-		 * local_position_to_index function will probably only require the square numbers, not the
-		 * board vectors.
-		 */
-#if NEEDED
-		current_position.board_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
-		current_position.board_vector |= BITVECTOR(movementptr->square);
-		if (tb->mobile_piece_color[piece] == WHITE) {
-		    current_position.white_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
-		    current_position.white_vector |= BITVECTOR(movementptr->square);
-		} else {
-		    current_position.black_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
-		    current_position.black_vector |= BITVECTOR(movementptr->square);
-		}
-#endif
+		    if (((tb->mobile_piece_color[piece] == WHITE)
+			 && ((current_position.mobile_piece_position[piece] / 8) == 2))
+			|| ((tb->mobile_piece_color[piece] == BLACK)
+			    && ((current_position.mobile_piece_position[piece] / 8) == 5))) {
 
-		current_position.mobile_piece_position[piece] = movementptr->square;
+			current_position.mobile_piece_position[piece] += backwards_pawn_move;
 
-		current_index = local_position_to_index(tb, &current_position);
+			if ((BITVECTOR(current_position.mobile_piece_position[piece])
+			     & current_position.board_vector) == 0) {
 
-		/* Parent position is the FUTURE position.  We now back-propagate to
-		 * the current position, which is the PAST position.
-		 *
-		 * If the player to move in the FUTURE position wins, then we add one to that
-		 * player's win count in the PAST position.  On other other hand, if the player not
-		 * to move in the FUTURE position wins, then the player to move in the PAST position
-		 * has a winning move (the one we're considering).
-		 *
-		 * These stalemate and mate counts increment by one every HALF MOVE.
-		 */
+			    propagate_one_move_within_table(tb, parent_index, &current_position);
 
-		if (does_PTM_win(tb, parent_index)) {
+			}
 
-		    if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			add_one_to_PNTM_wins(tb, current_index,
-					     get_mate_in_count(tb, parent_index)+1,
-					     get_stalemate_count(tb, parent_index)+1);
 		    }
-
-		} else if (does_PNTM_win(tb, parent_index)) {
-
-		    if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-			PTM_wins(tb, current_index,
-				 get_mate_in_count(tb, parent_index)+1,
-				 get_stalemate_count(tb, parent_index)+1);
-		    }
-
-		}
 
 	    }
 	}
@@ -2027,49 +2179,191 @@ initialize_tablebase(tablebase *tb)
 		if (tb->mobile_piece_color[piece] != parent_position.side_to_move)
 		    continue;
 
-		for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+		if (tb->mobile_piece_type[piece] != PAWN) {
+
+		    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+
+			current_position = parent_position;
+
+			for (movementptr = movements[tb->mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
+			     (movementptr->vector & current_position.board_vector) == 0;
+			     movementptr++) {
+
+			    movecnt ++;
+
+			}
+
+			/* Now check to see if the movement ended because we hit against another piece
+			 * of the opposite color.  If so, add another move for the capture.
+			 *
+			 * Actually, we check to see that we DIDN'T hit a piece of our OWN color.  The
+			 * difference is that this way we don't register a capture if we hit the end of
+			 * the list of movements in a given direction.
+			 *
+			 * We also check to see if the capture was against the enemy king! in which case
+			 * this position is a "mate in 0" (i.e, illegal)
+			 *
+			 * XXX ASSUMES THAT THE ENEMY KING IS ONE OF THE MOBILE PIECES XXX
+			 */
+
+			if (current_position.side_to_move == WHITE) {
+			    if ((movementptr->vector & current_position.white_vector) == 0) {
+				movecnt ++;
+				futuremove_cnt ++;
+				if (movementptr->square ==
+				    current_position.mobile_piece_position[BLACK_KING]) {
+				    initialize_index_with_black_mated(tb, index);
+				    goto mated;
+				}
+			    }
+			} else {
+			    if ((movementptr->vector & current_position.black_vector) == 0) {
+				movecnt ++;
+				futuremove_cnt ++;
+				if (movementptr->square ==
+				    current_position.mobile_piece_position[WHITE_KING]) {
+				    initialize_index_with_white_mated(tb, index);
+				    goto mated;
+				}
+			    }
+			}
+		    }
+
+		} else {
+
+		    /* Pawns, as always, are special */
+
+		    int forwards_pawn_move = ((tb->mobile_piece_color[piece] == WHITE) ? 8 : -8);
 
 		    current_position = parent_position;
 
-		    for (movementptr = movements[tb->mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
-			 (movementptr->vector & current_position.board_vector) == 0;
-			 movementptr++) {
+		    current_position.mobile_piece_position[piece] += forwards_pawn_move;
 
-			movecnt ++;
+		    if (((current_position.mobile_piece_position[piece]) >= 0)
+			&& ((current_position.mobile_piece_position[piece]) <= 63)
+			&& (BITVECTOR(current_position.mobile_piece_position[piece])
+			    & current_position.board_vector)) {
+
+			/* If the piece is a pawn and we're moving to the last rank, then this has
+			 * to be a promotion move, in fact, two promotion moves (one to queen and
+			 * one to knight).  As such, they will require back propagation from
+			 * futurebases and must therefore be flagged as futuremoves.
+			 *
+			 * Otherwise, it's just an ordinary move.
+			 */
+
+			if (((current_position.mobile_piece_position[piece] % 8) == 7)
+			    || ((current_position.mobile_piece_position[piece] % 8) == 0)) {
+
+			    futuremove_cnt += 2;
+			    movecnt += 2;
+
+			} else {
+
+			    movecnt ++;
+
+			}
+
 		    }
 
-		    /* Now check to see if the movement ended because we hit against another piece
-		     * of the opposite color.  If so, add another move for the capture.
+
+		    /* Pawn captures.
 		     *
-		     * Actually, we check to see that we DIDN'T hit a piece of our OWN color.  The
-		     * difference is that this way we don't register a capture if we hit the end of
-		     * the list of movements in a given direction.
-		     *
-		     * We also check to see if the capture was against the enemy king! in which case
-		     * this position is a "mate in 0" (i.e, illegal)
-		     *
-		     * XXX ASSUMES THAT THE ENEMY KING IS ONE OF THE MOBILE PIECES XXX
+		     * In this part of the code, we're just counting forward moves, and all captures
+		     * are futurebase moves, so the only difference to us whether this is a
+		     * promotion move or not is how many futuremoves get recorded (a promotion is
+		     * two moves - one to queen and one to knight)
 		     */
 
-		    if (current_position.side_to_move == WHITE) {
-			if ((movementptr->vector & current_position.white_vector) == 0) {
+		    if ((tb->mobile_piece_color[piece] == WHITE)
+			&& ((parent_position.mobile_piece_position[piece] % 8) != 0)
+			&& ((parent_position.mobile_piece_position[piece] / 8) <= 6)
+			&& (BITVECTOR(parent_position.mobile_piece_position[piece] + 8 - 1)
+			    & current_position.black_vector)) {
+
+			/* left captures with white pawn */
+
+			if ((parent_position.mobile_piece_position[piece] / 8) == 6) {
+			    movecnt += 2;
+			    futuremove_cnt += 2;
+			} else {
 			    movecnt ++;
 			    futuremove_cnt ++;
-			    if (movementptr->square ==
-				current_position.mobile_piece_position[BLACK_KING]) {
-				initialize_index_with_black_mated(tb, index);
-				goto mated;
-			    }
 			}
-		    } else {
-			if ((movementptr->vector & current_position.black_vector) == 0) {
+
+			if ((parent_position.mobile_piece_position[piece] + 8 - 1)
+			    == parent_position.mobile_piece_position[BLACK_KING]) {
+			    initialize_index_with_black_mated(tb, index);
+			    goto mated;
+			}
+		    }
+
+		    if ((tb->mobile_piece_color[piece] == WHITE)
+			&& ((parent_position.mobile_piece_position[piece] % 8) != 7)
+			&& ((parent_position.mobile_piece_position[piece] / 8) <= 6)
+			&& (BITVECTOR(parent_position.mobile_piece_position[piece] + 8 + 1)
+			    & current_position.black_vector)) {
+
+			/* right captures with white pawn */
+
+			if ((parent_position.mobile_piece_position[piece] / 8) == 6) {
+			    movecnt += 2;
+			    futuremove_cnt += 2;
+			} else {
 			    movecnt ++;
 			    futuremove_cnt ++;
-			    if (movementptr->square ==
-				current_position.mobile_piece_position[WHITE_KING]) {
-				initialize_index_with_white_mated(tb, index);
-				goto mated;
-			    }
+			}
+
+			if ((parent_position.mobile_piece_position[piece] + 8 + 1)
+			    == parent_position.mobile_piece_position[BLACK_KING]) {
+			    initialize_index_with_black_mated(tb, index);
+			    goto mated;
+			}
+		    }
+
+		    if ((tb->mobile_piece_color[piece] == BLACK)
+			&& ((parent_position.mobile_piece_position[piece] % 8) != 0)
+			&& ((parent_position.mobile_piece_position[piece] / 8) >= 1)
+			&& (BITVECTOR(parent_position.mobile_piece_position[piece] - 8 - 1)
+			    & current_position.white_vector)) {
+
+			/* right captures with black pawn */
+
+			if ((parent_position.mobile_piece_position[piece] / 8) == 1) {
+			    movecnt += 2;
+			    futuremove_cnt += 2;
+			} else {
+			    movecnt ++;
+			    futuremove_cnt ++;
+			}
+
+			if ((parent_position.mobile_piece_position[piece] - 8 - 1)
+			    == parent_position.mobile_piece_position[WHITE_KING]) {
+			    initialize_index_with_white_mated(tb, index);
+			    goto mated;
+			}
+		    }
+
+		    if ((tb->mobile_piece_color[piece] == BLACK)
+			&& ((parent_position.mobile_piece_position[piece] % 8) != 7)
+			&& ((parent_position.mobile_piece_position[piece] / 8) >= 1)
+			&& (BITVECTOR(parent_position.mobile_piece_position[piece] - 8 + 1)
+			    & current_position.white_vector)) {
+
+			/* left captures with black pawn */
+
+			if ((parent_position.mobile_piece_position[piece] / 8) == 1) {
+			    movecnt += 2;
+			    futuremove_cnt += 2;
+			} else {
+			    movecnt ++;
+			    futuremove_cnt ++;
+			}
+
+			if ((parent_position.mobile_piece_position[piece] - 8 + 1)
+			    == parent_position.mobile_piece_position[WHITE_KING]) {
+			    initialize_index_with_white_mated(tb, index);
+			    goto mated;
 			}
 		    }
 
