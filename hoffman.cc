@@ -82,6 +82,12 @@ typedef short boolean;
 
 #define STALEMATE_COUNT 100
 
+/* Number of possibilities for pawn promotions.  "2" means queen and knight, but that can cause some
+ * problems, as I've learned the hard (and embarrassing) way.
+ */
+
+#define PROMOTION_POSSIBILITIES 3
+
 /* seven possible pieces: KQRBNP, plus pawn that can be captured en passant 64 possible squares, up
  * to 8 directions per piece, up to 7 movements in one direction
  */
@@ -479,7 +485,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.47 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.48 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1786,8 +1792,8 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
 /* Back propagate promotion moves
  *
  * Still quite primitive.  Only handles white promotions.  Really only works reliably for a single
- * queen or knight in the futurebase.  Otherwise, just mindlessly back propagates the first
- * queen/knight it finds on the eight rank.
+ * queen/rook/knight in the futurebase.  Otherwise, just mindlessly back propagates the first
+ * queen/rook/knight it finds on the eight rank.
  */
 
 void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futurebase,
@@ -1807,13 +1813,13 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 	    if (invert_colors_of_futurebase)
 		invert_colors_of_global_position(&future_position);
 
-	    /* Consider only positions with a queen or knight on the last rank, with an empty square
-	     * right behind where a pawn could have come from, and the other side to move.
+	    /* Consider only positions with a queen, rook or knight on the last rank, with an empty
+	     * square right behind where a pawn could have come from, and the other side to move.
 	     */
 
 	    for (square = 56; square < 64; square ++) {
 
-		if (((future_position.board[square] == 'Q') || (future_position.board[square] == 'N'))
+		if (((future_position.board[square] == 'Q') || (future_position.board[square] == 'R') || (future_position.board[square] == 'N'))
 		    && (future_position.board[square - 8] < 'A')
 		    && (future_position.side_to_move == BLACK)) {
 
@@ -2504,9 +2510,10 @@ initialize_tablebase(tablebase *tb)
 			     & current_position.board_vector) == 0)) {
 
 			/* If the piece is a pawn and we're moving to the last rank, then this has
-			 * to be a promotion move, in fact, two promotion moves (one to queen and
-			 * one to knight).  As such, they will require back propagation from
-			 * futurebases and must therefore be flagged as futuremoves.
+			 * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
+			 * knight, maybe rook and bishop).  As such, they will require back
+			 * propagation from futurebases and must therefore be flagged as
+			 * futuremoves.
 			 *
 			 * Otherwise, it's just an ordinary move... unless its a white pawn that
 			 * moved to the third rank, or a black pawn that moved to the sixth.  In
@@ -2516,8 +2523,8 @@ initialize_tablebase(tablebase *tb)
 			if ((ROW(current_position.mobile_piece_position[piece]) == 7)
 			    || (ROW(current_position.mobile_piece_position[piece]) == 0)) {
 
-			    futuremove_cnt += 2;
-			    movecnt += 2;
+			    futuremove_cnt += PROMOTION_POSSIBILITIES;
+			    movecnt += PROMOTION_POSSIBILITIES;
 
 			} else {
 
@@ -2560,8 +2567,8 @@ initialize_tablebase(tablebase *tb)
 			/* left captures with white pawn */
 
 			if (ROW(parent_position.mobile_piece_position[piece]) == 6) {
-			    movecnt += 2;
-			    futuremove_cnt += 2;
+			    movecnt += PROMOTION_POSSIBILITIES;
+			    futuremove_cnt += PROMOTION_POSSIBILITIES;
 			} else {
 			    movecnt ++;
 			    futuremove_cnt ++;
@@ -2583,8 +2590,8 @@ initialize_tablebase(tablebase *tb)
 			/* right captures with white pawn */
 
 			if ((parent_position.mobile_piece_position[piece] / 8) == 6) {
-			    movecnt += 2;
-			    futuremove_cnt += 2;
+			    movecnt += PROMOTION_POSSIBILITIES;
+			    futuremove_cnt += PROMOTION_POSSIBILITIES;
 			} else {
 			    movecnt ++;
 			    futuremove_cnt ++;
@@ -2606,8 +2613,8 @@ initialize_tablebase(tablebase *tb)
 			/* right captures with black pawn */
 
 			if ((parent_position.mobile_piece_position[piece] / 8) == 1) {
-			    movecnt += 2;
-			    futuremove_cnt += 2;
+			    movecnt += PROMOTION_POSSIBILITIES;
+			    futuremove_cnt += PROMOTION_POSSIBILITIES;
 			} else {
 			    movecnt ++;
 			    futuremove_cnt ++;
@@ -2629,8 +2636,8 @@ initialize_tablebase(tablebase *tb)
 			/* left captures with black pawn */
 
 			if ((parent_position.mobile_piece_position[piece] / 8) == 1) {
-			    movecnt += 2;
-			    futuremove_cnt += 2;
+			    movecnt += PROMOTION_POSSIBILITIES;
+			    futuremove_cnt += PROMOTION_POSSIBILITIES;
 			} else {
 			    movecnt ++;
 			    futuremove_cnt ++;
