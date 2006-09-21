@@ -479,7 +479,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.44 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.45 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -702,6 +702,17 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
     for (piece = 0; piece < tb->num_mobiles; piece++) {
 
 	if (position->board[index & 63] != 0) {
+	    return 0;
+	}
+
+	/* There are other possibilities for illegal combinations, namely a king next to the other
+	 * king, but that possibility is taken care of with an is_position_valid() check.  I need
+	 * this check here to keep my Nalimov verification routine from screaming about pawns on the
+	 * eighth rank.
+	 */
+
+	if ((tb->mobile_piece_type[piece] == PAWN)
+	    && (((index & 63) < 8) || ((index & 63) >= 56))) {
 	    return 0;
 	}
 
