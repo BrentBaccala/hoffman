@@ -177,6 +177,7 @@ int64 allones_bitvector = 0xffffffffffffffffLL;
 #define PAWNep 6
 
 char * piece_name[NUM_PIECES+1] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", "PAWNep", NULL};
+char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 'E', 0};
 
 char * colors[3] = {"WHITE", "BLACK", NULL};
 
@@ -485,7 +486,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.48 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.49 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1092,32 +1093,28 @@ struct movement movements[NUM_PIECES][NUM_SQUARES][NUM_DIR][NUM_MOVEMENTS+1];
 /* Pawns are, of course, special.  We have seperate vectors for different types of pawn movements.
  * Each array is indexed first by square number, then by side (WHITE or BLACK - this doesn't exist
  * for other pieces), then by the number of possibilities (at most two normal movements, at most two
- * capture movements, at most one normal promotion movement, at most two capture promotions).
+ * captures, and one more for the all-ones bitvector to terminate)
  *
  * All of these are FORWARD motions.
  */
 
 struct movement normal_pawn_movements[NUM_SQUARES][2][3];
 struct movement capture_pawn_movements[NUM_SQUARES][2][3];
-struct movement normal_promotion_pawn_movements[NUM_SQUARES][2];
-struct movement capture_promotion_pawn_movements[NUM_SQUARES][2][3];
 
 /* How many different directions can each piece move in?  Knights have 8 directions because they
  * can't be blocked in any of them.
  */
 
-int number_of_movement_directions[7] = {8,8,4,4,8,1,1};
-int maximum_movements_in_one_direction[7] = {1,7,7,7,1,2,1};
+int number_of_movement_directions[7] = {8,8,4,4,8,0,0};
+int maximum_movements_in_one_direction[7] = {1,7,7,7,1,0,0};
 
-enum {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR, KNIGHTmove, PAWNmove, PAWN2move}
-movementdir[7][8] = {
+enum {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR, KNIGHTmove}
+movementdir[5][8] = {
     {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},	/* King */
     {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},	/* Queen */
     {RIGHT, LEFT, UP, DOWN},						/* Rook */
     {DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},				/* Bishop */
     {KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove},	/* Knights are special... */
-    {PAWNmove, PAWN2move},						/* Pawns need more work */
-    {PAWNmove},								/* en passant pawns */
 };
 
 
@@ -1135,7 +1132,8 @@ void init_movements()
 	algebraic_notation[square][2] = '\0';
     }
 
-    for (piece=0; piece < NUM_PIECES; piece++) {
+    for (piece=KING; piece <= KNIGHT; piece++) {
+
 	for (square=0; square < NUM_SQUARES; square++) {
 
 	    for (dir=0; dir < number_of_movement_directions[piece]; dir++) {
@@ -1332,12 +1330,6 @@ void init_movements()
 			}
 			break;
 
-		    case PAWNmove:
-		    case PAWN2move:
-			/* Oh, we need to distinguish between forward/backward here as well as white
-			 * and black pawns...
-			 */
-			break;
 		    }
 		}
 
@@ -1362,42 +1354,26 @@ void init_movements()
 
 	    if (((square + forwards_pawn_move) >= 0) && ((square + forwards_pawn_move) <= 63)) {
 
-		/* If the piece is a pawn and we're moving to the last rank, then this has
-		 * to be a promotion move.
+		/* An ordinary pawn move... unless its a white pawn on the second rank, or a black
+		 * pawn on the seventh.  In these two cases, there is a possible double move as
+		 * well.
 		 *
-		 * Otherwise, it's just an ordinary move... unless its a white pawn on the second
-		 * rank, or a black pawn on the seventh.  In these two cases, there is a possible
-		 * double move as well.
+		 * XXX I'm ignoring pawns on the first rank completely for now.  Might want to come
+		 * back later and regard them as en passant pawns.
 		 */
 
-		if ((ROW(square + forwards_pawn_move) == 7) || (ROW(square + forwards_pawn_move) == 0)) {
+		normal_pawn_movements[square][color][0].square = square + forwards_pawn_move;
+		normal_pawn_movements[square][color][0].vector = BITVECTOR(square + forwards_pawn_move);
 
-		    normal_promotion_pawn_movements[square][color].square = square + forwards_pawn_move;
-		    normal_promotion_pawn_movements[square][color].vector = BITVECTOR(square + forwards_pawn_move);
+		if (((color == WHITE) && (ROW(square) == 1)) || ((color == BLACK) && (ROW(square) == 6))) {
 
-		    normal_pawn_movements[square][color][0].square = -1;
-		    normal_pawn_movements[square][color][0].vector = allones_bitvector;
+		    normal_pawn_movements[square][color][1].square = square + 2*forwards_pawn_move;
+		    normal_pawn_movements[square][color][1].vector = BITVECTOR(square + 2*forwards_pawn_move);
 
 		} else {
 
-		    normal_promotion_pawn_movements[square][color].square = -1;
-		    normal_promotion_pawn_movements[square][color].vector = allones_bitvector;
-
-		    normal_pawn_movements[square][color][0].square = square + forwards_pawn_move;
-		    normal_pawn_movements[square][color][0].vector = BITVECTOR(square + forwards_pawn_move);
-
-		    if (((color == WHITE) && (ROW(square) == 1))
-			|| ((color == BLACK) && (ROW(square) == 6))) {
-
-			normal_pawn_movements[square][color][1].square = square + 2*forwards_pawn_move;
-			normal_pawn_movements[square][color][1].vector = BITVECTOR(square + 2*forwards_pawn_move);
-
-		    } else {
-
-			normal_pawn_movements[square][color][1].square = -1;
-			normal_pawn_movements[square][color][1].vector = allones_bitvector;
-		    }
-
+		    normal_pawn_movements[square][color][1].square = -1;
+		    normal_pawn_movements[square][color][1].vector = allones_bitvector;
 		}
 
 		normal_pawn_movements[square][color][2].square = -1;
@@ -1409,54 +1385,25 @@ void init_movements()
 
 		if (COL(square) > 0) {
 
-		    if ((ROW(square + forwards_pawn_move) == 7) || (ROW(square + forwards_pawn_move) == 0)) {
+		    capture_pawn_movements[square][color][mvmt].square
+			= square + forwards_pawn_move - 1;
+		    capture_pawn_movements[square][color][mvmt].vector
+			= BITVECTOR(square + forwards_pawn_move - 1);
 
-			capture_promotion_pawn_movements[square][color][mvmt].square
-			    = square + forwards_pawn_move - 1;
-			capture_promotion_pawn_movements[square][color][mvmt].vector
-			    = BITVECTOR(square + forwards_pawn_move - 1);
-
-			mvmt ++;
-
-		    } else {
-
-			capture_pawn_movements[square][color][mvmt].square
-			    = square + forwards_pawn_move - 1;
-			capture_pawn_movements[square][color][mvmt].vector
-			    = BITVECTOR(square + forwards_pawn_move - 1);
-
-			mvmt ++;
-
-		    }
+		    mvmt ++;
 
 		}
 
 		if (COL(square) < 7) {
 
-		    if ((ROW(square + forwards_pawn_move) == 7) || (ROW(square + forwards_pawn_move) == 0)) {
+		    capture_pawn_movements[square][color][mvmt].square
+			= square + forwards_pawn_move + 1;
+		    capture_pawn_movements[square][color][mvmt].vector
+			= BITVECTOR(square + forwards_pawn_move + 1);
 
-			capture_promotion_pawn_movements[square][color][mvmt].square
-			    = square + forwards_pawn_move + 1;
-			capture_promotion_pawn_movements[square][color][mvmt].vector
-			    = BITVECTOR(square + forwards_pawn_move + 1);
-
-			mvmt ++;
-
-		    } else {
-
-			capture_pawn_movements[square][color][mvmt].square
-			    = square + forwards_pawn_move + 1;
-			capture_pawn_movements[square][color][mvmt].vector
-			    = BITVECTOR(square + forwards_pawn_move + 1);
-
-			mvmt ++;
-
-		    }
+		    mvmt ++;
 
 		}
-
-		capture_promotion_pawn_movements[square][color][mvmt].square = -1;
-		capture_promotion_pawn_movements[square][color][mvmt].vector = allones_bitvector;
 
 		capture_pawn_movements[square][color][mvmt].square = -1;
 		capture_pawn_movements[square][color][mvmt].vector = allones_bitvector;
@@ -3425,84 +3372,68 @@ int main(int argc, char *argv[])
 			 (movementptr->vector & pos.board_vector) == 0;
 			 movementptr++) {
 
-			nextpos.mobile_piece_position[piece] = movementptr->square;
+			if ((ROW(movementptr->square) != 0) && (ROW(movementptr->square) != 7)) {
 
-			index2 = local_position_to_index(tb, &nextpos);
+			    nextpos.mobile_piece_position[piece] = movementptr->square;
 
-			/* This is the next move, so we reverse the sense of PTM and PNTM */
+			    index2 = local_position_to_index(tb, &nextpos);
 
-			if (is_position_valid(tb, index2)) {
-			    printf("   %s%s ",
-				   algebraic_notation[pos.mobile_piece_position[piece]],
-				   algebraic_notation[movementptr->square]);
-			    print_score(tb, index2, pntm, ptm);
+			    /* This is the next move, so we reverse the sense of PTM and PNTM */
+
+			    if (is_position_valid(tb, index2)) {
+				printf("   %s%s ",
+				       algebraic_notation[pos.mobile_piece_position[piece]],
+				       algebraic_notation[movementptr->square]);
+				print_score(tb, index2, pntm, ptm);
+			    }
+
+			} else {
+
+			    /* non-capture promotion */
+
+			    tablebase *tb2;
+			    global_position_t reversed_position;
+			    int *promoted_piece;
+			    int promoted_pieces[] = {QUEEN, ROOK, KNIGHT, 0};
+
+			    index_to_global_position(tb, index, &global_capture_position);
+
+			    flip_side_to_move_global(&global_capture_position);
+
+			    global_capture_position.board[pos.mobile_piece_position[piece]] = 0;
+
+			    for (promoted_piece = promoted_pieces; *promoted_piece; promoted_piece ++) {
+
+				place_piece_in_global_position(&global_capture_position, movementptr->square,
+							       tb->mobile_piece_color[piece],
+							       *promoted_piece);
+
+				reversed_position = global_capture_position;
+				invert_colors_of_global_position(&reversed_position);
+
+				if (search_tablebases_for_global_position(tbs, &global_capture_position,
+									  &tb2, &index2)
+				    || search_tablebases_for_global_position(tbs, &reversed_position,
+									     &tb2, &index2)) {
+
+				    if (is_position_valid(tb2, index2)) {
+					printf ("   %s%s=%c ",
+						algebraic_notation[pos.mobile_piece_position[piece]],
+						algebraic_notation[movementptr->square],
+						piece_char[*promoted_piece]);
+					print_score(tb2, index2, pntm, ptm);
+				    }
+				} else {
+				    printf("   %s%s=%c NO DATA\n",
+					   algebraic_notation[pos.mobile_piece_position[piece]],
+					   algebraic_notation[movementptr->square],
+					   piece_char[*promoted_piece]);
+				}
+			    }
 			}
-
 		    }
 
 
-		    /* non-capture promotion */
-
-		    movementptr = &normal_promotion_pawn_movements[pos.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
-
-		    if ((movementptr->vector & pos.board_vector) == 0) {
-
-			tablebase *tb2;
-			global_position_t reversed_position;
-
-			index_to_global_position(tb, index, &global_capture_position);
-
-			flip_side_to_move_global(&global_capture_position);
-
-			global_capture_position.board[pos.mobile_piece_position[piece]] = 0;
-
-			place_piece_in_global_position(&global_capture_position, movementptr->square,
-						       tb->mobile_piece_color[piece], QUEEN);
-
-			reversed_position = global_capture_position;
-			invert_colors_of_global_position(&reversed_position);
-
-			if (search_tablebases_for_global_position(tbs, &global_capture_position,
-								  &tb2, &index2)
-			    || search_tablebases_for_global_position(tbs, &reversed_position,
-								     &tb2, &index2)) {
-
-			    if (is_position_valid(tb2, index2)) {
-				printf ("   %s%s=Q ",
-					algebraic_notation[pos.mobile_piece_position[piece]],
-					algebraic_notation[movementptr->square]);
-				print_score(tb2, index2, pntm, ptm);
-			    }
-			} else {
-			    printf("   %s%s=Q NO DATA\n",
-				   algebraic_notation[pos.mobile_piece_position[piece]],
-				   algebraic_notation[movementptr->square]);
-			}
-
-			place_piece_in_global_position(&global_capture_position, movementptr->square,
-						       tb->mobile_piece_color[piece], KNIGHT);
-
-			reversed_position = global_capture_position;
-			invert_colors_of_global_position(&reversed_position);
-
-			if (search_tablebases_for_global_position(tbs, &global_capture_position,
-								  &tb2, &index2)
-			    || search_tablebases_for_global_position(tbs, &reversed_position,
-								     &tb2, &index2)) {
-
-			    if (is_position_valid(tb2, index2)) {
-				printf ("   %s%s=N ",
-					algebraic_notation[pos.mobile_piece_position[piece]],
-					algebraic_notation[movementptr->square]);
-				print_score(tb2, index2, pntm, ptm);
-			    }
-			} else {
-			    printf("   %s%s=N NO DATA\n",
-				   algebraic_notation[pos.mobile_piece_position[piece]],
-				   algebraic_notation[movementptr->square]);
-			}
-
-		    }
 
 		}
 
