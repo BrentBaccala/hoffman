@@ -479,7 +479,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.45 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.46 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2634,6 +2634,21 @@ char * global_position_to_FEN(global_position_t *position)
     return buffer;
 }
 
+char * nalimov_to_english(int score)
+{
+    static char buffer[256];
+
+    if (score > 0) {
+	sprintf(buffer, "mate in %d", ((65536-4)/2)-score+1);
+    } else if (score < 0) {
+	sprintf(buffer, "mated in %d", ((65536-4)/2)+score);
+    } else {
+	sprintf(buffer, "draw");
+    }
+
+    return buffer;
+}
+
 void verify_tablebase_against_nalimov(tablebase *tb)
 {
     int32 index;
@@ -2659,24 +2674,24 @@ void verify_tablebase_against_nalimov(tablebase *tb)
 		    if (tb->entries[index].mate_in_cnt > 0) {
 			if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)-score+1) {
 
-			    printf("%s (%d): Nalimov says %d (mate in %d), but we say mate in %d\n",
+			    printf("%s (%d): Nalimov says %s (%d), but we say mate in %d\n",
 				   global_position_to_FEN(&global), index,
-				   score, ((65536-4)/2)-score+1, tb->entries[index].mate_in_cnt/2);
+				   nalimov_to_english(score), score, tb->entries[index].mate_in_cnt/2);
 			}
 		    }
 		} else if (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE) {
 		    if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)+score) {
 
-			printf("%s (%d): Nalimov says %d (%d), but we say mated in %d\n",
+			printf("%s (%d): Nalimov says %s (%d), but we say mated in %d\n",
 			       global_position_to_FEN(&global), index,
-			       score, ((65536-4)/2)+score, tb->entries[index].mate_in_cnt/2);
+			       nalimov_to_english(score), score, tb->entries[index].mate_in_cnt/2);
 		    }
 		} else {
 		    if (score != 0) {
 
-			printf("%s (%d): Nalimov says %d (%d), but we say draw\n",
+			printf("%s (%d): Nalimov says %s (%d), but we say draw\n",
 			       global_position_to_FEN(&global), index,
-			       score, ((65536-4)/2)+score);
+			       nalimov_to_english(score), ((65536-4)/2)+score);
 		    }
 		}
 	    } else {
@@ -3046,8 +3061,8 @@ int main(int argc, char *argv[])
 	exit(0);
     }
 
-    if (!generating && !probing) {
-	fprintf(stderr, "Exactly one of the generating (-g) and probing (-p) options must be specified\n");
+    if (!generating && !probing && !verify) {
+	fprintf(stderr, "At least one of generating (-g), probing (-p), or verify (-v) must be specified\n");
 	exit(0);
     }
 
@@ -3056,8 +3071,8 @@ int main(int argc, char *argv[])
 	exit(0);
     }
 
-    if (probing && (output_filename != NULL)) {
-	fprintf(stderr, "An output filename can not be specified when probing\n");
+    if (!generating && (output_filename != NULL)) {
+	fprintf(stderr, "An output filename can not be specified when probing or verifying\n");
 	exit(0);
     }
 
@@ -3095,6 +3110,8 @@ int main(int argc, char *argv[])
 	if (verify) verify_tablebase_against_nalimov(tbs[i]);
 	i++;
     }
+
+    if (!probing) exit(1);
 
     read_history(".hoffman_history");
 
