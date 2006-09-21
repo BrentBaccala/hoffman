@@ -486,7 +486,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.50 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.51 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2371,6 +2371,8 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		     (movementptr->vector & parent_position.board_vector) == 0;
 		     movementptr++) {
 
+		    /* XXX can we move the next two statements out of this loop (ditto below)? */
+
 		    current_position = parent_position;
 
 		    flip_side_to_move_local(&current_position);
@@ -2385,50 +2387,19 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 	    /* Usual special case for pawns */
 
-	    int backwards_pawn_move = ((tb->mobile_piece_color[piece] == WHITE) ? -8 : 8);
+	    for (movementptr = normal_pawn_movements_bkwd[parent_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+		 (movementptr->vector & parent_position.board_vector) == 0;
+		 movementptr++) {
 
-	    current_position = parent_position;
+		/* Do we have a backwards pawn move here? */
 
-	    flip_side_to_move_local(&current_position);
+		current_position = parent_position;
 
-	    current_position.mobile_piece_position[piece] += backwards_pawn_move;
+		flip_side_to_move_local(&current_position);
 
-	    /* Do we have a backwards pawn move here?
-	     *
-	     * Well, yes, if it's a white pawn and its origin is at least the second rank, or if its
-	     * a black pawn and its origin is no further than the seventh rank, and there's nothing
-	     * in that square.
-	     */
+		current_position.mobile_piece_position[piece] = movementptr->square;
 
-	    if ((((tb->mobile_piece_color[piece] == WHITE)
-		  && ((current_position.mobile_piece_position[piece] / 8) >= 1))
-		 || ((tb->mobile_piece_color[piece] == BLACK)
-		     && ((current_position.mobile_piece_position[piece] / 8) <= 6)))
-		&& ((BITVECTOR(current_position.mobile_piece_position[piece])
-		     & current_position.board_vector) == 0)) {
-
-		    propagate_one_move_within_table(tb, parent_index, &current_position);
-
-		    /* A white pawn that back-moved to the third, or a black pawn that back-moved to
-		     * the sixth, requires a check for a possible double move.  Just back up one
-		     * more rank and see if nothing was there.
-		     */
-
-		    if (((tb->mobile_piece_color[piece] == WHITE)
-			 && ((current_position.mobile_piece_position[piece] / 8) == 2))
-			|| ((tb->mobile_piece_color[piece] == BLACK)
-			    && ((current_position.mobile_piece_position[piece] / 8) == 5))) {
-
-			current_position.mobile_piece_position[piece] += backwards_pawn_move;
-
-			if ((BITVECTOR(current_position.mobile_piece_position[piece])
-			     & current_position.board_vector) == 0) {
-
-			    propagate_one_move_within_table(tb, parent_index, &current_position);
-
-			}
-
-		    }
+		propagate_one_move_within_table(tb, parent_index, &current_position);
 
 	    }
 	}
@@ -2569,30 +2540,20 @@ initialize_tablebase(tablebase *tb)
 
 		    /* Pawns, as always, are special */
 
-		    int forwards_pawn_move = ((tb->mobile_piece_color[piece] == WHITE) ? 8 : -8);
-
 		    current_position = parent_position;
 
-		    current_position.mobile_piece_position[piece] += forwards_pawn_move;
-
-		    if (((current_position.mobile_piece_position[piece]) >= 0)
-			&& ((current_position.mobile_piece_position[piece]) <= 63)
-			&& ((BITVECTOR(current_position.mobile_piece_position[piece])
-			     & current_position.board_vector) == 0)) {
+		    for (movementptr = normal_pawn_movements[parent_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+			 (movementptr->vector & current_position.board_vector) == 0;
+			 movementptr++) {
 
 			/* If the piece is a pawn and we're moving to the last rank, then this has
 			 * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
 			 * knight, maybe rook and bishop).  As such, they will require back
 			 * propagation from futurebases and must therefore be flagged as
 			 * futuremoves.
-			 *
-			 * Otherwise, it's just an ordinary move... unless its a white pawn that
-			 * moved to the third rank, or a black pawn that moved to the sixth.  In
-			 * these two cases, we need to check for a possible double move as well.
 			 */
 
-			if ((ROW(current_position.mobile_piece_position[piece]) == 7)
-			    || (ROW(current_position.mobile_piece_position[piece]) == 0)) {
+			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
 			    futuremove_cnt += PROMOTION_POSSIBILITIES;
 			    movecnt += PROMOTION_POSSIBILITIES;
@@ -2600,21 +2561,6 @@ initialize_tablebase(tablebase *tb)
 			} else {
 
 			    movecnt ++;
-
-			    if (((tb->mobile_piece_color[piece] == WHITE)
-				 && (ROW(current_position.mobile_piece_position[piece]) == 2))
-				|| ((tb->mobile_piece_color[piece] == BLACK)
-				    && (ROW(current_position.mobile_piece_position[piece]) == 5))) {
-
-				current_position.mobile_piece_position[piece] += forwards_pawn_move;
-
-				if ((BITVECTOR(current_position.mobile_piece_position[piece])
-				     & current_position.board_vector) == 0) {
-
-				    movecnt ++;
-
-				}
-			    }
 
 			}
 
@@ -2625,100 +2571,46 @@ initialize_tablebase(tablebase *tb)
 		     *
 		     * In this part of the code, we're just counting forward moves, and all captures
 		     * are futurebase moves, so the only difference to us whether this is a
-		     * promotion move or not is how many futuremoves get recorded (a promotion is
-		     * two moves - one to queen and one to knight)
+		     * promotion move or not is how many futuremoves get recorded.
 		     */
 
-		    if ((tb->mobile_piece_color[piece] == WHITE)
-			&& (COL(parent_position.mobile_piece_position[piece]) != 0)
-			&& (ROW(parent_position.mobile_piece_position[piece]) <= 6)
-			&& (BITVECTOR(parent_position.mobile_piece_position[piece] + 8 - 1)
-			    & current_position.black_vector)) {
+		    for (movementptr = capture_pawn_movements[parent_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+			 (movementptr->vector & current_position.board_vector) == 0;
+			 movementptr++) {
 
-			/* left captures with white pawn */
+			/* Same check as above for a mated situation */
 
-			if (ROW(parent_position.mobile_piece_position[piece]) == 6) {
-			    movecnt += PROMOTION_POSSIBILITIES;
-			    futuremove_cnt += PROMOTION_POSSIBILITIES;
+			if (current_position.side_to_move == WHITE) {
+			    if (movementptr->square == current_position.mobile_piece_position[BLACK_KING]) {
+				initialize_index_with_black_mated(tb, index);
+				goto mated;
+			    }
 			} else {
+			    if (movementptr->square == current_position.mobile_piece_position[WHITE_KING]) {
+				initialize_index_with_white_mated(tb, index);
+				goto mated;
+			    }
+			}
+
+			/* If the piece is a pawn and we're moving to the last rank, then this has
+			 * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
+			 * knight, maybe rook and bishop).  As such, they will require back
+			 * propagation from futurebases and must therefore be flagged as
+			 * futuremoves.
+			 */
+
+			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+
+			    futuremove_cnt += PROMOTION_POSSIBILITIES;
+			    movecnt += PROMOTION_POSSIBILITIES;
+
+			} else {
+
 			    movecnt ++;
 			    futuremove_cnt ++;
+
 			}
 
-			if ((parent_position.mobile_piece_position[piece] + 8 - 1)
-			    == parent_position.mobile_piece_position[BLACK_KING]) {
-			    initialize_index_with_black_mated(tb, index);
-			    goto mated;
-			}
-		    }
-
-		    if ((tb->mobile_piece_color[piece] == WHITE)
-			&& ((parent_position.mobile_piece_position[piece] % 8) != 7)
-			&& ((parent_position.mobile_piece_position[piece] / 8) <= 6)
-			&& (BITVECTOR(parent_position.mobile_piece_position[piece] + 8 + 1)
-			    & current_position.black_vector)) {
-
-			/* right captures with white pawn */
-
-			if ((parent_position.mobile_piece_position[piece] / 8) == 6) {
-			    movecnt += PROMOTION_POSSIBILITIES;
-			    futuremove_cnt += PROMOTION_POSSIBILITIES;
-			} else {
-			    movecnt ++;
-			    futuremove_cnt ++;
-			}
-
-			if ((parent_position.mobile_piece_position[piece] + 8 + 1)
-			    == parent_position.mobile_piece_position[BLACK_KING]) {
-			    initialize_index_with_black_mated(tb, index);
-			    goto mated;
-			}
-		    }
-
-		    if ((tb->mobile_piece_color[piece] == BLACK)
-			&& ((parent_position.mobile_piece_position[piece] % 8) != 0)
-			&& ((parent_position.mobile_piece_position[piece] / 8) >= 1)
-			&& (BITVECTOR(parent_position.mobile_piece_position[piece] - 8 - 1)
-			    & current_position.white_vector)) {
-
-			/* right captures with black pawn */
-
-			if ((parent_position.mobile_piece_position[piece] / 8) == 1) {
-			    movecnt += PROMOTION_POSSIBILITIES;
-			    futuremove_cnt += PROMOTION_POSSIBILITIES;
-			} else {
-			    movecnt ++;
-			    futuremove_cnt ++;
-			}
-
-			if ((parent_position.mobile_piece_position[piece] - 8 - 1)
-			    == parent_position.mobile_piece_position[WHITE_KING]) {
-			    initialize_index_with_white_mated(tb, index);
-			    goto mated;
-			}
-		    }
-
-		    if ((tb->mobile_piece_color[piece] == BLACK)
-			&& ((parent_position.mobile_piece_position[piece] % 8) != 7)
-			&& ((parent_position.mobile_piece_position[piece] / 8) >= 1)
-			&& (BITVECTOR(parent_position.mobile_piece_position[piece] - 8 + 1)
-			    & current_position.white_vector)) {
-
-			/* left captures with black pawn */
-
-			if ((parent_position.mobile_piece_position[piece] / 8) == 1) {
-			    movecnt += PROMOTION_POSSIBILITIES;
-			    futuremove_cnt += PROMOTION_POSSIBILITIES;
-			} else {
-			    movecnt ++;
-			    futuremove_cnt ++;
-			}
-
-			if ((parent_position.mobile_piece_position[piece] - 8 + 1)
-			    == parent_position.mobile_piece_position[WHITE_KING]) {
-			    initialize_index_with_white_mated(tb, index);
-			    goto mated;
-			}
 		    }
 
 		}
