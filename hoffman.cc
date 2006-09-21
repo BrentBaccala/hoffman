@@ -486,7 +486,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.49 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.50 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1101,6 +1101,9 @@ struct movement movements[NUM_PIECES][NUM_SQUARES][NUM_DIR][NUM_MOVEMENTS+1];
 struct movement normal_pawn_movements[NUM_SQUARES][2][3];
 struct movement capture_pawn_movements[NUM_SQUARES][2][3];
 
+struct movement normal_pawn_movements_bkwd[NUM_SQUARES][2][3];
+struct movement capture_pawn_movements_bkwd[NUM_SQUARES][2][3];
+
 /* How many different directions can each piece move in?  Knights have 8 directions because they
  * can't be blocked in any of them.
  */
@@ -1351,37 +1354,66 @@ void init_movements()
 	for (color = WHITE; color <= BLACK; color ++) {
 
 	    int forwards_pawn_move = ((color == WHITE) ? 8 : -8);
+	    int backwards_pawn_move = ((color == WHITE) ? -8 : 8);
 
-	    if (((square + forwards_pawn_move) >= 0) && ((square + forwards_pawn_move) <= 63)) {
+	    /* Forward pawn movements
+	     *
+	     * An ordinary pawn move... unless its a white pawn on the second rank, or a black
+	     * pawn on the seventh.  In these two cases, there is a possible double move as
+	     * well.
+	     *
+	     * XXX I'm ignoring pawns on the first rank completely for now.  Might want to come
+	     * back later and regard them as en passant pawns.
+	     */
 
-		/* An ordinary pawn move... unless its a white pawn on the second rank, or a black
-		 * pawn on the seventh.  In these two cases, there is a possible double move as
-		 * well.
-		 *
-		 * XXX I'm ignoring pawns on the first rank completely for now.  Might want to come
-		 * back later and regard them as en passant pawns.
-		 */
+	    mvmt = 0;
 
-		normal_pawn_movements[square][color][0].square = square + forwards_pawn_move;
-		normal_pawn_movements[square][color][0].vector = BITVECTOR(square + forwards_pawn_move);
+	    if ((ROW(square) >= 1) && (ROW(square) <= 6)) {
 
-		if (((color == WHITE) && (ROW(square) == 1)) || ((color == BLACK) && (ROW(square) == 6))) {
+		normal_pawn_movements[square][color][mvmt].square = square + forwards_pawn_move;
+		normal_pawn_movements[square][color][mvmt].vector = BITVECTOR(square + forwards_pawn_move);
 
-		    normal_pawn_movements[square][color][1].square = square + 2*forwards_pawn_move;
-		    normal_pawn_movements[square][color][1].vector = BITVECTOR(square + 2*forwards_pawn_move);
+		mvmt ++;
+	    }
 
-		} else {
+	    if (((color == WHITE) && (ROW(square) == 1)) || ((color == BLACK) && (ROW(square) == 6))) {
 
-		    normal_pawn_movements[square][color][1].square = -1;
-		    normal_pawn_movements[square][color][1].vector = allones_bitvector;
-		}
+		normal_pawn_movements[square][color][mvmt].square = square + 2*forwards_pawn_move;
+		normal_pawn_movements[square][color][mvmt].vector = BITVECTOR(square + 2*forwards_pawn_move);
 
-		normal_pawn_movements[square][color][2].square = -1;
-		normal_pawn_movements[square][color][2].vector = allones_bitvector;
+		mvmt ++;
 
-		/* Pawn captures. */
+	    }
 
-		mvmt = 0;
+	    normal_pawn_movements[square][color][mvmt].square = -1;
+	    normal_pawn_movements[square][color][mvmt].vector = allones_bitvector;
+
+	    /* Backwards pawn movements */
+
+	    mvmt = 0;
+
+	    if (((color == WHITE) && (ROW(square) > 1)) || ((color == BLACK) && (ROW(square) < 6))) {
+
+		normal_pawn_movements_bkwd[square][color][mvmt].square = square + backwards_pawn_move;
+		normal_pawn_movements_bkwd[square][color][mvmt].vector = BITVECTOR(square + backwards_pawn_move);
+		mvmt ++;
+	    }
+
+	    if (((color == WHITE) && (ROW(square) == 3)) || ((color == BLACK) && (ROW(square) == 4))) {
+
+		normal_pawn_movements_bkwd[square][color][mvmt].square = square + 2*backwards_pawn_move;
+		normal_pawn_movements_bkwd[square][color][mvmt].vector = BITVECTOR(square + 2*backwards_pawn_move);
+		mvmt ++;
+	    }
+
+	    normal_pawn_movements_bkwd[square][color][mvmt].square = -1;
+	    normal_pawn_movements_bkwd[square][color][mvmt].vector = allones_bitvector;
+
+	    /* Forward pawn captures. */
+
+	    mvmt = 0;
+
+	    if ((ROW(square) >= 1) && (ROW(square) <= 6)) {
 
 		if (COL(square) > 0) {
 
@@ -1404,11 +1436,43 @@ void init_movements()
 		    mvmt ++;
 
 		}
-
-		capture_pawn_movements[square][color][mvmt].square = -1;
-		capture_pawn_movements[square][color][mvmt].vector = allones_bitvector;
-
 	    }
+
+	    capture_pawn_movements[square][color][mvmt].square = -1;
+	    capture_pawn_movements[square][color][mvmt].vector = allones_bitvector;
+
+	    /* Backwards pawn captures */
+
+	    mvmt = 0;
+
+	    if (((color == WHITE) && (ROW(square) > 1)) || ((color == BLACK) && (ROW(square) < 6))) {
+
+		if (COL(square) > 0) {
+
+		    capture_pawn_movements_bkwd[square][color][mvmt].square
+			= square + backwards_pawn_move - 1;
+		    capture_pawn_movements_bkwd[square][color][mvmt].vector
+			= BITVECTOR(square + backwards_pawn_move - 1);
+
+		    mvmt ++;
+
+		}
+
+		if (COL(square) < 7) {
+
+		    capture_pawn_movements_bkwd[square][color][mvmt].square
+			= square + backwards_pawn_move + 1;
+		    capture_pawn_movements_bkwd[square][color][mvmt].vector
+			= BITVECTOR(square + backwards_pawn_move + 1);
+
+		    mvmt ++;
+
+		}
+	    }
+
+	    capture_pawn_movements_bkwd[square][color][mvmt].square = -1;
+	    capture_pawn_movements_bkwd[square][color][mvmt].vector = allones_bitvector;
+
 	}
 
     }
@@ -1426,7 +1490,9 @@ void verify_movements()
     int piece;
     int squareA, squareB;
     int dir;
+    int color;
     struct movement * movementptr;
+    int pawn_option;
 
     /* For everything except pawns, if it can move from A to B, then it better be able to move from
      * B to A...
@@ -1441,6 +1507,8 @@ void verify_movements()
 		int movement_possible = 0;
 		int reverse_movement_possible = 0;
 
+		/* check for possible self-movement, if A and B are the same square */
+
 		if (squareA == squareB) {
 		    for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
 			for (movementptr = movements[piece][squareA][dir];
@@ -1453,6 +1521,8 @@ void verify_movements()
 		    }
 		    continue;
 		}
+
+		/* check for possible A to B move */
 
 		for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
 
@@ -1506,6 +1576,110 @@ void verify_movements()
 			    piece_name[piece], squareA, squareB);
 		}
 
+	    }
+	}
+    }
+
+    /* Pawns are special */
+
+    piece = PAWN;
+
+    for (pawn_option = 0; pawn_option < 4; pawn_option ++) {
+
+	struct movement * fwd_movement;
+	struct movement * rev_movement;
+
+	for (color = WHITE; color <= BLACK; color ++) {
+
+	    /* fprintf(stderr, "Pawn option %d; color %s\n", pawn_option, colors[color]); */
+
+	    for (squareA=0; squareA < NUM_SQUARES; squareA ++) {
+
+		for (squareB=0; squareB < NUM_SQUARES; squareB ++) {
+
+		    int movement_possible = 0;
+		    int reverse_movement_possible = 0;
+
+		    switch (pawn_option) {
+		    case 0:
+			fwd_movement = normal_pawn_movements[squareA][color];
+			rev_movement = normal_pawn_movements_bkwd[squareB][color];
+			break;
+		    case 1:
+			fwd_movement = normal_pawn_movements_bkwd[squareA][color];
+			rev_movement = normal_pawn_movements[squareB][color];
+			break;
+		    case 2:
+			fwd_movement = capture_pawn_movements[squareA][color];
+			rev_movement = capture_pawn_movements_bkwd[squareB][color];
+			break;
+		    case 3:
+			fwd_movement = capture_pawn_movements_bkwd[squareA][color];
+			rev_movement = capture_pawn_movements[squareB][color];
+			break;
+		    }
+
+		    /* check for self-movement */
+
+		    if (squareA == squareB) {
+			for (movementptr = fwd_movement;
+			     (movementptr->vector & BITVECTOR(squareB)) == 0;
+			     movementptr++) ;
+			if ((movementptr->square != -1) || (movementptr->vector != allones_bitvector)) {
+			    fprintf(stderr, "Self movement possible!? PAWN %d %d\n",
+				    squareA, movementptr->square);
+			}
+		    }
+
+		    /* check for possible A to B move */
+
+		    for (movementptr = fwd_movement;
+			 (movementptr->vector & BITVECTOR(squareB)) == 0;
+			 movementptr++) {
+			if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
+			    fprintf(stderr, "Bad movement square: %s %d %d %d\n",
+				    piece_name[piece], squareA, squareB, movementptr->square);
+			}
+		    }
+
+		    if (movementptr->square == -1) {
+			if (movementptr->vector != allones_bitvector) {
+			    fprintf(stderr, "-1 movement lacks allones_bitvector: %s %d %d\n",
+				    piece_name[piece], squareA, squareB);
+			}
+		    } else if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
+			fprintf(stderr, "Bad movement square: %s %d %d\n",
+				piece_name[piece], squareA, squareB);
+		    } else {
+			if (movementptr->square != squareB) {
+			    fprintf(stderr, "bitvector does not match destination square: %s %d %d\n",
+				    piece_name[piece], squareA, squareB);
+			}
+			if (movement_possible) {
+			    fprintf(stderr, "multiple idential destinations from same origin: %s %d %d\n",
+				    piece_name[piece], squareA, squareB);
+			}
+			movement_possible = 1;
+			if (movementptr->vector == allones_bitvector) {
+			    fprintf(stderr, "allones_bitvector on a legal movement: %s %d %d\n",
+				    piece_name[piece], squareA, squareB);
+			}
+		    }
+
+
+		    /* check for possible B to A reverse move */
+
+		    for (movementptr = rev_movement;
+			 (movementptr->vector & BITVECTOR(squareA)) == 0;
+			 movementptr++) ;
+
+		    if (movementptr->square != -1) reverse_movement_possible=1;
+
+		    if (movement_possible && !reverse_movement_possible) {
+			fprintf(stderr, "reverse movement impossible: %s %d %d\n",
+				piece_name[piece], squareA, squareB);
+		    }
+		}
 	    }
 	}
     }
@@ -1894,63 +2068,13 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 		    /* Yes, pawn captures are special */
 
-		    /* XXX probably should check to make sure nothing was on the square already */
+		    for (movementptr = capture_pawn_movements_bkwd[current_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+			 (movementptr->vector & future_position.board_vector) == 0;
+			 movementptr++) {
 
-		    if ((tb->mobile_piece_color[piece] == WHITE)
-			&& ((current_position.mobile_piece_position[captured_piece] % 8) != 7)
-			&& ((current_position.mobile_piece_position[captured_piece] / 8) <= 6)) {
+			/* non-promotion capture */
 
-			/* left non-promotion capture with white pawn */
-
-			current_position.mobile_piece_position[piece]
-			    = current_position.mobile_piece_position[captured_piece];
-			current_position.mobile_piece_position[piece] += 1;
-			current_position.mobile_piece_position[piece] -= 8;
-
-			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
-									  &current_position, mate_in_limit);
-		    }
-
-		    if ((tb->mobile_piece_color[piece] == WHITE)
-			&& ((current_position.mobile_piece_position[captured_piece] % 8) != 0)
-			&& ((current_position.mobile_piece_position[captured_piece] / 8) <= 6)) {
-
-			/* right non-promotion capture with white pawn */
-
-			current_position.mobile_piece_position[piece]
-			    = current_position.mobile_piece_position[captured_piece];
-			current_position.mobile_piece_position[piece] -= 1;
-			current_position.mobile_piece_position[piece] -= 8;
-
-			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
-									  &current_position, mate_in_limit);
-		    }
-
-		    if ((tb->mobile_piece_color[piece] == BLACK)
-			&& ((current_position.mobile_piece_position[captured_piece] % 8) != 7)
-			&& ((current_position.mobile_piece_position[captured_piece] / 8) >= 1)) {
-
-			/* right non-promotion capture with black pawn */
-
-			current_position.mobile_piece_position[piece]
-			    = current_position.mobile_piece_position[captured_piece];
-			current_position.mobile_piece_position[piece] += 1;
-			current_position.mobile_piece_position[piece] += 8;
-
-			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
-									  &current_position, mate_in_limit);
-		    }
-
-		    if ((tb->mobile_piece_color[piece] == BLACK)
-			&& ((current_position.mobile_piece_position[captured_piece] % 8) != 0)
-			&& ((current_position.mobile_piece_position[captured_piece] / 8) >= 1)) {
-
-			/* left non-promotion capture with black pawn */
-
-			current_position.mobile_piece_position[piece]
-			    = current_position.mobile_piece_position[captured_piece];
-			current_position.mobile_piece_position[piece] -= 1;
-			current_position.mobile_piece_position[piece] += 8;
+			current_position.mobile_piece_position[piece] = movementptr->square;
 
 			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
 									  &current_position, mate_in_limit);
