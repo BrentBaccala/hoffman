@@ -486,7 +486,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.51 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.52 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -585,6 +585,13 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
     int piece;
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	/* I've added this pawn check because I've had some problems.  This makes the
+	 * return of this function match up with the return of index_to_global_position
+	 */
+	if ((tb->mobile_piece_type[piece] == PAWN)
+	    && ((pos->mobile_piece_position[piece] < 8) || (pos->mobile_piece_position[piece] >= 56))) {
+	    return -1;
+	}
 	if (pos->mobile_piece_position[piece] < 0)
 	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");
 	index |= pos->mobile_piece_position[piece] << shift_count;
@@ -656,6 +663,12 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
     index >>= 1;
 
     for (piece = 0; piece < tb->num_mobiles; piece++) {
+	/* I've added this pawn check because I've had some problems.  This makes the
+	 * return of this function match up with the return of index_to_global_position
+	 */
+	if ((tb->mobile_piece_type[piece] == PAWN) && (((index & 63) < 8) || ((index & 63) >= 56))) {
+	    return 0;
+	}
 	p->mobile_piece_position[piece] = index & 63;
 	if (p->board_vector & BITVECTOR(index & 63)) {
 	    return 0;
@@ -906,7 +919,7 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 42923 */
+/* #define DEBUG_MOVE 8464 */
 
 /* Five possible ways we can initialize an index for a position:
  *  - it's illegal
@@ -1960,6 +1973,69 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
     }
 }
 
+void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase *futurebase,
+						       int invert_colors_of_futurebase,
+						       unsigned char captured_piece,
+						       int *mate_in_limit)
+{
+    int32 future_index;
+    int32 max_future_index_static = max_index(futurebase);
+    global_position_t future_position;
+    int square;
+
+    /* We could limit the range of future_index here */
+
+    for (future_index = 0; future_index < max_future_index_static; future_index ++) {
+
+	if (index_to_global_position(futurebase, future_index, &future_position)) {
+
+	    if (invert_colors_of_futurebase)
+		invert_colors_of_global_position(&future_position);
+
+	    /* Consider only positions with a queen, rook or knight on the last rank, with an empty
+	     * square right behind where a pawn could have captured from, and the other side to move.
+	     */
+
+	    for (square = 56; square < 64; square ++) {
+
+		if (((future_position.board[square] == 'Q') || (future_position.board[square] == 'R') || (future_position.board[square] == 'N'))
+		    && (future_position.side_to_move == BLACK)) {
+
+		    flip_side_to_move_global(&future_position);
+
+		    if ((COL(square) != 0) && (future_position.board[square - 8 - 1] < 'A')) {
+
+			/* Replace the queen/knight with a pawn on the seventh */
+
+			future_position.board[square] = captured_piece;
+			future_position.board[square - 8 - 1] = 'P';
+
+			/* Back propagate the resulting position */
+
+			propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
+
+			/* We're about to use this position just below, probably... */
+
+			future_position.board[square - 8 - 1] = '\0';
+		    }
+
+		    if ((COL(square) != 7) && (future_position.board[square - 8 + 1] < 'A')) {
+
+			/* Replace the queen/knight with a pawn on the seventh */
+
+			future_position.board[square] = captured_piece;
+			future_position.board[square - 8 + 1] = 'P';
+
+			/* Back propagate the resulting position */
+
+			propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
+		    }
+		}
+	    }
+	}
+    }
+}
+
 void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
 						    int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
 {
@@ -2017,11 +2093,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		    continue;
 		}
 
-		if (future_position.side_to_move == WHITE)
-		    current_position.side_to_move = BLACK;
-		else
-		    current_position.side_to_move = WHITE;
-
+		flip_side_to_move_local(&current_position);
 
 		if (current_position.mobile_piece_position[captured_piece] != -1) {
 		    fprintf(stderr, "Captured piece position specified too soon during back-prop\n");
@@ -2036,6 +2108,18 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		 * look at the square the captured piece is on as a possible origin square for the
 		 * capturing piece.
 		 */
+
+		if ((tb->mobile_piece_type[captured_piece] == PAWN)
+		    && ((current_position.mobile_piece_position[piece] < 8)
+			|| (current_position.mobile_piece_position[piece] >= 56))) {
+
+		    /* If we "captured" a pawn on the first or eighth ranks, well, obviously that
+		     * can't happen...
+		     */
+
+		    continue;
+		}
+
 
 		current_position.mobile_piece_position[captured_piece]
 		    = current_position.mobile_piece_position[piece];
@@ -2069,8 +2153,10 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		    /* Yes, pawn captures are special */
 
 		    for (movementptr = capture_pawn_movements_bkwd[current_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
-			 (movementptr->vector & future_position.board_vector) == 0;
+			 movementptr->square != -1;
 			 movementptr++) {
+
+			if ((movementptr->vector & future_position.board_vector) != 0) continue;
 
 			/* non-promotion capture */
 
@@ -2201,6 +2287,85 @@ int back_propagate_all_futurebases(tablebase *tb) {
 
 		propagate_moves_from_promotion_futurebase(tb, futurebase, invert_colors, &mate_in_limit);
 
+	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion-capture")) {
+
+		int promoted_piece = -1;
+		unsigned char captured_piece_char;
+
+		/* It's a promotion capture futurebase.  Futurebase should have exactly one less
+		 * mobile than the current tablebase, and one of our pawns should have promoted
+		 * into something else.  Find the missing piece in the current tablebase, and
+		 * determine what the pawn promoted into.
+		 */
+
+		/* piece_vector - set a bit for every mobile piece in current tablebase */
+		piece_vector = (1 << tb->num_mobiles) - 1;
+
+		for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
+		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+			if (! (piece_vector & (1 << piece))) continue;
+			if ((tb->mobile_piece_type[piece] == futurebase->mobile_piece_type[future_piece])
+			    && ((!invert_colors &&
+				 (tb->mobile_piece_color[piece] == futurebase->mobile_piece_color[future_piece]))
+				|| (invert_colors &&
+				    (tb->mobile_piece_color[piece] != futurebase->mobile_piece_color[future_piece])))) {
+			    piece_vector ^= (1 << piece);
+			    break;
+			}
+		    }
+		    if (piece == tb->num_mobiles) {
+			if ((promoted_piece == -1) && (futurebase->mobile_piece_type[future_piece] != PAWN)) {
+			    promoted_piece = future_piece;
+			} else {
+			    fprintf(stderr, "Couldn't find future piece in tablebase\n");
+			    return;
+			}
+		    }
+		}
+
+		/* The only things left unaccounted for in the current tablebase should be
+		 * one of our pawns and one of our non-pawns.
+		 */
+
+		for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		    if ((tb->mobile_piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
+		}
+
+		if (piece == tb->num_mobiles) {
+		    fprintf(stderr, "No extra pawn in tablebase\n");
+		    return;
+		}
+
+		piece_vector ^= (1 << piece);
+
+		for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		    if ((tb->mobile_piece_type[piece] != PAWN) && (piece_vector & (1 << piece))) break;
+		}
+
+		if (piece == tb->num_mobiles) {
+		    fprintf(stderr, "No captured non-pawn in tablebase\n");
+		    return;
+		}
+
+		piece_vector ^= (1 << piece);
+
+		if (piece_vector != 0) {
+		    fprintf(stderr, "Too many extra mobile pieces in futurebase\n");
+		    return;
+		}
+
+		/* Right now, we only handle white promotions, so the pawn was white, and that means
+		 * the captured piece was black.
+		 */
+
+		captured_piece_char = global_pieces[BLACK][tb->mobile_piece_type[piece]];
+
+		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
+
+		propagate_moves_from_promotion_capture_futurebase(tb, futurebase, invert_colors,
+								  captured_piece_char,
+								  &mate_in_limit);
+
 	    } else {
 
 		fprintf(stderr, "Unknown back propagation type on '%s'\n", (char *) filename);
@@ -2282,6 +2447,10 @@ void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_po
 #endif
 
     current_index = local_position_to_index(tb, current_position);
+
+    if (current_index == -1) {
+	fprintf(stderr, "Can't lookup position in intratable propagation!\n");
+    }
 
     /* Parent position is the FUTURE position.  We now back-propagate to
      * the current position, which is the PAST position.
@@ -2574,9 +2743,13 @@ initialize_tablebase(tablebase *tb)
 		     * promotion move or not is how many futuremoves get recorded.
 		     */
 
+#define ENEMY_BOARD_VECTOR(pos) ((tb->mobile_piece_color[piece] == WHITE) ? pos.black_vector : pos.white_vector)
+
 		    for (movementptr = capture_pawn_movements[parent_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
-			 (movementptr->vector & current_position.board_vector) == 0;
+			 movementptr->square != -1;
 			 movementptr++) {
+
+			if ((movementptr->vector & ENEMY_BOARD_VECTOR(current_position)) == 0) continue;
 
 			/* Same check as above for a mated situation */
 
@@ -3313,7 +3486,7 @@ int main(int argc, char *argv[])
 
 			    /* This is the next move, so we reverse the sense of PTM and PNTM */
 
-			    if (is_position_valid(tb, index2)) {
+			    if ((index2 != -1) && is_position_valid(tb, index2)) {
 				printf("   %s%s ",
 				       algebraic_notation[pos.mobile_piece_position[piece]],
 				       algebraic_notation[movementptr->square]);
@@ -3396,7 +3569,7 @@ int main(int argc, char *argv[])
 
 			    /* This is the next move, so we reverse the sense of PTM and PNTM */
 
-			    if (is_position_valid(tb, index2)) {
+			    if ((index2 != -1) && is_position_valid(tb, index2)) {
 				printf("   %s%s ",
 				       algebraic_notation[pos.mobile_piece_position[piece]],
 				       algebraic_notation[movementptr->square]);
