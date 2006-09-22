@@ -1,0 +1,199 @@
+
+
+		       The Hoffman User's Guide
+
+			   by Brent Baccala
+			 cosine@freesoft.org
+
+
+Hoffman is a program to solve chess endgames using retrograde
+analysis.  For those not up on Americana, the program is named after
+Trevor Hoffman, an All Star baseball pitcher who specializes in
+"closing" games.  It was written specifically for The World vs. Arno
+Nickel game.
+
+A retrograde analysis program is much different from a conventional
+computer chess programs.  Retrograde analysis is only useful in the
+endgame, runs very slowly, and produces enormous amounts of data.  Its
+great advantage lies in its ability to completely solve the endgame.
+In a very real sense, a retrograde engine has no 'move horizon' like a
+conventional chess engine.  It sees everything.
+
+Hoffman (and this guide) is still very much a work in progress.
+
+Let me illustrate how Hoffman works using some simple examples.
+
+First, Hoffman operates using XML control files to govern its
+operation.  You build a Hoffman tablebase (traditionally an '.htb'
+file) by running Hoffman with the '-g' (generate) option, and passing
+it an XML control file.
+
+Here is about the simplest possible XML control file, for the king
+vs. king endgame:
+
+<tablebase>
+   <pieces>
+      <mobile color="white" type="king"/>
+      <mobile color="black" type="king"/>
+   </pieces>
+</tablebase>
+
+You put this in a file called "kk.xml", and run Hoffman like this:
+
+baccala@debian ~/src/endgame$ ./hoffman -g -o kk.htb kk.xml
+Initializing tablebase
+Checking futuremoves...
+All futuremoves handled under move restrictions
+Intra-table propagating
+Pass 0 complete; 840 positions processed
+Pass 1 complete; 0 positions processed
+baccala@debian ~/src/endgame$
+
+There isn't much to see, of course.  King vs king is nothing more than
+figuring out the different between illegal positions and draws.  But
+this information is important, because it's needed to back propagate
+from the (slightly) more complex three piece endgames, like K+Q vs K:
+
+<tablebase>
+   <pieces>
+      <mobile color="white" type="king"/>
+      <mobile color="black" type="king"/>
+      <mobile color="white" type="queen"/>
+   </pieces>
+   <futurebase filename="kk.htb" type="capture"/>
+</tablebase>
+
+Notice the new "futurebase" line.  This tells Hoffman where to get the
+information about what happens when the black king can capture the
+white queen.  The current version of Hoffman actually needs this
+information, since it doesn't distinguish between positions where the
+white king is guarding the queen or not.
+
+You put this is a file called "kqk.xml", make sure the "kk.htb" that
+was generated from the first run is present, and run Hoffman again:
+
+baccala@debian ~/src/endgame$ ./hoffman -g -o kqk.htb kqk.xml
+Initializing tablebase
+Back propagating from 'kk.htb'
+Checking futuremoves...
+All futuremoves handled under move restrictions
+Intra-table propagating
+Pass 0 complete; 131516 positions processed
+Pass 1 complete; 364 positions processed
+Pass 2 complete; 2448 positions processed
+Pass 3 complete; 1352 positions processed
+Pass 4 complete; 5012 positions processed
+Pass 5 complete; 2956 positions processed
+Pass 6 complete; 9064 positions processed
+Pass 7 complete; 7480 positions processed
+Pass 8 complete; 19964 positions processed
+Pass 9 complete; 14144 positions processed
+Pass 10 complete; 26164 positions processed
+Pass 11 complete; 25484 positions processed
+Pass 12 complete; 32064 positions processed
+Pass 13 complete; 39908 positions processed
+Pass 14 complete; 32104 positions processed
+Pass 15 complete; 54052 positions processed
+Pass 16 complete; 15000 positions processed
+Pass 17 complete; 43800 positions processed
+Pass 18 complete; 2680 positions processed
+Pass 19 complete; 11300 positions processed
+Pass 20 complete; 8 positions processed
+Pass 21 complete; 56 positions processed
+Pass 22 complete; 0 positions processed
+baccala@debian ~/src/endgame$
+
+See, it's a little more interesting this time, right?
+
+All of these XML files are available on the freesoft.org web server.
+After processing "kk.xml" and "kqk.xml", you'll want to compute
+"krk.xml" and "knk.xml".  Now you're ready to build "kpk.xml":
+
+<tablebase>
+   <pieces>
+      <mobile color="white" type="king"/>
+      <mobile color="black" type="king"/>
+      <mobile color="white" type="pawn"/>
+   </pieces>
+   <futurebase filename="kqk.htb" type="promotion"/>
+   <futurebase filename="krk.htb" type="promotion"/>
+   <futurebase filename="knk.htb" type="promotion"/>
+   <futurebase filename="kk.htb" type="capture"/>
+</tablebase>
+
+Notice we've added a new type of "futurebase" line - pawn promotion.
+Right now, Hoffman handles queen, rook, and knight promotions.
+Bishops would be easy to add, but I haven't done that yet.
+
+After computing "kpk.htb", you've got all of the three piece
+tablebases (except bishop).  Ready to try a four piece?  Here's
+"kqkq.xml":
+
+<tablebase>
+   <pieces>
+      <mobile color="white" type="king"/>
+      <mobile color="black" type="king"/>
+      <mobile color="white" type="queen"/>
+      <mobile color="black" type="queen"/>
+   </pieces>
+   <futurebase filename="kqk.htb" type="capture"/>
+   <futurebase filename="kqk.htb" type="capture" colors="invert"/>
+</tablebase>
+
+Notice several things.  First, we no longer specify "kk.htb" as a
+futurebase.  We're only interested in the single captures that lead
+out of the tablebase we're building.  "kk.htb" has already been used
+to build "kqk.htb", so its data is in there.  Two queens can't be
+taken on a single move, so all we need to worry about is what happens
+if one of them is captured.  That's why I use the "kqk.htb" tablebase.
+Notice that I use it twice, depending on which queen is being
+captured.  The "kqk.htb" tablebase has a white queen in it, and invert
+colors option handles the case where the white queen is captured and
+we're left with a black queen on the board.
+
+Notice also that a four piece tablebase takes a good bit longer to
+compute than a three piece one.
+
+By the way, if you have the appropriate Nalimov tablebases, you
+can verify Hoffman tablebases using the "-v" option:
+
+baccala@debian ~/src/endgame$ ./hoffman -v kqk.htb
+4 piece Nalimov tablebases found
+Loading 'kqk.htb'
+Verifying tablebase against Nalimov
+baccala@debian ~/src/endgame$
+
+Tablebases take a lot longer to verify than to create.
+
+Now you can process "kqkr.xml" and "kqkn.xml", which prepares you for
+"kpkq.xml":
+
+<tablebase>
+   <pieces>
+      <mobile color="white" type="king"/>
+      <mobile color="black" type="king"/>
+      <mobile color="white" type="pawn"/>
+      <mobile color="black" type="queen"/>
+   </pieces>
+   <futurebase filename="kqk.htb" type="capture" colors="invert"/>
+   <futurebase filename="kpk.htb" type="capture"/>
+   <futurebase filename="kqkq.htb" type="promotion"/>
+   <futurebase filename="kqkr.htb" type="promotion" colors="invert"/>
+   <futurebase filename="kqkn.htb" type="promotion" colors="invert"/>
+   <futurebase filename="kqk.htb" type="promotion-capture"/>
+   <futurebase filename="krk.htb" type="promotion-capture"/>
+   <futurebase filename="knk.htb" type="promotion-capture"/>
+</tablebase>
+
+Notice that the pawn is white and the queen is black.  That's a
+limitation in the program currently.  It can't handle black promotions
+(yet), but in this case there's only one pawn, so it's not a problem.
+Notice the new type of futurebase, "promotion-capture", that is pretty
+much for what its name implies.
+
+You will notice that the number of "futurebase" statements is starting
+to pile up.  That's one of the big reasons I used XML for a control
+file.  I fully expect to have another "meta-program" to generate
+XML files to govern a whole series of Hoffman runs.
+
+That's all for now.
