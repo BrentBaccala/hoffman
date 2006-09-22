@@ -486,7 +486,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.53 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.54 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -919,7 +919,7 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 8464 */
+/* #define DEBUG_MOVE 29783672 */
 
 /* Five possible ways we can initialize an index for a position:
  *  - it's illegal
@@ -1046,15 +1046,19 @@ inline void add_one_to_PNTM_wins(tablebase *tb, int32 index, int mate_in_count, 
 	 * no extra check needed here
 	 */
 	tb->entries[index].movecnt --;
-	if (mate_in_count < tb->entries[index].mate_in_cnt) {
-	    if (tb->entries[index].mate_in_cnt != 255) {
-		/* As above, this can happen during a futurebase back propagation */
-		/* fprintf(stderr, "mate-in count dropped in add_one_to_PNTM_wins?\n"); */
-		tb->entries[index].mate_in_cnt = mate_in_count;
-		tb->entries[index].stalemate_cnt = stalemate_count;
-	    }
+	if ((mate_in_count < tb->entries[index].mate_in_cnt) && (tb->entries[index].mate_in_cnt != 255)) {
+	    /* (255 means we haven't found any mates yet in this position) As above, this can
+	     * happen during a futurebase back propagation, and if it does... we do nothing!
+	     * Since this is PNTM wins, PTM will make the move leading to the slowest mate.
+	     */
+	    /* XXX need to think more about the stalemates */
+	    /* fprintf(stderr, "mate-in count dropped in add_one_to_PNTM_wins?\n"); */
+	    /* tb->entries[index].mate_in_cnt = mate_in_count; */
+	    /* tb->entries[index].stalemate_cnt = stalemate_count; */
+	} else {
+	    tb->entries[index].mate_in_cnt = mate_in_count;
+	    tb->entries[index].stalemate_cnt = stalemate_count;
 	}
-	tb->entries[index].mate_in_cnt = mate_in_count;
 
 	if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
 	    && (tb->entries[index].mate_in_cnt == 1)) {
