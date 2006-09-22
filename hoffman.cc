@@ -486,7 +486,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.52 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.53 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -3291,7 +3291,7 @@ void print_score(tablebase *tb, int32 index, char *ptm, char *pntm)
 int main(int argc, char *argv[])
 {
     /* Make sure this tablebase array is one bigger than we need, so it can be NULL terminated */
-    tablebase *tb, *tbs[5];
+    tablebase *tb, **tbs;
     global_position_t global_position;
     boolean global_position_valid = 0;
     int argi;
@@ -3305,8 +3305,6 @@ int main(int argc, char *argv[])
     extern int optind;
 
     bzero(tbs, sizeof(tbs));
-
-    init_nalimov_code();
 
     init_movements();
     verify_movements();
@@ -3378,9 +3376,14 @@ int main(int argc, char *argv[])
 	exit(1);
     }
 
-    /* Probing */
+    /* Probing / Verifying */
+
+    init_nalimov_code();
 
     i = 0;
+    /* calloc (unlike malloc) zeros memory */
+    tbs = calloc(argc - optind + 1, sizeof(tablebase *));
+
     for (argi=optind; argi<argc; argi++) {
 	fprintf(stderr, "Loading '%s'\n", argv[argi]);
 	tbs[i] = load_futurebase_from_file(argv[argi]);
@@ -3389,6 +3392,8 @@ int main(int argc, char *argv[])
     }
 
     if (!probing) exit(1);
+
+    /* Probing only */
 
     read_history(".hoffman_history");
 
