@@ -486,7 +486,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.54 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.55 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -750,24 +750,43 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
 /* invert_colors_of_global_position - just what its name implies
  *
  * We use this when propagating from a futurebase built for the opposite colors, say a K+R vs K
- * endgame that we now want to propagate into a game where the rook is black, not white.
- *
- * Actually, this only works (in its present form) if no pawns are present.  If there are pawns in
- * the game, this function will also have to reflect the board around a horizontal centerline,
- * right?
+ * endgame that we now want to propagate into a game where the rook is black, not white.  If there
+ * are pawns in the game, this function has to reflect the board around a horizontal centerline.
  */
 
 void invert_colors_of_global_position(global_position_t *global)
 {
-    int square;
+    int squareA;
 
-    for (square=0; square < NUM_SQUARES; square++) {
-	if ((global->board[square] >= 'A') && (global->board[square] <= 'Z')) {
-	    global->board[square] += 'a' - 'A';
-	} else if ((global->board[square] >= 'a') && (global->board[square] <= 'z')) {
-	    global->board[square] += 'A' - 'a';
+    global->board_vector = 0;
+
+    for (squareA=0; squareA < NUM_SQUARES/2; squareA++) {
+	unsigned char pieceA;
+	unsigned char pieceB;
+	int squareB = square(7-ROW(squareA),COL(squareA));
+
+	pieceA = global->board[squareA];
+	pieceB = global->board[squareB];
+
+	if ((pieceA >= 'A') && (pieceA <= 'Z')) {
+	    pieceA += 'a' - 'A';
+	} else if ((pieceA >= 'a') && (pieceA <= 'z')) {
+	    pieceA += 'A' - 'a';
 	}
+
+	if ((pieceB >= 'A') && (pieceB <= 'Z')) {
+	    pieceB += 'a' - 'A';
+	} else if ((pieceB >= 'a') && (pieceB <= 'z')) {
+	    pieceB += 'A' - 'a';
+	}
+	
+	global->board[squareA] = pieceB;
+	global->board[squareB] = pieceA;
+
+	if (pieceB >= 'A') global->board_vector |= BITVECTOR(squareA);
+	if (pieceA >= 'A') global->board_vector |= BITVECTOR(squareB);
     }
+
     if (global->side_to_move == WHITE)
 	global->side_to_move = BLACK;
     else
@@ -919,7 +938,7 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 29783672 */
+/* #define DEBUG_MOVE 393220 */
 
 /* Five possible ways we can initialize an index for a position:
  *  - it's illegal
@@ -1929,18 +1948,24 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
 
 /* Back propagate promotion moves
  *
- * Still quite primitive.  Only handles white promotions.  Really only works reliably for a single
- * queen/rook/knight in the futurebase.  Otherwise, just mindlessly back propagates the first
- * queen/rook/knight it finds on the eight rank.
+ * Passed a piece (a global position character) that the pawn is promoting into.  Searches
+ * futurebase for positions with that piece on the last rank and back-props.
  */
 
 void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futurebase,
-					       int invert_colors_of_futurebase, int *mate_in_limit)
+					       int invert_colors_of_futurebase,
+					       unsigned char promoted_piece,
+					       int *mate_in_limit)
 {
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
     global_position_t future_position;
     int square;
+
+    int promotion_color = ((promoted_piece < 'a') ? WHITE : BLACK);
+    int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
+    int last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
+    int promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
     /* We could limit the range of future_index here */
 
@@ -1951,26 +1976,39 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 	    if (invert_colors_of_futurebase)
 		invert_colors_of_global_position(&future_position);
 
-	    /* Consider only positions with a queen, rook or knight on the last rank, with an empty
-	     * square right behind where a pawn could have come from, and the other side to move.
+	    /* Whatever color the promoted piece is, after the promotion it must be the other side
+	     * to move.
 	     */
 
-	    for (square = 56; square < 64; square ++) {
+	    if (future_position.side_to_move == promotion_color) continue;
 
-		if (((future_position.board[square] == 'Q') || (future_position.board[square] == 'R') || (future_position.board[square] == 'N'))
-		    && (future_position.board[square - 8] < 'A')
-		    && (future_position.side_to_move == BLACK)) {
+	    /* We're back-proping one half move to the promotion move. */
 
-		    /* Replace the queen/knight with a pawn on the seventh */
+	    flip_side_to_move_global(&future_position);
+
+	    /* Consider only positions with the promoted piece on the last rank and with an empty
+	     * square right behind where a pawn could have come from.
+	     */
+
+	    for (square = first_back_rank_square; square <= last_back_rank_square; square ++) {
+
+		if ((future_position.board[square] == promoted_piece)
+		    && (future_position.board[square - promotion_move] < 'A')) {
+
+		    /* Replace the promoted piece with a pawn on the seventh */
 
 		    future_position.board[square] = 0;
-		    future_position.board[square - 8] = 'P';
-
-		    flip_side_to_move_global(&future_position);
+		    future_position.board[square - promotion_move]
+			= ((promotion_color == WHITE) ? 'P' : 'p');
 
 		    /* Back propagate the resulting position */
 
 		    propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
+
+		    /* ...and put everything back so we can keep running this loop! */
+
+		    future_position.board[square - promotion_move] = 0;
+		    future_position.board[square] = promoted_piece;
 		}
 	    }
 	}
@@ -1979,6 +2017,7 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 
 void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase *futurebase,
 						       int invert_colors_of_futurebase,
+						       unsigned char promoted_piece,
 						       unsigned char captured_piece,
 						       int *mate_in_limit)
 {
@@ -1986,6 +2025,11 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
     int32 max_future_index_static = max_index(futurebase);
     global_position_t future_position;
     int square;
+
+    int promotion_color = ((promoted_piece < 'a') ? WHITE : BLACK);
+    int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
+    int last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
+    int promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
     /* We could limit the range of future_index here */
 
@@ -1996,23 +2040,34 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
 	    if (invert_colors_of_futurebase)
 		invert_colors_of_global_position(&future_position);
 
-	    /* Consider only positions with a queen, rook or knight on the last rank, with an empty
-	     * square right behind where a pawn could have captured from, and the other side to move.
+	    /* Whatever color the promoted piece is, after the promotion it must be the other side
+	     * to move.
 	     */
 
-	    for (square = 56; square < 64; square ++) {
+	    if (future_position.side_to_move == promotion_color) continue;
 
-		if (((future_position.board[square] == 'Q') || (future_position.board[square] == 'R') || (future_position.board[square] == 'N'))
-		    && (future_position.side_to_move == BLACK)) {
+	    /* We're back-proping one half move to the promotion move. */
 
-		    flip_side_to_move_global(&future_position);
+	    flip_side_to_move_global(&future_position);
 
-		    if ((COL(square) != 0) && (future_position.board[square - 8 - 1] < 'A')) {
+	    /* Consider only positions with the promoted piece on the last rank and with an empty
+	     * square right behind where a pawn could have captured from.
+	     */
 
-			/* Replace the queen/knight with a pawn on the seventh */
+	    for (square = first_back_rank_square; square <= last_back_rank_square; square ++) {
 
-			future_position.board[square] = captured_piece;
-			future_position.board[square - 8 - 1] = 'P';
+		if (future_position.board[square] == promoted_piece) {
+
+		    /* Put the captured piece where it's going to go */
+
+		    future_position.board[square] = captured_piece;
+
+		    if ((COL(square) != 0) && (future_position.board[square - promotion_move - 1] < 'A')) {
+
+			/* Replace the promoted piece with a pawn on the seventh */
+
+			future_position.board[square - promotion_move - 1]
+			    = ((promotion_color == WHITE) ? 'P' : 'p');
 
 			/* Back propagate the resulting position */
 
@@ -2020,20 +2075,30 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
 
 			/* We're about to use this position just below, probably... */
 
-			future_position.board[square - 8 - 1] = '\0';
+			future_position.board[square - promotion_move - 1] = '\0';
 		    }
 
-		    if ((COL(square) != 7) && (future_position.board[square - 8 + 1] < 'A')) {
+		    if ((COL(square) != 7) && (future_position.board[square - promotion_move + 1] < 'A')) {
 
-			/* Replace the queen/knight with a pawn on the seventh */
+			/* Replace the promoted piece with a pawn on the seventh */
 
 			future_position.board[square] = captured_piece;
-			future_position.board[square - 8 + 1] = 'P';
+			future_position.board[square - promotion_move + 1]
+			    = ((promotion_color == WHITE) ? 'P' : 'p');
 
 			/* Back propagate the resulting position */
 
 			propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
+
+			future_position.board[square - promotion_move + 1] = '\0';
 		    }
+
+		    /* We've taken the pawns back off the board, now put the promoted piece back
+		     * where the captured piece was, because we want to keep running this loop.
+		     */
+
+		    future_position.board[square] = promoted_piece;
+
 		}
 	    }
 	}
@@ -2215,6 +2280,9 @@ int back_propagate_all_futurebases(tablebase *tb) {
 	    int piece;
 	    int color;
 	    int piece_vector;
+	    int promoted_piece = -1;
+	    unsigned char captured_piece_char;
+	    unsigned char promoted_piece_char;
 
 	    filename = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "filename");
 
@@ -2287,14 +2355,68 @@ int back_propagate_all_futurebases(tablebase *tb) {
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion")) {
 
+		/* It's a promotion futurebase.  Futurebase should have exactly the same number of
+		 * pieces as the current tablebase, and one of our pawns should have promoted into
+		 * something else.  Determine what the pawn promoted into.
+		 */
+
+		/* piece_vector - set a bit for every mobile piece in current tablebase */
+		piece_vector = (1 << tb->num_mobiles) - 1;
+
+		for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
+		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+			if (! (piece_vector & (1 << piece))) continue;
+			if ((tb->mobile_piece_type[piece] == futurebase->mobile_piece_type[future_piece])
+			    && ((!invert_colors &&
+				 (tb->mobile_piece_color[piece] == futurebase->mobile_piece_color[future_piece]))
+				|| (invert_colors &&
+				    (tb->mobile_piece_color[piece] != futurebase->mobile_piece_color[future_piece])))) {
+			    piece_vector ^= (1 << piece);
+			    break;
+			}
+		    }
+		    if (piece == tb->num_mobiles) {
+			if ((promoted_piece == -1) && (futurebase->mobile_piece_type[future_piece] != PAWN)) {
+			    promoted_piece = future_piece;
+			} else {
+			    fprintf(stderr, "Couldn't find future piece in tablebase\n");
+			    return;
+			}
+		    }
+		}
+
+		/* The only thing left unaccounted for in the current tablebase should be a pawn. */
+
+		for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		    if ((tb->mobile_piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
+		}
+
+		if (piece == tb->num_mobiles) {
+		    fprintf(stderr, "No extra pawn in tablebase\n");
+		    return;
+		}
+
+		piece_vector ^= (1 << piece);
+
+		if (piece_vector != 0) {
+		    fprintf(stderr, "Too many extra mobile pieces in futurebase\n");
+		    return;
+		}
+
+		/* Ready to go.
+		 *
+		 * I use the color of 'piece' (the pawn) here because the futurebase might have
+		 * colors inverted.
+		 */
+
+		promoted_piece_char = global_pieces[tb->mobile_piece_color[piece]][futurebase->mobile_piece_type[promoted_piece]];
+
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
-		propagate_moves_from_promotion_futurebase(tb, futurebase, invert_colors, &mate_in_limit);
+		propagate_moves_from_promotion_futurebase(tb, futurebase, invert_colors,
+							  promoted_piece_char, &mate_in_limit);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion-capture")) {
-
-		int promoted_piece = -1;
-		unsigned char captured_piece_char;
 
 		/* It's a promotion capture futurebase.  Futurebase should have exactly one less
 		 * mobile than the current tablebase, and one of our pawns should have promoted
@@ -2358,15 +2480,21 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		    return;
 		}
 
-		/* Right now, we only handle white promotions, so the pawn was white, and that means
-		 * the captured piece was black.
+		/* Ready to go.
+		 *
+		 * I use the color of 'piece' (the captured piece) here, and invert it, because the
+		 * futurebase might have colors inverted.
 		 */
+		/* XXX this "BLACK -" business has to go */
 
-		captured_piece_char = global_pieces[BLACK][tb->mobile_piece_type[piece]];
+
+		promoted_piece_char = global_pieces[BLACK - tb->mobile_piece_color[piece]][futurebase->mobile_piece_type[promoted_piece]];
+		captured_piece_char = global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]];
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
 		propagate_moves_from_promotion_capture_futurebase(tb, futurebase, invert_colors,
+								  promoted_piece_char,
 								  captured_piece_char,
 								  &mate_in_limit);
 
