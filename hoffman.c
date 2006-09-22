@@ -369,14 +369,39 @@ tablebase * parse_XML_into_tablebase(xmlDocPtr doc)
 
 tablebase * parse_XML_control_file(char *filename)
 {
+    xmlParserCtxtPtr ctxt; /* the parser context */
     xmlDocPtr doc;
     tablebase *tb;
 
+    /* create a parser context */
+    ctxt = xmlNewParserCtxt();
+    if (ctxt == NULL) {
+        fprintf(stderr, "Failed to allocate parser context\n");
+	return;
+    }
+    /* parse the file, activating the DTD validation option */
+    doc = xmlCtxtReadFile(ctxt, filename, NULL, XML_PARSE_DTDVALID);
+
+    /* check if parsing suceeded */
+    if (doc == NULL) {
+	fprintf(stderr, "'%s' failed XML read\n", filename);
+	return NULL;
+    } else {
+	/* check if validation suceeded */
+        if (ctxt->valid == 0) {
+	    fprintf(stderr, "WARNING: '%s' failed XML validatation\n", filename);
+	}
+    }
+    /* free up the parser context */
+    xmlFreeParserCtxt(ctxt);
+
+#if 0
     doc = xmlReadFile(filename, NULL, 0);
     if (doc == NULL) {
 	fprintf(stderr, "'%s' failed XML read\n", filename);
 	return NULL;
     }
+#endif
 
     tb = parse_XML_into_tablebase(doc);
 
@@ -457,6 +482,8 @@ xmlDocPtr create_XML_header(tablebase *tb)
     struct hostent *he;
 
     doc = xmlNewDoc((const xmlChar *) "1.0");
+    xmlCreateIntSubset(doc, BAD_CAST "tablebase", NULL, BAD_CAST "tablebase.dtd");
+
     tablebase = xmlNewDocNode(doc, NULL, (const xmlChar *) "tablebase", NULL);
     xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
     xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "fourbyte");
@@ -486,7 +513,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.55 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.56 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
