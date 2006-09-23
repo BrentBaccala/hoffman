@@ -513,7 +513,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.58 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.59 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2009,6 +2009,10 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 
 	    if (future_position.side_to_move == promotion_color) continue;
 
+	    /* Since the last move had to have been a promotion move, there is absolutely no way we
+	     * could have en passant capturable pawns in the futurebase position.
+	     */
+
 	    /* We're back-proping one half move to the promotion move. */
 
 	    flip_side_to_move_global(&future_position);
@@ -2029,6 +2033,10 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 			= ((promotion_color == WHITE) ? 'P' : 'p');
 
 		    /* Back propagate the resulting position */
+
+		    /* Also want to back prop any similar positions with one of the pawns from the
+		     * side that didn't promote in an en passant state.
+		     */
 
 		    propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
 
@@ -2073,6 +2081,10 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
 
 	    if (future_position.side_to_move == promotion_color) continue;
 
+	    /* Since the last move had to have been a promotion move, there is absolutely no way we
+	     * could have en passant capturable pawns in the futurebase position.
+	     */
+
 	    /* We're back-proping one half move to the promotion move. */
 
 	    flip_side_to_move_global(&future_position);
@@ -2098,6 +2110,10 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
 
 			/* Back propagate the resulting position */
 
+			/* Also want to back prop any similar positions with one of the pawns from
+			 * the side that didn't promote in an en passant state.
+			 */
+
 			propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
 
 			/* We're about to use this position just below, probably... */
@@ -2114,6 +2130,10 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
 			    = ((promotion_color == WHITE) ? 'P' : 'p');
 
 			/* Back propagate the resulting position */
+
+			/* Also want to back prop any similar positions with one of the pawns from
+			 * the side that didn't promote in an en passant state.
+			 */
 
 			propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
 
@@ -2156,6 +2176,10 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	    if (invert_colors_of_futurebase)
 		invert_colors_of_global_position(&future_position);
 
+	    /* Since the last move had to have been a capture move, there is absolutely no way we
+	     * could have en passant capturable pawns in the futurebase position.
+	     */
+
 	    /* Since the position resulted from a capture, we only want to consider future positions
 	     * where the side to move is not the side that captured.
 	     */
@@ -2179,9 +2203,6 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		 * Probably could move this code outside of the for loop, and just copy the local
 		 * position.  But we don't have that many mobile pieces, so it's probably not a huge
 		 * performance hit anyway.
-		 *
-		 * This subroutine call could fail, for example if we're back propagating from a
-		 * futurebase with a promoted queen and the current tablebase only contains a pawn.
 		 */
 
 		if (! global_position_to_local_position(tb, &future_position, &current_position)) {
@@ -2216,7 +2237,6 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		    continue;
 		}
 
-
 		current_position.mobile_piece_position[captured_piece]
 		    = current_position.mobile_piece_position[piece];
 
@@ -2247,6 +2267,16 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		} else {
 
 		    /* Yes, pawn captures are special */
+
+		    /* The en passant special case: if both the piece that captured and the piece
+		     * that was captured are both pawns, and either a white pawn captured from the
+		     * fifth to the sixth rank, or a black pawn captured from the fourth to the
+		     * third, then there are two possible back prop positions - the obvious one, and
+		     * the one where the captured pawn was in an en passant state.  This is in
+		     * addition to back prop positions with a pawn in the 'obvious' capturable
+		     * position, and some other pawn in an en passant state.
+		     */
+
 
 		    for (movementptr = capture_pawn_movements_bkwd[current_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
 			 movementptr->square != -1;
@@ -2686,6 +2716,11 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 	if (tb->mobile_piece_color[piece] == parent_position.side_to_move)
 	    continue;
 
+	/* If there are any en passant capturable pawns in the position, then the last move had to
+	 * have been a pawn move.  In fact, in this case, we already know exactly what the last move
+	 * had to have been.
+	 */
+
 	/* forall possible_moves(current_position, piece) { */
 
 	if (tb->mobile_piece_type[piece] != PAWN) {
@@ -2709,6 +2744,16 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 		    current_position = parent_position;
 
+		    /* Back stepping a half move here involves several things: flipping the
+		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
+		     * the piece (backwards), and considering a bunch of additional positions
+		     * identical to the base position except that a single one of the pawns on the
+		     * fourth or fifth ranks was capturable en passant.
+		     *
+		     * Of course, the only way we could have gotten an en passant pawn is if THIS
+		     * MOVE created it.  Since this isn't a pawn move, that can't happen.
+		     */
+
 		    flip_side_to_move_local(&current_position);
 
 		    current_position.mobile_piece_position[piece] = movementptr->square;
@@ -2725,7 +2770,18 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		 (movementptr->vector & parent_position.board_vector) == 0;
 		 movementptr++) {
 
-		/* Do we have a backwards pawn move here? */
+		/* Do we have a backwards pawn move here?
+		 *
+		 * Back stepping a half move here involves several things: flipping the
+		 * side-to-move flag, clearing any en passant pawns into regular pawns, moving
+		 * the piece (backwards), and considering a bunch of additional positions
+		 * identical to the base position except that a single one of the pawns on the
+		 * fourth or fifth ranks was capturable en passant.
+		 *
+		 * Of course, the only way we could have gotten an en passant pawn is if THIS MOVE
+		 * created it.  We handle that as a special case above, so we shouldn't have to
+		 * worry about clearing en passant pawns here - there should be none.
+		 */
 
 		current_position = parent_position;
 
@@ -2811,6 +2867,16 @@ initialize_tablebase(tablebase *tb)
 	    /* Now we need to count moves.  FORWARD moves. */
 	    int movecnt = 0;
 	    int futuremove_cnt = 0;
+
+	    /* En passant:
+	     *
+	     * We're just counting moves here.  In particular, we don't compute the indices of the
+	     * resulting positions.  If we did, we'd have to worry about clearing en passant status
+	     * from any of fourth or fifth rank pawns, but we don't have to worry about it.
+	     *
+	     * We do have to count one or two possible extra en passant pawn captures, though...
+	     */
+
 
 	    for (piece = 0; piece < tb->num_mobiles; piece++) {
 
@@ -2906,6 +2972,10 @@ initialize_tablebase(tablebase *tb)
 		    for (movementptr = capture_pawn_movements[position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
 			 movementptr->square != -1;
 			 movementptr++) {
+
+			/* This is where we'll need to check for en passant captures.  Something
+			 * simple like "if (movementptr->square == enPassantSquare)"
+			 */
 
 			if ((movementptr->vector & ENEMY_BOARD_VECTOR(position)) == 0) continue;
 
