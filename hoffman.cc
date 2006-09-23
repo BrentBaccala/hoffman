@@ -513,7 +513,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.56 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.57 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2279,7 +2279,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
  * promotions, nor to frozen pieces moving, nor to any configuration of mobile pieces other than
  * that described (like one of the frozen pieces becoming mobile in the futurebase).
  *
- * Returns maximum mate_in value
+ * Returns maximum mate_in value, or -1 if something went wrong
  */
 
 int back_propagate_all_futurebases(tablebase *tb) {
@@ -2321,13 +2321,17 @@ int back_propagate_all_futurebases(tablebase *tb) {
 
 	    futurebase = load_futurebase_from_file((char *) filename);
 
+	    /* load_futurebase_from_file() already printed some kind of error message */
+	    if (futurebase == NULL) return -1;
+
 	    /* Check futurebase to make sure its move restriction(s) match our own */
 
 	    for (color = 0; color < 2; color ++) {
 		if ((futurebase->move_restrictions[color] != RESTRICTION_NONE)
 		    && (futurebase->move_restrictions[color]
 			!= tb->move_restrictions[invert_colors ? 1 - color : color])) {
-		    fprintf(stderr, "Futurebase doesn't match move restrictions!\n");
+		    fprintf(stderr, "'%s': Futurebase doesn't match move restrictions!\n", filename);
+		    return -1;
 		}
 	    }
 
@@ -2355,8 +2359,8 @@ int back_propagate_all_futurebases(tablebase *tb) {
 			}
 		    }
 		    if (piece == tb->num_mobiles) {
-			fprintf(stderr, "Couldn't find future piece in tablebase\n");
-			return;
+			fprintf(stderr, "'%s': Couldn't find future piece in tablebase\n", filename);
+			return -1;
 		    }
 		}
 
@@ -2365,15 +2369,15 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		}
 
 		if (piece == tb->num_mobiles) {
-		    fprintf(stderr, "No extra mobile piece in futurebase\n");
-		    return;
+		    fprintf(stderr, "'%s': No extra mobile piece in futurebase\n", filename);
+		    return -1;
 		}
 
 		piece_vector ^= (1 << piece);
 
 		if (piece_vector != 0) {
-		    fprintf(stderr, "Too many extra mobile pieces in futurebase\n");
-		    return;
+		    fprintf(stderr, "'%s': Too many extra mobile pieces in futurebase\n", filename);
+		    return -1;
 		}
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
@@ -2406,8 +2410,8 @@ int back_propagate_all_futurebases(tablebase *tb) {
 			if ((promoted_piece == -1) && (futurebase->mobile_piece_type[future_piece] != PAWN)) {
 			    promoted_piece = future_piece;
 			} else {
-			    fprintf(stderr, "Couldn't find future piece in tablebase\n");
-			    return;
+			    fprintf(stderr, "'%s': Couldn't find future piece in tablebase\n", filename);
+			    return -1;
 			}
 		    }
 		}
@@ -2419,15 +2423,15 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		}
 
 		if (piece == tb->num_mobiles) {
-		    fprintf(stderr, "No extra pawn in tablebase\n");
-		    return;
+		    fprintf(stderr, "'%s': No extra pawn in tablebase\n", filename);
+		    return -1;
 		}
 
 		piece_vector ^= (1 << piece);
 
 		if (piece_vector != 0) {
-		    fprintf(stderr, "Too many extra mobile pieces in futurebase\n");
-		    return;
+		    fprintf(stderr, "'%s': Too many extra mobile pieces in futurebase\n", filename);
+		    return -1;
 		}
 
 		/* Ready to go.
@@ -2470,8 +2474,8 @@ int back_propagate_all_futurebases(tablebase *tb) {
 			if ((promoted_piece == -1) && (futurebase->mobile_piece_type[future_piece] != PAWN)) {
 			    promoted_piece = future_piece;
 			} else {
-			    fprintf(stderr, "Couldn't find future piece in tablebase\n");
-			    return;
+			    fprintf(stderr, "'%s': Couldn't find future piece in tablebase\n", filename);
+			    return -1;
 			}
 		    }
 		}
@@ -2485,8 +2489,8 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		}
 
 		if (piece == tb->num_mobiles) {
-		    fprintf(stderr, "No extra pawn in tablebase\n");
-		    return;
+		    fprintf(stderr, "'%s': No extra pawn in tablebase\n", filename);
+		    return -1;
 		}
 
 		piece_vector ^= (1 << piece);
@@ -2496,15 +2500,15 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		}
 
 		if (piece == tb->num_mobiles) {
-		    fprintf(stderr, "No captured non-pawn in tablebase\n");
-		    return;
+		    fprintf(stderr, "'%s': No captured non-pawn in tablebase\n", filename);
+		    return -1;
 		}
 
 		piece_vector ^= (1 << piece);
 
 		if (piece_vector != 0) {
-		    fprintf(stderr, "Too many extra mobile pieces in futurebase\n");
-		    return;
+		    fprintf(stderr, "'%s': Too many extra mobile pieces in futurebase\n", filename);
+		    return -1;
 		}
 
 		/* Ready to go.
@@ -2527,7 +2531,9 @@ int back_propagate_all_futurebases(tablebase *tb) {
 
 	    } else {
 
-		fprintf(stderr, "Unknown back propagation type on '%s'\n", (char *) filename);
+		fprintf(stderr, "'%s': Unknown back propagation type (%s)\n",
+			(char *) filename, (char *) type);
+		return -1;
 
 	    }
 	}
@@ -3520,11 +3526,15 @@ int main(int argc, char *argv[])
 
 	mate_in_limit = back_propagate_all_futurebases(tb);
 
+	/* back_propagate_all_futurebases() printed some kind of error message already */
+	if (mate_in_limit == -1) exit(1);
+
 	fprintf(stderr, "Checking futuremoves...\n");
 	if (have_all_futuremoves_been_handled(tb)) {
 	    fprintf(stderr, "All futuremoves handled under move restrictions\n");
 	} else {
-	    fprintf(stderr, "WARNING: Some futuremoves not handled under move restrictions!\n");
+	    fprintf(stderr, "ERROR: Some futuremoves not handled under move restrictions!\n");
+	    exit(1);
 	}
 
 	fprintf(stderr, "Intra-table propagating\n");
