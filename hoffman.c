@@ -513,7 +513,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.57 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.58 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2790,8 +2790,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 initialize_tablebase(tablebase *tb)
 {
-    local_position_t parent_position;
-    local_position_t current_position;
+    local_position_t position;
     int32 index;
     int piece;
     int dir;
@@ -2803,7 +2802,7 @@ initialize_tablebase(tablebase *tb)
 
     for (index=0; index < max_index_static; index++) {
 
-	if (! index_to_local_position(tb, index, &parent_position)) {
+	if (! index_to_local_position(tb, index, &position)) {
 
 	    initialize_index_as_illegal(tb, index);
 
@@ -2817,17 +2816,15 @@ initialize_tablebase(tablebase *tb)
 
 		/* We only want to consider pieces of the side which is to move... */
 
-		if (tb->mobile_piece_color[piece] != parent_position.side_to_move)
+		if (tb->mobile_piece_color[piece] != position.side_to_move)
 		    continue;
 
 		if (tb->mobile_piece_type[piece] != PAWN) {
 
 		    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
 
-			current_position = parent_position;
-
-			for (movementptr = movements[tb->mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
-			     (movementptr->vector & current_position.board_vector) == 0;
+			for (movementptr = movements[tb->mobile_piece_type[piece]][position.mobile_piece_position[piece]][dir];
+			     (movementptr->vector & position.board_vector) == 0;
 			     movementptr++) {
 
 			    movecnt ++;
@@ -2847,22 +2844,20 @@ initialize_tablebase(tablebase *tb)
 			 * XXX ASSUMES THAT THE ENEMY KING IS ONE OF THE MOBILE PIECES XXX
 			 */
 
-			if (current_position.side_to_move == WHITE) {
-			    if ((movementptr->vector & current_position.white_vector) == 0) {
+			if (position.side_to_move == WHITE) {
+			    if ((movementptr->vector & position.white_vector) == 0) {
 				movecnt ++;
 				futuremove_cnt ++;
-				if (movementptr->square ==
-				    current_position.mobile_piece_position[BLACK_KING]) {
+				if (movementptr->square == position.mobile_piece_position[BLACK_KING]) {
 				    initialize_index_with_black_mated(tb, index);
 				    goto mated;
 				}
 			    }
 			} else {
-			    if ((movementptr->vector & current_position.black_vector) == 0) {
+			    if ((movementptr->vector & position.black_vector) == 0) {
 				movecnt ++;
 				futuremove_cnt ++;
-				if (movementptr->square ==
-				    current_position.mobile_piece_position[WHITE_KING]) {
+				if (movementptr->square == position.mobile_piece_position[WHITE_KING]) {
 				    initialize_index_with_white_mated(tb, index);
 				    goto mated;
 				}
@@ -2874,10 +2869,8 @@ initialize_tablebase(tablebase *tb)
 
 		    /* Pawns, as always, are special */
 
-		    current_position = parent_position;
-
-		    for (movementptr = normal_pawn_movements[parent_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
-			 (movementptr->vector & current_position.board_vector) == 0;
+		    for (movementptr = normal_pawn_movements[position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
 
 			/* If the piece is a pawn and we're moving to the last rank, then this has
@@ -2910,21 +2903,21 @@ initialize_tablebase(tablebase *tb)
 
 #define ENEMY_BOARD_VECTOR(pos) ((tb->mobile_piece_color[piece] == WHITE) ? pos.black_vector : pos.white_vector)
 
-		    for (movementptr = capture_pawn_movements[parent_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+		    for (movementptr = capture_pawn_movements[position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
 			 movementptr->square != -1;
 			 movementptr++) {
 
-			if ((movementptr->vector & ENEMY_BOARD_VECTOR(current_position)) == 0) continue;
+			if ((movementptr->vector & ENEMY_BOARD_VECTOR(position)) == 0) continue;
 
 			/* Same check as above for a mated situation */
 
-			if (current_position.side_to_move == WHITE) {
-			    if (movementptr->square == current_position.mobile_piece_position[BLACK_KING]) {
+			if (position.side_to_move == WHITE) {
+			    if (movementptr->square == position.mobile_piece_position[BLACK_KING]) {
 				initialize_index_with_black_mated(tb, index);
 				goto mated;
 			    }
 			} else {
-			    if (movementptr->square == current_position.mobile_piece_position[WHITE_KING]) {
+			    if (movementptr->square == position.mobile_piece_position[WHITE_KING]) {
 				initialize_index_with_white_mated(tb, index);
 				goto mated;
 			    }
