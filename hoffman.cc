@@ -137,6 +137,7 @@ typedef struct {
     int64 white_vector;
     int64 black_vector;
     short side_to_move;
+    short en_passant_square;
     short mobile_piece_position[MAX_MOBILES];
 } local_position_t;
 
@@ -150,6 +151,7 @@ typedef struct {
     unsigned char board[64];
     int64 board_vector;
     short side_to_move;
+    short en_passant_square;
 } global_position_t;
 
 
@@ -513,7 +515,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.59 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.60 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -598,6 +600,10 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
      * For example, two kings can never be next to each other.  Pieces can never be on top of each
      * other, or on top of static pieces.  The side to move can not be in check.
      *
+     * It also updates the position's board_vector (which doesn't have to be valid going in),
+     * but not the white_vector or black_vector.  It does this to check for illegal en passant
+     * positions.
+     *
      * Returns either an index into the table, or -1 (probably) if the position is illegal.
      *
      * Let's just ASSERT right now that this function can be used to check for illegal positions.
@@ -611,6 +617,8 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
     int32 index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
     int piece;
 
+    pos->board_vector = 0;
+
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
 	/* I've added this pawn check because I've had some problems.  This makes the
 	 * return of this function match up with the return of index_to_global_position
@@ -621,12 +629,43 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
 	}
 	if (pos->mobile_piece_position[piece] < 0)
 	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");
-	index |= pos->mobile_piece_position[piece] << shift_count;
+
+	/* The way we encode en passant capturable pawns is use the column number of the
+	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
+	 * this is completely legit.
+	 */
+	if ((tb->mobile_piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
+	    && (((tb->mobile_piece_color[piece] == WHITE)
+		 && (pos->en_passant_square + 8 == pos->mobile_piece_position[piece]))
+		|| ((tb->mobile_piece_color[piece] == BLACK)
+		    && (pos->en_passant_square - 8 == pos->mobile_piece_position[piece])))) {
+	    index |= COL(pos->en_passant_square) << shift_count;
+	} else {
+	    index |= pos->mobile_piece_position[piece] << shift_count;
+	}
+	if (pos->board_vector & BITVECTOR(pos->mobile_piece_position[piece])) return -1;
+	pos->board_vector |= BITVECTOR(pos->mobile_piece_position[piece]);
+
 	shift_count += 6;  /* because 2^6=64 */
+    }
+
+    /* Check board_vector to make sure an en passant position is legal */
+
+    if (pos->en_passant_square != -1) {
+	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
+	if (pos->side_to_move == WHITE) {
+	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
+	} else {
+	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
+	}
     }
 
     return index;
 }
+
+/* Like local_position_to_index(), this routine updates the position's board vector
+ * so it can check en passant legality.
+ */
 
 int32 global_position_to_index(tablebase *tb, global_position_t *position)
 {
@@ -635,13 +674,27 @@ int32 global_position_to_index(tablebase *tb, global_position_t *position)
     int square;
     short pieces_processed_bitvector = 0;
 
+    position->board_vector = 0;
+
     for (square = 0; square < NUM_SQUARES; square ++) {
 	if ((position->board[square] != 0) && (position->board[square] != ' ')) {
 	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
 		if ((position->board[square]
 		     == global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]])
 		    && !(pieces_processed_bitvector & (1 << piece))) {
-		    index |= square << (1 + 6*piece);
+
+		    if ((tb->mobile_piece_type[piece] == PAWN) && (position->en_passant_square != -1)
+			&& (((tb->mobile_piece_color[piece] == WHITE)
+			     && (position->en_passant_square + 8 == square))
+			    || ((tb->mobile_piece_color[piece] == BLACK)
+				&& (position->en_passant_square - 8 == square)))) {
+			index |= COL(position->en_passant_square) << (1 + 6*piece);
+		    } else {
+			index |= square << (1 + 6*piece);
+		    }
+
+		    position->board_vector |= BITVECTOR(square);
+
 		    pieces_processed_bitvector |= (1 << piece);
 		    break;
 		}
@@ -659,19 +712,18 @@ int32 global_position_to_index(tablebase *tb, global_position_t *position)
 	    return -1;
     }
 
+    /* Check board_vector to make sure an en passant position is legal */
+
+    if (position->en_passant_square != -1) {
+	if (position->board_vector & BITVECTOR(position->en_passant_square)) return -1;
+	if (position->side_to_move == WHITE) {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return -1;
+	} else {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return -1;
+	}
+    }
+
     return index;
-}
-
-/* OK, maybe not.  Maybe need to check index numbers, too. (Unless all positions in the table are
- * legal!)
- *
- * It's starting to look like we won't need this function, because the only time we want to check
- * the legality of an index is when we want to convert it to a position right after that,
- * so both functions get wrapped together into index_to_local_position().
- */
-
-boolean check_legality_of_index(tablebase *config, int32 index)
-{
 }
 
 boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
@@ -685,29 +737,63 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
     int piece;
 
     bzero(p, sizeof(local_position_t));
+    p->en_passant_square = -1;
 
     p->side_to_move = index & 1;
     index >>= 1;
 
     for (piece = 0; piece < tb->num_mobiles; piece++) {
+
+	int square = index & 63;
+
+	/* En passant */
+	if ((tb->mobile_piece_type[piece] == PAWN) && (square < 8)) {
+	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
+	    if (tb->mobile_piece_color[piece] == WHITE) {
+		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = square + 2*8;
+		square += 3*8;
+	    } else {
+		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = square + 5*8;
+		square += 4*8;
+	    }
+	}
+
 	/* I've added this pawn check because I've had some problems.  This makes the
 	 * return of this function match up with the return of index_to_global_position
 	 */
-	if ((tb->mobile_piece_type[piece] == PAWN) && (((index & 63) < 8) || ((index & 63) >= 56))) {
+	if ((tb->mobile_piece_type[piece] == PAWN) && (square >= 56)) {
 	    return 0;
 	}
-	p->mobile_piece_position[piece] = index & 63;
-	if (p->board_vector & BITVECTOR(index & 63)) {
+
+	p->mobile_piece_position[piece] = square;
+	if (p->board_vector & BITVECTOR(square)) {
 	    return 0;
 	}
-	p->board_vector |= BITVECTOR(index & 63);
+	p->board_vector |= BITVECTOR(square);
 	if (tb->mobile_piece_color[piece] == WHITE) {
-	    p->white_vector |= BITVECTOR(index & 63);
+	    p->white_vector |= BITVECTOR(square);
 	} else {
-	    p->black_vector |= BITVECTOR(index & 63);
+	    p->black_vector |= BITVECTOR(square);
 	}
 	index >>= 6;
     }
+
+    /* If there is an en passant capturable pawn in this position, then there can't be anything
+     * on the capture square or on the square right behind it (where the pawn just came from),
+     * or its an illegal position.
+     */
+
+    if (p->en_passant_square != -1) {
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->side_to_move == WHITE) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	} else {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	}
+    }
+
     return 1;
 }
 
@@ -743,14 +829,13 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
 
     bzero(position, sizeof(global_position_t));
 
+    position->en_passant_square = -1;
     position->side_to_move = index & 1;
     index >>= 1;
 
     for (piece = 0; piece < tb->num_mobiles; piece++) {
 
-	if (position->board[index & 63] != 0) {
-	    return 0;
-	}
+	int square = index & 63;
 
 	/* There are other possibilities for illegal combinations, namely a king next to the other
 	 * king, but that possibility is taken care of with an is_position_valid() check.  I need
@@ -758,17 +843,48 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
 	 * eighth rank.
 	 */
 
-	if ((tb->mobile_piece_type[piece] == PAWN)
-	    && (((index & 63) < 8) || ((index & 63) >= 56))) {
+	/* En passant */
+	if ((tb->mobile_piece_type[piece] == PAWN) && (square < 8)) {
+	    if (position->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
+	    if (tb->mobile_piece_color[piece] == WHITE) {
+		if (position->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		position->en_passant_square = square + 2*8;
+		square += 3*8;
+	    } else {
+		if (position->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		position->en_passant_square = square + 5*8;
+		square += 4*8;
+	    }
+	}
+
+	if (position->board[square] != 0) {
 	    return 0;
 	}
 
-	position->board[index & 63]
+	if ((tb->mobile_piece_type[piece] == PAWN) && (square >= 56)) {
+	    return 0;
+	}
+
+	position->board[square]
 	    = global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]];
 
-	position->board_vector |= BITVECTOR(index & 63);
+	position->board_vector |= BITVECTOR(square);
 
 	index >>= 6;
+    }
+
+    /* If there is an en passant capturable pawn in this position, then there can't be anything
+     * on the capture square or on the square right behind it (where the pawn just came from),
+     * or its an illegal position.
+     */
+
+    if (position->en_passant_square != -1) {
+	if (position->board_vector & BITVECTOR(position->en_passant_square)) return 0;
+	if (position->side_to_move == WHITE) {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return 0;
+	} else {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return 0;
+	}
     }
 
     return 1;
@@ -814,10 +930,13 @@ void invert_colors_of_global_position(global_position_t *global)
 	if (pieceA >= 'A') global->board_vector |= BITVECTOR(squareB);
     }
 
-    if (global->side_to_move == WHITE)
+    if (global->side_to_move == WHITE) {
 	global->side_to_move = BLACK;
-    else
+	if (global->en_passant_square != -1) global->en_passant_square -= 3*8;
+    } else {
 	global->side_to_move = WHITE;
+	if (global->en_passant_square != -1) global->en_passant_square += 3*8;
+    }
 }
 
 boolean global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
@@ -831,6 +950,7 @@ boolean global_position_to_local_position(tablebase *tb, global_position_t *glob
     for (piece = 0; piece < tb->num_mobiles; piece ++)
 	local->mobile_piece_position[piece] = -1;
 
+    local->en_passant_square = global->en_passant_square;
     local->side_to_move = global->side_to_move;
 
     for (square = 0; square < NUM_SQUARES; square ++) {
@@ -965,7 +1085,7 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 393220 */
+#define DEBUG_MOVE 4784384
 
 /* Five possible ways we can initialize an index for a position:
  *  - it's illegal
@@ -1086,7 +1206,7 @@ inline void add_one_to_PNTM_wins(tablebase *tb, int32 index, int mate_in_count, 
 	(tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
 	/* This is OK.  PTM already found a way to win.  Do nothing. */
     } else if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
-	fprintf(stderr, "add_one_to_PNTM_wins in an already won position!?\n");
+	fprintf(stderr, "add_one_to_PNTM_wins in an already won position!?\n");  /* BREAKPOINT */
     } else {
 	/* since PNTM_WIN_PROPAGATION_NEEDED is 0, this decrements right into the special flag,
 	 * no extra check needed here
@@ -1939,9 +2059,9 @@ void propagate_index_from_futurebase(tablebase *tb, tablebase *futurebase,
     }
 }
 
-void propagate_one_move_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
-						       int32 future_index, local_position_t *current_position,
-						       int *mate_in_limit)
+void propagate_minilocal_position_from_futurebase(tablebase *tb, tablebase *futurebase,
+						  int32 future_index, local_position_t *current_position,
+						  int *mate_in_limit)
 {
     int32 current_index;
 
@@ -1950,14 +2070,62 @@ void propagate_one_move_from_mobile_capture_futurebase(tablebase *tb, tablebase 
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == -1) {
-	fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
+	/* This can happen because we don't fully check en passant legality */
+	/* fprintf(stderr, "Can't lookup local position in futurebase propagation!\n"); */
+	return;
     }
 
     propagate_index_from_futurebase(tb, futurebase, future_index, current_index, mate_in_limit);
 }
 
-void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futurebase,
-					       int32 future_index, global_position_t *position, int *mate_in_limit)
+void propagate_local_position_from_futurebase(tablebase *tb, tablebase *futurebase,
+					      int32 future_index, local_position_t *position,
+					      int *mate_in_limit)
+{
+    int piece;
+
+    /* We may need to consider a bunch of additional positions here that are identical to the base
+     * position except that a single one of the pawns on the fourth or fifth ranks was capturable en
+     * passant.
+     * 
+     * We key off the en_passant flag in the position that was passed in.  If it's set, then we're
+     * back propagating a position that requires en passant, so we just do it.  Otherwise, we're
+     * back propagating a position that doesn't require en passant, so we check for additional
+     * en passant positions.
+     */
+
+    propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+
+    if (position->en_passant_square == -1) {
+
+	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+
+	    if (tb->mobile_piece_color[piece] == position->side_to_move) continue;
+	    if (tb->mobile_piece_type[piece] != PAWN) continue;
+
+	    if ((tb->mobile_piece_color[piece] == WHITE)
+		&& (ROW(position->mobile_piece_position[piece]) == 3)
+		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] - 8))
+		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] - 16))) {
+		position->en_passant_square = position->mobile_piece_position[piece] - 8;
+		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+	    }
+
+	    if ((tb->mobile_piece_color[piece] == BLACK)
+		&& (ROW(position->mobile_piece_position[piece]) == 4)
+		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] + 8))
+		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] + 16))) {
+		position->en_passant_square = position->mobile_piece_position[piece] + 8;
+		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+	    }
+
+	    position->en_passant_square = -1;
+	}
+    }
+}
+
+void propagate_miniglobal_position_from_futurebase(tablebase *tb, tablebase *futurebase,
+						   int32 future_index, global_position_t *position, int *mate_in_limit)
 {
     int32 current_index;
 
@@ -1966,12 +2134,47 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
     current_index = global_position_to_index(tb, position);
 
     if (current_index == -1) {
-	fprintf(stderr, "Can't lookup position in futurebase propagation!\n");
+	/* This can happen because we don't fully check en passant legality */
+	/* fprintf(stderr, "Can't lookup global position in futurebase propagation!\n"); */
+	return;
     }
 
     propagate_index_from_futurebase(tb, futurebase, future_index, current_index, mate_in_limit);
 }
 
+
+void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futurebase,
+					       int32 future_index, global_position_t *position, int *mate_in_limit)
+{
+    /* We may need to consider a bunch of additional positions here that are identical to the base
+     * position except that a single one of the pawns on the fourth or fifth ranks was capturable en
+     * passant.
+     * 
+     * We key off the en_passant flag in the position that was passed in.  If it's set, then we're
+     * back propagating a position that requires en passant, so we just do it.  Otherwise, we're
+     * back propagating a position that doesn't require en passant, so we check for additional
+     * en passant positions.
+     */
+
+    propagate_miniglobal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+
+    if (position->en_passant_square == -1) {
+
+	int starting_square = (position->side_to_move == WHITE) ? 32 : 24;
+	int ending_square = (position->side_to_move == WHITE) ? 39 : 31;
+	unsigned char pawn = (position->side_to_move == WHITE) ? 'p' : 'P';
+	int capture_row = (position->side_to_move == WHITE) ? 5 : 2;
+	int sq;
+
+	for (sq = starting_square; sq <= ending_square; sq ++) {
+
+	    if (position->board[sq] == pawn) {
+		position->en_passant_square = square(capture_row, COL(sq));
+		propagate_miniglobal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+	    }
+	}
+    }
+}
 
 /* Back propagate promotion moves
  *
@@ -2013,6 +2216,8 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 	     * could have en passant capturable pawns in the futurebase position.
 	     */
 
+	    if (future_position.en_passant_square != -1) continue;
+
 	    /* We're back-proping one half move to the promotion move. */
 
 	    flip_side_to_move_global(&future_position);
@@ -2034,8 +2239,8 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 
 		    /* Back propagate the resulting position */
 
-		    /* Also want to back prop any similar positions with one of the pawns from the
-		     * side that didn't promote in an en passant state.
+		    /* This function also back props any similar positions with one of the pawns
+		     * from the side that didn't promote in an en passant state.
 		     */
 
 		    propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
@@ -2085,6 +2290,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
 	     * could have en passant capturable pawns in the futurebase position.
 	     */
 
+	    if (future_position.en_passant_square != -1) continue;
+
 	    /* We're back-proping one half move to the promotion move. */
 
 	    flip_side_to_move_global(&future_position);
@@ -2110,8 +2317,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
 
 			/* Back propagate the resulting position */
 
-			/* Also want to back prop any similar positions with one of the pawns from
-			 * the side that didn't promote in an en passant state.
+			/* This function also back props any similar positions with one of the pawns
+			 * from the side that didn't promote in an en passant state.
 			 */
 
 			propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
@@ -2131,8 +2338,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
 
 			/* Back propagate the resulting position */
 
-			/* Also want to back prop any similar positions with one of the pawns from
-			 * the side that didn't promote in an en passant state.
+			/* This function also back props any similar positions with one of the pawns
+			 * from the side that didn't promote in an en passant state.
 			 */
 
 			propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
@@ -2179,6 +2386,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	    /* Since the last move had to have been a capture move, there is absolutely no way we
 	     * could have en passant capturable pawns in the futurebase position.
 	     */
+
+	    if (future_position.en_passant_square != -1) continue;
 
 	    /* Since the position resulted from a capture, we only want to consider future positions
 	     * where the side to move is not the side that captured.
@@ -2259,7 +2468,11 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 			    current_position.mobile_piece_position[piece] = movementptr->square;
 
-			    propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
+			    /* This function also back props any similar positions with one of the pawns
+			     * from the side that didn't capture in an en passant state.
+			     */
+
+			    propagate_local_position_from_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
 
 			}
 		    }
@@ -2268,19 +2481,11 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 		    /* Yes, pawn captures are special */
 
-		    /* The en passant special case: if both the piece that captured and the piece
-		     * that was captured are both pawns, and either a white pawn captured from the
-		     * fifth to the sixth rank, or a black pawn captured from the fourth to the
-		     * third, then there are two possible back prop positions - the obvious one, and
-		     * the one where the captured pawn was in an en passant state.  This is in
-		     * addition to back prop positions with a pawn in the 'obvious' capturable
-		     * position, and some other pawn in an en passant state.
-		     */
-
-
 		    for (movementptr = capture_pawn_movements_bkwd[current_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
 			 movementptr->square != -1;
 			 movementptr++) {
+
+			/* Is there anything on the square the pawn had to capture from? */
 
 			if ((movementptr->vector & future_position.board_vector) != 0) continue;
 
@@ -2288,8 +2493,66 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 			current_position.mobile_piece_position[piece] = movementptr->square;
 
-			propagate_one_move_from_mobile_capture_futurebase(tb, futurebase, future_index,
-									  &current_position, mate_in_limit);
+			/* This function also back props any similar positions with one of the pawns
+			 * from the side that didn't capture in an en passant state.
+			 */
+
+			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+								 &current_position, mate_in_limit);
+
+			/* The en passant special case: if both the piece that captured and the
+			 * piece that was captured are both pawns, and either a white pawn captured
+			 * from the fifth rank, or a black pawn captured from the fourth, then there
+			 * are two possible back prop positions - the obvious one we just handled,
+			 * and the one where the captured pawn was in an en passant state.
+			 */
+
+			if (tb->mobile_piece_type[captured_piece] == PAWN) {
+			    if ((tb->mobile_piece_color[piece] == BLACK)
+				&& (ROW(movementptr->square) == 3)) {
+
+				/* A black pawn capturing a white one (en passant)
+				 *
+				 * The white pawn is actually a rank higher than usual.
+				 */
+
+				current_position.en_passant_square
+				    = current_position.mobile_piece_position[captured_piece];
+				current_position.mobile_piece_position[captured_piece] += 8;
+
+				propagate_local_position_from_futurebase(tb, futurebase, future_index,
+									 &current_position, mate_in_limit);
+
+				/* Yes, we're in a for loop and could might this position again,
+				 * so put things back where they came from...
+				 */
+				current_position.en_passant_square = -1;
+				current_position.mobile_piece_position[captured_piece] -= 8;
+			    }
+
+			    if ((tb->mobile_piece_color[piece] == WHITE)
+				&& (ROW(movementptr->square) == 4)) {
+
+				/* A white pawn capturing a black one (en passant)
+				 *
+				 * The black pawn is actually a rank lower than usual.
+				 */
+
+				current_position.en_passant_square
+				    = current_position.mobile_piece_position[captured_piece];
+				current_position.mobile_piece_position[captured_piece] -= 8;
+
+				propagate_local_position_from_futurebase(tb, futurebase, future_index,
+									 &current_position, mate_in_limit);
+
+				/* Yes, we're in a for loop and could might this position again,
+				 * so put things back where they came from...
+				 */
+				current_position.en_passant_square = -1;
+				current_position.mobile_piece_position[captured_piece] += 8;
+			    }
+			}
+
 		    }
 
 		}
@@ -2593,7 +2856,7 @@ boolean have_all_futuremoves_been_handled(tablebase *tb) {
 		{
 		    global_position_t global;
 		    index_to_global_position(tb, index, &global);
-		    all_futuremoves_handled = 0;
+		    all_futuremoves_handled = 0;		/* BREAKPOINT */
 		}
 		break;
 
@@ -2621,7 +2884,7 @@ boolean have_all_futuremoves_been_handled(tablebase *tb) {
  * here and update their counters in various obscure ways.
  */
 
-void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_position_t *current_position)
+void propagate_one_minimove_within_table(tablebase *tb, int32 parent_index, local_position_t *current_position)
 {
     int32 current_index;
 
@@ -2644,8 +2907,16 @@ void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_po
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == -1) {
-	fprintf(stderr, "Can't lookup position in intratable propagation!\n");
+	/* This can happen because we don't fully check en passant legality */
+	/* fprintf(stderr, "Can't lookup position in intratable propagation!\n"); */
+	return;
     }
+
+#ifdef DEBUG_MOVE
+    if (current_index == DEBUG_MOVE)
+	printf("propagate_one_minimove_within_table:  current_index=%d; parent_index=%d\n",
+	       current_index, parent_index);
+#endif
 
     /* Parent position is the FUTURE position.  We now back-propagate to
      * the current position, which is the PAST position.
@@ -2678,6 +2949,46 @@ void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_po
 
 }
 
+void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_position_t *position)
+{
+    int piece;
+
+    /* We may need to consider a bunch of additional positions here that are identical to the base
+     * position except that a single one of the pawns on the fourth or fifth ranks was capturable en
+     * passant.
+     * 
+     * We key off the en_passant flag in the position that was passed in.  If it's set, then we're
+     * back propagating a position that requires en passant, so we just do it.  Otherwise, we're
+     * back propagating a position that doesn't require en passant, so we check for additional
+     * en passant positions.
+     */
+
+    propagate_one_minimove_within_table(tb, parent_index, position);
+
+    if (position->en_passant_square == -1) {
+
+	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+
+	    if (tb->mobile_piece_color[piece] == position->side_to_move) continue;
+	    if (tb->mobile_piece_type[piece] != PAWN) continue;
+
+	    if ((tb->mobile_piece_color[piece] == WHITE)
+		&& (ROW(position->mobile_piece_position[piece]) == 3)) {
+		position->en_passant_square = position->mobile_piece_position[piece] - 8;
+		propagate_one_minimove_within_table(tb, parent_index, position);
+	    }
+
+	    if ((tb->mobile_piece_color[piece] == BLACK)
+		&& (ROW(position->mobile_piece_position[piece]) == 4)) {
+		position->en_passant_square = position->mobile_piece_position[piece] + 8;
+		propagate_one_minimove_within_table(tb, parent_index, position);
+	    }
+
+	    position->en_passant_square = -1;
+	}
+    }
+}
+
 void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_count)
 {
     local_position_t parent_position;
@@ -2705,6 +3016,44 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
     index_to_local_position(tb, parent_index, &parent_position);
 
+    /* If there are any en passant capturable pawns in the position, then the last move had to
+     * have been a pawn move.  In fact, in this case, we already know exactly what the last move
+     * had to have been.
+     */
+
+    if (parent_position.en_passant_square != -1) {
+
+	int en_passant_pawn = -1;
+
+	for (piece = 0; piece < tb->num_mobiles; piece++) {
+
+	    if (tb->mobile_piece_color[piece] == parent_position.side_to_move) continue;
+	    if (tb->mobile_piece_type[piece] != PAWN) continue;
+
+	    if (((tb->mobile_piece_color[piece] == WHITE)
+		 && (parent_position.mobile_piece_position[piece] - 8 == parent_position.en_passant_square))
+		|| ((tb->mobile_piece_color[piece] == BLACK)
+		    && (parent_position.mobile_piece_position[piece] + 8 == parent_position.en_passant_square))) {
+		if (en_passant_pawn != -1) fprintf(stderr, "Two en passant pawns in back prop?!\n");
+		en_passant_pawn = piece;
+	    }
+	}
+	if (en_passant_pawn == -1) {
+	    fprintf(stderr, "No en passant pawn in back prop!?\n");
+	} else {
+	    current_position = parent_position;
+	    flip_side_to_move_local(&current_position);
+	    current_position.en_passant_square = -1;
+	    if (tb->mobile_piece_color[en_passant_pawn] == WHITE)
+		current_position.mobile_piece_position[en_passant_pawn] -= 16;
+	    else
+		current_position.mobile_piece_position[en_passant_pawn] += 16;
+	    propagate_one_move_within_table(tb, parent_index, &current_position);
+	}
+
+	return;
+    }
+
     /* foreach (mobile piece of player NOT TO PLAY) { */
 
     for (piece = 0; piece < tb->num_mobiles; piece++) {
@@ -2715,13 +3064,6 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 	if (tb->mobile_piece_color[piece] == parent_position.side_to_move)
 	    continue;
-
-	/* If there are any en passant capturable pawns in the position, then the last move had to
-	 * have been a pawn move.  In fact, in this case, we already know exactly what the last move
-	 * had to have been.
-	 */
-
-	/* forall possible_moves(current_position, piece) { */
 
 	if (tb->mobile_piece_type[piece] != PAWN) {
 
@@ -2751,7 +3093,9 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		     * fourth or fifth ranks was capturable en passant.
 		     *
 		     * Of course, the only way we could have gotten an en passant pawn is if THIS
-		     * MOVE created it.  Since this isn't a pawn move, that can't happen.
+		     * MOVE created it.  Since this isn't a pawn move, that can't happen.  Checking
+		     * additional en passant positions is taken care of in
+		     * propagate_one_move_within_table()
 		     */
 
 		    flip_side_to_move_local(&current_position);
@@ -2780,8 +3124,19 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		 *
 		 * Of course, the only way we could have gotten an en passant pawn is if THIS MOVE
 		 * created it.  We handle that as a special case above, so we shouldn't have to
-		 * worry about clearing en passant pawns here - there should be none.
+		 * worry about clearing en passant pawns here - there should be none.  Checking
+		 * additional en passant positions is taken care of in
+		 * propagate_one_move_within_table()
+		 *
+		 * But we start with an extra check to make sure this isn't a double pawn move, it
+		 * which case it would result in an en passant position, not the non-en passant
+		 * position we are in now (en passant got taken care of in the special case above).
 		 */
+
+		if (((movementptr->square - parent_position.mobile_piece_position[piece]) == 16)
+		    || ((movementptr->square - parent_position.mobile_piece_position[piece]) == -16)) {
+		    continue;
+		}
 
 		current_position = parent_position;
 
@@ -2973,9 +3328,13 @@ initialize_tablebase(tablebase *tb)
 			 movementptr->square != -1;
 			 movementptr++) {
 
-			/* This is where we'll need to check for en passant captures.  Something
-			 * simple like "if (movementptr->square == enPassantSquare)"
-			 */
+			/* A special check for en passant captures.  */
+
+			if (movementptr->square == position.en_passant_square) {
+			    movecnt ++;
+			    futuremove_cnt ++;
+			    continue;
+			}
 
 			if ((movementptr->vector & ENEMY_BOARD_VECTOR(position)) == 0) continue;
 
@@ -3072,7 +3431,7 @@ void propagate_all_moves_within_tablebase(tablebase *tb, int mate_in_limit)
 
 /***** PROBING NALIMOV TABLEBASES *****/
 
-int EGTBProbe(int wtm, unsigned char board[64], int *score);
+int EGTBProbe(int wtm, unsigned char board[64], int sqEnP, int *score);
 
 int IInitializeTb(char *pszPath);
 
@@ -3163,7 +3522,25 @@ void verify_tablebase_against_nalimov(tablebase *tb)
 
 		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
 
-	    } else if (EGTBProbe(global.side_to_move == WHITE, global.board, &score) == 1) {
+	    } else if ((global.en_passant_square != -1)
+		       && ((global.board[global.en_passant_square - 9] != 'P')
+			   || (global.en_passant_square == 40)
+			   || (global.side_to_move == BLACK))
+		       && ((global.board[global.en_passant_square - 7] != 'P')
+			   || (global.en_passant_square == 47)
+			   || (global.side_to_move == BLACK))
+		       && ((global.board[global.en_passant_square + 7] != 'p')
+			   || (global.en_passant_square == 16)
+			   || (global.side_to_move == WHITE))
+		       && ((global.board[global.en_passant_square + 9] != 'p')
+			   || (global.en_passant_square == 23)
+			   || (global.side_to_move == WHITE))) {
+
+		/* Nor does Nalimov like it if the en passant pawn can't actually be captured by
+		 * another pawn.
+		 */
+
+	    } else if (EGTBProbe(global.side_to_move == WHITE, global.board, global.en_passant_square, &score) == 1) {
 
 		if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
 		    /* Make sure mate_in_cnt is greater than zero here, since the Nalimov tablebase
@@ -3678,7 +4055,7 @@ int main(int argc, char *argv[])
 
 #if 1
 		printf("\nNalimov score: ");
-		if (EGTBProbe(global_position.side_to_move == WHITE, global_position.board, &score) == 1) {
+		if (EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
 		    if (score > 0) {
 			printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
 		    } else if (score < 0) {
