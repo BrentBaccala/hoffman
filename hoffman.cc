@@ -23,8 +23,6 @@
  * Three piece tablebases with no frozen pieces can also be built.  These are the only tablebases
  * that are completely self contained and don't depend on other tablebases (the 'futurebases').
  *
- * Feed this program a list of futurebases on the command line.
- *
  * Feed this program an XML control file on the command line.
  */
 
@@ -100,29 +98,28 @@ typedef short boolean;
 
 /***** DATA STRUCTURES *****/
 
-/* position - the data structure that represents a board position
+/* position - the data structures that represents a board position
  *
- * How about if "position" is a structure containing an 8x8 char array with ASCII characters
- * representing each piece?  No.  Too slow.  Position manipulation is at the core of this program.
- * It has to be fast.
+ * There are two kinds of positions: local and global.  Locals are faster but are tied to a specific
+ * tablebase.  Globals are more general and are used to translate between different tablebases.
  *
- * So we use a 64-bit vector with one bit for each board position, in addition to a flag to indicate
- * which side is to move and numbers (0-63) indicating the positions of the mobile pieces.  That
- * way, we can easily check if possible moves are legal by looking for pieces that block our moving
+ * Both types use a 64-bit vector with one bit for each board position, in addition to a flag to
+ * indicate which side is to move and the en passant capture square (or -1 if no en passant capture
+ * is possible).  We use the board vector to easily check if possible moves are legal by looking for
+ * pieces that block our moving piece.
+ *
+ * Local positions use numbers (0-63) indicating the positions of the mobile pieces, and also have a
+ * quick way to check captures using a black_vector and a white_vector.  You have to look into the
+ * tablebase structure to figure out what piece corresponds to each number.
+ *
+ * Global positions contain an 8x8 unsigned char array with ASCII characters representing each
  * piece.
  *
- * Also need a quick way to check captures.  Do this using a black_vector and a white_vector.
+ * Sometimes I allow the board vectors, black_vector and white_vector to get out of sync with the
+ * position (for speed).  This can be a problem, so it has to be done really carefully.
  *
  * We don't worry about moving a piece that's pinned on our king, for example.  The resulting
  * position will already have been flagged illegal in the table.
- *
- * We actually need to call this function a lot, so we want it to be fast, but I don't want to
- * optimize to the point where bugs can creep in.
- *
- * So how about a static 64-bit vector with bits set for the frozen pieces but not the mobiles?
- * Everytime we call index_to_local_position, copy from the static vector into the position structure.
- * Then we compute the positions of the mobile pieces and plug their bits into the structure's
- * vector at the right places.
  *
  */
 
@@ -513,7 +510,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.61 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.62 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -572,6 +569,9 @@ void write_tablebase_to_file(tablebase *tb, char *filename)
 #define ROW(square) ((square) / 8)
 #define COL(square) ((square) % 8)
 
+
+/***** INDICES AND POSITIONS *****/
+
 inline int square(int row, int col)
 {
     return (col + row*8);
@@ -584,13 +584,7 @@ int32 max_index(tablebase *tb)
 
 int32 local_position_to_index(tablebase *tb, local_position_t *pos)
 {
-    /* This function, given a board position, returns an index into the tablebase.
-     *
-     * The reason we pass the tablebase in explicitly is that we will need to use this function to
-     * calculate not only indices into our own table, but also into future tables with different
-     * static configs.  Actually, I'm not sure about this.  Maybe it's only the matching function
-     * index_to_local_position() that we need for future tables.  In any event, we'll need this function
-     * to probe tables when we want to actually use them.
+    /* This function, given a local board position, returns an index into the tablebase.
      *
      * Initially, this function can be very simple (multiplying numbers together), but to build
      * smaller tables it can be more precise.
@@ -730,6 +724,11 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
      * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
      * succeeded (the index is at least minimally valid) and FALSE if the index is so blatantly
      * illegal (two pieces on the same square) that we can't even fill in the position.
+     *
+     * So how about a static 64-bit vector with bits set for the frozen pieces but not the mobiles?
+     * Everytime we call index_to_local_position, copy from the static vector into the position
+     * structure.  Then we compute the positions of the mobile pieces and plug their bits into the
+     * structure's vector at the right places.
      */
 
     int piece;
@@ -793,32 +792,6 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
     }
 
     return 1;
-}
-
-/* This function could be made a bit faster, but this simpler version is hopefully safer. */
-
-int index_to_side_to_move(tablebase *tb, int32 index)
-{
-    local_position_t position;
-
-    if (! index_to_local_position(tb, index, &position)) return -1;
-    else return position.side_to_move;
-}
-
-inline void flip_side_to_move_local(local_position_t *position)
-{
-    if (position->side_to_move == WHITE)
-	position->side_to_move = BLACK;
-    else
-	position->side_to_move = WHITE;
-}
-
-inline void flip_side_to_move_global(global_position_t *position)
-{
-    if (position->side_to_move == WHITE)
-	position->side_to_move = BLACK;
-    else
-	position->side_to_move = WHITE;
 }
 
 boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *position)
@@ -888,6 +861,32 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
     return 1;
 }
 
+/* This function could be made a bit faster, but this simpler version is hopefully safer. */
+
+int index_to_side_to_move(tablebase *tb, int32 index)
+{
+    local_position_t position;
+
+    if (! index_to_local_position(tb, index, &position)) return -1;
+    else return position.side_to_move;
+}
+
+inline void flip_side_to_move_local(local_position_t *position)
+{
+    if (position->side_to_move == WHITE)
+	position->side_to_move = BLACK;
+    else
+	position->side_to_move = WHITE;
+}
+
+inline void flip_side_to_move_global(global_position_t *position)
+{
+    if (position->side_to_move == WHITE)
+	position->side_to_move = BLACK;
+    else
+	position->side_to_move = WHITE;
+}
+
 /* invert_colors_of_global_position - just what its name implies
  *
  * We use this when propagating from a futurebase built for the opposite colors, say a K+R vs K
@@ -936,6 +935,12 @@ void invert_colors_of_global_position(global_position_t *global)
 	if (global->en_passant_square != -1) global->en_passant_square += 3*8;
     }
 }
+
+/* This function works a little bit different from taking a global position, calling
+ * global_position_to_index(), and then calling index_to_local_position().  It is used during
+ * back-propagation of capture positions, and will leave a single piece in the local position
+ * unassigned if it wasn't in the global position.
+ */
 
 boolean global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
 {
@@ -994,7 +999,9 @@ boolean global_position_to_local_position(tablebase *tb, global_position_t *glob
 }
 
 
-/* "Designed to multi-thread"
+/* MORE TABLEBASE OPERATIONS - those that probe and manipulate individual position entries
+ *
+ * "Designed to multi-thread"
  *
  * Keep atomic operations confined to single functions.  Design functions so that functions calling
  * them don't need to know the details of table format, either.
@@ -1083,7 +1090,7 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
  * doing to process a single move.
  */
 
-#define DEBUG_MOVE 4784384
+/* #define DEBUG_MOVE 4784384 */
 
 /* Five possible ways we can initialize an index for a position:
  *  - it's illegal
@@ -2003,17 +2010,22 @@ propagate_moves_from_futurebases()
 
 #endif
 
-/* Propagate moves from a futurebase that resulted from capturing one of the mobile
- * pieces in the current tablebase.
+/* Subroutines to backpropagate an individual index, or an individual local (or global) position
+ * (these are the "mini" routines), or a set of local (or global) positions that differ
+ * only in the en passant square.
  *
- * We use global positions here, even though they're slower than local positions, because we're
- * translating between two different tablebases.  The cleanest (but not necessarily fastest) way to
- * do this is with global positions.
+ * If we're back propagating from a simple capture, we can use local positions fairly easily.  If
+ * we're back propagating from a promotion futurebase (or a promotion capture futurebase), we use
+ * global positions, even though they're slower than local positions, because we're translating
+ * between two quite different tablebases.  The cleanest (but not necessarily fastest) way to do
+ * this is with global positions.
  *
- * I'm thinking of changing that "invert_colors_of_futurebase" flag to be a subroutine that gets
- * passed in.  It could be a pointer to invert_colors_of_global_position to do what it does now.  Or
- * it could be a "reflect board around vertical axis" to move a d4 pawn to e4.  Also see my comments
- * on invert_colors_of_global position.
+ * The idea behind the en passant handling is this.  If we back propagate a position with the en
+ * passant square set, then that's the only position we process.  If we back prop a position without
+ * the en passant square set, then we process not only that position, but also any positions just
+ * like it that have en passant set.  The idea being that we set en passant if we actually need it,
+ * and we clear it if we don't need it, so if it's clear we need to process positions where it was
+ * set, but we didn't use it.
  */
 
 void propagate_index_from_futurebase(tablebase *tb, tablebase *futurebase,
@@ -2354,6 +2366,15 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
     }
 }
 
+/* Propagate moves from a futurebase that resulted from capturing one of the mobile
+ * pieces in the current tablebase.
+ *
+ * I'm thinking of changing that "invert_colors_of_futurebase" flag to be a subroutine that gets
+ * passed in.  It could be a pointer to invert_colors_of_global_position to do what it does now.  Or
+ * it could be a "reflect board around vertical axis" to move a d4 pawn to e4.  Also see my comments
+ * on invert_colors_of_global position.
+ */
+
 void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
 						    int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
 {
@@ -2562,10 +2583,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
  * Should be called after the tablebase has been initialized, but before intra-table propagation.
  *
  * Runs through the parsed XML control file, pulls out all the futurebases, and back-propagates each
- * one.  Right now, only handles futurebases that resulted from captures, and that therefore have
- * exactly one less mobile piece than the current tablebase.  Doesn't handle futurebases due to pawn
- * promotions, nor to frozen pieces moving, nor to any configuration of mobile pieces other than
- * that described (like one of the frozen pieces becoming mobile in the futurebase).
+ * one.
  *
  * Returns maximum mate_in value, or -1 if something went wrong
  */
@@ -2874,9 +2892,8 @@ boolean have_all_futuremoves_been_handled(tablebase *tb) {
 
 /***** INTRA-TABLE MOVE PROPAGATION *****/
 
-/* This is the guts of the program here.  We've got a move that needs to be propagated,
- * so we back out one half-move to all of the positions that could have gotten us
- * here and update their counters in various obscure ways.
+/* We've got a move that needs to be propagated, so we back out one half-move to all of the
+ * positions that could have gotten us here and update their counters in various obscure ways.
  */
 
 void propagate_one_minimove_within_table(tablebase *tb, int32 parent_index, local_position_t *current_position)
