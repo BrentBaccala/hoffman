@@ -20,10 +20,10 @@
  * configuration of other 'frozen' pieces.  The mobile pieces could possibly be pawns.  The frozen
  * pieces could possibly be kings.
  *
- * Three piece tablebases with no frozen pieces can also be built.  These are the only tablebases
- * that are completely self contained and don't depend on other tablebases (the 'futurebases').
  *
- * Feed this program an XML control file on the command line.
+ * Usage: hoffman -g -o <output-tablebase> <xml-control-file>     (generate mode)
+ *        hoffman -v <tablebase> ...                              (verification mode)
+ *        hoffman -p <tablebase> ...                              (probe mode)
  */
 
 #include <stdio.h>
@@ -103,14 +103,26 @@ typedef short boolean;
  * There are two kinds of positions: local and global.  Locals are faster but are tied to a specific
  * tablebase.  Globals are more general and are used to translate between different tablebases.
  *
- * Both types use a 64-bit vector with one bit for each board position, in addition to a flag to
- * indicate which side is to move and the en passant capture square (or -1 if no en passant capture
- * is possible).  We use the board vector to easily check if possible moves are legal by looking for
- * pieces that block our moving piece.
+ * Both types use a 64-bit board_vector with one bit for each board position, in addition to a flag
+ * to indicate which side is to move and the en passant capture square (or -1 if no en passant
+ * capture is possible).  We use board_vector to easily check if possible moves are legal by looking
+ * for pieces that block our moving piece.  This is done during futurebase propagation (mobile
+ * capture only), during intratable propagation, and during initialization.  It could be used to
+ * check if en passant positions are legal (are the two squares behind the pawn blocked or not), but
+ * that is problematic now because the board_vector isn't correct at the point where we need to
+ * make that check.
  *
  * Local positions use numbers (0-63) indicating the positions of the mobile pieces, and also have a
  * quick way to check captures using a black_vector and a white_vector.  You have to look into the
- * tablebase structure to figure out what piece corresponds to each number.
+ * tablebase structure to figure out what piece corresponds to each number.  "black_vector" and
+ * "white_vector" are only used during tablebase initialization and in the probe code.  It's
+ * starting to look like these vectors would be better arranged as PTM_vector and PNTM_vector
+ * (player to move and player not to move).
+ *
+ * It makes sense to include these vectors in the position structures because it's easiest to
+ * compute them in the routines that convert indices to positions, but if you alter the position,
+ * then they get out of sync, and its tempting to just leave them that way because you rarely need
+ * them to be right at that point.  This really came back to haunt me when implementing en passant.
  *
  * Global positions contain an 8x8 unsigned char array with ASCII characters representing each
  * piece.
@@ -510,7 +522,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.63 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.64 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -566,11 +578,11 @@ void write_tablebase_to_file(tablebase *tb, char *filename)
     close(fd);
 }
 
-#define ROW(square) ((square) / 8)
-#define COL(square) ((square) % 8)
-
 
 /***** INDICES AND POSITIONS *****/
+
+#define ROW(square) ((square) / 8)
+#define COL(square) ((square) % 8)
 
 inline int square(int row, int col)
 {
@@ -598,9 +610,26 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
      *
      * Returns either an index into the table, or -1 (probably) if the position is illegal.
      *
-     * Let's just ASSERT right now that this function can be used to check for illegal positions.
-     * In fact, it is our primary function to check for illegal positions.  We call it and see if it
-     * returns -1.
+     * What exactly is an illegal position?  Well, for starters, one that index_to_local_position()
+     * reports as illegal, because that's the function that initialize_tablebase() uses to figure
+     * which positions need to be flagged illegal, and the program screams if you try to back prop
+     * into one of them.  Since global_position_to_index() is also used to generate indices during
+     * back prop, its idea of illegality also has to match with index_to_local_position().  And
+     * since index_to_global_position() is used to decide which futurebase positions to back prop to
+     * begin with, its idea of legality also has to consistent.
+     *
+     * This function is currently used only during back propagation to generate indices, and during
+     * probing to convert "next move" positions into indices.
+     *
+     * When we back propagate a local position from either a futurebase or intratable, we generate
+     * en passant positions simply by running through the pawns on the fourth and fifth ranks.  If
+     * we don't look then to see if there was a piece behind the "en passant" pawn (that would have
+     * prevented it from moving), and we currently don't (correctly) because the board vectors
+     * aren't set right, then we have to detect that and return -1 here.  Otherwise, we would try to
+     * back propagate to a position that had been labeled illegal during initialization by
+     * index_to_local_position().
+     *
+     * This function is also used during probing to see if possible next positions are legal.
      */
 
     /* Keep it simple, for now */
@@ -657,6 +686,13 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
 
 /* Like local_position_to_index(), this routine updates the position's board vector
  * so it can check en passant legality.
+ *
+ * Used during futurebase back-propagation.  Same problem there with the possibility of generating
+ * illegal en passant positions.
+ *
+ * The only other place this function is currently used is in the probe code, when we have parsed
+ * FEN into a global position and are searching for it.  There, we count on this routine returning
+ * -1 for positions that aren't handled by the current tablebase.
  */
 
 int32 global_position_to_index(tablebase *tb, global_position_t *position)
@@ -724,6 +760,17 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
      * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
      * succeeded (the index is at least minimally valid) and FALSE if the index is so blatantly
      * illegal (two pieces on the same square) that we can't even fill in the position.
+     *
+     * Used by index_to_side_to_move() (which is currently only use to check move restrictions) to
+     * determine position legality.
+     *
+     * Used in propagate_move_within_table() to get from an index to a position, and its return
+     * value is ignored there, because a position that needs_propagation() couldn't have been marked
+     * illegal during initialization.
+     *
+     * Used in initialize_tablebase() to determine which positions are legal.
+     *
+     * Use to prepare a move list during probe.
      *
      * So how about a static 64-bit vector with bits set for the frozen pieces but not the mobiles?
      * Everytime we call index_to_local_position, copy from the static vector into the position
@@ -793,6 +840,20 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 
     return 1;
 }
+
+/* index_to_global_position()
+ *
+ * Used during promotion, promotion capture, and mobile capture futurebase propagation.  Runs
+ * through all the indices of a futurebase, and its return value is used to decide if the index
+ * corresponds to a legal position, so its verdict on legal or illegal positions needs to match up
+ * with the above functions.
+ *
+ * Also used during Nalimov tablebase verification in the same way (running through all indices in a
+ * tablebase), as well as during probe code to consider possible captures and promotions because
+ * they may lead out of the current tablebase.
+ *
+ * Seems never to be used on a tablebase under construction; only on a finished one.
+ */
 
 boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *position)
 {
@@ -2468,6 +2529,11 @@ void propagate_local_position_from_futurebase(tablebase *tb, tablebase *futureba
 	    if (tb->mobile_piece_color[piece] == position->side_to_move) continue;
 	    if (tb->mobile_piece_type[piece] != PAWN) continue;
 
+	    /* XXX The problem is that these board vectors might not be correct, because we moved
+	     * the capturing piece without updating them.  We get around this by checking
+	     * in local_position_to_index() for illegal en passant positions.
+	     */
+
 	    if ((tb->mobile_piece_color[piece] == WHITE)
 		&& (ROW(position->mobile_piece_position[piece]) == 3)
 		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] - 8))
@@ -3341,6 +3407,11 @@ void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_po
 
 	    if (tb->mobile_piece_color[piece] == position->side_to_move) continue;
 	    if (tb->mobile_piece_type[piece] != PAWN) continue;
+
+	    /* XXX The problem is that the board vectors might not be correct, because we moved the
+	     * piece without updating them.  We don't even bother to use them here.  We get around
+	     * this by checking in local_position_to_index() for illegal en passant positions.
+	     */
 
 	    if ((tb->mobile_piece_color[piece] == WHITE)
 		&& (ROW(position->mobile_piece_position[piece]) == 3)) {
