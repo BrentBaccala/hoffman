@@ -510,7 +510,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.62 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.63 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -994,6 +994,364 @@ boolean global_position_to_local_position(tablebase *tb, global_position_t *glob
 	    return 0;
     }
 #endif
+
+    return 1;
+}
+
+
+/***** PARSING FEN TO/FROM POSITION STRUCTURES *****/
+
+boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int square, int color, int type)
+{
+    int piece;
+
+    if (pos->board_vector & BITVECTOR(square)) return 0;
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	if ((tb->mobile_piece_type[piece] == type) && (tb->mobile_piece_color[piece] == color)) {
+	    pos->mobile_piece_position[piece] = square;
+	    pos->board_vector |= BITVECTOR(square);
+	    if (color == WHITE) pos->white_vector |= BITVECTOR(square);
+	    else pos->black_vector |= BITVECTOR(square);
+	    return 1;
+	}
+    }
+
+    return 0;
+}
+
+boolean place_piece_in_global_position(global_position_t *position, int square, int color, int type)
+{
+    position->board[square] = global_pieces[color][type];
+    return 1;
+}
+
+boolean parse_FEN_to_local_position(char *FEN_string, tablebase *tb, local_position_t *pos)
+{
+    int row, col;
+
+    bzero(pos, sizeof(local_position_t));
+    pos->en_passant_square = -1;
+
+    for (row=7; row>=0; row--) {
+	for (col=0; col<=7; col++) {
+	    switch (*FEN_string) {
+	    case '1':
+	    case '2':
+	    case '3':
+	    case '4':
+	    case '5':
+	    case '6':
+	    case '7':
+	    case '8':
+		/* subtract one here since the 'for' loop will bump col by one */
+		col += *FEN_string - '0' - 1;
+		if (col > 7) return 0;
+		break;
+
+	    case 'k':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, KING)) return 0;
+		break;
+	    case 'K':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, KING)) return 0;
+		break;
+
+	    case 'q':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, QUEEN)) return 0;
+		break;
+	    case 'Q':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, QUEEN)) return 0;
+		break;
+
+	    case 'r':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, ROOK)) return 0;
+		break;
+	    case 'R':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, ROOK)) return 0;
+		break;
+
+	    case 'b':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, BISHOP)) return 0;
+		break;
+	    case 'B':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, BISHOP)) return 0;
+		break;
+
+	    case 'n':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, KNIGHT)) return 0;
+		break;
+	    case 'N':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, KNIGHT)) return 0;
+		break;
+
+	    case 'p':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, PAWN)) return 0;
+		break;
+	    case 'P':
+		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, PAWN)) return 0;
+		break;
+	    }
+	    FEN_string++;
+	}
+	if (row > 0) {
+	  if (*FEN_string != '/') return 0;
+	  else FEN_string++;
+	}
+    }
+
+    if (*FEN_string != ' ') return 0;
+    while (*FEN_string == ' ') FEN_string ++;
+
+    if (*FEN_string == 'w') {
+      pos->side_to_move = WHITE;
+    } else if (*FEN_string == 'b') {
+      pos->side_to_move = BLACK;
+    } else {
+      return 0;
+    }
+
+    while (*FEN_string == ' ') FEN_string ++;
+
+    /* skip castling rights (if they exist) */
+
+    while ((*FEN_string == '-') || (*FEN_string == 'K') || (*FEN_string == 'Q')
+	   || (*FEN_string == 'k') || (*FEN_string == 'q')) FEN_string ++;
+
+    while (*FEN_string == ' ') FEN_string ++;
+
+    /* If en passant square was specified, parse it */
+
+    if ((FEN_string[0] >= 'a') && (FEN_string[0] <= 'h')
+	&& (FEN_string[1] >= '1') && (FEN_string[1] <= '8')) {
+	pos->en_passant_square = square(FEN_string[1] - '1', FEN_string[0] - 'a');
+    }
+
+    return 1;
+}
+
+boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
+{
+    int row, col;
+
+    bzero(pos, sizeof(global_position_t));
+    pos->en_passant_square = -1;
+
+    for (row=7; row>=0; row--) {
+	for (col=0; col<=7; col++) {
+	    switch (*FEN_string) {
+	    case '1':
+	    case '2':
+	    case '3':
+	    case '4':
+	    case '5':
+	    case '6':
+	    case '7':
+	    case '8':
+		/* subtract one here since the 'for' loop will bump col by one */
+		col += *FEN_string - '0' - 1;
+		if (col > 7) return 0;
+		break;
+
+	    case 'k':
+		if (!place_piece_in_global_position(pos, square(row, col), BLACK, KING)) return 0;
+		break;
+	    case 'K':
+		if (!place_piece_in_global_position(pos, square(row, col), WHITE, KING)) return 0;
+		break;
+
+	    case 'q':
+		if (!place_piece_in_global_position(pos, square(row, col), BLACK, QUEEN)) return 0;
+		break;
+	    case 'Q':
+		if (!place_piece_in_global_position(pos, square(row, col), WHITE, QUEEN)) return 0;
+		break;
+
+	    case 'r':
+		if (!place_piece_in_global_position(pos, square(row, col), BLACK, ROOK)) return 0;
+		break;
+	    case 'R':
+		if (!place_piece_in_global_position(pos, square(row, col), WHITE, ROOK)) return 0;
+		break;
+
+	    case 'b':
+		if (!place_piece_in_global_position(pos, square(row, col), BLACK, BISHOP)) return 0;
+		break;
+	    case 'B':
+		if (!place_piece_in_global_position(pos, square(row, col), WHITE, BISHOP)) return 0;
+		break;
+
+	    case 'n':
+		if (!place_piece_in_global_position(pos, square(row, col), BLACK, KNIGHT)) return 0;
+		break;
+	    case 'N':
+		if (!place_piece_in_global_position(pos, square(row, col), WHITE, KNIGHT)) return 0;
+		break;
+
+	    case 'p':
+		if (!place_piece_in_global_position(pos, square(row, col), BLACK, PAWN)) return 0;
+		break;
+	    case 'P':
+		if (!place_piece_in_global_position(pos, square(row, col), WHITE, PAWN)) return 0;
+		break;
+	    }
+	    FEN_string++;
+	}
+	if (row > 0) {
+	  if (*FEN_string != '/') return 0;
+	  else FEN_string++;
+	}
+    }
+
+    if (*FEN_string != ' ') return 0;
+    while (*FEN_string == ' ') FEN_string ++;
+
+    if (*FEN_string == 'w') {
+      pos->side_to_move = WHITE;
+    } else if (*FEN_string == 'b') {
+      pos->side_to_move = BLACK;
+    } else {
+      return 0;
+    }
+
+    while (*FEN_string == ' ') FEN_string ++;
+
+    /* skip castling rights (if they exist) */
+
+    while ((*FEN_string == '-') || (*FEN_string == 'K') || (*FEN_string == 'Q')
+	   || (*FEN_string == 'k') || (*FEN_string == 'q')) FEN_string ++;
+
+    while (*FEN_string == ' ') FEN_string ++;
+
+    /* If en passant square was specified, parse it */
+
+    if ((FEN_string[0] >= 'a') && (FEN_string[0] <= 'h')
+	&& (FEN_string[1] >= '1') && (FEN_string[1] <= '8')) {
+	pos->en_passant_square = square(FEN_string[1] - '1', FEN_string[0] - 'a');
+    }
+
+    return 1;
+}
+
+/* Note that the buffer in this function is static... */
+
+char * global_position_to_FEN(global_position_t *position)
+{
+    static char buffer[256];
+    char *ptr = buffer;
+    int empty_squares;
+    int row, col;
+
+    for (row=7; row>=0; row--) {
+	empty_squares=0;
+	for (col=0; col<=7; col++) {
+	    if ((position->board[square(row, col)] == ' ') || (position->board[square(row,col)] == 0)) {
+		empty_squares++;
+	    } else {
+		if (empty_squares > 0) {
+		    *(ptr++) = '0' + empty_squares;
+		    empty_squares = 0;
+		}
+		*(ptr++) = position->board[square(row,col)];
+	    }
+	}
+	if (empty_squares > 0) {
+	    *(ptr++) = '0' + empty_squares;
+	}
+	if (row > 0) *(ptr++) = '/';
+    }
+
+    *(ptr++) = ' ';
+
+    *(ptr++) = (position->side_to_move == WHITE) ? 'w' : 'b';
+
+    /* no castling rights */
+
+    *(ptr++) = ' ';
+    *(ptr++) = '-';
+    *(ptr++) = ' ';
+
+    if (position->en_passant_square == -1) {
+	*(ptr++) = '-';
+    } else {
+	*(ptr++) = 'a' + COL(position->en_passant_square);
+	*(ptr++) = '1' + ROW(position->en_passant_square);
+    }
+
+    *(ptr++) = '\0';
+
+    return buffer;
+}
+
+/* This routine looks at "movestr" to try and figure out if it is a valid move from this global
+ * position.  If so, it changes the global position to reflect the move and returns true.
+ * Otherwise, it leaves the global position alone and returns false.
+ */
+
+boolean parse_move_in_global_position(char *movestr, global_position_t *global)
+{
+    int origin_square, destination_square;
+    int is_capture = 0;
+    unsigned char promotion_piece = '\0';
+
+    if (movestr[0] >= 'a' && movestr[0] <= 'h' && movestr[1] >= '1' && movestr[1] <= '8') {
+	origin_square = movestr[0]-'a' + (movestr[1]-'1')*8;
+	movestr += 2;
+    } else {
+	return 0;
+    }
+
+    if (movestr[0] == 'x') {
+	is_capture = 1;
+	movestr ++;
+    }
+
+    if (movestr[0] >= 'a' && movestr[0] <= 'h' && movestr[1] >= '1' && movestr[1] <= '8') {
+	destination_square = movestr[0]-'a' + (movestr[1]-'1')*8;
+	movestr += 2;
+    } else {
+	return 0;
+    }
+
+    if (movestr[0] == '=') {
+	movestr ++;
+	promotion_piece = movestr[0];
+    }
+
+    if (!(global->board[origin_square] >= 'A' && global->board[origin_square] <= 'Z')
+	&& global->side_to_move == WHITE)
+	return 0;
+
+    if (!(global->board[origin_square] >= 'a' && global->board[origin_square] <= 'z')
+	&& global->side_to_move == BLACK)
+	return 0;
+
+    if (global->board[destination_square] >= 'A' && !is_capture) return 0;
+
+    if (!(global->board[destination_square] >= 'A' && global->board[destination_square] <= 'Z')
+	&& is_capture && global->side_to_move == BLACK)
+	return 0;
+
+    if (!(global->board[destination_square] >= 'a' && global->board[destination_square] <= 'z')
+	&& is_capture && global->side_to_move == WHITE)
+	return 0;
+
+    global->board[destination_square] = promotion_piece ? promotion_piece : global->board[origin_square];
+    global->board[origin_square] = 0;
+    if (global->side_to_move == WHITE)
+	global->side_to_move = BLACK;
+    else
+	global->side_to_move = WHITE;
+
+    global->en_passant_square = -1;
+
+    if ((global->board[destination_square] == 'P') && (origin_square == destination_square - 16)) {
+	global->en_passant_square = destination_square - 8;
+    }
+    if ((global->board[destination_square] == 'p') && (origin_square == destination_square + 16)) {
+	global->en_passant_square = destination_square + 8;
+    }
+
+    /* XXX doesn't modify board vector */
 
     return 1;
 }
@@ -3443,6 +3801,8 @@ void propagate_all_moves_within_tablebase(tablebase *tb, int mate_in_limit)
 
 /***** PROBING NALIMOV TABLEBASES *****/
 
+#ifdef USE_NALIMOV
+
 int EGTBProbe(int wtm, unsigned char board[64], int sqEnP, int *score);
 
 int IInitializeTb(char *pszPath);
@@ -3465,56 +3825,6 @@ void init_nalimov_code(void)
     } else {
 	FTbSetCacheSize(EGTB_cache, EGTB_CACHE_DEFAULT);
     }
-}
-
-/* Note that the buffer in this function is static... */
-
-char * global_position_to_FEN(global_position_t *position)
-{
-    static char buffer[256];
-    char *ptr = buffer;
-    int empty_squares;
-    int row, col;
-
-    for (row=7; row>=0; row--) {
-	empty_squares=0;
-	for (col=0; col<=7; col++) {
-	    if ((position->board[square(row, col)] == ' ') || (position->board[square(row,col)] == 0)) {
-		empty_squares++;
-	    } else {
-		if (empty_squares > 0) {
-		    *(ptr++) = '0' + empty_squares;
-		    empty_squares = 0;
-		}
-		*(ptr++) = position->board[square(row,col)];
-	    }
-	}
-	if (empty_squares > 0) {
-	    *(ptr++) = '0' + empty_squares;
-	}
-	if (row > 0) *(ptr++) = '/';
-    }
-
-    *(ptr++) = ' ';
-
-    *(ptr++) = (position->side_to_move == WHITE) ? 'w' : 'b';
-
-    /* no castling rights */
-
-    *(ptr++) = ' ';
-    *(ptr++) = '-';
-    *(ptr++) = ' ';
-
-    if (position->en_passant_square == -1) {
-	*(ptr++) = '-';
-    } else {
-	*(ptr++) = 'a' + COL(position->en_passant_square);
-	*(ptr++) = '1' + ROW(position->en_passant_square);
-    }
-
-    *(ptr++) = '\0';
-
-    return buffer;
 }
 
 char * nalimov_to_english(int score)
@@ -3611,313 +3921,8 @@ void verify_tablebase_against_nalimov(tablebase *tb)
     }
 }
 
+#endif /* USE_NALIMOV */
 
-/***** PARSING FEN INTO POSITION STRUCTURES *****/
-
-boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int square, int color, int type)
-{
-    int piece;
-
-    if (pos->board_vector & BITVECTOR(square)) return 0;
-
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	if ((tb->mobile_piece_type[piece] == type) && (tb->mobile_piece_color[piece] == color)) {
-	    pos->mobile_piece_position[piece] = square;
-	    pos->board_vector |= BITVECTOR(square);
-	    if (color == WHITE) pos->white_vector |= BITVECTOR(square);
-	    else pos->black_vector |= BITVECTOR(square);
-	    return 1;
-	}
-    }
-
-    return 0;
-}
-
-boolean place_piece_in_global_position(global_position_t *position, int square, int color, int type)
-{
-    position->board[square] = global_pieces[color][type];
-    return 1;
-}
-
-boolean parse_FEN_to_local_position(char *FEN_string, tablebase *tb, local_position_t *pos)
-{
-    int row, col;
-
-    bzero(pos, sizeof(local_position_t));
-    pos->en_passant_square = -1;
-
-    for (row=7; row>=0; row--) {
-	for (col=0; col<=7; col++) {
-	    switch (*FEN_string) {
-	    case '1':
-	    case '2':
-	    case '3':
-	    case '4':
-	    case '5':
-	    case '6':
-	    case '7':
-	    case '8':
-		/* subtract one here since the 'for' loop will bump col by one */
-		col += *FEN_string - '0' - 1;
-		if (col > 7) return 0;
-		break;
-
-	    case 'k':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, KING)) return 0;
-		break;
-	    case 'K':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, KING)) return 0;
-		break;
-
-	    case 'q':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, QUEEN)) return 0;
-		break;
-	    case 'Q':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, QUEEN)) return 0;
-		break;
-
-	    case 'r':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, ROOK)) return 0;
-		break;
-	    case 'R':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, ROOK)) return 0;
-		break;
-
-	    case 'b':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, BISHOP)) return 0;
-		break;
-	    case 'B':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, BISHOP)) return 0;
-		break;
-
-	    case 'n':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, KNIGHT)) return 0;
-		break;
-	    case 'N':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, KNIGHT)) return 0;
-		break;
-
-	    case 'p':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, PAWN)) return 0;
-		break;
-	    case 'P':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, PAWN)) return 0;
-		break;
-	    }
-	    FEN_string++;
-	}
-	if (row > 0) {
-	  if (*FEN_string != '/') return 0;
-	  else FEN_string++;
-	}
-    }
-
-    if (*FEN_string != ' ') return 0;
-    while (*FEN_string == ' ') FEN_string ++;
-
-    if (*FEN_string == 'w') {
-      pos->side_to_move = WHITE;
-    } else if (*FEN_string == 'b') {
-      pos->side_to_move = BLACK;
-    } else {
-      return 0;
-    }
-
-    while (*FEN_string == ' ') FEN_string ++;
-
-    /* skip castling rights (if they exist) */
-
-    while ((*FEN_string == '-') || (*FEN_string == 'K') || (*FEN_string == 'Q')
-	   || (*FEN_string == 'k') || (*FEN_string == 'q')) FEN_string ++;
-
-    while (*FEN_string == ' ') FEN_string ++;
-
-    /* If en passant square was specified, parse it */
-
-    if ((FEN_string[0] >= 'a') && (FEN_string[0] <= 'h')
-	&& (FEN_string[1] >= '1') && (FEN_string[1] <= '8')) {
-	pos->en_passant_square = square(FEN_string[1] - '1', FEN_string[0] - 'a');
-    }
-
-    return 1;
-}
-
-boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
-{
-    int row, col;
-
-    bzero(pos, sizeof(global_position_t));
-    pos->en_passant_square = -1;
-
-    for (row=7; row>=0; row--) {
-	for (col=0; col<=7; col++) {
-	    switch (*FEN_string) {
-	    case '1':
-	    case '2':
-	    case '3':
-	    case '4':
-	    case '5':
-	    case '6':
-	    case '7':
-	    case '8':
-		/* subtract one here since the 'for' loop will bump col by one */
-		col += *FEN_string - '0' - 1;
-		if (col > 7) return 0;
-		break;
-
-	    case 'k':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, KING)) return 0;
-		break;
-	    case 'K':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, KING)) return 0;
-		break;
-
-	    case 'q':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, QUEEN)) return 0;
-		break;
-	    case 'Q':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, QUEEN)) return 0;
-		break;
-
-	    case 'r':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, ROOK)) return 0;
-		break;
-	    case 'R':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, ROOK)) return 0;
-		break;
-
-	    case 'b':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, BISHOP)) return 0;
-		break;
-	    case 'B':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, BISHOP)) return 0;
-		break;
-
-	    case 'n':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, KNIGHT)) return 0;
-		break;
-	    case 'N':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, KNIGHT)) return 0;
-		break;
-
-	    case 'p':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, PAWN)) return 0;
-		break;
-	    case 'P':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, PAWN)) return 0;
-		break;
-	    }
-	    FEN_string++;
-	}
-	if (row > 0) {
-	  if (*FEN_string != '/') return 0;
-	  else FEN_string++;
-	}
-    }
-
-    if (*FEN_string != ' ') return 0;
-    while (*FEN_string == ' ') FEN_string ++;
-
-    if (*FEN_string == 'w') {
-      pos->side_to_move = WHITE;
-    } else if (*FEN_string == 'b') {
-      pos->side_to_move = BLACK;
-    } else {
-      return 0;
-    }
-
-    while (*FEN_string == ' ') FEN_string ++;
-
-    /* skip castling rights (if they exist) */
-
-    while ((*FEN_string == '-') || (*FEN_string == 'K') || (*FEN_string == 'Q')
-	   || (*FEN_string == 'k') || (*FEN_string == 'q')) FEN_string ++;
-
-    while (*FEN_string == ' ') FEN_string ++;
-
-    /* If en passant square was specified, parse it */
-
-    if ((FEN_string[0] >= 'a') && (FEN_string[0] <= 'h')
-	&& (FEN_string[1] >= '1') && (FEN_string[1] <= '8')) {
-	pos->en_passant_square = square(FEN_string[1] - '1', FEN_string[0] - 'a');
-    }
-
-    return 1;
-}
-
-/* This routine looks at "movestr" to try and figure out if it is a valid move from this global
- * position.  If so, it changes the global position to reflect the move and returns true.
- * Otherwise, it leaves the global position alone and returns false.
- */
-
-boolean parse_move_in_global_position(char *movestr, global_position_t *global)
-{
-    int origin_square, destination_square;
-    int is_capture = 0;
-    unsigned char promotion_piece = '\0';
-
-    if (movestr[0] >= 'a' && movestr[0] <= 'h' && movestr[1] >= '1' && movestr[1] <= '8') {
-	origin_square = movestr[0]-'a' + (movestr[1]-'1')*8;
-	movestr += 2;
-    } else {
-	return 0;
-    }
-
-    if (movestr[0] == 'x') {
-	is_capture = 1;
-	movestr ++;
-    }
-
-    if (movestr[0] >= 'a' && movestr[0] <= 'h' && movestr[1] >= '1' && movestr[1] <= '8') {
-	destination_square = movestr[0]-'a' + (movestr[1]-'1')*8;
-	movestr += 2;
-    } else {
-	return 0;
-    }
-
-    if (movestr[0] == '=') {
-	movestr ++;
-	promotion_piece = movestr[0];
-    }
-
-    if (!(global->board[origin_square] >= 'A' && global->board[origin_square] <= 'Z')
-	&& global->side_to_move == WHITE)
-	return 0;
-
-    if (!(global->board[origin_square] >= 'a' && global->board[origin_square] <= 'z')
-	&& global->side_to_move == BLACK)
-	return 0;
-
-    if (global->board[destination_square] >= 'A' && !is_capture) return 0;
-
-    if (!(global->board[destination_square] >= 'A' && global->board[destination_square] <= 'Z')
-	&& is_capture && global->side_to_move == BLACK)
-	return 0;
-
-    if (!(global->board[destination_square] >= 'a' && global->board[destination_square] <= 'z')
-	&& is_capture && global->side_to_move == WHITE)
-	return 0;
-
-    global->board[destination_square] = promotion_piece ? promotion_piece : global->board[origin_square];
-    global->board[origin_square] = 0;
-    if (global->side_to_move == WHITE)
-	global->side_to_move = BLACK;
-    else
-	global->side_to_move = WHITE;
-
-    global->en_passant_square = -1;
-
-    if ((global->board[destination_square] == 'P') && (origin_square == destination_square - 16)) {
-	global->en_passant_square = destination_square - 8;
-    }
-    if ((global->board[destination_square] == 'p') && (origin_square == destination_square + 16)) {
-	global->en_passant_square = destination_square + 8;
-    }
-
-    /* XXX doesn't modify board vector */
-
-    return 1;
-}
 
 /* Search an array of tablebases for a global position.  Array should be terminated with a NULL ptr.
  */
@@ -4053,7 +4058,9 @@ int main(int argc, char *argv[])
 
     /* Probing / Verifying */
 
+#ifdef USE_NALIMOV
     init_nalimov_code();
+#endif
 
     i = 0;
     /* calloc (unlike malloc) zeros memory */
@@ -4062,7 +4069,9 @@ int main(int argc, char *argv[])
     for (argi=optind; argi<argc; argi++) {
 	fprintf(stderr, "Loading '%s'\n", argv[argi]);
 	tbs[i] = load_futurebase_from_file(argv[argi]);
+#ifdef USE_NALIMOV
 	if (verify) verify_tablebase_against_nalimov(tbs[i]);
+#endif
 	i++;
     }
 
@@ -4119,7 +4128,7 @@ int main(int argc, char *argv[])
 		print_score(tb, index, ptm, pntm);
 	    }
 
-#if 1
+#ifdef USE_NALIMOV
 		printf("\nNalimov score: ");
 		if (EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
 		    if (score > 0) {
