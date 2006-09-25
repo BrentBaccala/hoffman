@@ -12,4 +12,4 @@ CPPFLAGS=$(CFLAGS)
 
 hoffman: hoffman.o probe.o egtb.o
 	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++
-	grep -n BREAKPOINT hoffman.c | cut -d : -f 1 | sed 's/^/break hoffman.c:/' > .gdbinit
+	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' > .gdbinit
