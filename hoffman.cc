@@ -522,7 +522,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.65 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.66 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -681,6 +681,10 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
 	}
     }
 
+    /* Possibly a quicker check for position legality that all that en passant stuff */
+
+    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
+
     return index;
 }
 
@@ -750,6 +754,10 @@ int32 global_position_to_index(tablebase *tb, global_position_t *position)
 	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return -1;
 	}
     }
+
+    /* Possibly a quicker check for position legality that all that en passant stuff */
+
+    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
 
     return index;
 }
@@ -858,6 +866,14 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *position)
 {
     int piece;
+
+    /* This check somewhat violates principles of code isolation, but since this function is never
+     * used on a tablebase under construction, and we do need this to figure out which indices in a
+     * futurebase are legit, it seems reasonable to get out of it early with a quick check like
+     * this to speed up futurebase propagation.
+     */
+
+    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return 0;
 
     bzero(position, sizeof(global_position_t));
 
@@ -2496,8 +2512,8 @@ void propagate_minilocal_position_from_futurebase(tablebase *tb, tablebase *futu
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == -1) {
-	/* This can happen because we don't fully check en passant legality */
-	/* fprintf(stderr, "Can't lookup local position in futurebase propagation!\n"); */
+	/* This can happen if we don't fully check en passant legality (but right now, we do) */
+	fprintf(stderr, "Can't lookup local position in futurebase propagation!\n");  /* BREAKPOINT */
 	return;
     }
 
@@ -2529,9 +2545,9 @@ void propagate_local_position_from_futurebase(tablebase *tb, tablebase *futureba
 	    if (tb->mobile_piece_color[piece] == position->side_to_move) continue;
 	    if (tb->mobile_piece_type[piece] != PAWN) continue;
 
-	    /* XXX The problem is that these board vectors might not be correct, because we moved
-	     * the capturing piece without updating them.  We get around this by checking
-	     * in local_position_to_index() for illegal en passant positions.
+#if 1
+	    /* XXX I've taken care to update board_vector specifically so we can check for en
+	     * passant legality here.
 	     */
 
 	    if ((tb->mobile_piece_color[piece] == WHITE)
@@ -2550,6 +2566,26 @@ void propagate_local_position_from_futurebase(tablebase *tb, tablebase *futureba
 		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
 	    }
 
+#else
+
+	    /* XXX The problem is that the board vector might not be correct, because we moved the
+	     * capturing piece without updating it.  We get around this by checking in
+	     * local_position_to_index() for illegal en passant positions.
+	     */
+
+	    if ((tb->mobile_piece_color[piece] == WHITE)
+		&& (ROW(position->mobile_piece_position[piece]) == 3)) {
+		position->en_passant_square = position->mobile_piece_position[piece] - 8;
+		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+	    }
+
+	    if ((tb->mobile_piece_color[piece] == BLACK)
+		&& (ROW(position->mobile_piece_position[piece]) == 4)) {
+		position->en_passant_square = position->mobile_piece_position[piece] + 8;
+		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+	    }
+#endif
+
 	    position->en_passant_square = -1;
 	}
     }
@@ -2565,8 +2601,8 @@ void propagate_miniglobal_position_from_futurebase(tablebase *tb, tablebase *fut
     current_index = global_position_to_index(tb, position);
 
     if (current_index == -1) {
-	/* This can happen because we don't fully check en passant legality */
-	/* fprintf(stderr, "Can't lookup global position in futurebase propagation!\n"); */
+	/* This can happen if we don't fully check en passant legality (but right now, we do) */
+	fprintf(stderr, "Can't lookup global position in futurebase propagation!\n");  /* BREAKPOINT */
 	return;
     }
 
@@ -2595,11 +2631,20 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
 	int ending_square = (position->side_to_move == WHITE) ? 39 : 31;
 	unsigned char pawn = (position->side_to_move == WHITE) ? 'p' : 'P';
 	int capture_row = (position->side_to_move == WHITE) ? 5 : 2;
+	int back_row1 = (position->side_to_move == WHITE) ? 6 : 1;
 	int sq;
 
 	for (sq = starting_square; sq <= ending_square; sq ++) {
 
-	    if (position->board[sq] == pawn) {
+	    /* We do a full check for en passant legality here to make the code more robust.  This
+	     * way, we should never get an illegal position in the miniglobal propagation Well, an
+	     * almost full check.  We don't check to see if an enemy pawn could actually capture the
+	     * en passant pawn, but the index/position code currently doesn't treat that situation
+	     * as illegal, so we're OK (for now).
+	     */
+
+	    if ((position->board[sq] == pawn) && (position->board[square(capture_row, COL(sq))] == 0)
+		&& (position->board[square(back_row1, COL(sq))] == 0)) {
 		position->en_passant_square = square(capture_row, COL(sq));
 		propagate_miniglobal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
 	    }
@@ -2906,7 +2951,18 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 			    /* Move the capturing piece... */
 
+			    /* I update board_vector here because I want to check for en passant
+			     * legality before I call local_position_to_index().  It just makes the
+			     * code a little more robust at this point, because then there should be
+			     * no reason for local_position_to_index() to return -1.
+			     *
+			     * By the way, the piece didn't "come from" anywhere other than the
+			     * capture square, which will have the captured piece on it (this is
+			     * back prop), so we don't need to clear anything in board_vector.
+			     */
+
 			    current_position.mobile_piece_position[piece] = movementptr->square;
+			    current_position.board_vector |= BITVECTOR(movementptr->square);
 
 			    /* This function also back props any similar positions with one of the pawns
 			     * from the side that didn't capture in an en passant state.
@@ -2914,6 +2970,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 			    propagate_local_position_from_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
 
+
+			    current_position.board_vector &= ~BITVECTOR(movementptr->square);
 			}
 		    }
 
@@ -2931,7 +2989,18 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 			/* non-promotion capture */
 
+			/* I update board_vector here because I want to check for en passant
+			 * legality before I call local_position_to_index().  It just makes the code
+			 * a little more robust at this point, because then there should be no
+			 * reason for local_position_to_index() to return -1.
+			 *
+			 * By the way, the piece didn't "come from" anywhere other than the capture
+			 * square, which will have the captured piece on it (this is back prop), so
+			 * we don't need to clear anything in board_vector.
+			 */
+
 			current_position.mobile_piece_position[piece] = movementptr->square;
+			current_position.board_vector |= BITVECTOR(movementptr->square);
 
 			/* This function also back props any similar positions with one of the pawns
 			 * from the side that didn't capture in an en passant state.
@@ -2940,14 +3009,24 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			propagate_local_position_from_futurebase(tb, futurebase, future_index,
 								 &current_position, mate_in_limit);
 
+			current_position.board_vector &= ~BITVECTOR(movementptr->square);
+
 			/* The en passant special case: if both the piece that captured and the
 			 * piece that was captured are both pawns, and either a white pawn captured
 			 * from the fifth rank, or a black pawn captured from the fourth, then there
 			 * are two possible back prop positions - the obvious one we just handled,
-			 * and the one where the captured pawn was in an en passant state.
+			 * and the one where the captured pawn was in an en passant state.  We also
+			 * make sure right away that the rank is clear where the pawn had to come
+			 * from, and the rank is clear where the pawn had to go to, ensuring that an
+			 * en passant move was even possible.
 			 */
 
-			if (tb->mobile_piece_type[captured_piece] == PAWN) {
+			if ((tb->mobile_piece_type[captured_piece] == PAWN)
+			    && !(current_position.board_vector
+				 & BITVECTOR(current_position.mobile_piece_position[captured_piece]-8))
+			    && !(current_position.board_vector
+				 & BITVECTOR(current_position.mobile_piece_position[captured_piece]+8))) {
+
 			    if ((tb->mobile_piece_color[piece] == BLACK)
 				&& (ROW(movementptr->square) == 3)) {
 
@@ -3343,8 +3422,8 @@ void propagate_one_minimove_within_table(tablebase *tb, int32 parent_index, loca
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == -1) {
-	/* This can happen because we don't fully check en passant legality */
-	/* fprintf(stderr, "Can't lookup position in intratable propagation!\n"); */
+	/* This can happen if we don't fully check en passant legality (but right now, we do) */
+	fprintf(stderr, "Can't lookup position in intratable propagation!\n");  /* BREAKPOINT */
 	return;
     }
 
@@ -3408,6 +3487,28 @@ void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_po
 	    if (tb->mobile_piece_color[piece] == position->side_to_move) continue;
 	    if (tb->mobile_piece_type[piece] != PAWN) continue;
 
+#if 1
+	    /* XXX I've taken care to update board_vector specifically so we can check for en
+	     * passant legality here.
+	     */
+
+	    if ((tb->mobile_piece_color[piece] == WHITE)
+		&& (ROW(position->mobile_piece_position[piece]) == 3)
+		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] - 8))
+		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] - 16))) {
+		position->en_passant_square = position->mobile_piece_position[piece] - 8;
+		propagate_one_minimove_within_table(tb, parent_index, position);
+	    }
+
+	    if ((tb->mobile_piece_color[piece] == BLACK)
+		&& (ROW(position->mobile_piece_position[piece]) == 4)
+		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] + 8))
+		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] + 16))) {
+		position->en_passant_square = position->mobile_piece_position[piece] + 8;
+		propagate_one_minimove_within_table(tb, parent_index, position);
+	    }
+
+#else
 	    /* XXX The problem is that the board vectors might not be correct, because we moved the
 	     * piece without updating them.  We don't even bother to use them here.  We get around
 	     * this by checking in local_position_to_index() for illegal en passant positions.
@@ -3424,6 +3525,7 @@ void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_po
 		position->en_passant_square = position->mobile_piece_position[piece] + 8;
 		propagate_one_minimove_within_table(tb, parent_index, position);
 	    }
+#endif
 
 	    position->en_passant_square = -1;
 	}
@@ -3485,10 +3587,19 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 	    current_position = parent_position;
 	    flip_side_to_move_local(&current_position);
 	    current_position.en_passant_square = -1;
+
+	    /* I go to the trouble to update board_vector here so we can check en passant
+	     * legality in propagate_one_move_within_table().
+	     */
+
+	    current_position.board_vector &= ~BITVECTOR(current_position.mobile_piece_position[en_passant_pawn]);
 	    if (tb->mobile_piece_color[en_passant_pawn] == WHITE)
 		current_position.mobile_piece_position[en_passant_pawn] -= 16;
 	    else
 		current_position.mobile_piece_position[en_passant_pawn] += 16;
+
+	    current_position.board_vector != BITVECTOR(current_position.mobile_piece_position[en_passant_pawn]);
+
 	    propagate_one_move_within_table(tb, parent_index, &current_position);
 	}
 
@@ -3523,7 +3634,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		     (movementptr->vector & parent_position.board_vector) == 0;
 		     movementptr++) {
 
-		    /* XXX can we move the next two statements out of this loop (ditto below)? */
+		    /* XXX can we move the next several statements out of this loop (ditto below)? */
 
 		    current_position = parent_position;
 
@@ -3541,7 +3652,15 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 		    flip_side_to_move_local(&current_position);
 
+		    /* I go to the trouble to update board_vector here so we can check en passant
+		     * legality in propagate_one_move_within_table().
+		     */
+
+		    current_position.board_vector &= ~BITVECTOR(current_position.mobile_piece_position[piece]);
+
 		    current_position.mobile_piece_position[piece] = movementptr->square;
+
+		    current_position.board_vector |= BITVECTOR(movementptr->square);
 
 		    propagate_one_move_within_table(tb, parent_index, &current_position);
 		}
@@ -3583,7 +3702,15 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 		flip_side_to_move_local(&current_position);
 
+		/* I go to the trouble to update board_vector here so we can check en passant
+		 * legality in propagate_one_move_within_table().
+		 */
+
+		current_position.board_vector &= ~BITVECTOR(current_position.mobile_piece_position[piece]);
+
 		current_position.mobile_piece_position[piece] = movementptr->square;
+
+		current_position.board_vector |= BITVECTOR(current_position.mobile_piece_position[piece]);
 
 		propagate_one_move_within_table(tb, parent_index, &current_position);
 
