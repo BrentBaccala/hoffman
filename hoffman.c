@@ -522,7 +522,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.64 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.65 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -649,7 +649,7 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
 	    return -1;
 	}
 	if (pos->mobile_piece_position[piece] < 0)
-	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");
+	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
@@ -1483,7 +1483,7 @@ inline void mark_propagated(tablebase *tb, int32 index)
     } else if (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED) {
 	tb->entries[index].movecnt = PNTM_WINS_PROPAGATION_DONE;
     } else {
-	fprintf(stderr, "Propagation attempt on a completed or unresolved position\n");
+	fprintf(stderr, "Propagation attempt on a completed or unresolved position\n");   /* BREAKPOINT */
     }
 }
 
@@ -1596,7 +1596,7 @@ inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemat
 
     if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
 	if (mate_in_count < tb->entries[index].mate_in_cnt) {
-	    fprintf(stderr, "Mate in count dropped in PTM_wins after propagation done!?\n");
+	    fprintf(stderr, "Mate in count dropped in PTM_wins after propagation done!?\n"); /* BREAKPOINT */
 	}
     } else if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) {
 	if (mate_in_count < tb->entries[index].mate_in_cnt) {
@@ -1609,7 +1609,7 @@ inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemat
 	}
     } else if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
 	       || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE)) {
-	fprintf(stderr, "PTM_wins in a position where PNTM already won?!\n");
+	fprintf(stderr, "PTM_wins in a position where PNTM already won?!\n");   /* BREAKPOINT */
     } else {
 	tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
 	tb->entries[index].mate_in_cnt = mate_in_count;
