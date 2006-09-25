@@ -147,7 +147,7 @@ typedef struct {
     int64 black_vector;
     short side_to_move;
     short en_passant_square;
-    short mobile_piece_position[MAX_MOBILES];
+    short piece_position[MAX_MOBILES];
 } local_position_t;
 
 /* This is a global position, that doesn't depend on a particular tablebase.  It's slower to
@@ -263,8 +263,8 @@ typedef struct tablebase {
     xmlDocPtr xml;
     int num_mobiles;
     int move_restrictions[2];		/* one for each color */
-    short mobile_piece_type[MAX_MOBILES];
-    short mobile_piece_color[MAX_MOBILES];
+    short piece_type[MAX_MOBILES];
+    short piece_color[MAX_MOBILES];
     struct fourbyte_entry *entries;
 } tablebase;
 
@@ -324,18 +324,18 @@ tablebase * parse_XML_into_tablebase(xmlDocPtr doc)
 	    xmlChar * type;
 	    color = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "color");
 	    type = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "type");
-	    tb->mobile_piece_color[i] = find_name_in_array((char *) color, colors);
-	    tb->mobile_piece_type[i] = find_name_in_array((char *) type, piece_name);
+	    tb->piece_color[i] = find_name_in_array((char *) color, colors);
+	    tb->piece_type[i] = find_name_in_array((char *) type, piece_name);
 
-	    if ((tb->mobile_piece_color[i] == -1) || (tb->mobile_piece_type[i] == -1)) {
+	    if ((tb->piece_color[i] == -1) || (tb->piece_type[i] == -1)) {
 		fprintf(stderr, "Illegal color (%s) or type (%s) in mobile\n", color, type);
 		xmlFree(color);
 	    }
 	}
     }
 
-    if ((tb->mobile_piece_color[WHITE_KING] != WHITE) || (tb->mobile_piece_type[WHITE_KING] != KING)
-	|| (tb->mobile_piece_color[BLACK_KING] != BLACK) || (tb->mobile_piece_type[BLACK_KING] != KING)) {
+    if ((tb->piece_color[WHITE_KING] != WHITE) || (tb->piece_type[WHITE_KING] != KING)
+	|| (tb->piece_color[BLACK_KING] != BLACK) || (tb->piece_type[BLACK_KING] != KING)) {
 	fprintf(stderr, "Kings aren't where they need to be in mobiles!\n");
     }
 
@@ -506,9 +506,9 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
 	mobile = xmlNewChild(pieces, NULL, (const xmlChar *) "mobile", NULL);
 	xmlNewProp(mobile, (const xmlChar *) "color",
-		   (const xmlChar *) colors[tb->mobile_piece_color[piece]]);
+		   (const xmlChar *) colors[tb->piece_color[piece]]);
 	xmlNewProp(mobile, (const xmlChar *) "type",
-		   (const xmlChar *) piece_name[tb->mobile_piece_type[piece]]);
+		   (const xmlChar *) piece_name[tb->piece_type[piece]]);
     }
 
     for (color = 0; color < 2; color ++) {
@@ -522,7 +522,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.66 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.67 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -644,28 +644,28 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
 	/* I've added this pawn check because I've had some problems.  This makes the
 	 * return of this function match up with the return of index_to_global_position
 	 */
-	if ((tb->mobile_piece_type[piece] == PAWN)
-	    && ((pos->mobile_piece_position[piece] < 8) || (pos->mobile_piece_position[piece] >= 56))) {
+	if ((tb->piece_type[piece] == PAWN)
+	    && ((pos->piece_position[piece] < 8) || (pos->piece_position[piece] >= 56))) {
 	    return -1;
 	}
-	if (pos->mobile_piece_position[piece] < 0)
+	if (pos->piece_position[piece] < 0)
 	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	 * this is completely legit.
 	 */
-	if ((tb->mobile_piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
-	    && (((tb->mobile_piece_color[piece] == WHITE)
-		 && (pos->en_passant_square + 8 == pos->mobile_piece_position[piece]))
-		|| ((tb->mobile_piece_color[piece] == BLACK)
-		    && (pos->en_passant_square - 8 == pos->mobile_piece_position[piece])))) {
+	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
+	    && (((tb->piece_color[piece] == WHITE)
+		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		|| ((tb->piece_color[piece] == BLACK)
+		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 	    index |= COL(pos->en_passant_square) << shift_count;
 	} else {
-	    index |= pos->mobile_piece_position[piece] << shift_count;
+	    index |= pos->piece_position[piece] << shift_count;
 	}
-	if (pos->board_vector & BITVECTOR(pos->mobile_piece_position[piece])) return -1;
-	pos->board_vector |= BITVECTOR(pos->mobile_piece_position[piece]);
+	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
+	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
 
 	shift_count += 6;  /* because 2^6=64 */
     }
@@ -712,13 +712,13 @@ int32 global_position_to_index(tablebase *tb, global_position_t *position)
 	if ((position->board[square] != 0) && (position->board[square] != ' ')) {
 	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
 		if ((position->board[square]
-		     == global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]])
+		     == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
 		    && !(pieces_processed_bitvector & (1 << piece))) {
 
-		    if ((tb->mobile_piece_type[piece] == PAWN) && (position->en_passant_square != -1)
-			&& (((tb->mobile_piece_color[piece] == WHITE)
+		    if ((tb->piece_type[piece] == PAWN) && (position->en_passant_square != -1)
+			&& (((tb->piece_color[piece] == WHITE)
 			     && (position->en_passant_square + 8 == square))
-			    || ((tb->mobile_piece_color[piece] == BLACK)
+			    || ((tb->piece_color[piece] == BLACK)
 				&& (position->en_passant_square - 8 == square)))) {
 			index |= COL(position->en_passant_square) << (1 + 6*piece);
 		    } else {
@@ -799,9 +799,9 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 	int square = index & 63;
 
 	/* En passant */
-	if ((tb->mobile_piece_type[piece] == PAWN) && (square < 8)) {
+	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
 	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
-	    if (tb->mobile_piece_color[piece] == WHITE) {
+	    if (tb->piece_color[piece] == WHITE) {
 		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
 		p->en_passant_square = square + 2*8;
 		square += 3*8;
@@ -815,16 +815,16 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 	/* I've added this pawn check because I've had some problems.  This makes the
 	 * return of this function match up with the return of index_to_global_position
 	 */
-	if ((tb->mobile_piece_type[piece] == PAWN) && (square >= 56)) {
+	if ((tb->piece_type[piece] == PAWN) && (square >= 56)) {
 	    return 0;
 	}
 
-	p->mobile_piece_position[piece] = square;
+	p->piece_position[piece] = square;
 	if (p->board_vector & BITVECTOR(square)) {
 	    return 0;
 	}
 	p->board_vector |= BITVECTOR(square);
-	if (tb->mobile_piece_color[piece] == WHITE) {
+	if (tb->piece_color[piece] == WHITE) {
 	    p->white_vector |= BITVECTOR(square);
 	} else {
 	    p->black_vector |= BITVECTOR(square);
@@ -892,9 +892,9 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
 	 */
 
 	/* En passant */
-	if ((tb->mobile_piece_type[piece] == PAWN) && (square < 8)) {
+	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
 	    if (position->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
-	    if (tb->mobile_piece_color[piece] == WHITE) {
+	    if (tb->piece_color[piece] == WHITE) {
 		if (position->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
 		position->en_passant_square = square + 2*8;
 		square += 3*8;
@@ -909,12 +909,12 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
 	    return 0;
 	}
 
-	if ((tb->mobile_piece_type[piece] == PAWN) && (square >= 56)) {
+	if ((tb->piece_type[piece] == PAWN) && (square >= 56)) {
 	    return 0;
 	}
 
 	position->board[square]
-	    = global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]];
+	    = global_pieces[tb->piece_color[piece]][tb->piece_type[piece]];
 
 	position->board_vector |= BITVECTOR(square);
 
@@ -1028,7 +1028,7 @@ boolean global_position_to_local_position(tablebase *tb, global_position_t *glob
     bzero(local, sizeof(local_position_t));
 
     for (piece = 0; piece < tb->num_mobiles; piece ++)
-	local->mobile_piece_position[piece] = -1;
+	local->piece_position[piece] = -1;
 
     local->en_passant_square = global->en_passant_square;
     local->side_to_move = global->side_to_move;
@@ -1037,12 +1037,12 @@ boolean global_position_to_local_position(tablebase *tb, global_position_t *glob
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
 	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
 		if ((global->board[square]
-		     == global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]])
+		     == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
 		    && !(pieces_processed_bitvector & (1 << piece))) {
 
-		    local->mobile_piece_position[piece] = square;
+		    local->piece_position[piece] = square;
 		    local->board_vector |= BITVECTOR(square);
-		    if (tb->mobile_piece_color[piece] == WHITE)
+		    if (tb->piece_color[piece] == WHITE)
 			local->white_vector |= BITVECTOR(square);
 		    else
 			local->black_vector |= BITVECTOR(square);
@@ -1085,8 +1085,8 @@ boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int 
     if (pos->board_vector & BITVECTOR(square)) return 0;
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	if ((tb->mobile_piece_type[piece] == type) && (tb->mobile_piece_color[piece] == color)) {
-	    pos->mobile_piece_position[piece] = square;
+	if ((tb->piece_type[piece] == type) && (tb->piece_color[piece] == color)) {
+	    pos->piece_position[piece] = square;
 	    pos->board_vector |= BITVECTOR(square);
 	    if (color == WHITE) pos->white_vector |= BITVECTOR(square);
 	    else pos->black_vector |= BITVECTOR(square);
@@ -2542,27 +2542,27 @@ void propagate_local_position_from_futurebase(tablebase *tb, tablebase *futureba
 
 	for (piece = 0; piece < tb->num_mobiles; piece ++) {
 
-	    if (tb->mobile_piece_color[piece] == position->side_to_move) continue;
-	    if (tb->mobile_piece_type[piece] != PAWN) continue;
+	    if (tb->piece_color[piece] == position->side_to_move) continue;
+	    if (tb->piece_type[piece] != PAWN) continue;
 
 #if 1
 	    /* XXX I've taken care to update board_vector specifically so we can check for en
 	     * passant legality here.
 	     */
 
-	    if ((tb->mobile_piece_color[piece] == WHITE)
-		&& (ROW(position->mobile_piece_position[piece]) == 3)
-		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] - 8))
-		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] - 16))) {
-		position->en_passant_square = position->mobile_piece_position[piece] - 8;
+	    if ((tb->piece_color[piece] == WHITE)
+		&& (ROW(position->piece_position[piece]) == 3)
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
+		position->en_passant_square = position->piece_position[piece] - 8;
 		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
 	    }
 
-	    if ((tb->mobile_piece_color[piece] == BLACK)
-		&& (ROW(position->mobile_piece_position[piece]) == 4)
-		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] + 8))
-		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] + 16))) {
-		position->en_passant_square = position->mobile_piece_position[piece] + 8;
+	    if ((tb->piece_color[piece] == BLACK)
+		&& (ROW(position->piece_position[piece]) == 4)
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
+		position->en_passant_square = position->piece_position[piece] + 8;
 		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
 	    }
 
@@ -2573,15 +2573,15 @@ void propagate_local_position_from_futurebase(tablebase *tb, tablebase *futureba
 	     * local_position_to_index() for illegal en passant positions.
 	     */
 
-	    if ((tb->mobile_piece_color[piece] == WHITE)
-		&& (ROW(position->mobile_piece_position[piece]) == 3)) {
-		position->en_passant_square = position->mobile_piece_position[piece] - 8;
+	    if ((tb->piece_color[piece] == WHITE)
+		&& (ROW(position->piece_position[piece]) == 3)) {
+		position->en_passant_square = position->piece_position[piece] - 8;
 		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
 	    }
 
-	    if ((tb->mobile_piece_color[piece] == BLACK)
-		&& (ROW(position->mobile_piece_position[piece]) == 4)) {
-		position->en_passant_square = position->mobile_piece_position[piece] + 8;
+	    if ((tb->piece_color[piece] == BLACK)
+		&& (ROW(position->piece_position[piece]) == 4)) {
+		position->en_passant_square = position->piece_position[piece] + 8;
 		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
 	    }
 #endif
@@ -2878,7 +2878,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	     * where the side to move is not the side that captured.
 	     */
 
-	    if (future_position.side_to_move != tb->mobile_piece_color[captured_piece])
+	    if (future_position.side_to_move != tb->piece_color[captured_piece])
 		continue;
 
 	    for (piece = 0; piece < tb->num_mobiles; piece++) {
@@ -2887,7 +2887,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		 * pieces of the side which captured...
 		 */
 
-		if (tb->mobile_piece_color[piece] == tb->mobile_piece_color[captured_piece])
+		if (tb->piece_color[piece] == tb->piece_color[captured_piece])
 		    continue;
 
 		/* Take the global position from the futurebase and translate it into a local
@@ -2906,7 +2906,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 		flip_side_to_move_local(&current_position);
 
-		if (current_position.mobile_piece_position[captured_piece] != -1) {
+		if (current_position.piece_position[captured_piece] != -1) {
 		    fprintf(stderr, "Captured piece position specified too soon during back-prop\n");
 		    continue;
 		}
@@ -2920,9 +2920,9 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		 * capturing piece.
 		 */
 
-		if ((tb->mobile_piece_type[captured_piece] == PAWN)
-		    && ((current_position.mobile_piece_position[piece] < 8)
-			|| (current_position.mobile_piece_position[piece] >= 56))) {
+		if ((tb->piece_type[captured_piece] == PAWN)
+		    && ((current_position.piece_position[piece] < 8)
+			|| (current_position.piece_position[piece] >= 56))) {
 
 		    /* If we "captured" a pawn on the first or eighth ranks, well, obviously that
 		     * can't happen...
@@ -2931,21 +2931,21 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		    continue;
 		}
 
-		current_position.mobile_piece_position[captured_piece]
-		    = current_position.mobile_piece_position[piece];
+		current_position.piece_position[captured_piece]
+		    = current_position.piece_position[piece];
 
 		/* We consider all possible backwards movements of the piece which captured. */
 
-		if (tb->mobile_piece_type[piece] != PAWN) {
+		if (tb->piece_type[piece] != PAWN) {
 
-		    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+		    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
 
 			/* Make sure we start each movement of the capturing piece from the capture square */
 
-			current_position.mobile_piece_position[piece]
-			    = current_position.mobile_piece_position[captured_piece];
+			current_position.piece_position[piece]
+			    = current_position.piece_position[captured_piece];
 
-			for (movementptr = movements[tb->mobile_piece_type[piece]][current_position.mobile_piece_position[piece]][dir];
+			for (movementptr = movements[tb->piece_type[piece]][current_position.piece_position[piece]][dir];
 			     (movementptr->vector & future_position.board_vector) == 0;
 			     movementptr++) {
 
@@ -2961,7 +2961,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			     * back prop), so we don't need to clear anything in board_vector.
 			     */
 
-			    current_position.mobile_piece_position[piece] = movementptr->square;
+			    current_position.piece_position[piece] = movementptr->square;
 			    current_position.board_vector |= BITVECTOR(movementptr->square);
 
 			    /* This function also back props any similar positions with one of the pawns
@@ -2979,7 +2979,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 		    /* Yes, pawn captures are special */
 
-		    for (movementptr = capture_pawn_movements_bkwd[current_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+		    for (movementptr = capture_pawn_movements_bkwd[current_position.piece_position[piece]][tb->piece_color[piece]];
 			 movementptr->square != -1;
 			 movementptr++) {
 
@@ -2999,7 +2999,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			 * we don't need to clear anything in board_vector.
 			 */
 
-			current_position.mobile_piece_position[piece] = movementptr->square;
+			current_position.piece_position[piece] = movementptr->square;
 			current_position.board_vector |= BITVECTOR(movementptr->square);
 
 			/* This function also back props any similar positions with one of the pawns
@@ -3021,13 +3021,13 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			 * en passant move was even possible.
 			 */
 
-			if ((tb->mobile_piece_type[captured_piece] == PAWN)
+			if ((tb->piece_type[captured_piece] == PAWN)
 			    && !(current_position.board_vector
-				 & BITVECTOR(current_position.mobile_piece_position[captured_piece]-8))
+				 & BITVECTOR(current_position.piece_position[captured_piece]-8))
 			    && !(current_position.board_vector
-				 & BITVECTOR(current_position.mobile_piece_position[captured_piece]+8))) {
+				 & BITVECTOR(current_position.piece_position[captured_piece]+8))) {
 
-			    if ((tb->mobile_piece_color[piece] == BLACK)
+			    if ((tb->piece_color[piece] == BLACK)
 				&& (ROW(movementptr->square) == 3)) {
 
 				/* A black pawn capturing a white one (en passant)
@@ -3036,8 +3036,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 				 */
 
 				current_position.en_passant_square
-				    = current_position.mobile_piece_position[captured_piece];
-				current_position.mobile_piece_position[captured_piece] += 8;
+				    = current_position.piece_position[captured_piece];
+				current_position.piece_position[captured_piece] += 8;
 
 				propagate_local_position_from_futurebase(tb, futurebase, future_index,
 									 &current_position, mate_in_limit);
@@ -3046,10 +3046,10 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 				 * so put things back where they came from...
 				 */
 				current_position.en_passant_square = -1;
-				current_position.mobile_piece_position[captured_piece] -= 8;
+				current_position.piece_position[captured_piece] -= 8;
 			    }
 
-			    if ((tb->mobile_piece_color[piece] == WHITE)
+			    if ((tb->piece_color[piece] == WHITE)
 				&& (ROW(movementptr->square) == 4)) {
 
 				/* A white pawn capturing a black one (en passant)
@@ -3058,8 +3058,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 				 */
 
 				current_position.en_passant_square
-				    = current_position.mobile_piece_position[captured_piece];
-				current_position.mobile_piece_position[captured_piece] -= 8;
+				    = current_position.piece_position[captured_piece];
+				current_position.piece_position[captured_piece] -= 8;
 
 				propagate_local_position_from_futurebase(tb, futurebase, future_index,
 									 &current_position, mate_in_limit);
@@ -3068,7 +3068,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 				 * so put things back where they came from...
 				 */
 				current_position.en_passant_square = -1;
-				current_position.mobile_piece_position[captured_piece] += 8;
+				current_position.piece_position[captured_piece] += 8;
 			    }
 			}
 
@@ -3158,11 +3158,11 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
 		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
 			if (! (piece_vector & (1 << piece))) continue;
-			if ((tb->mobile_piece_type[piece] == futurebase->mobile_piece_type[future_piece])
+			if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
 			    && ((!invert_colors &&
-				 (tb->mobile_piece_color[piece] == futurebase->mobile_piece_color[future_piece]))
+				 (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
 				|| (invert_colors &&
-				    (tb->mobile_piece_color[piece] != futurebase->mobile_piece_color[future_piece])))) {
+				    (tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
 			    piece_vector ^= (1 << piece);
 			    break;
 			}
@@ -3206,17 +3206,17 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
 		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
 			if (! (piece_vector & (1 << piece))) continue;
-			if ((tb->mobile_piece_type[piece] == futurebase->mobile_piece_type[future_piece])
+			if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
 			    && ((!invert_colors &&
-				 (tb->mobile_piece_color[piece] == futurebase->mobile_piece_color[future_piece]))
+				 (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
 				|| (invert_colors &&
-				    (tb->mobile_piece_color[piece] != futurebase->mobile_piece_color[future_piece])))) {
+				    (tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
 			    piece_vector ^= (1 << piece);
 			    break;
 			}
 		    }
 		    if (piece == tb->num_mobiles) {
-			if ((promoted_piece == -1) && (futurebase->mobile_piece_type[future_piece] != PAWN)) {
+			if ((promoted_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
 			    promoted_piece = future_piece;
 			} else {
 			    fprintf(stderr, "'%s': Couldn't find future piece in tablebase\n", filename);
@@ -3228,7 +3228,7 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		/* The only thing left unaccounted for in the current tablebase should be a pawn. */
 
 		for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		    if ((tb->mobile_piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
+		    if ((tb->piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
 		}
 
 		if (piece == tb->num_mobiles) {
@@ -3249,7 +3249,7 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		 * colors inverted.
 		 */
 
-		promoted_piece_char = global_pieces[tb->mobile_piece_color[piece]][futurebase->mobile_piece_type[promoted_piece]];
+		promoted_piece_char = global_pieces[tb->piece_color[piece]][futurebase->piece_type[promoted_piece]];
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
@@ -3270,17 +3270,17 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
 		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
 			if (! (piece_vector & (1 << piece))) continue;
-			if ((tb->mobile_piece_type[piece] == futurebase->mobile_piece_type[future_piece])
+			if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
 			    && ((!invert_colors &&
-				 (tb->mobile_piece_color[piece] == futurebase->mobile_piece_color[future_piece]))
+				 (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
 				|| (invert_colors &&
-				    (tb->mobile_piece_color[piece] != futurebase->mobile_piece_color[future_piece])))) {
+				    (tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
 			    piece_vector ^= (1 << piece);
 			    break;
 			}
 		    }
 		    if (piece == tb->num_mobiles) {
-			if ((promoted_piece == -1) && (futurebase->mobile_piece_type[future_piece] != PAWN)) {
+			if ((promoted_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
 			    promoted_piece = future_piece;
 			} else {
 			    fprintf(stderr, "'%s': Couldn't find future piece in tablebase\n", filename);
@@ -3294,7 +3294,7 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		 */
 
 		for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		    if ((tb->mobile_piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
+		    if ((tb->piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
 		}
 
 		if (piece == tb->num_mobiles) {
@@ -3305,7 +3305,7 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		piece_vector ^= (1 << piece);
 
 		for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		    if ((tb->mobile_piece_type[piece] != PAWN) && (piece_vector & (1 << piece))) break;
+		    if ((tb->piece_type[piece] != PAWN) && (piece_vector & (1 << piece))) break;
 		}
 
 		if (piece == tb->num_mobiles) {
@@ -3328,8 +3328,8 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		/* XXX this "BLACK -" business has to go */
 
 
-		promoted_piece_char = global_pieces[BLACK - tb->mobile_piece_color[piece]][futurebase->mobile_piece_type[promoted_piece]];
-		captured_piece_char = global_pieces[tb->mobile_piece_color[piece]][tb->mobile_piece_type[piece]];
+		promoted_piece_char = global_pieces[BLACK - tb->piece_color[piece]][futurebase->piece_type[promoted_piece]];
+		captured_piece_char = global_pieces[tb->piece_color[piece]][tb->piece_type[piece]];
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
@@ -3408,13 +3408,13 @@ void propagate_one_minimove_within_table(tablebase *tb, int32 parent_index, loca
      */
 
 #if NEEDED
-		current_position.board_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
+		current_position.board_vector &= ~BITVECTOR(parent_position.piece_position[piece]);
 		current_position.board_vector |= BITVECTOR(movementptr->square);
-		if (tb->mobile_piece_color[piece] == WHITE) {
-		    current_position.white_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
+		if (tb->piece_color[piece] == WHITE) {
+		    current_position.white_vector &= ~BITVECTOR(parent_position.piece_position[piece]);
 		    current_position.white_vector |= BITVECTOR(movementptr->square);
 		} else {
-		    current_position.black_vector &= ~BITVECTOR(parent_position.mobile_piece_position[piece]);
+		    current_position.black_vector &= ~BITVECTOR(parent_position.piece_position[piece]);
 		    current_position.black_vector |= BITVECTOR(movementptr->square);
 		}
 #endif
@@ -3484,27 +3484,27 @@ void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_po
 
 	for (piece = 0; piece < tb->num_mobiles; piece ++) {
 
-	    if (tb->mobile_piece_color[piece] == position->side_to_move) continue;
-	    if (tb->mobile_piece_type[piece] != PAWN) continue;
+	    if (tb->piece_color[piece] == position->side_to_move) continue;
+	    if (tb->piece_type[piece] != PAWN) continue;
 
 #if 1
 	    /* XXX I've taken care to update board_vector specifically so we can check for en
 	     * passant legality here.
 	     */
 
-	    if ((tb->mobile_piece_color[piece] == WHITE)
-		&& (ROW(position->mobile_piece_position[piece]) == 3)
-		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] - 8))
-		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] - 16))) {
-		position->en_passant_square = position->mobile_piece_position[piece] - 8;
+	    if ((tb->piece_color[piece] == WHITE)
+		&& (ROW(position->piece_position[piece]) == 3)
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
+		position->en_passant_square = position->piece_position[piece] - 8;
 		propagate_one_minimove_within_table(tb, parent_index, position);
 	    }
 
-	    if ((tb->mobile_piece_color[piece] == BLACK)
-		&& (ROW(position->mobile_piece_position[piece]) == 4)
-		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] + 8))
-		&& !(position->board_vector & BITVECTOR(position->mobile_piece_position[piece] + 16))) {
-		position->en_passant_square = position->mobile_piece_position[piece] + 8;
+	    if ((tb->piece_color[piece] == BLACK)
+		&& (ROW(position->piece_position[piece]) == 4)
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
+		position->en_passant_square = position->piece_position[piece] + 8;
 		propagate_one_minimove_within_table(tb, parent_index, position);
 	    }
 
@@ -3514,15 +3514,15 @@ void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_po
 	     * this by checking in local_position_to_index() for illegal en passant positions.
 	     */
 
-	    if ((tb->mobile_piece_color[piece] == WHITE)
-		&& (ROW(position->mobile_piece_position[piece]) == 3)) {
-		position->en_passant_square = position->mobile_piece_position[piece] - 8;
+	    if ((tb->piece_color[piece] == WHITE)
+		&& (ROW(position->piece_position[piece]) == 3)) {
+		position->en_passant_square = position->piece_position[piece] - 8;
 		propagate_one_minimove_within_table(tb, parent_index, position);
 	    }
 
-	    if ((tb->mobile_piece_color[piece] == BLACK)
-		&& (ROW(position->mobile_piece_position[piece]) == 4)) {
-		position->en_passant_square = position->mobile_piece_position[piece] + 8;
+	    if ((tb->piece_color[piece] == BLACK)
+		&& (ROW(position->piece_position[piece]) == 4)) {
+		position->en_passant_square = position->piece_position[piece] + 8;
 		propagate_one_minimove_within_table(tb, parent_index, position);
 	    }
 #endif
@@ -3570,13 +3570,13 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 	for (piece = 0; piece < tb->num_mobiles; piece++) {
 
-	    if (tb->mobile_piece_color[piece] == parent_position.side_to_move) continue;
-	    if (tb->mobile_piece_type[piece] != PAWN) continue;
+	    if (tb->piece_color[piece] == parent_position.side_to_move) continue;
+	    if (tb->piece_type[piece] != PAWN) continue;
 
-	    if (((tb->mobile_piece_color[piece] == WHITE)
-		 && (parent_position.mobile_piece_position[piece] - 8 == parent_position.en_passant_square))
-		|| ((tb->mobile_piece_color[piece] == BLACK)
-		    && (parent_position.mobile_piece_position[piece] + 8 == parent_position.en_passant_square))) {
+	    if (((tb->piece_color[piece] == WHITE)
+		 && (parent_position.piece_position[piece] - 8 == parent_position.en_passant_square))
+		|| ((tb->piece_color[piece] == BLACK)
+		    && (parent_position.piece_position[piece] + 8 == parent_position.en_passant_square))) {
 		if (en_passant_pawn != -1) fprintf(stderr, "Two en passant pawns in back prop?!\n");
 		en_passant_pawn = piece;
 	    }
@@ -3592,13 +3592,13 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 	     * legality in propagate_one_move_within_table().
 	     */
 
-	    current_position.board_vector &= ~BITVECTOR(current_position.mobile_piece_position[en_passant_pawn]);
-	    if (tb->mobile_piece_color[en_passant_pawn] == WHITE)
-		current_position.mobile_piece_position[en_passant_pawn] -= 16;
+	    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[en_passant_pawn]);
+	    if (tb->piece_color[en_passant_pawn] == WHITE)
+		current_position.piece_position[en_passant_pawn] -= 16;
 	    else
-		current_position.mobile_piece_position[en_passant_pawn] += 16;
+		current_position.piece_position[en_passant_pawn] += 16;
 
-	    current_position.board_vector != BITVECTOR(current_position.mobile_piece_position[en_passant_pawn]);
+	    current_position.board_vector != BITVECTOR(current_position.piece_position[en_passant_pawn]);
 
 	    propagate_one_move_within_table(tb, parent_index, &current_position);
 	}
@@ -3614,12 +3614,12 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	if (tb->mobile_piece_color[piece] == parent_position.side_to_move)
+	if (tb->piece_color[piece] == parent_position.side_to_move)
 	    continue;
 
-	if (tb->mobile_piece_type[piece] != PAWN) {
+	if (tb->piece_type[piece] != PAWN) {
 
-	    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+	    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
 
 		/* What about captures?  Well, first of all, there are no captures here!  We're
 		 * moving BACKWARDS in the game... and pieces don't appear out of thin air.
@@ -3630,7 +3630,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		 */
 
 		for (movementptr
-			 = movements[tb->mobile_piece_type[piece]][parent_position.mobile_piece_position[piece]][dir];
+			 = movements[tb->piece_type[piece]][parent_position.piece_position[piece]][dir];
 		     (movementptr->vector & parent_position.board_vector) == 0;
 		     movementptr++) {
 
@@ -3656,9 +3656,9 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		     * legality in propagate_one_move_within_table().
 		     */
 
-		    current_position.board_vector &= ~BITVECTOR(current_position.mobile_piece_position[piece]);
+		    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
 
-		    current_position.mobile_piece_position[piece] = movementptr->square;
+		    current_position.piece_position[piece] = movementptr->square;
 
 		    current_position.board_vector |= BITVECTOR(movementptr->square);
 
@@ -3670,7 +3670,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 
 	    /* Usual special case for pawns */
 
-	    for (movementptr = normal_pawn_movements_bkwd[parent_position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+	    for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][tb->piece_color[piece]];
 		 (movementptr->vector & parent_position.board_vector) == 0;
 		 movementptr++) {
 
@@ -3693,8 +3693,8 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		 * position we are in now (en passant got taken care of in the special case above).
 		 */
 
-		if (((movementptr->square - parent_position.mobile_piece_position[piece]) == 16)
-		    || ((movementptr->square - parent_position.mobile_piece_position[piece]) == -16)) {
+		if (((movementptr->square - parent_position.piece_position[piece]) == 16)
+		    || ((movementptr->square - parent_position.piece_position[piece]) == -16)) {
 		    continue;
 		}
 
@@ -3706,11 +3706,11 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		 * legality in propagate_one_move_within_table().
 		 */
 
-		current_position.board_vector &= ~BITVECTOR(current_position.mobile_piece_position[piece]);
+		current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
 
-		current_position.mobile_piece_position[piece] = movementptr->square;
+		current_position.piece_position[piece] = movementptr->square;
 
-		current_position.board_vector |= BITVECTOR(current_position.mobile_piece_position[piece]);
+		current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
 
 		propagate_one_move_within_table(tb, parent_index, &current_position);
 
@@ -3805,14 +3805,14 @@ initialize_tablebase(tablebase *tb)
 
 		/* We only want to consider pieces of the side which is to move... */
 
-		if (tb->mobile_piece_color[piece] != position.side_to_move)
+		if (tb->piece_color[piece] != position.side_to_move)
 		    continue;
 
-		if (tb->mobile_piece_type[piece] != PAWN) {
+		if (tb->piece_type[piece] != PAWN) {
 
-		    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+		    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
 
-			for (movementptr = movements[tb->mobile_piece_type[piece]][position.mobile_piece_position[piece]][dir];
+			for (movementptr = movements[tb->piece_type[piece]][position.piece_position[piece]][dir];
 			     (movementptr->vector & position.board_vector) == 0;
 			     movementptr++) {
 
@@ -3837,7 +3837,7 @@ initialize_tablebase(tablebase *tb)
 			    if ((movementptr->vector & position.white_vector) == 0) {
 				movecnt ++;
 				futuremove_cnt ++;
-				if (movementptr->square == position.mobile_piece_position[BLACK_KING]) {
+				if (movementptr->square == position.piece_position[BLACK_KING]) {
 				    initialize_index_with_black_mated(tb, index);
 				    goto mated;
 				}
@@ -3846,7 +3846,7 @@ initialize_tablebase(tablebase *tb)
 			    if ((movementptr->vector & position.black_vector) == 0) {
 				movecnt ++;
 				futuremove_cnt ++;
-				if (movementptr->square == position.mobile_piece_position[WHITE_KING]) {
+				if (movementptr->square == position.piece_position[WHITE_KING]) {
 				    initialize_index_with_white_mated(tb, index);
 				    goto mated;
 				}
@@ -3858,7 +3858,7 @@ initialize_tablebase(tablebase *tb)
 
 		    /* Pawns, as always, are special */
 
-		    for (movementptr = normal_pawn_movements[position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+		    for (movementptr = normal_pawn_movements[position.piece_position[piece]][tb->piece_color[piece]];
 			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
 
@@ -3890,9 +3890,9 @@ initialize_tablebase(tablebase *tb)
 		     * promotion move or not is how many futuremoves get recorded.
 		     */
 
-#define ENEMY_BOARD_VECTOR(pos) ((tb->mobile_piece_color[piece] == WHITE) ? pos.black_vector : pos.white_vector)
+#define ENEMY_BOARD_VECTOR(pos) ((tb->piece_color[piece] == WHITE) ? pos.black_vector : pos.white_vector)
 
-		    for (movementptr = capture_pawn_movements[position.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+		    for (movementptr = capture_pawn_movements[position.piece_position[piece]][tb->piece_color[piece]];
 			 movementptr->square != -1;
 			 movementptr++) {
 
@@ -3909,12 +3909,12 @@ initialize_tablebase(tablebase *tb)
 			/* Same check as above for a mated situation */
 
 			if (position.side_to_move == WHITE) {
-			    if (movementptr->square == position.mobile_piece_position[BLACK_KING]) {
+			    if (movementptr->square == position.piece_position[BLACK_KING]) {
 				initialize_index_with_black_mated(tb, index);
 				goto mated;
 			    }
 			} else {
-			    if (movementptr->square == position.mobile_piece_position[WHITE_KING]) {
+			    if (movementptr->square == position.piece_position[WHITE_KING]) {
 				initialize_index_with_white_mated(tb, index);
 				goto mated;
 			    }
@@ -4347,12 +4347,12 @@ int main(int argc, char *argv[])
 
 		/* We only want to consider pieces of the side which is to move... */
 
-		if (tb->mobile_piece_color[piece] != global_position.side_to_move)
+		if (tb->piece_color[piece] != global_position.side_to_move)
 		    continue;
 
-		if (tb->mobile_piece_type[piece] != PAWN) {
+		if (tb->piece_type[piece] != PAWN) {
 
-		    for (dir = 0; dir < number_of_movement_directions[tb->mobile_piece_type[piece]]; dir++) {
+		    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
 
 			index_to_local_position(tb, index, &pos);
 
@@ -4361,11 +4361,11 @@ int main(int argc, char *argv[])
 			flip_side_to_move_local(&nextpos);
 			nextpos.en_passant_square = -1;
 
-			for (movementptr = movements[tb->mobile_piece_type[piece]][pos.mobile_piece_position[piece]][dir];
+			for (movementptr = movements[tb->piece_type[piece]][pos.piece_position[piece]][dir];
 			     (movementptr->vector & pos.board_vector) == 0;
 			     movementptr++) {
 
-			    nextpos.mobile_piece_position[piece] = movementptr->square;
+			    nextpos.piece_position[piece] = movementptr->square;
 
 			    index2 = local_position_to_index(tb, &nextpos);
 
@@ -4373,7 +4373,7 @@ int main(int argc, char *argv[])
 
 			    if ((index2 != -1) && is_position_valid(tb, index2)) {
 				printf("   %s%s    ",
-				       algebraic_notation[pos.mobile_piece_position[piece]],
+				       algebraic_notation[pos.piece_position[piece]],
 				       algebraic_notation[movementptr->square]);
 				print_score(tb, index2, pntm, ptm);
 			    }
@@ -4389,8 +4389,8 @@ int main(int argc, char *argv[])
 			    || ((pos.side_to_move == BLACK) &&
 				((movementptr->vector & pos.black_vector) == 0))) {
 
-			    if ((movementptr->square == pos.mobile_piece_position[BLACK_KING])
-				|| (movementptr->square == pos.mobile_piece_position[WHITE_KING])) {
+			    if ((movementptr->square == pos.piece_position[BLACK_KING])
+				|| (movementptr->square == pos.piece_position[WHITE_KING])) {
 
 				/* printf("MATE\n"); */
 
@@ -4398,10 +4398,10 @@ int main(int argc, char *argv[])
 				tablebase *tb2;
 				global_position_t reversed_position;
 
-				global_capture_position.board[pos.mobile_piece_position[piece]] = 0;
+				global_capture_position.board[pos.piece_position[piece]] = 0;
 				place_piece_in_global_position(&global_capture_position, movementptr->square,
-							       tb->mobile_piece_color[piece],
-							       tb->mobile_piece_type[piece]);
+							       tb->piece_color[piece],
+							       tb->piece_type[piece]);
 
 				if (global_capture_position.side_to_move == WHITE)
 				    global_capture_position.side_to_move = BLACK;
@@ -4418,13 +4418,13 @@ int main(int argc, char *argv[])
 
 				    if (is_position_valid(tb2, index2)) {
 					printf ("   %sx%s   ",
-						algebraic_notation[pos.mobile_piece_position[piece]],
+						algebraic_notation[pos.piece_position[piece]],
 						algebraic_notation[movementptr->square]);
 					print_score(tb2, index2, pntm, ptm);
 				    }
 				} else {
 				    printf("   %sx%s   NO DATA\n",
-					   algebraic_notation[pos.mobile_piece_position[piece]],
+					   algebraic_notation[pos.piece_position[piece]],
 					   algebraic_notation[movementptr->square]);
 				}
 			    }
@@ -4444,13 +4444,13 @@ int main(int argc, char *argv[])
 
 		    /* normal pawn moves */
 
-		    for (movementptr = normal_pawn_movements[pos.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+		    for (movementptr = normal_pawn_movements[pos.piece_position[piece]][tb->piece_color[piece]];
 			 (movementptr->vector & pos.board_vector) == 0;
 			 movementptr++) {
 
 			if ((ROW(movementptr->square) != 0) && (ROW(movementptr->square) != 7)) {
 
-			    nextpos.mobile_piece_position[piece] = movementptr->square;
+			    nextpos.piece_position[piece] = movementptr->square;
 
 			    index2 = local_position_to_index(tb, &nextpos);
 
@@ -4458,7 +4458,7 @@ int main(int argc, char *argv[])
 
 			    if ((index2 != -1) && is_position_valid(tb, index2)) {
 				printf("   %s%s    ",
-				       algebraic_notation[pos.mobile_piece_position[piece]],
+				       algebraic_notation[pos.piece_position[piece]],
 				       algebraic_notation[movementptr->square]);
 				print_score(tb, index2, pntm, ptm);
 			    }
@@ -4475,12 +4475,12 @@ int main(int argc, char *argv[])
 
 			    flip_side_to_move_global(&global_capture_position);
 
-			    global_capture_position.board[pos.mobile_piece_position[piece]] = 0;
+			    global_capture_position.board[pos.piece_position[piece]] = 0;
 
 			    for (promoted_piece = promoted_pieces; *promoted_piece; promoted_piece ++) {
 
 				place_piece_in_global_position(&global_capture_position, movementptr->square,
-							       tb->mobile_piece_color[piece],
+							       tb->piece_color[piece],
 							       *promoted_piece);
 
 				reversed_position = global_capture_position;
@@ -4493,14 +4493,14 @@ int main(int argc, char *argv[])
 
 				    if (is_position_valid(tb2, index2)) {
 					printf ("   %s%s=%c  ",
-						algebraic_notation[pos.mobile_piece_position[piece]],
+						algebraic_notation[pos.piece_position[piece]],
 						algebraic_notation[movementptr->square],
 						piece_char[*promoted_piece]);
 					print_score(tb2, index2, pntm, ptm);
 				    }
 				} else {
 				    printf("   %s%s=%c  NO DATA\n",
-					   algebraic_notation[pos.mobile_piece_position[piece]],
+					   algebraic_notation[pos.piece_position[piece]],
 					   algebraic_notation[movementptr->square],
 					   piece_char[*promoted_piece]);
 				}
@@ -4510,7 +4510,7 @@ int main(int argc, char *argv[])
 
 		    /* capture pawn moves */
 
-		    for (movementptr = capture_pawn_movements[pos.mobile_piece_position[piece]][tb->mobile_piece_color[piece]];
+		    for (movementptr = capture_pawn_movements[pos.piece_position[piece]][tb->piece_color[piece]];
 			 movementptr->square != -1;
 			 movementptr++) {
 
@@ -4521,12 +4521,12 @@ int main(int argc, char *argv[])
 			    tablebase *tb2;
 			    global_position_t reversed_position;
 
-			    global_capture_position.board[pos.mobile_piece_position[piece]] = 0;
+			    global_capture_position.board[pos.piece_position[piece]] = 0;
 			    place_piece_in_global_position(&global_capture_position, movementptr->square,
-							   tb->mobile_piece_color[piece],
-							   tb->mobile_piece_type[piece]);
+							   tb->piece_color[piece],
+							   tb->piece_type[piece]);
 
-			    if (tb->mobile_piece_color[piece] == WHITE) {
+			    if (tb->piece_color[piece] == WHITE) {
 				global_capture_position.board[pos.en_passant_square - 8] = 0;
 			    } else {
 				global_capture_position.board[pos.en_passant_square + 8] = 0;
@@ -4544,13 +4544,13 @@ int main(int argc, char *argv[])
 
 				if (is_position_valid(tb2, index2)) {
 				    printf ("   %sx%s   ",
-					    algebraic_notation[pos.mobile_piece_position[piece]],
+					    algebraic_notation[pos.piece_position[piece]],
 					    algebraic_notation[movementptr->square]);
 				    print_score(tb2, index2, pntm, ptm);
 				}
 			    } else {
 				printf("   %sx%s   NO DATA\n",
-				       algebraic_notation[pos.mobile_piece_position[piece]],
+				       algebraic_notation[pos.piece_position[piece]],
 				       algebraic_notation[movementptr->square]);
 			    }
 
@@ -4571,12 +4571,12 @@ int main(int argc, char *argv[])
 
 			    flip_side_to_move_global(&global_capture_position);
 
-			    global_capture_position.board[pos.mobile_piece_position[piece]] = 0;
+			    global_capture_position.board[pos.piece_position[piece]] = 0;
 
 			    for (promoted_piece = promoted_pieces; *promoted_piece; promoted_piece ++) {
 
 				place_piece_in_global_position(&global_capture_position, movementptr->square,
-							       tb->mobile_piece_color[piece],
+							       tb->piece_color[piece],
 							       *promoted_piece);
 
 				reversed_position = global_capture_position;
@@ -4589,14 +4589,14 @@ int main(int argc, char *argv[])
 
 				    if (is_position_valid(tb2, index2)) {
 					printf ("   %sx%s=%c ",
-						algebraic_notation[pos.mobile_piece_position[piece]],
+						algebraic_notation[pos.piece_position[piece]],
 						algebraic_notation[movementptr->square],
 						piece_char[*promoted_piece]);
 					print_score(tb2, index2, pntm, ptm);
 				    }
 				} else {
 				    printf("   %sx%s=%c NO DATA\n",
-					   algebraic_notation[pos.mobile_piece_position[piece]],
+					   algebraic_notation[pos.piece_position[piece]],
 					   algebraic_notation[movementptr->square],
 					   piece_char[*promoted_piece]);
 				}
@@ -4605,8 +4605,8 @@ int main(int argc, char *argv[])
 			    continue;
 			}
 
-			if ((movementptr->square == pos.mobile_piece_position[BLACK_KING])
-			    || (movementptr->square == pos.mobile_piece_position[WHITE_KING])) {
+			if ((movementptr->square == pos.piece_position[BLACK_KING])
+			    || (movementptr->square == pos.piece_position[WHITE_KING])) {
 
 			    /* printf("MATE\n"); */
 
@@ -4614,10 +4614,10 @@ int main(int argc, char *argv[])
 			    tablebase *tb2;
 			    global_position_t reversed_position;
 
-			    global_capture_position.board[pos.mobile_piece_position[piece]] = 0;
+			    global_capture_position.board[pos.piece_position[piece]] = 0;
 			    place_piece_in_global_position(&global_capture_position, movementptr->square,
-							   tb->mobile_piece_color[piece],
-							   tb->mobile_piece_type[piece]);
+							   tb->piece_color[piece],
+							   tb->piece_type[piece]);
 
 			    flip_side_to_move_global(&global_capture_position);
 
@@ -4631,13 +4631,13 @@ int main(int argc, char *argv[])
 
 				if (is_position_valid(tb2, index2)) {
 				    printf ("   %sx%s   ",
-					    algebraic_notation[pos.mobile_piece_position[piece]],
+					    algebraic_notation[pos.piece_position[piece]],
 					    algebraic_notation[movementptr->square]);
 				    print_score(tb2, index2, pntm, ptm);
 				}
 			    } else {
 				printf("   %sx%s   NO DATA\n",
-				       algebraic_notation[pos.mobile_piece_position[piece]],
+				       algebraic_notation[pos.piece_position[piece]],
 				       algebraic_notation[movementptr->square]);
 			    }
 			}
