@@ -534,7 +534,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.70 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.71 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1092,14 +1092,16 @@ int global_position_to_local_position(tablebase *tb, global_position_t *global, 
     }
 
     if (piece == tb->num_mobiles) {
-	fprintf(stderr, "No free piece in global_position_to_local_position()\n");   /* BREAKPOINT */
+	/* We might want to function to do exact matches... */
+	/* fprintf(stderr, "No free piece in global_position_to_local_position()\n"); */
 	return -1;
     }
 
     for (piece2 = piece+1; piece2 < tb->num_mobiles; piece2 ++) {
 	if (!(pieces_processed_bitvector & (1 << piece2))
 	    || !(tb->piece_legal_squares[piece2] & BITVECTOR(local->piece_position[piece2]))) {
-	    fprintf(stderr, "Multiple free pieces in global_position_to_local_position()\n");   /* BREAKPOINT */
+	    /* This might legitimately happen if the futurebase is more liberal than we are */
+	    /* fprintf(stderr, "Multiple free pieces in global_position_to_local_position()\n"); */
 	    return -1;
 	}
     }
@@ -2645,6 +2647,7 @@ void propagate_miniglobal_position_from_futurebase(tablebase *tb, tablebase *fut
 void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futurebase,
 					       int32 future_index, global_position_t *position, int *mate_in_limit)
 {
+#if 0
     /* We may need to consider a bunch of additional positions here that are identical to the base
      * position except that a single one of the pawns on the fourth or fifth ranks was capturable en
      * passant.
@@ -2682,6 +2685,20 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
 	    }
 	}
     }
+#else
+    local_position_t local;
+
+    /* Did we match exactly?  Meaning no free pieces? */
+
+    if (global_position_to_local_position(tb, position, &local) != -1) {
+	/* This might legitimately happen if the futurebase is more liberal than we are */
+	/* fprintf(stderr, "Can't convert global position to local during capture back-prop\n"); */
+	return;
+    }
+
+    propagate_local_position_from_futurebase(tb, futurebase, future_index, &local, mate_in_limit);
+
+#endif
 }
 
 /* Back propagate promotion moves
@@ -2933,7 +2950,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		 */
 
 		if (global_position_to_local_position(tb, &future_position, &current_position) != captured_piece) {
-		    fprintf(stderr, "Can't convert global position to local during back-prop\n");
+		    /* This might legitimately happen if the futurebase is more liberal than we are */
+		    /* fprintf(stderr, "Can't convert global position to local during capture back-prop\n"); */
 		    continue;
 		}
 
@@ -2994,6 +3012,12 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			     (movementptr->vector & future_position.board_vector) == 0;
 			     movementptr++) {
 
+			    /* We already checked that the captured piece was on a legal square
+			     * for it.  Now check the capturing piece.
+			     */
+
+			    if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
+
 			    /* Move the capturing piece... */
 
 			    /* I update board_vector here because I want to check for en passant
@@ -3031,6 +3055,10 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 			/* Is there anything on the square the pawn had to capture from? */
 
 			if ((movementptr->vector & future_position.board_vector) != 0) continue;
+
+			/* Did it come from a legal square for it? */
+
+			if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
 
 			/* non-promotion capture */
 
@@ -3159,7 +3187,7 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 
 	    piece = global_position_to_local_position(tb, &future_position, &current_position);
 	    if (piece == -1) {
-		fprintf(stderr, "Can't convert global position to local during back-prop\n"); /* BREAKPOINT */
+		fprintf(stderr, "Can't convert global position to local during normal back-prop\n"); /* BREAKPOINT */
 		continue;
 	    }
 
@@ -3414,8 +3442,9 @@ int back_propagate_all_futurebases(tablebase *tb) {
 				 (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
 				|| (invert_colors &&
 				    (tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-			    if (tb->piece_legal_squares[piece] != futurebase->piece_legal_squares[future_piece]) {
-				fprintf(stderr, "WARNING: matched a piece but move restrictions are different\n");
+			    if ((tb->piece_legal_squares[piece] & futurebase->piece_legal_squares[future_piece])
+				!= tb->piece_legal_squares[piece]) {
+				fprintf(stderr, "WARNING: matched a piece but futurebase is more restrictive\n");
 			    } else {
 				piece_vector ^= (1 << piece);
 				break;
@@ -3466,8 +3495,9 @@ int back_propagate_all_futurebases(tablebase *tb) {
 				 (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
 				|| (invert_colors &&
 				    (tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-			    if (tb->piece_legal_squares[piece] != futurebase->piece_legal_squares[future_piece]) {
-				fprintf(stderr, "WARNING: matched a piece but move restrictions are different\n");
+			    if ((tb->piece_legal_squares[piece] & futurebase->piece_legal_squares[future_piece])
+				!= tb->piece_legal_squares[piece]) {
+				fprintf(stderr, "WARNING: matched a piece but futurebase is more restrictive\n");
 			    } else {
 				piece_vector ^= (1 << piece);
 				break;
