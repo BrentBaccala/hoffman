@@ -63,6 +63,14 @@ typedef unsigned int int32;
 typedef short boolean;
 
 
+#define ROW(square) ((square) / 8)
+#define COL(square) ((square) % 8)
+
+inline int square(int row, int col)
+{
+    return (col + row*8);
+}
+
 /***** GLOBAL CONSTANTS *****/
 
 /* Maximum number of mobile pieces; used to simplify various arrays
@@ -534,7 +542,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.71 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.72 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -592,14 +600,6 @@ void write_tablebase_to_file(tablebase *tb, char *filename)
 
 
 /***** INDICES AND POSITIONS *****/
-
-#define ROW(square) ((square) / 8)
-#define COL(square) ((square) % 8)
-
-inline int square(int row, int col)
-{
-    return (col + row*8);
-}
 
 int32 max_index(tablebase *tb)
 {
@@ -3658,6 +3658,7 @@ boolean have_all_futuremoves_been_handled(tablebase *tb) {
     int32 max_index_static = max_index(tb);
     int32 index;
     int all_futuremoves_handled = 1;
+    int max_complaints = 10;
 
     for (index = 0; index < max_index_static; index ++) {
 	if (tb->entries[index].futuremove_cnt != 0) {
@@ -3667,6 +3668,10 @@ boolean have_all_futuremoves_been_handled(tablebase *tb) {
 		{
 		    global_position_t global;
 		    index_to_global_position(tb, index, &global);
+		    if (all_futuremoves_handled)
+			fprintf(stderr, "ERROR: Some futuremoves not handled under move restrictions!\n");
+		    fprintf(stderr, "%s\n", global_position_to_FEN(&global));
+		    if ((-- max_complaints) == 0) return 0;
 		    all_futuremoves_handled = 0;		/* BREAKPOINT */
 		}
 		break;
@@ -4567,12 +4572,10 @@ int main(int argc, char *argv[])
 	if (mate_in_limit == -1) exit(1);
 
 	fprintf(stderr, "Checking futuremoves...\n");
-	if (have_all_futuremoves_been_handled(tb)) {
-	    fprintf(stderr, "All futuremoves handled under move restrictions\n");
-	} else {
-	    fprintf(stderr, "ERROR: Some futuremoves not handled under move restrictions!\n");
+	if (! have_all_futuremoves_been_handled(tb)) {
 	    exit(1);
 	}
+	fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
 	fprintf(stderr, "Intra-table propagating\n");
 	propagate_all_moves_within_tablebase(tb, mate_in_limit);
