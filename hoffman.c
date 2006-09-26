@@ -269,6 +269,8 @@ char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
 
 typedef struct tablebase {
     xmlDocPtr xml;
+    void *fileptr;
+    size_t length;
     int num_mobiles;
     int move_restrictions[2];		/* one for each color */
     short piece_type[MAX_MOBILES];
@@ -481,6 +483,9 @@ tablebase * load_futurebase_from_file(char *filename)
 
     tb = parse_XML_into_tablebase(doc);
 
+    tb->fileptr = fileptr;
+    tb->length = filestat.st_size;
+
     root_element = xmlDocGetRootElement(doc);
 
     if (xmlStrcmp(root_element->name, (const xmlChar *) "tablebase")) {
@@ -495,6 +500,12 @@ tablebase * load_futurebase_from_file(char *filename)
     tb->entries = (struct fourbyte_entry *) (fileptr + offset);
 
     return tb;
+}
+
+void unload_futurebase(tablebase *tb)
+{
+    if (tb->fileptr != NULL) munmap(tb->fileptr, tb->length);
+    tb->fileptr = NULL;
 }
 
 /* Given a tablebase, create an XML header describing its contents and return it.
@@ -542,7 +553,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.72 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.73 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -3640,6 +3651,8 @@ int back_propagate_all_futurebases(tablebase *tb) {
 		return -1;
 
 	    }
+
+	    unload_futurebase(futurebase);
 	}
     }
 
