@@ -534,7 +534,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.68 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.69 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1039,12 +1039,15 @@ void invert_colors_of_global_position(global_position_t *global)
 /* This function works a little bit different from taking a global position, calling
  * global_position_to_index(), and then calling index_to_local_position().  It is used during
  * back-propagation of capture positions, and will leave a single piece in the local position
- * unassigned if it wasn't in the global position.
+ * unassigned if it wasn't in the global position.  It is also used during back-propagation of
+ * normal futurebases, when the single piece unassigned is in a restricted position, according to
+ * the current tablebase.  In any event, returns the piece number of the unassigned piece, or -1 if
+ * something went wrong.
  */
 
-boolean global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
+int global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
 {
-    int piece;
+    int piece, piece2;
     int square;
     short pieces_processed_bitvector = 0;
 
@@ -1059,8 +1062,7 @@ boolean global_position_to_local_position(tablebase *tb, global_position_t *glob
     for (square = 0; square < NUM_SQUARES; square ++) {
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
 	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		if ((global->board[square]
-		     == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
+		if ((global->board[square] == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
 		    && !(pieces_processed_bitvector & (1 << piece))) {
 
 		    local->piece_position[piece] = square;
@@ -1069,33 +1071,40 @@ boolean global_position_to_local_position(tablebase *tb, global_position_t *glob
 			local->white_vector |= BITVECTOR(square);
 		    else
 			local->black_vector |= BITVECTOR(square);
+
 		    pieces_processed_bitvector |= (1 << piece);
+
 		    break;
 		}
 	    }
-	    /* If we didn't find a suitable matching piece... */
-	    if (piece == tb->num_mobiles) return 0;
 	}
     }
 
 
-    /* Right now, it seems that we actually don't want to do this.  When we back-propagate
-     * from a futurebase, one piece in the current tablebase will be missing from the
-     * futurebase (since it was captured), so we leave its value at -1.  Obviously,
-     * this will have to be corrected by the calling routine before this local position
-     * can be converted to an index.
+    /* Make sure all the pieces but one have been accounted for.  We count a piece as "free" if
+     * either it hasn't been processed at all, or if it was processed but was outside its move
+     * restriction.
      */
 
-#if 0
-    /* Make sure all the pieces have been accounted for */
-
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	if (!(pieces_processed_bitvector & (1 << piece)))
-	    return 0;
+	if (!(pieces_processed_bitvector & (1 << piece))
+	    || !(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) break;
     }
-#endif
 
-    return 1;
+    if (piece == tb->num_mobiles) {
+	fprintf(stderr, "No free piece in global_position_to_local_position()\n");   /* BREAKPOINT */
+	return -1;
+    }
+
+    for (piece2 = piece+1; piece2 < tb->num_mobiles; piece2 ++) {
+	if (!(pieces_processed_bitvector & (1 << piece))
+	    || !(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
+	    fprintf(stderr, "Multiple free pieces in global_position_to_local_position()\n");   /* BREAKPOINT */
+	    return -1;
+	}
+    }
+
+    return piece;
 }
 
 
@@ -2923,7 +2932,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		 * performance hit anyway.
 		 */
 
-		if (! global_position_to_local_position(tb, &future_position, &current_position)) {
+		if (global_position_to_local_position(tb, &future_position, &current_position) != captured_piece) {
 		    fprintf(stderr, "Can't convert global position to local during back-prop\n");
 		    continue;
 		}
@@ -3113,6 +3122,212 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		}
 	    }
 
+	}
+    }
+}
+
+/* A "normal" futurebase is one that's identical to our own in terms of the number and types
+ * of pieces.  It differs only in the frozen positions of the pieces.
+ */
+
+void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase,
+					    int invert_colors_of_futurebase, int *mate_in_limit)
+{
+    int32 future_index;
+    int32 max_future_index_static = max_index(futurebase);
+    global_position_t future_position;
+    local_position_t parent_position;
+    local_position_t current_position; /* i.e, last position that moved to parent_position */
+    int piece;
+    int dir;
+    struct movement *movementptr;
+
+    for (future_index = 0; future_index < max_future_index_static; future_index ++) {
+
+	if (index_to_global_position(futurebase, future_index, &future_position)) {
+
+	    if (invert_colors_of_futurebase)
+		invert_colors_of_global_position(&future_position);
+
+
+	    /* We have exactly the same number and type of pieces here, but exactly one of them is
+	     * on a restricted square (according to the current tablebase).  If more than one of
+	     * them was on a restricted square, then there'd be no way we could get to this
+	     * futurebase with a single move.  On the other hand, if none of them were on restricted
+	     * squares, then this would be a position in the current tablebase.
+	     */
+
+	    piece = global_position_to_local_position(tb, &future_position, &current_position);
+	    if (piece == -1) {
+		fprintf(stderr, "Can't convert global position to local during back-prop\n"); /* BREAKPOINT */
+		continue;
+	    }
+
+	    /* We've moving BACKWARDS in the game, so this has to be a piece of the player who is
+	     * NOT TO PLAY here - this is the LAST move we're considering, not the next move.
+	     */
+
+	    if (tb->piece_color[piece] == future_position.side_to_move)
+		continue;
+
+
+	    /* If there are any en passant capturable pawns in the position, then the last move had
+	     * to have been a pawn move.  In fact, in this case, we already know exactly what the
+	     * last move had to have been.
+	     */
+
+	    if (future_position.en_passant_square != -1) {
+
+		if (tb->piece_type[piece] != PAWN) continue;
+
+		if (((tb->piece_color[piece] == WHITE)
+		     && (current_position.piece_position[piece] != future_position.en_passant_square + 8))
+		    || ((tb->piece_color[piece] == BLACK)
+			&& (current_position.piece_position[piece] != future_position.en_passant_square - 8))) {
+
+		    /* No reason to complain here.  Maybe some other pawn was the en passant pawn. */
+		    continue;
+		}
+
+		flip_side_to_move_local(&current_position);
+		current_position.en_passant_square = -1;
+
+		/* I go to the trouble to update board_vector here so we can check en passant
+		 * legality in propagate_one_move_within_table().
+		 */
+
+		current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
+		if (tb->piece_color[piece] == WHITE)
+		    current_position.piece_position[piece] -= 16;
+		else
+		    current_position.piece_position[piece] += 16;
+
+		current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
+
+		/* We never back out into a restricted position.  Since we've already decided
+		 * that this is the only legal back-move from this point, well...
+		 */
+
+		if (! (tb->piece_legal_squares[piece]
+		       & BITVECTOR(current_position.piece_position[piece]))) {
+		    continue;
+		}
+
+		propagate_local_position_from_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
+
+		continue;
+
+	    }
+
+	    /* Abuse of notation here.  We just want to keep a copy of current_position because we
+	     * change it around a lot during the loops below.
+	     */
+
+	    parent_position = current_position;
+
+	    if (tb->piece_type[piece] != PAWN) {
+
+		for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+
+		    /* What about captures?  Well, first of all, there are no captures here!  We're
+		     * moving BACKWARDS in the game... and pieces don't appear out of thin air.
+		     * Captures are handled by back-propagation from futurebases, not here in the
+		     * movement code.  The piece moving had to come from somewhere, and that
+		     * somewhere will now be an empty square, so once we've hit another piece along
+		     * a movement vector, there's absolutely no need to consider anything further.
+		     */
+
+		    for (movementptr
+			     = movements[tb->piece_type[piece]][parent_position.piece_position[piece]][dir];
+			 (movementptr->vector & parent_position.board_vector) == 0;
+			 movementptr++) {
+
+			/* We never back out into a restricted position (obviously) */
+
+			if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
+
+			/* Back stepping a half move here involves several things: flipping the
+			 * side-to-move flag, clearing any en passant pawns into regular pawns, moving
+			 * the piece (backwards), and considering a bunch of additional positions
+			 * identical to the base position except that a single one of the pawns on the
+			 * fourth or fifth ranks was capturable en passant.
+			 *
+			 * Of course, the only way we could have gotten an en passant pawn is if THIS
+			 * MOVE created it.  Since this isn't a pawn move, that can't happen.  Checking
+			 * additional en passant positions is taken care of in
+			 * propagate_one_move_within_table()
+			 */
+
+			flip_side_to_move_local(&current_position);
+
+			/* I go to the trouble to update board_vector here so we can check en passant
+			 * legality in propagate_one_move_within_table().
+			 */
+
+			current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
+
+			current_position.piece_position[piece] = movementptr->square;
+
+			current_position.board_vector |= BITVECTOR(movementptr->square);
+
+			propagate_local_position_from_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
+		    }
+		}
+
+	    } else {
+
+		/* Usual special case for pawns */
+
+		for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][tb->piece_color[piece]];
+		     (movementptr->vector & parent_position.board_vector) == 0;
+		     movementptr++) {
+
+		    /* We never back out into a restricted position (obviously) */
+
+		    if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
+
+		    /* Do we have a backwards pawn move here?
+		     *
+		     * Back stepping a half move here involves several things: flipping the
+		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
+		     * the piece (backwards), and considering a bunch of additional positions
+		     * identical to the base position except that a single one of the pawns on the
+		     * fourth or fifth ranks was capturable en passant.
+		     *
+		     * Of course, the only way we could have gotten an en passant pawn is if THIS MOVE
+		     * created it.  We handle that as a special case above, so we shouldn't have to
+		     * worry about clearing en passant pawns here - there should be none.  Checking
+		     * additional en passant positions is taken care of in
+		     * propagate_one_move_within_table()
+		     *
+		     * But we start with an extra check to make sure this isn't a double pawn move, it
+		     * which case it would result in an en passant position, not the non-en passant
+		     * position we are in now (en passant got taken care of in the special case above).
+		     */
+
+		    if (((movementptr->square - parent_position.piece_position[piece]) == 16)
+			|| ((movementptr->square - parent_position.piece_position[piece]) == -16)) {
+			continue;
+		    }
+
+		    current_position = parent_position;
+
+		    flip_side_to_move_local(&current_position);
+
+		    /* I go to the trouble to update board_vector here so we can check en passant
+		     * legality in propagate_one_move_within_table().
+		     */
+
+		    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
+
+		    current_position.piece_position[piece] = movementptr->square;
+
+		    current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
+
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
+
+		}
+	    }
 	}
     }
 }
@@ -3381,6 +3596,12 @@ int back_propagate_all_futurebases(tablebase *tb) {
 								  promoted_piece_char,
 								  captured_piece_char,
 								  &mate_in_limit);
+
+	    } else if ((type != NULL) && !strcasecmp((char *) type, "normal")) {
+
+		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
+
+		propagate_moves_from_normal_futurebase(tb, futurebase, invert_colors, &mate_in_limit);
 
 	    } else {
 
