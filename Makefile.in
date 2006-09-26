@@ -1,6 +1,6 @@
 
 # Debugging
-CFLAGS=-g -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+CFLAGS=-g -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Debugging w/optimization
 # CFLAGS=-g -O3 -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
