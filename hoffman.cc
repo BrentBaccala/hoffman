@@ -534,7 +534,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.69 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.70 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1097,8 +1097,8 @@ int global_position_to_local_position(tablebase *tb, global_position_t *global, 
     }
 
     for (piece2 = piece+1; piece2 < tb->num_mobiles; piece2 ++) {
-	if (!(pieces_processed_bitvector & (1 << piece))
-	    || !(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
+	if (!(pieces_processed_bitvector & (1 << piece2))
+	    || !(tb->piece_legal_squares[piece2] & BITVECTOR(local->piece_position[piece2]))) {
 	    fprintf(stderr, "Multiple free pieces in global_position_to_local_position()\n");   /* BREAKPOINT */
 	    return -1;
 	}
