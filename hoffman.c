@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.80 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.81 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2441,143 +2441,6 @@ void verify_movements()
 
 /***** FUTUREBASES *****/
 
-#ifdef FUTUREBASES
-
-calculate_all_possible_futuremoves()
-{
-    consider all possible captures;
-
-    consider all possible pawn moves, including queening and knighting;
-
-    put them in some kind of list or array;
-
-    flag them according to our pruning instructions;
-
-    sort them so that if the same table is used for several positions, they appear together on the list;
-								
-    later: strike them off the list as we process their respective files;
-}
-
-propagate_position_from_future_table(position)
-{
-    for (all possible captures and pawn moves in position) {
-
-	check if one of our future tables matches this move;
-
-	if so {
-	    fetch result from future table;
-	    if (result == white_wins) break;
-	    if (result == white_draws) {
-		result = white_draws;
-		continue;
-		/* keep looking for a win */
-	    }
-	    /* but whose move is it? */
-	}
-
-	else if move is flagged prune-our-move, decrement counts;
-
-	else if move is flagged prune-his-move {
-
-	    for (all possible responses to his move) {
-		if (one of our future tables matches a white win) {
-		    propagate a white win;
-		}
-		elsif (one of our future tables matches a white draw) {
-		    propagate a white draw;
-		} else {
-		    /* this is where we vary for a more complex program */
-		    propagate a black win;
-		}
-	    }
-	}
-    }
-
-    /* This is where we make pruning decisions, if we don't want to fully analyze out the tree past
-     * the table we're now building.  Of course, this will affect the accuracy of the table; the
-     * table is a result of BOTH the position it was set up for AND the pruning decisions (and any
-     * pruning decisions made on the future tables used to calculate this one).
-     *
-     * We specify pruning in a simple way - by omitting future tables for moves we don't want to
-     * consider.  This can be dangerous, so we require this feature to be specifically enabled for
-     * each move by a command-line switch.  Actually, we use two switches, one to calculate a table
-     * for OUR SIDE to move, and another if it is the OTHER SIDE to move.
-     *
-     * So, --prune-our-move e3e4 prunes a pawn move (assuming this is a table with a static pawn on
-     * e3) by simply ignoring e3e4 as a possible move.
-     *
-     * Pruning an opponent's move is more complex because we step a half-move into the future and
-     * consider our own next move.  This costs us little, since we can control our own move and
-     * therefore don't have to consider all possibilities, and improves a lot.  If future tables
-     * exist for any of our responses, they are used.  If no such future tables exist, then the move
-     * is regarded as a lost game.
-     *
-     * So, --prune-his-move e7e8 prunes a pawn promotion (assuming a static pawn on e7) by
-     * considering all possible positions resulting after the pawn promotion (to either Q or N) AND
-     * the answering move.  The resulting game is regarded as a win for white unless both Q and N
-     * promotions have an answer that leads to another table with a win or draw for black.
-     *
-     * For example, let's say we're looking at a Q-and-P vs. Q-and-P endgame.  There are four mobile
-     * pieces (2 Ks and 2 Qs), so we can handle this.  But if one of the pawns queens, then we've
-     * got a game with five mobile pieces, and that's too complex.  But we don't want to completely
-     * discard all possible enemy promotions, if we can immediately capture the new queen (or the
-     * old one).  So we specify something like --prune-his-move e7e8 and pass in a tablebase for a
-     * Q-and-P vs. Q endgame.
-     *
-     * We also check for immediate checkmates or stalemates.
-     *
-     * Question: do we really need to flag this at all?  Probably yes, because we don't want this
-     * pruning to occur by accident.
-     *
-     * Another reason to flag it is that we want to label in the file header that this pruning was
-     * done.  In particular, if we use a pruned tablebase to compute another (earlier) pruned
-     * tablebase, we want to make sure the pruning is consistent, i.e. "our" side has to stay the
-     * same.  This can only be guaranteed if we explicitly flag which side is which in the file
-     * header.
-     *
-     * Pruning doesn't affect the size of the resulting tablebase.  We discard the extra
-     * information.  If the pruned move is actually made in the game, then you have to calculate all
-     * possible next moves and check your tablebases for them.  This seems reasonable.
-     *
-     */
-
-}
-
-propagate_move_from_future_table()
-{
-    if (future_table resulted from capture) {
-	/* need to consider pawn captures seperately? */
-
-    } else if (future_table resulted from pawn move) {
-
-	future_table could result from pawn queening;
-	future_table could result from pawn knighting;
-
-    }
-}
-
-propagate_moves_from_futurebases()
-{
-    for (all legal positions in our table) {
-	propagate_position_from_future_table(position);
-    }
-}
-
-propagate_moves_from_futurebases()
-{
-    calculate_all_possible_futuremoves();
-
-    for (all futurebases on command line or control file) {
-	propagate_moves_from_futurebase();
-    }
-
-    if (any futuremoves still unhandled) {
-	die(error);
-    }
-}
-
-#endif
-
 /* Subroutines to backpropagate an individual index, or an individual local (or global) position
  * (these are the "mini" routines), or a set of local (or global) positions that differ
  * only in the en passant square.
@@ -3780,8 +3643,47 @@ int back_propagate_all_futurebases(tablebase *tb) {
 
 }
 
-/* I really want to improve this function's handling of move restrictions.  I want to explicitly
- * state in the XML config which moves are being restricted, rather than the current catch-all.
+/* This is where we finalize pruning decisions, if we don't want to fully analyze out the tree past
+ * the table we're now building.  Of course, this will affect the accuracy of the table; the table
+ * is a result of BOTH the position it was set up for AND the pruning decisions (and any pruning
+ * decisions made on the futurebases used to calculate this one).
+ *
+ * We specify pruning in a simple way - by omitting future tables for moves we don't want to
+ * consider.  This can be dangerous, so we require this feature to be specifically enabled.
+ * Right now, there are two possibilities we can specify in the XML control file; one
+ * to allow OUR MOVES to be pruned; the other to allow HIS MOVES to be pruned.
+ *
+ * And I don't like this.  I want to specify exactly what kinds of moves (pawn queening, frozen
+ * piece moving, catpures) I want pruned rather than the current catch-all.
+ *
+ * So, if we are white, and assuming that this is a table with a frozen white pawn on e3, we can
+ * prune by simply ignoring e3e4 as a possible move.  If there is a semi-frozen black pawn on the
+ * g-file, we can prune by treating g2g1=anything as a forced win for black.
+ *
+ * We might want to "partially" prune a move like g2g1=X by looking a half-move into the future to
+ * see if we can immediately take the new piece and simplify that way.  To do so, we would construct
+ * a futurebase for the piece combination resulting after g2g1=X, probably leaving X frozen on g1,
+ * make one pass through that futurebase (this is currently unimplemented) and flag everything else
+ * a win for black.  This approach avoids having to step a half-move into the future during back
+ * propagation.  The advantages of this are three-fold.  First, it simplifies the program, and
+ * that's a big plus from a quality control standpoint.  Second, it avoids the random accesses that
+ * would be required to probe into the tablebase, replacing them with a series of sequential sweeps,
+ * and for a big tablebase that's probably a significant performance win.  Finally, it's a lot more
+ * flexible.  We can make two, or three, or five sweeps through that tablebase, looking a few more
+ * moves into the future for forced reductions.
+ *
+ * For example, let's say we're looking at a Q-and-P vs. Q-and-P endgame.  There are four completely
+ * mobile pieces (2 Ks and 2 Qs), and this is easy.  But if one of the pawns queens, then we've got
+ * a more complex game with five mobile pieces, and that's too complex.  But we don't want to
+ * completely discard all possible enemy promotions, if we can immediately capture the new queen (or
+ * the old one).  So we construct a special tablebase for a queen frozen on the queening square,
+ * back prop a tablebase for a Q-and-P vs. Q endgame into it, make a pass or two through it, then
+ * feed it into our current tablebase.
+ *
+ * And finally, we want to label in the file header that this pruning was done.  In particular, if
+ * we use a pruned tablebase to compute another (earlier) pruned tablebase, we want to make sure the
+ * pruning is consistent, i.e. "our" side has to stay the same.  This can only be guaranteed if we
+ * explicitly flag which side is which in the file header.
  */
 
 boolean have_all_futuremoves_been_handled(tablebase *tb) {
