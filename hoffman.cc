@@ -553,7 +553,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.73 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.74 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1054,11 +1054,29 @@ void invert_colors_of_global_position(global_position_t *global)
  * normal futurebases, when the single piece unassigned is in a restricted position, according to
  * the current tablebase.  In any event, returns the piece number of the unassigned piece, or -1 if
  * something went wrong.
+ *
+ * This thing is really starting to evolve into one of our key, key functions during futurebase back
+ * propagation.  There are, right now, three different modes in which it is used.  It can convert a
+ * position with one piece completely missing (used during capture processing; returns the missing
+ * piece number), it can convert a position with no pieces missing and all on legal squares (used
+ * during other types of futurebase back prop; returns -1), or it can convert a position with no
+ * pieces missing but one of them on a restricted square (used during normal futurebase back prop;
+ * returns restricted piece number).  We also want it to convert positions with one piece missing
+ * and one of the other pieces on a restricted square (this is a possibility during capture back
+ * prop).
+ *
+ * The return value is 0x8080 if all pieces converted OK; (0x8000 & missing_piece) if one piece was
+ * missing but everything else was OK; ((restricted_piece << 8) | 0x0080) if one piece was on a
+ * restricted square but everything else was OK; and ((restricted_piece << 8) | missing_piece) if
+ * one piece was missing and one was on a restricted square, and -1 if something went wrong (more
+ * than one piece missing and/or more than one piece on a restricted square).
  */
 
 int global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
 {
     int piece, piece2;
+    int restricted_piece = 0x80;
+    int missing_piece = 0x80;
     int square;
     short pieces_processed_bitvector = 0;
 
@@ -1098,10 +1116,18 @@ int global_position_to_local_position(tablebase *tb, global_position_t *global, 
      */
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	if (!(pieces_processed_bitvector & (1 << piece))
-	    || !(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) break;
+	if (!(pieces_processed_bitvector & (1 << piece))) {
+	    if (missing_piece == 0x80) missing_piece = piece;
+	    else return -1;
+	} else if (!(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
+	    if (restricted_piece == 0x80) restricted_piece = piece;
+	    else return -1;
+	}
     }
 
+    return ((restricted_piece << 8) | missing_piece);
+
+#if 0
     if (piece == tb->num_mobiles) {
 	/* We might want to function to do exact matches... */
 	/* fprintf(stderr, "No free piece in global_position_to_local_position()\n"); */
@@ -1118,6 +1144,7 @@ int global_position_to_local_position(tablebase *tb, global_position_t *global, 
     }
 
     return piece;
+#endif
 }
 
 
@@ -2698,16 +2725,20 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
     }
 #else
     local_position_t local;
+    int conversion_result;
+
+    conversion_result = global_position_to_local_position(tb, position, &local);
 
     /* Did we match exactly?  Meaning no free pieces? */
 
-    if (global_position_to_local_position(tb, position, &local) != -1) {
+    if (conversion_result == 0x8080) {
+	propagate_local_position_from_futurebase(tb, futurebase, future_index, &local, mate_in_limit);
+    } else if ((conversion_result & 0x00ff) == 0x0080) {
 	/* This might legitimately happen if the futurebase is more liberal than we are */
-	/* fprintf(stderr, "Can't convert global position to local during capture back-prop\n"); */
-	return;
+	/* fprintf(stderr, "Restricted piece during futurebase back-prop\n"); */
+    } else {
+	fprintf(stderr, "Conversion error during futurebase back-prop\n");
     }
-
-    propagate_local_position_from_futurebase(tb, futurebase, future_index, &local, mate_in_limit);
 
 #endif
 }
@@ -2905,6 +2936,196 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
  * on invert_colors_of_global position.
  */
 
+void consider_possible_captures(tablebase *tb, tablebase *futurebase, int32 future_index,
+				local_position_t *position,
+				int capturing_piece, int captured_piece, int *mate_in_limit)
+{
+    int dir;
+    struct movement *movementptr;
+
+    /* We only want to consider pieces of the side which captured... */
+
+    if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) return;
+
+    /* Place the captured piece back into the position on the square from which the moving piece
+     * started (i.e, ended) its move.
+     *
+     * Probably should use place_piece_in_local_position here, but we don't.  The board vectors
+     * don't get updated, but that doesn't matter since we're never going to look at the square the
+     * captured piece is on as a possible origin square for the capturing piece.
+     */
+
+    if ((tb->piece_type[captured_piece] == PAWN)
+	&& ((position->piece_position[capturing_piece] < 8)
+	    || (position->piece_position[capturing_piece] >= 56))) {
+
+	/* If we "captured" a pawn on the first or eighth ranks, well, obviously that
+	 * can't happen...
+	 */
+
+	return;
+    }
+
+
+    /* If the square we're about to put the captured piece on isn't legal for it, then
+     * don't consider this capturing piece in this future position any more.
+     *
+     * Probably can wrap the pawn check just above into this code eventually.
+     */
+
+    if (!(tb->piece_legal_squares[captured_piece] & BITVECTOR(position->piece_position[capturing_piece]))) {
+	return;
+    }
+
+    position->piece_position[captured_piece] = position->piece_position[capturing_piece];
+
+    /* We consider all possible backwards movements of the piece which captured. */
+
+    if (tb->piece_type[capturing_piece] != PAWN) {
+
+	for (dir = 0; dir < number_of_movement_directions[tb->piece_type[capturing_piece]]; dir++) {
+
+	    /* Make sure we start each movement of the capturing piece from the capture square */
+
+	    position->piece_position[capturing_piece] = position->piece_position[captured_piece];
+
+	    for (movementptr = movements[tb->piece_type[capturing_piece]][position->piece_position[capturing_piece]][dir];
+		 (movementptr->vector & position->board_vector) == 0;
+		 movementptr++) {
+
+		/* We already checked that the captured piece was on a legal square
+		 * for it.  Now check the capturing piece.
+		 */
+
+		if (! (tb->piece_legal_squares[capturing_piece] & movementptr->vector)) continue;
+
+		/* Move the capturing piece... */
+
+		/* I update board_vector here because I want to check for en passant legality before
+		 * I call local_position_to_index().  It just makes the code a little more robust at
+		 * this point, because then there should be no reason for local_position_to_index()
+		 * to return -1.
+		 *
+		 * By the way, the piece didn't "come from" anywhere other than the capture square,
+		 * which will have the captured piece on it (this is back prop), so we don't need to
+		 * clear anything in board_vector.
+		 */
+
+		position->piece_position[capturing_piece] = movementptr->square;
+		position->board_vector |= BITVECTOR(movementptr->square);
+
+		/* This function also back props any similar positions with one of the pawns from
+		 * the side that didn't capture in an en passant state.
+		 */
+
+		propagate_local_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+
+
+		position->board_vector &= ~BITVECTOR(movementptr->square);
+	    }
+	}
+
+    } else {
+
+	/* Yes, pawn captures are special */
+
+	for (movementptr = capture_pawn_movements_bkwd[position->piece_position[capturing_piece]][tb->piece_color[capturing_piece]];
+	     movementptr->square != -1;
+	     movementptr++) {
+
+	    /* Is there anything on the square the pawn had to capture from? */
+
+	    if ((movementptr->vector & position->board_vector) != 0) continue;
+
+	    /* Did it come from a legal square for it? */
+
+	    if (! (tb->piece_legal_squares[capturing_piece] & movementptr->vector)) continue;
+
+	    /* non-promotion capture */
+
+	    /* I update board_vector here because I want to check for en passant legality before I
+	     * call local_position_to_index().  It just makes the code a little more robust at this
+	     * point, because then there should be no reason for local_position_to_index() to return
+	     * -1.
+	     *
+	     * By the way, the piece didn't "come from" anywhere other than the capture square,
+	     * which will have the captured piece on it (this is back prop), so we don't need to
+	     * clear anything in board_vector.
+	     */
+
+	    position->piece_position[capturing_piece] = movementptr->square;
+	    position->board_vector |= BITVECTOR(movementptr->square);
+
+	    /* This function also back props any similar positions with one of the pawns from the
+	     * side that didn't capture in an en passant state.
+	     */
+
+	    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+						     position, mate_in_limit);
+
+	    position->board_vector &= ~BITVECTOR(movementptr->square);
+
+	    /* The en passant special case: if both the piece that captured and the piece that was
+	     * captured are both pawns, and either a white pawn captured from the fifth rank, or a
+	     * black pawn captured from the fourth, then there are two possible back prop positions
+	     * - the obvious one we just handled, and the one where the captured pawn was in an en
+	     * passant state.  We also make sure right away that the rank is clear where the pawn
+	     * had to come from, and the rank is clear where the pawn had to go to, ensuring that an
+	     * en passant move was even possible.
+	     */
+
+	    if ((tb->piece_type[captured_piece] == PAWN)
+		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]-8))
+		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]+8))) {
+
+		if ((tb->piece_color[capturing_piece] == BLACK) && (ROW(movementptr->square) == 3)) {
+
+		    /* A black pawn capturing a white one (en passant)
+		     *
+		     * The white pawn is actually a rank higher than usual.
+		     */
+
+		    position->en_passant_square = position->piece_position[captured_piece];
+		    position->piece_position[captured_piece] += 8;
+
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+							     position, mate_in_limit);
+
+		    /* Yes, we're in a for loop and could might this position again, so put things
+		     * back where they came from...
+		     */
+
+		    position->en_passant_square = -1;
+		    position->piece_position[captured_piece] -= 8;
+		}
+
+		if ((tb->piece_color[capturing_piece] == WHITE) && (ROW(movementptr->square) == 4)) {
+
+		    /* A white pawn capturing a black one (en passant)
+		     *
+		     * The black pawn is actually a rank lower than usual.
+		     */
+
+		    position->en_passant_square = position->piece_position[captured_piece];
+		    position->piece_position[captured_piece] -= 8;
+
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+							     position, mate_in_limit);
+
+		    /* Yes, we're in a for loop and could might this position again, so put things
+		     * back where they came from...
+		     */
+
+		    position->en_passant_square = -1;
+		    position->piece_position[captured_piece] += 8;
+		}
+	    }
+
+	}
+
+    }
+}
+
 void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
 						    int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
 {
@@ -2914,8 +3135,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     global_position_t future_position;
     local_position_t current_position;
     int piece;
-    int dir;
-    struct movement *movementptr;
+    int conversion_result;
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
@@ -2942,223 +3162,38 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	    if (future_position.side_to_move != tb->piece_color[captured_piece])
 		continue;
 
-	    for (piece = 0; piece < tb->num_mobiles; piece++) {
+	    /* Take the global position from the futurebase and translate it into a local position
+	     * for the current tablebase.  There should be one piece missing from the local
+	     * position: the piece that was captured.  There could possibly be one piece on a
+	     * restricted square, as well.  If so, then it must be the piece that moved in order to
+	     * capture.
+	     */
 
-		/* Now this is the piece that actually did the capturing.  We only want to consider
-		 * pieces of the side which captured...
-		 */
+	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
 
-		if (tb->piece_color[piece] == tb->piece_color[captured_piece])
-		    continue;
+	    if ((conversion_result & 0xff) != captured_piece) {
+		fprintf(stderr, "Conversion error during capture back-prop\n");
+		continue;
+	    }
 
-		/* Take the global position from the futurebase and translate it into a local
-		 * position for the current tablebase.  There should be one piece missing
-		 * from the local position - the piece that was captured.
-		 *
-		 * Probably could move this code outside of the for loop, and just copy the local
-		 * position.  But we don't have that many mobile pieces, so it's probably not a huge
-		 * performance hit anyway.
-		 */
+	    flip_side_to_move_local(&current_position);
 
-		if (global_position_to_local_position(tb, &future_position, &current_position) != captured_piece) {
-		    /* This might legitimately happen if the futurebase is more liberal than we are */
-		    /* fprintf(stderr, "Can't convert global position to local during capture back-prop\n"); */
-		    continue;
+	    if ((conversion_result & 0xff00) == 0x8000) {
+
+		/* No pieces were on restricted squares.  Check them all. */
+
+		for (piece = 0; piece < tb->num_mobiles; piece++) {
+		    consider_possible_captures(tb, futurebase, future_index, &current_position,
+					       piece, captured_piece, mate_in_limit);
 		}
 
-		flip_side_to_move_local(&current_position);
+	    } else {
 
-		if (current_position.piece_position[captured_piece] != -1) {
-		    fprintf(stderr, "Captured piece position specified too soon during back-prop\n");
-		    continue;
-		}
+		/* One piece was on a restricted square.  It's the only possible capturing piece. */
 
-		/* Place the captured piece back into the position on the square from which
-		 * the moving piece started (i.e, ended) its move.
-		 *
-		 * Probably should use place_piece_in_local_position here, but we don't.  The board
-		 * vectors don't get updated, but that doesn't matter since we're never going to
-		 * look at the square the captured piece is on as a possible origin square for the
-		 * capturing piece.
-		 */
+		consider_possible_captures(tb, futurebase, future_index, &current_position,
+					   conversion_result >> 8, captured_piece, mate_in_limit);
 
-		if ((tb->piece_type[captured_piece] == PAWN)
-		    && ((current_position.piece_position[piece] < 8)
-			|| (current_position.piece_position[piece] >= 56))) {
-
-		    /* If we "captured" a pawn on the first or eighth ranks, well, obviously that
-		     * can't happen...
-		     */
-
-		    continue;
-		}
-
-
-		/* If the square we're about to put the captured piece on isn't legal for it, then
-		 * don't consider this capturing piece in this future position any more.
-		 *
-		 * Probably can wrap the pawn check just above into this code eventually.
-		 */
-
-		if (!(tb->piece_legal_squares[captured_piece]
-		      & BITVECTOR(current_position.piece_position[piece]))) {
-		    continue;
-		}
-
-		current_position.piece_position[captured_piece]
-		    = current_position.piece_position[piece];
-
-		/* We consider all possible backwards movements of the piece which captured. */
-
-		if (tb->piece_type[piece] != PAWN) {
-
-		    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
-
-			/* Make sure we start each movement of the capturing piece from the capture square */
-
-			current_position.piece_position[piece]
-			    = current_position.piece_position[captured_piece];
-
-			for (movementptr = movements[tb->piece_type[piece]][current_position.piece_position[piece]][dir];
-			     (movementptr->vector & future_position.board_vector) == 0;
-			     movementptr++) {
-
-			    /* We already checked that the captured piece was on a legal square
-			     * for it.  Now check the capturing piece.
-			     */
-
-			    if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
-
-			    /* Move the capturing piece... */
-
-			    /* I update board_vector here because I want to check for en passant
-			     * legality before I call local_position_to_index().  It just makes the
-			     * code a little more robust at this point, because then there should be
-			     * no reason for local_position_to_index() to return -1.
-			     *
-			     * By the way, the piece didn't "come from" anywhere other than the
-			     * capture square, which will have the captured piece on it (this is
-			     * back prop), so we don't need to clear anything in board_vector.
-			     */
-
-			    current_position.piece_position[piece] = movementptr->square;
-			    current_position.board_vector |= BITVECTOR(movementptr->square);
-
-			    /* This function also back props any similar positions with one of the pawns
-			     * from the side that didn't capture in an en passant state.
-			     */
-
-			    propagate_local_position_from_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
-
-
-			    current_position.board_vector &= ~BITVECTOR(movementptr->square);
-			}
-		    }
-
-		} else {
-
-		    /* Yes, pawn captures are special */
-
-		    for (movementptr = capture_pawn_movements_bkwd[current_position.piece_position[piece]][tb->piece_color[piece]];
-			 movementptr->square != -1;
-			 movementptr++) {
-
-			/* Is there anything on the square the pawn had to capture from? */
-
-			if ((movementptr->vector & future_position.board_vector) != 0) continue;
-
-			/* Did it come from a legal square for it? */
-
-			if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
-
-			/* non-promotion capture */
-
-			/* I update board_vector here because I want to check for en passant
-			 * legality before I call local_position_to_index().  It just makes the code
-			 * a little more robust at this point, because then there should be no
-			 * reason for local_position_to_index() to return -1.
-			 *
-			 * By the way, the piece didn't "come from" anywhere other than the capture
-			 * square, which will have the captured piece on it (this is back prop), so
-			 * we don't need to clear anything in board_vector.
-			 */
-
-			current_position.piece_position[piece] = movementptr->square;
-			current_position.board_vector |= BITVECTOR(movementptr->square);
-
-			/* This function also back props any similar positions with one of the pawns
-			 * from the side that didn't capture in an en passant state.
-			 */
-
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
-								 &current_position, mate_in_limit);
-
-			current_position.board_vector &= ~BITVECTOR(movementptr->square);
-
-			/* The en passant special case: if both the piece that captured and the
-			 * piece that was captured are both pawns, and either a white pawn captured
-			 * from the fifth rank, or a black pawn captured from the fourth, then there
-			 * are two possible back prop positions - the obvious one we just handled,
-			 * and the one where the captured pawn was in an en passant state.  We also
-			 * make sure right away that the rank is clear where the pawn had to come
-			 * from, and the rank is clear where the pawn had to go to, ensuring that an
-			 * en passant move was even possible.
-			 */
-
-			if ((tb->piece_type[captured_piece] == PAWN)
-			    && !(current_position.board_vector
-				 & BITVECTOR(current_position.piece_position[captured_piece]-8))
-			    && !(current_position.board_vector
-				 & BITVECTOR(current_position.piece_position[captured_piece]+8))) {
-
-			    if ((tb->piece_color[piece] == BLACK)
-				&& (ROW(movementptr->square) == 3)) {
-
-				/* A black pawn capturing a white one (en passant)
-				 *
-				 * The white pawn is actually a rank higher than usual.
-				 */
-
-				current_position.en_passant_square
-				    = current_position.piece_position[captured_piece];
-				current_position.piece_position[captured_piece] += 8;
-
-				propagate_local_position_from_futurebase(tb, futurebase, future_index,
-									 &current_position, mate_in_limit);
-
-				/* Yes, we're in a for loop and could might this position again,
-				 * so put things back where they came from...
-				 */
-				current_position.en_passant_square = -1;
-				current_position.piece_position[captured_piece] -= 8;
-			    }
-
-			    if ((tb->piece_color[piece] == WHITE)
-				&& (ROW(movementptr->square) == 4)) {
-
-				/* A white pawn capturing a black one (en passant)
-				 *
-				 * The black pawn is actually a rank lower than usual.
-				 */
-
-				current_position.en_passant_square
-				    = current_position.piece_position[captured_piece];
-				current_position.piece_position[captured_piece] -= 8;
-
-				propagate_local_position_from_futurebase(tb, futurebase, future_index,
-									 &current_position, mate_in_limit);
-
-				/* Yes, we're in a for loop and could might this position again,
-				 * so put things back where they came from...
-				 */
-				current_position.en_passant_square = -1;
-				current_position.piece_position[captured_piece] += 8;
-			    }
-			}
-
-		    }
-
-		}
 	    }
 
 	}
@@ -3177,6 +3212,7 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
     global_position_t future_position;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
+    int conversion_result;
     int piece;
     int dir;
     struct movement *movementptr;
@@ -3196,11 +3232,14 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 	     * squares, then this would be a position in the current tablebase.
 	     */
 
-	    piece = global_position_to_local_position(tb, &future_position, &current_position);
-	    if (piece == -1) {
-		fprintf(stderr, "Can't convert global position to local during normal back-prop\n"); /* BREAKPOINT */
+	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
+
+	    if (((conversion_result & 0xff) != 0x80) || ((conversion_result & 0xff00 == 0x8000))) {
+		fprintf(stderr, "Conversion error during normal back-prop\n"); /* BREAKPOINT */
 		continue;
 	    }
+
+	    piece = conversion_result >> 8;
 
 	    /* We've moving BACKWARDS in the game, so this has to be a piece of the player who is
 	     * NOT TO PLAY here - this is the LAST move we're considering, not the next move.
