@@ -553,7 +553,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.74 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.75 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1072,11 +1072,13 @@ void invert_colors_of_global_position(global_position_t *global)
  * than one piece missing and/or more than one piece on a restricted square).
  */
 
+#define NONE 0x80
+
 int global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
 {
     int piece, piece2;
-    int restricted_piece = 0x80;
-    int missing_piece = 0x80;
+    int restricted_piece = NONE;
+    int missing_piece = NONE;
     int square;
     short pieces_processed_bitvector = 0;
 
@@ -1117,10 +1119,10 @@ int global_position_to_local_position(tablebase *tb, global_position_t *global, 
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
 	if (!(pieces_processed_bitvector & (1 << piece))) {
-	    if (missing_piece == 0x80) missing_piece = piece;
+	    if (missing_piece == NONE) missing_piece = piece;
 	    else return -1;
 	} else if (!(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
-	    if (restricted_piece == 0x80) restricted_piece = piece;
+	    if (restricted_piece == NONE) restricted_piece = piece;
 	    else return -1;
 	}
     }
@@ -2725,15 +2727,18 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
     }
 #else
     local_position_t local;
-    int conversion_result;
+    int conversion_result, restricted_piece, missing_piece;
 
     conversion_result = global_position_to_local_position(tb, position, &local);
+    restricted_piece = conversion_result >> 8;
+    missing_piece = conversion_result & 0xff;
 
     /* Did we match exactly?  Meaning no free pieces? */
 
-    if (conversion_result == 0x8080) {
+    if ((restricted_piece == NONE) && (missing_piece == NONE)) {
 	propagate_local_position_from_futurebase(tb, futurebase, future_index, &local, mate_in_limit);
-    } else if ((conversion_result & 0x00ff) == 0x0080) {
+    } else if (missing_piece == NONE) {
+	/* No missing piece, but there was a restricted piece */
 	/* This might legitimately happen if the futurebase is more liberal than we are */
 	/* fprintf(stderr, "Restricted piece during futurebase back-prop\n"); */
     } else {
@@ -3135,7 +3140,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     global_position_t future_position;
     local_position_t current_position;
     int piece;
-    int conversion_result;
+    int conversion_result, restricted_piece, missing_piece;
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
@@ -3170,15 +3175,17 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	     */
 
 	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
+	    restricted_piece = conversion_result >> 8;
+	    missing_piece = conversion_result & 0xff;
 
-	    if ((conversion_result & 0xff) != captured_piece) {
+	    if (missing_piece != captured_piece) {
 		fprintf(stderr, "Conversion error during capture back-prop\n");
 		continue;
 	    }
 
 	    flip_side_to_move_local(&current_position);
 
-	    if ((conversion_result & 0xff00) == 0x8000) {
+	    if (restricted_piece == NONE) {
 
 		/* No pieces were on restricted squares.  Check them all. */
 
@@ -3192,7 +3199,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		/* One piece was on a restricted square.  It's the only possible capturing piece. */
 
 		consider_possible_captures(tb, futurebase, future_index, &current_position,
-					   conversion_result >> 8, captured_piece, mate_in_limit);
+					   restricted_piece, captured_piece, mate_in_limit);
 
 	    }
 
@@ -3212,7 +3219,7 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
     global_position_t future_position;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
-    int conversion_result;
+    int conversion_result, missing_piece, restricted_piece;
     int piece;
     int dir;
     struct movement *movementptr;
@@ -3233,13 +3240,15 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 	     */
 
 	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
+	    restricted_piece = conversion_result >> 8;
+	    missing_piece = conversion_result & 0xff;
 
-	    if (((conversion_result & 0xff) != 0x80) || ((conversion_result & 0xff00 == 0x8000))) {
+	    if ((missing_piece != NONE) || (restricted_piece == NONE)) {
 		fprintf(stderr, "Conversion error during normal back-prop\n"); /* BREAKPOINT */
 		continue;
 	    }
 
-	    piece = conversion_result >> 8;
+	    piece = restricted_piece;
 
 	    /* We've moving BACKWARDS in the game, so this has to be a piece of the player who is
 	     * NOT TO PLAY here - this is the LAST move we're considering, not the next move.
