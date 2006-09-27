@@ -605,7 +605,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.77 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.78 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -3035,7 +3035,7 @@ void consider_possible_captures(tablebase *tb, tablebase *futurebase, int32 futu
 	/* If the square we put the captured piece on isn't legal for it, then don't consider this
 	 * capturing piece in this future position any more.  This is after the "if" instead of
 	 * before it because an en passant pawn capture is special, since then the capturing piece
-	 * ends up on a different square from the capturing piece.
+	 * ends up on a different square from the captured piece.
 	 */
 
 	if (!(tb->piece_legal_squares[captured_piece]
@@ -4193,31 +4193,27 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
  *
  * Basically, there are two types of moves we need to consider in each position:
  *
- * 1. non-capture moves of the mobile pieces
+ * 1. non-capture, non-promotion, non-restricted moves
  *
- * Normally, we just add these up and then count them down during intra-table propagation.  The only
- * extra issue that arises is the possibility of move restrictions.  If the "good guys" are PTM,
- * then we can just ignore any possible moves outside the restriction - we don't count them up here,
- * and we don't count them down later.  If the "bad guys" are PTM, then any possible move outside
- * the restriction immediately results in this routine flagging the position won for PTM...  unless
- * we want to step forward another half move.  (How?)
+ * We just add these up and then count them down during intra-table propagation, depending on the
+ * integrity of the program's algorithm to make sure that every move counted forward gets considered
+ * as a move backward.
  *
- * 2. non-capture moves of the frozen pieces and capture/promotion moves
+ * 2. everything else (futuremoves)
  *
  * These always lead to a different tablebase (a futurebase).  The only way we handle them is
- * through inter-table back propagation.  We keep a seperate count of these moves (the
- * "futuremoves"), because, unlike non-capture moves of mobile pieces, we might miss some of these
- * moves if we don't have a complete set of futurebases.  So we count futuremoves by themselves (as
- * well as part of the standard count), and count them down normally during a single sweep through
- * our futurebases.  If that takes care of everything fine.  Otherwise, during our first pass
- * through the current tablebase, we'll find that some of the futuremoves remain unaccounted for.
- * If they occur with the "good guys" as PTM, we just double-check that the restriction is OK,
- * subtract the remaining futuremoves out from the standard count, and keep going.  But if the "bad
- * guys" are PTM, then some more work is needed.  The position is marked won for PTM, unless we want
- * to step forward another half move.  In this case, we compute all possible next moves (or maybe
- * just captures), and search for them in our tablebases.  If any of them are marked drawn or won,
- * we can safely back-propagate this.  Otherwise, the position has to be marked won for PTM, as
- * before.
+ * through inter-table back propagation.  We keep a seperate count of futuremoves because, unlike
+ * intratable moves, we might miss some of these moves if we don't have a complete set of
+ * futurebases.  So we count futuremoves by themselves (as well as part of the standard count), and
+ * count them down normally during a single sweep through our futurebases.  If that takes care of
+ * everything fine.  Otherwise, during our first pass through the current tablebase, we'll find that
+ * some of the futuremoves remain unaccounted for.  If they occur with the "good guys" as PTM, we
+ * just double-check that the restriction is OK, subtract the remaining futuremoves out from the
+ * standard count, and keep going.  But if the "bad guys" are PTM, then some more work is needed.
+ * The position is marked won for PTM, unless we want to step forward another half move.  In this
+ * case, we compute all possible next moves (or maybe just captures), and search for them in our
+ * tablebases.  If any of them are marked drawn or won, we can safely back-propagate this.
+ * Otherwise, the position has to be marked won for PTM, as before.
  *
  * There's a real serious speed penalty here, because this half-move-forward algorithm requires
  * random access lookups in the futurebases.  A possible way to address this would be to create an
@@ -4421,12 +4417,6 @@ initialize_tablebase(tablebase *tb)
 
 		}
 
-#ifdef FROZEN_PIECES
-		for (;;) {
-		    forall (possible moves of frozen pieces) movecnt++;
-		}
-#endif
-	    }
 
 	    if (movecnt == 0) initialize_index_with_stalemate(tb, index);
 	    else initialize_index_with_movecnt(tb, index, movecnt, futuremove_cnt);
