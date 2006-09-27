@@ -81,6 +81,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>	/* for write(), lseek(), gethostname() */
 #include <time.h>	/* for putting timestamps on the output tablebases */
 #include <fcntl.h>	/* for O_RDONLY */
 #include <sys/stat.h>	/* for stat'ing the length of the tablebase file */
@@ -95,6 +96,7 @@
 
 #define READLINE_LIBRARY
 #include "readline.h"
+#include "history.h"
 
 /* The GNOME XML library.  To use it, I need "-I /usr/include/libxml2" (compiler) and "-lxml2"
  * (linker).
@@ -467,7 +469,7 @@ tablebase * parse_XML_control_file(char *filename)
     ctxt = xmlNewParserCtxt();
     if (ctxt == NULL) {
         fprintf(stderr, "Failed to allocate parser context\n");
-	return;
+	return NULL;
     }
     /* parse the file, activating the DTD validation option */
     doc = xmlCtxtReadFile(ctxt, filename, NULL, XML_PARSE_DTDVALID);
@@ -515,7 +517,6 @@ tablebase * load_futurebase_from_file(char *filename)
 {
     int fd;
     struct stat filestat;
-    size_t length;
     char *fileptr;
     int xml_size;
     xmlDocPtr doc;
@@ -612,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision$");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.80 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -645,7 +646,6 @@ void write_tablebase_to_file(tablebase *tb, char *filename)
     xmlDocPtr doc;
     xmlSaveCtxtPtr savectx;
     int fd;
-    void *writeptr;
 
     fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd == -1) {
@@ -1135,7 +1135,7 @@ void invert_colors_of_global_position(global_position_t *global)
 
 int global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
 {
-    int piece, piece2;
+    int piece;
     int restricted_piece = NONE;
     int missing_piece = NONE;
     int square;
@@ -3207,7 +3207,6 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 {
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
-    int32 current_index;
     global_position_t future_position;
     local_position_t current_position;
     int piece;
@@ -4212,7 +4211,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
  *
  */
 
-initialize_tablebase(tablebase *tb)
+void initialize_tablebase(tablebase *tb)
 {
     local_position_t position;
     int32 index;
@@ -4663,22 +4662,22 @@ int main(int argc, char *argv[])
 
     if (generating && probing) {
 	fprintf(stderr, "Only one of the generating (-g) and probing (-p) options can be specified\n");
-	exit(0);
+	exit(EXIT_FAILURE);
     }
 
     if (!generating && !probing && !verify) {
 	fprintf(stderr, "At least one of generating (-g), probing (-p), or verify (-v) must be specified\n");
-	exit(0);
+	exit(EXIT_FAILURE);
     }
 
     if (generating && (output_filename == NULL)) {
 	fprintf(stderr, "An output filename must be specified to generate\n");
-	exit(0);
+	exit(EXIT_FAILURE);
     }
 
     if (!generating && (output_filename != NULL)) {
 	fprintf(stderr, "An output filename can not be specified when probing or verifying\n");
-	exit(0);
+	exit(EXIT_FAILURE);
     }
 
     if (generating) {
@@ -4692,11 +4691,11 @@ int main(int argc, char *argv[])
 	mate_in_limit = back_propagate_all_futurebases(tb);
 
 	/* back_propagate_all_futurebases() printed some kind of error message already */
-	if (mate_in_limit == -1) exit(1);
+	if (mate_in_limit == -1) exit(EXIT_FAILURE);
 
 	fprintf(stderr, "Checking futuremoves...\n");
 	if (! have_all_futuremoves_been_handled(tb)) {
-	    exit(1);
+	    exit(EXIT_FAILURE);
 	}
 	fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
@@ -4705,7 +4704,7 @@ int main(int argc, char *argv[])
 
 	write_tablebase_to_file(tb, output_filename);
 
-	exit(1);
+	exit(EXIT_SUCCESS);
     }
 
     /* Probing / Verifying */
@@ -4727,7 +4726,7 @@ int main(int argc, char *argv[])
 	i++;
     }
 
-    if (!probing) exit(1);
+    if (!probing) exit(EXIT_SUCCESS);
 
     /* Probing only */
 
@@ -5106,4 +5105,6 @@ int main(int argc, char *argv[])
     }
     write_history(".hoffman_history");
     printf("\n");
+
+    exit(EXIT_SUCCESS);
 }
