@@ -228,6 +228,9 @@ typedef struct {
 int64 bitvector[64];
 int64 allones_bitvector = 0xffffffffffffffffLL;
 
+/* pawn can't be on the first or last eight squares of the board */
+#define LEGAL_PAWN_BITVECTOR 0x00ffffffffffff00LL
+
 /* I'm not sure which one of these will be faster... */
 
 /* #define BITVECTOR(square) bitvector[square] */
@@ -393,7 +396,11 @@ tablebase * parse_XML_into_tablebase(xmlDocPtr doc)
 	    tb->piece_type[i] = find_name_in_array((char *) type, piece_name);
 
 	    if (location == NULL) {
-		tb->piece_legal_squares[i] = allones_bitvector;
+		if (tb->piece_type[i] == PAWN) {
+		    tb->piece_legal_squares[i] = LEGAL_PAWN_BITVECTOR;
+		} else {
+		    tb->piece_legal_squares[i] = allones_bitvector;
+		}
 	    } else if ((location[0] >= 'a') && (location[0] <= 'h')
 		       && (location[1] >= '1') && (location[1] <= '8') && (location[2] == '\0')) {
 		tb->piece_legal_squares[i] = BITVECTOR(square(location[1] - '1', location[0] - 'a'));
@@ -605,7 +612,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.78 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision$");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -3004,26 +3011,6 @@ void consider_possible_captures(tablebase *tb, tablebase *futurebase, int32 futu
 
     if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) return;
 
-    /* Place the captured piece back into the position on the square from which the moving piece
-     * started (i.e, ended) its move.
-     *
-     * Probably should use place_piece_in_local_position here, but we don't.  The board vectors
-     * don't get updated, but that doesn't matter since we're never going to look at the square the
-     * captured piece is on as a possible origin square for the capturing piece.
-     */
-
-    if ((tb->piece_type[captured_piece] == PAWN)
-	&& ((position->piece_position[capturing_piece] < 8)
-	    || (position->piece_position[capturing_piece] >= 56))) {
-
-	/* If we "captured" a pawn on the first or eighth ranks, well, obviously that
-	 * can't happen...
-	 */
-
-	return;
-    }
-
-
     /* Put the captured piece on the capturing piece's square (from the future position). */
 
     position->piece_position[captured_piece] = position->piece_position[capturing_piece];
@@ -4417,6 +4404,7 @@ initialize_tablebase(tablebase *tb)
 
 		}
 
+	    }
 
 	    if (movecnt == 0) initialize_index_with_stalemate(tb, index);
 	    else initialize_index_with_movecnt(tb, index, movecnt, futuremove_cnt);
