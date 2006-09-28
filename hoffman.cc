@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.82 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.83 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1133,11 +1133,17 @@ void invert_colors_of_global_position(global_position_t *global)
 
 #define NONE 0x80
 
-int global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
+int pieces[26] = {-1, BISHOP /*B*/, -1, -1, -1, -1, -1, -1, -1, -1, KING /*K*/, -1, -1, KNIGHT /*N*/,
+		  -1, PAWN /*P*/, QUEEN /*Q*/, ROOK /*R*/, -1, -1, -1, -1, -1, -1, -1, -1};
+
+int32 global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
 {
     int piece;
     int restricted_piece = NONE;
     int missing_piece = NONE;
+    int extra_piece = NONE;
+    int extra_piece_color = -1;
+    int extra_piece_square = -1;
     int square;
     short pieces_processed_bitvector = 0;
 
@@ -1167,6 +1173,20 @@ int global_position_to_local_position(tablebase *tb, global_position_t *global, 
 		    break;
 		}
 	    }
+	    if (piece == tb->num_mobiles) {
+		if (extra_piece != NONE) {
+		    fprintf(stderr, "More than one extra piece in translation\n");
+		    return -1;
+		}
+		extra_piece_color = (global->board[square] <= 'Z') ? WHITE : BLACK;
+		extra_piece = pieces[global->board[square]
+					  - ((extra_piece_color == WHITE) ? 'A' : 'a')];
+		if (extra_piece == -1) {
+		    fprintf(stderr, "Couldn't lookup piece in translation\n");
+		    return -1;
+		}
+		extra_piece_square = square;
+	    }
 	}
     }
 
@@ -1179,14 +1199,21 @@ int global_position_to_local_position(tablebase *tb, global_position_t *global, 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
 	if (!(pieces_processed_bitvector & (1 << piece))) {
 	    if (missing_piece == NONE) missing_piece = piece;
-	    else return -1;
+	    else {
+		fprintf(stderr, "More than one missing piece in translation\n");
+		return -1;
+	    }
 	} else if (!(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
 	    if (restricted_piece == NONE) restricted_piece = piece;
-	    else return -1;
+	    else {
+		fprintf(stderr, "More than one restricted piece in translation\n");
+		return -1;
+	    }
 	}
     }
 
-    return ((restricted_piece << 8) | missing_piece);
+    return ((extra_piece_square << 24) | (extra_piece_color << 23) | (extra_piece << 16)
+	    | (restricted_piece << 8) | missing_piece);
 }
 
 /* Translate tb1/index1 into tb2/local2
@@ -2646,18 +2673,22 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
     }
 #else
     local_position_t local;
-    int conversion_result, restricted_piece, missing_piece;
+    int32 conversion_result;
+    int extra_piece_square, extra_piece_color, extra_piece, restricted_piece, missing_piece;
 
     conversion_result = global_position_to_local_position(tb, position, &local);
-    restricted_piece = conversion_result >> 8;
+    extra_piece_square = (conversion_result >> 24) & 0xff;
+    extra_piece_color = (conversion_result >> 23) & 1;
+    extra_piece = (conversion_result >> 16) & 0xff;
+    restricted_piece = (conversion_result >> 8) & 0xff;
     missing_piece = conversion_result & 0xff;
 
     /* Did we match exactly?  Meaning no free pieces? */
 
-    if ((restricted_piece == NONE) && (missing_piece == NONE)) {
+    if ((restricted_piece == NONE) && (missing_piece == NONE) && (extra_piece == NONE)) {
 	propagate_local_position_from_futurebase(tb, futurebase, future_index, &local, mate_in_limit);
-    } else if (missing_piece == NONE) {
-	/* No missing piece, but there was a restricted piece */
+    } else if ((missing_piece == NONE) && (extra_piece == NONE)) {
+	/* No missing or extra pieces, but there was a restricted piece */
 	/* This might legitimately happen if the futurebase is more liberal than we are */
 	/* fprintf(stderr, "Restricted piece during futurebase back-prop\n"); */
     } else {
@@ -2871,7 +2902,7 @@ void consider_possible_captures(tablebase *tb, tablebase *futurebase, int32 futu
 
     if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) return;
 
-    /* Put the captured piece on the capturing piece's square (from the future position). */
+    /* Put the captured piece on the capturing piece's square (from the future position).  */
 
     position->piece_position[captured_piece] = position->piece_position[capturing_piece];
 
@@ -3060,6 +3091,15 @@ void consider_possible_captures(tablebase *tb, tablebase *futurebase, int32 futu
 	}
 
     }
+
+    /* Put the capturing piece back where it came from (on the capture square) so that we can use
+     * this local position again (on another call to this function) to consider other potential
+     * capturing pieces without having to copy or recreate the entire local position structure.
+     */
+
+
+    position->piece_position[capturing_piece] = position->piece_position[captured_piece];
+
 }
 
 void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
@@ -3069,7 +3109,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     int32 max_future_index_static = max_index(futurebase);
     local_position_t current_position;
     int piece;
-    int conversion_result, restricted_piece, missing_piece;
+    int32 conversion_result;
+    int extra_piece_square, extra_piece_color, extra_piece, restricted_piece, missing_piece;
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
@@ -3085,16 +3126,23 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	 * then it must be the piece that moved in order to capture.
 	 */
 
+	if (future_index == 65569) {
+	    fprintf(stderr, "hi\n"); /* BREAKPOINT */
+	}
+
 	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
 								      tb, &current_position,
 								      invert_colors_of_futurebase);
 
 	if (conversion_result != -1) {
 
-	    restricted_piece = conversion_result >> 8;
+	    extra_piece_square = (conversion_result >> 24) & 0xff;
+	    extra_piece_color = (conversion_result >> 23) & 1;
+	    extra_piece = (conversion_result >> 16) & 0xff;
+	    restricted_piece = (conversion_result >> 8) & 0xff;
 	    missing_piece = conversion_result & 0xff;
 
-	    if (missing_piece != captured_piece) {
+	    if ((extra_piece != NONE) || (restricted_piece != NONE) || missing_piece != captured_piece) {
 		fprintf(stderr, "Conversion error during capture back-prop\n");
 		continue;
 	    }
@@ -3150,7 +3198,8 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
     global_position_t future_position;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
-    int conversion_result, missing_piece, restricted_piece;
+    int32 conversion_result;
+    int extra_piece_square, extra_piece_color, extra_piece, restricted_piece, missing_piece;
     int piece;
     int dir;
     struct movement *movementptr;
@@ -3171,10 +3220,13 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 	     */
 
 	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
-	    restricted_piece = conversion_result >> 8;
+	    extra_piece_square = (conversion_result >> 24) & 0xff;
+	    extra_piece_color = (conversion_result >> 23) & 1;
+	    extra_piece = (conversion_result >> 16) & 0xff;
+	    restricted_piece = (conversion_result >> 8) & 0xff;
 	    missing_piece = conversion_result & 0xff;
 
-	    if ((missing_piece != NONE) || (restricted_piece == NONE)) {
+	    if ((missing_piece != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
 		fprintf(stderr, "Conversion error during normal back-prop\n"); /* BREAKPOINT */
 		continue;
 	    }
