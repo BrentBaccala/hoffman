@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.90 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.91 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2615,92 +2615,6 @@ void propagate_local_position_from_futurebase(tablebase *tb, tablebase *futureba
 	    position->en_passant_square = -1;
 	}
     }
-}
-
-void propagate_miniglobal_position_from_futurebase(tablebase *tb, tablebase *futurebase,
-						   int32 future_index, global_position_t *position, int *mate_in_limit)
-{
-    int32 current_index;
-
-    /* Look up the position in the current tablebase... */
-
-    current_index = global_position_to_index(tb, position);
-
-    if (current_index == -1) {
-	/* This can happen if we don't fully check en passant legality (but right now, we do) */
-	fprintf(stderr, "Can't lookup global position in futurebase propagation!\n");  /* BREAKPOINT */
-	return;
-    }
-
-    propagate_index_from_futurebase(tb, futurebase, future_index, current_index, mate_in_limit);
-}
-
-
-void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futurebase,
-					       int32 future_index, global_position_t *position, int *mate_in_limit)
-{
-#if 0
-    /* We may need to consider a bunch of additional positions here that are identical to the base
-     * position except that a single one of the pawns on the fourth or fifth ranks was capturable en
-     * passant.
-     * 
-     * We key off the en_passant flag in the position that was passed in.  If it's set, then we're
-     * back propagating a position that requires en passant, so we just do it.  Otherwise, we're
-     * back propagating a position that doesn't require en passant, so we check for additional
-     * en passant positions.
-     */
-
-    propagate_miniglobal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
-
-    if (position->en_passant_square == -1) {
-
-	int starting_square = (position->side_to_move == WHITE) ? 32 : 24;
-	int ending_square = (position->side_to_move == WHITE) ? 39 : 31;
-	unsigned char pawn = (position->side_to_move == WHITE) ? 'p' : 'P';
-	int capture_row = (position->side_to_move == WHITE) ? 5 : 2;
-	int back_row1 = (position->side_to_move == WHITE) ? 6 : 1;
-	int sq;
-
-	for (sq = starting_square; sq <= ending_square; sq ++) {
-
-	    /* We do a full check for en passant legality here to make the code more robust.  This
-	     * way, we should never get an illegal position in the miniglobal propagation Well, an
-	     * almost full check.  We don't check to see if an enemy pawn could actually capture the
-	     * en passant pawn, but the index/position code currently doesn't treat that situation
-	     * as illegal, so we're OK (for now).
-	     */
-
-	    if ((position->board[sq] == pawn) && (position->board[square(capture_row, COL(sq))] == 0)
-		&& (position->board[square(back_row1, COL(sq))] == 0)) {
-		position->en_passant_square = square(capture_row, COL(sq));
-		propagate_miniglobal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
-	    }
-	}
-    }
-#else
-    local_position_t local;
-    int32 conversion_result;
-    int extra_piece, restricted_piece, missing_piece1, missing_piece2;
-
-    conversion_result = global_position_to_local_position(tb, position, &local);
-    extra_piece = (conversion_result >> 16) & 0xff;
-    restricted_piece = (conversion_result >> 8) & 0xff;
-    missing_piece1 = conversion_result & 0xff;
-    missing_piece2 = (conversion_result >> 24) & 0xff;
-
-    /* Did we match exactly?  Meaning no free pieces? */
-
-    if ((restricted_piece == NONE) && (missing_piece1 == NONE) && (extra_piece == NONE)) {
-	propagate_local_position_from_futurebase(tb, futurebase, future_index, &local, mate_in_limit);
-    } else if ((missing_piece1 == NONE) && (extra_piece == NONE)) {
-	/* No missing or extra pieces, but there was a restricted piece */
-	/* This might legitimately happen if the futurebase is more liberal than we are */
-	/* fprintf(stderr, "Restricted piece during futurebase back-prop\n"); */
-    } else {
-	fprintf(stderr, "Conversion error during futurebase back-prop\n");
-    }
-
-#endif
 }
 
 /* Back propagate promotion moves
