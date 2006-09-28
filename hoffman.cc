@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.83 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.84 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -3125,10 +3125,6 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	 * captured.  There could possibly be one piece on a restricted square, as well.  If so,
 	 * then it must be the piece that moved in order to capture.
 	 */
-
-	if (future_index == 65569) {
-	    fprintf(stderr, "hi\n"); /* BREAKPOINT */
-	}
 
 	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
 								      tb, &current_position,
