@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.89 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.90 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2752,10 +2752,14 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 	    missing_piece1 = conversion_result & 0xff;
 	    missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	    if ((extra_piece == NONE) || (restricted_piece != NONE) || missing_piece1 != pawn) {
-		fprintf(stderr, "Conversion error during capture back-prop\n");
+	    if ((extra_piece == NONE) || missing_piece1 != pawn) {
+		fprintf(stderr, "Conversion error during promotion back-prop\n");  /* BREAKPOINT */
 		continue;
 	    }
+
+	    /* This can happen if the futurebase is more liberal than the current tablebase. */
+
+	    if (restricted_piece != NONE) continue;
 
 	    /* Since the last move had to have been a promotion move, there is absolutely no way we
 	     * could have en passant capturable pawns in the futurebase position.
@@ -2851,11 +2855,14 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
 	    missing_piece1 = conversion_result & 0xff;
 	    missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	    if ((extra_piece == NONE) || (restricted_piece != NONE)
-		|| (missing_piece1 != pawn) || (missing_piece2 == NONE)) {
-		fprintf(stderr, "Conversion error during promotion capture back-prop\n");
+	    if ((extra_piece == NONE) || (missing_piece1 != pawn) || (missing_piece2 == NONE)) {
+		fprintf(stderr, "Conversion error during promotion capture back-prop\n");  /* BREAKPOINT */
 		continue;
 	    }
+
+	    /* This can happen if the futurebase is more liberal than the current tablebase. */
+
+	    if (restricted_piece != NONE) continue;
 
 	    /* Since the last move had to have been a promotion move, there is absolutely no way we
 	     * could have en passant capturable pawns in the futurebase position.
@@ -3189,6 +3196,10 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	 * then it must be the piece that moved in order to capture.
 	 */
 
+	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
+	 * with multiple restricted pieces that should be quietly ignored.
+	 */
+
 	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
 								      tb, &current_position,
 								      invert_colors_of_futurebase);
@@ -3200,9 +3211,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	    missing_piece1 = conversion_result & 0xff;
 	    missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	    if ((extra_piece != NONE) || (restricted_piece != NONE)
-		|| (missing_piece1 != captured_piece) || (missing_piece2 != NONE)) {
-		fprintf(stderr, "Conversion error during capture back-prop\n");
+	    if ((extra_piece != NONE) || (missing_piece1 != captured_piece) || (missing_piece2 != NONE)) {
+		fprintf(stderr, "Conversion error during capture back-prop\n");  /* BREAKPOINT */
 		continue;
 	    }
 
@@ -3254,7 +3264,6 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 {
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
-    global_position_t future_position;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
     int32 conversion_result;
@@ -3265,20 +3274,24 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
-	if (index_to_global_position(futurebase, future_index, &future_position)) {
+	/* Translate the futurebase index into a local position.  We have exactly the same number
+	 * and type of pieces here, but exactly one of them is on a restricted square (according to
+	 * the current tablebase).  If more than one of them was on a restricted square, then
+	 * there'd be no way we could get to this futurebase with a single move.  On the other hand,
+	 * if none of them were on restricted squares, then this would be a position in the current
+	 * tablebase.
+	 */
 
-	    if (invert_colors_of_futurebase)
-		invert_colors_of_global_position(&future_position);
+	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
+	 * with multiple restricted pieces that should be quietly ignored.
+	 */
 
+	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
+								      tb, &current_position,
+								      invert_colors_of_futurebase);
 
-	    /* We have exactly the same number and type of pieces here, but exactly one of them is
-	     * on a restricted square (according to the current tablebase).  If more than one of
-	     * them was on a restricted square, then there'd be no way we could get to this
-	     * futurebase with a single move.  On the other hand, if none of them were on restricted
-	     * squares, then this would be a position in the current tablebase.
-	     */
+	if (conversion_result != -1) {
 
-	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
 	    extra_piece = (conversion_result >> 16) & 0xff;
 	    restricted_piece = (conversion_result >> 8) & 0xff;
 	    missing_piece1 = conversion_result & 0xff;
@@ -3295,7 +3308,7 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 	     * NOT TO PLAY here - this is the LAST move we're considering, not the next move.
 	     */
 
-	    if (tb->piece_color[piece] == future_position.side_to_move)
+	    if (tb->piece_color[piece] == current_position.side_to_move)
 		continue;
 
 
@@ -3304,14 +3317,14 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 	     * last move had to have been.
 	     */
 
-	    if (future_position.en_passant_square != -1) {
+	    if (current_position.en_passant_square != -1) {
 
 		if (tb->piece_type[piece] != PAWN) continue;
 
 		if (((tb->piece_color[piece] == WHITE)
-		     && (current_position.piece_position[piece] != future_position.en_passant_square + 8))
+		     && (current_position.piece_position[piece] != current_position.en_passant_square + 8))
 		    || ((tb->piece_color[piece] == BLACK)
-			&& (current_position.piece_position[piece] != future_position.en_passant_square - 8))) {
+			&& (current_position.piece_position[piece] != current_position.en_passant_square - 8))) {
 
 		    /* No reason to complain here.  Maybe some other pawn was the en passant pawn. */
 		    continue;
