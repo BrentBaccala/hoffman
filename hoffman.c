@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.91 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.92 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2471,15 +2471,8 @@ void verify_movements()
 
 /***** FUTUREBASES *****/
 
-/* Subroutines to backpropagate an individual index, or an individual local (or global) position
- * (these are the "mini" routines), or a set of local (or global) positions that differ
- * only in the en passant square.
- *
- * If we're back propagating from a simple capture, we can use local positions fairly easily.  If
- * we're back propagating from a promotion futurebase (or a promotion capture futurebase), we use
- * global positions, even though they're slower than local positions, because we're translating
- * between two quite different tablebases.  The cleanest (but not necessarily fastest) way to do
- * this is with global positions.
+/* Subroutines to backpropagate an individual index, or an individual local position (these are the
+ * "mini" routines), or a set of local positions that differ only in the en passant square.
  *
  * The idea behind the en passant handling is this.  If we back propagate a position with the en
  * passant square set, then that's the only position we process.  If we back prop a position without
