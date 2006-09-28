@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.87 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.88 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1129,6 +1129,9 @@ void invert_colors_of_global_position(global_position_t *global)
  * restricted square but everything else was OK; and ((restricted_piece << 8) | missing_piece) if
  * one piece was missing and one was on a restricted square, and -1 if something went wrong (more
  * than one piece missing and/or more than one piece on a restricted square).
+ *
+ * Reports up to two missing pieces (a missing pawn is always missing piece 1), a restricted piece,
+ * and an extra piece.  None have to exist.
  */
 
 #define NONE 0x80
@@ -1140,7 +1143,8 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
 {
     int piece;
     int restricted_piece = NONE;
-    int missing_piece = NONE;
+    int missing_piece1 = NONE;
+    int missing_piece2 = NONE;
     int extra_piece = NONE;
     int square;
     short pieces_processed_bitvector = 0;
@@ -1193,8 +1197,16 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
 	if (!(pieces_processed_bitvector & (1 << piece))) {
-	    if (missing_piece == NONE) missing_piece = piece;
-	    else {
+	    if (missing_piece1 == NONE) {
+		missing_piece1 = piece;
+	    } else if (missing_piece2 == NONE) {
+		if (tb->piece_type[piece] == PAWN) {
+		    missing_piece2 = missing_piece1;
+		    missing_piece1 = piece;
+		} else {
+		    missing_piece2 = piece;
+		}
+	    } else {
 		fprintf(stderr, "More than one missing piece in translation\n");
 		return -1;
 	    }
@@ -1207,7 +1219,7 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
 	}
     }
 
-    return ((extra_piece << 16) | (restricted_piece << 8) | missing_piece);
+    return ((missing_piece2 << 24) | (extra_piece << 16) | (restricted_piece << 8) | missing_piece1);
 }
 
 /* Translate tb1/index1 into tb2/local2
@@ -2668,18 +2680,19 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
 #else
     local_position_t local;
     int32 conversion_result;
-    int extra_piece, restricted_piece, missing_piece;
+    int extra_piece, restricted_piece, missing_piece1, missing_piece2;
 
     conversion_result = global_position_to_local_position(tb, position, &local);
     extra_piece = (conversion_result >> 16) & 0xff;
     restricted_piece = (conversion_result >> 8) & 0xff;
-    missing_piece = conversion_result & 0xff;
+    missing_piece1 = conversion_result & 0xff;
+    missing_piece2 = (conversion_result >> 24) & 0xff;
 
     /* Did we match exactly?  Meaning no free pieces? */
 
-    if ((restricted_piece == NONE) && (missing_piece == NONE) && (extra_piece == NONE)) {
+    if ((restricted_piece == NONE) && (missing_piece1 == NONE) && (extra_piece == NONE)) {
 	propagate_local_position_from_futurebase(tb, futurebase, future_index, &local, mate_in_limit);
-    } else if ((missing_piece == NONE) && (extra_piece == NONE)) {
+    } else if ((missing_piece1 == NONE) && (extra_piece == NONE)) {
 	/* No missing or extra pieces, but there was a restricted piece */
 	/* This might legitimately happen if the futurebase is more liberal than we are */
 	/* fprintf(stderr, "Restricted piece during futurebase back-prop\n"); */
@@ -2705,7 +2718,7 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
     int32 max_future_index_static = max_index(futurebase);
     local_position_t position;
     int32 conversion_result;
-    int extra_piece, restricted_piece, missing_piece;
+    int extra_piece, restricted_piece, missing_piece1, missing_piece2;
 
     int promotion_color = ((promoted_piece < 'a') ? WHITE : BLACK);
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
@@ -2736,9 +2749,10 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 
 	    extra_piece = (conversion_result >> 16) & 0xff;
 	    restricted_piece = (conversion_result >> 8) & 0xff;
-	    missing_piece = conversion_result & 0xff;
+	    missing_piece1 = conversion_result & 0xff;
+	    missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	    if ((extra_piece == NONE) || (restricted_piece != NONE) || missing_piece != pawn) {
+	    if ((extra_piece == NONE) || (restricted_piece != NONE) || missing_piece1 != pawn) {
 		fprintf(stderr, "Conversion error during capture back-prop\n");
 		continue;
 	    }
@@ -3125,7 +3139,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     local_position_t current_position;
     int piece;
     int32 conversion_result;
-    int extra_piece, restricted_piece, missing_piece;
+    int extra_piece, restricted_piece, missing_piece1, missing_piece2;
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
@@ -3149,9 +3163,11 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 	    extra_piece = (conversion_result >> 16) & 0xff;
 	    restricted_piece = (conversion_result >> 8) & 0xff;
-	    missing_piece = conversion_result & 0xff;
+	    missing_piece1 = conversion_result & 0xff;
+	    missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	    if ((extra_piece != NONE) || (restricted_piece != NONE) || missing_piece != captured_piece) {
+	    if ((extra_piece != NONE) || (restricted_piece != NONE)
+		|| (missing_piece1 != captured_piece) || (missing_piece2 != NONE)) {
 		fprintf(stderr, "Conversion error during capture back-prop\n");
 		continue;
 	    }
@@ -3208,7 +3224,7 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
     int32 conversion_result;
-    int extra_piece, restricted_piece, missing_piece;
+    int extra_piece, restricted_piece, missing_piece1, missing_piece2;
     int piece;
     int dir;
     struct movement *movementptr;
@@ -3231,9 +3247,10 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
 	    extra_piece = (conversion_result >> 16) & 0xff;
 	    restricted_piece = (conversion_result >> 8) & 0xff;
-	    missing_piece = conversion_result & 0xff;
+	    missing_piece1 = conversion_result & 0xff;
+	    missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	    if ((missing_piece != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
+	    if ((missing_piece1 != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
 		fprintf(stderr, "Conversion error during normal back-prop\n"); /* BREAKPOINT */
 		continue;
 	    }
