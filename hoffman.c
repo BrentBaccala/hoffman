@@ -35,19 +35,19 @@
  * possibility of all pawns queening, requires the K+Q+Q vs K+Q endgame to be solved before it can
  * be calculated.
  *
- * Hoffman takes a somewhat different approach, one pioneered by the commercial program Freezer.
- * When faced with something like K+P+P vs K+P, rather than calculate all possible resulting
- * positions, it may ignore the possibility of more than two pawns queening at the same time, thus
- * computing nothing more complex than K+Q+P vs K+Q.  While incomplete, such a tablebase is
- * nevertheless useful.  For the player with two pawns, if the tablebase finds a winning line
- * subject to the queening restrictions, then that line is still playable for a win, even though a
- * faster winning line may exist.  From the opposing point of view, if the tablebase treats any
- * position where the third pawn queens as a forced win, then the player can be confident that any
- * drawing line can not be improved upon by the superior side.  From a computational perspective, we
- * have reduced the complexity requirements to a point where the calculation can be performed in a
- * reasonable amount of time.  While still too slow for over-the-board use, we now have a useful
- * tool for the analysis of more complex endgames, useful for either static analysis, or for the
- * slow time controls of correspondence games.
+ * Hoffman takes a somewhat different approach, one pioneered by the Eiko Bleicher's Freezer, now a
+ * commercial program. When faced with something like K+P+P vs K+P, rather than calculate all
+ * possible resulting positions, it may ignore the possibility of more than two pawns queening at
+ * the same time, thus computing nothing more complex than K+Q+P vs K+Q.  While incomplete, such a
+ * tablebase is nevertheless useful.  For the player with two pawns, if the tablebase finds a
+ * winning line subject to the queening restrictions, then that line is still playable for a win,
+ * even though a faster winning line may exist.  From the opposing point of view, if the tablebase
+ * treats any position where the third pawn queens as a forced win, then the player can be confident
+ * that any drawing line can not be improved upon by the superior side.  From a computational
+ * perspective, we have reduced the complexity requirements to a point where the calculation can be
+ * performed in a reasonable amount of time.  While still too slow for over-the-board use, we now
+ * have a useful tool for the analysis of more complex endgames, useful for either static analysis,
+ * or for the slow time controls of correspondence games.
  *
  * Hoffman improves upon Freezer with a more sophisticated method of chaining one endgame analysis
  * into another, allowing more realistic modeling of queening combinations and exchanges.  For
@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.85 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.86 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2711,8 +2711,9 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 {
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
-    global_position_t future_position;
-    int square;
+    local_position_t position;
+    int32 conversion_result;
+    int extra_piece_square, extra_piece_color, extra_piece, restricted_piece, missing_piece;
 
     int promotion_color = ((promoted_piece < 'a') ? WHITE : BLACK);
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
@@ -2723,57 +2724,89 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
-	if (index_to_global_position(futurebase, future_index, &future_position)) {
+	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
+	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
+	 * the simplest way to do that is to run this loop even for draws.
+	 */
 
-	    if (invert_colors_of_futurebase)
-		invert_colors_of_global_position(&future_position);
+	/* Take the position from the futurebase and translate it into a local position for the
+	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
+	 * Otherwise, there should be one piece missing from the local position (the pawn that
+	 * promoted) and one piece extra (what it promoted into).  There can be no pieces on
+	 * restricted squares.
+	 */
 
-	    /* Whatever color the promoted piece is, after the promotion it must be the other side
-	     * to move.
-	     */
+	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
+								      tb, &position,
+								      invert_colors_of_futurebase);
 
-	    if (future_position.side_to_move == promotion_color) continue;
+	if (conversion_result != -1) {
+
+	    extra_piece_color = (conversion_result >> 30) & 1;
+	    extra_piece_square = (conversion_result >> 24) & 0x3f;
+	    extra_piece = (conversion_result >> 16) & 0xff;
+	    restricted_piece = (conversion_result >> 8) & 0xff;
+	    missing_piece = conversion_result & 0xff;
+
+	    if ((extra_piece == NONE) || (restricted_piece != NONE) || missing_piece != pawn) {
+		fprintf(stderr, "Conversion error during capture back-prop\n");
+		continue;
+	    }
 
 	    /* Since the last move had to have been a promotion move, there is absolutely no way we
 	     * could have en passant capturable pawns in the futurebase position.
 	     */
 
-	    if (future_position.en_passant_square != -1) continue;
+	    if (position.en_passant_square != -1) continue;
 
-	    /* We're back-proping one half move to the promotion move. */
-
-	    flip_side_to_move_global(&future_position);
-
-	    /* Consider only positions with the promoted piece on the last rank and with an empty
-	     * square right behind where a pawn could have come from.
+	    /* Whatever color the promoted piece is, after the promotion it must be the other side
+	     * to move.
 	     */
 
-	    for (square = first_back_rank_square; square <= last_back_rank_square; square ++) {
+	    if (position.side_to_move == promotion_color) continue;
 
-		if ((future_position.board[square] == promoted_piece)
-		    && !(future_position.board_vector & BITVECTOR(square - promotion_move))
-		    && (tb->piece_legal_squares[pawn] & BITVECTOR(square - promotion_move))) {
+	    /* The extra piece has to be on the back rank */
 
-		    /* Replace the promoted piece with a pawn on the seventh */
+	    if ((extra_piece_square < first_back_rank_square)
+		|| (extra_piece_square > last_back_rank_square)) continue;
 
-		    future_position.board[square] = 0;
-		    future_position.board[square - promotion_move]
-			= ((promotion_color == WHITE) ? 'P' : 'p');
+	    /* There has to be an empty square right behind where the pawn came from. */
 
-		    /* Back propagate the resulting position */
+	    if (position.board_vector & BITVECTOR(extra_piece_square - promotion_move)) continue;
 
-		    /* This function also back props any similar positions with one of the pawns
-		     * from the side that didn't promote in an en passant state.
-		     */
+	    /* And it has to be a legal (i.e, non-restricted) square for the pawn in our tablebase. */
 
-		    propagate_global_position_from_futurebase(tb, futurebase, future_index, &future_position, mate_in_limit);
+	    if (!(tb->piece_legal_squares[pawn] & BITVECTOR(extra_piece_square - promotion_move))) continue;
 
-		    /* ...and put everything back so we can keep running this loop! */
+	    /* Double check to make sure we've got the correct promoted piece. */
 
-		    future_position.board[square - promotion_move] = 0;
-		    future_position.board[square] = promoted_piece;
-		}
+	    if (global_pieces[extra_piece_color][extra_piece] != promoted_piece) {
+		fprintf(stderr, "Piece type/color doesn't match in promotion back prop\n");
+		continue;
 	    }
+
+	    /* We're going to back step a half move now */
+
+	    flip_side_to_move_local(&position);
+
+	    /* Because the promoted piece was 'extra' it doesn't appear in the local position, so we
+	     * don't have to worry about taking it off the board.  Put the missing pawn on the
+	     * seventh (or second).
+	     */
+
+	    position.piece_position[pawn] = extra_piece_square - promotion_move;
+	    position.board_vector |= BITVECTOR(extra_piece_square - promotion_move);
+
+	    /* Back propagate the resulting position */
+
+	    /* This function also back props any similar positions with one of the pawns
+	     * from the side that didn't promote in an en passant state.
+	     */
+
+	    propagate_local_position_from_futurebase(tb, futurebase, future_index, &position, mate_in_limit);
+
+	    /* Don't bother to put anything back since we recompute a new position next time around. */
+
 	}
     }
 }
