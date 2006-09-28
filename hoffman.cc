@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.81 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.82 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1187,25 +1187,22 @@ int global_position_to_local_position(tablebase *tb, global_position_t *global, 
     }
 
     return ((restricted_piece << 8) | missing_piece);
+}
 
-#if 0
-    if (piece == tb->num_mobiles) {
-	/* We might want to function to do exact matches... */
-	/* fprintf(stderr, "No free piece in global_position_to_local_position()\n"); */
-	return -1;
-    }
+/* Translate tb1/index1 into tb2/local2
+ */
 
-    for (piece2 = piece+1; piece2 < tb->num_mobiles; piece2 ++) {
-	if (!(pieces_processed_bitvector & (1 << piece2))
-	    || !(tb->piece_legal_squares[piece2] & BITVECTOR(local->piece_position[piece2]))) {
-	    /* This might legitimately happen if the futurebase is more liberal than we are */
-	    /* fprintf(stderr, "Multiple free pieces in global_position_to_local_position()\n"); */
-	    return -1;
-	}
-    }
+int translate_foreign_index_to_local_position(tablebase *tb1, int32 index1,
+					      tablebase *tb2, local_position_t *local2, int invert_colors)
+{
+    global_position_t global;
 
-    return piece;
-#endif
+    if (! index_to_global_position(tb1, index1, &global)) return -1;
+
+    if (invert_colors) invert_colors_of_global_position(&global);
+
+    return global_position_to_local_position(tb2, &global, local2);
+
 }
 
 
@@ -3070,7 +3067,6 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 {
     int32 future_index;
     int32 max_future_index_static = max_index(futurebase);
-    global_position_t future_position;
     local_position_t current_position;
     int piece;
     int conversion_result, restricted_piece, missing_piece;
@@ -3082,32 +3078,19 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	if (index_to_global_position(futurebase, future_index, &future_position)) {
+	/* Take the position from the futurebase and translate it into a local position for the
+	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
+	 * Otherwise, there should be one piece missing from the local position: the piece that was
+	 * captured.  There could possibly be one piece on a restricted square, as well.  If so,
+	 * then it must be the piece that moved in order to capture.
+	 */
 
-	    if (invert_colors_of_futurebase)
-		invert_colors_of_global_position(&future_position);
+	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
+								      tb, &current_position,
+								      invert_colors_of_futurebase);
 
-	    /* Since the last move had to have been a capture move, there is absolutely no way we
-	     * could have en passant capturable pawns in the futurebase position.
-	     */
+	if (conversion_result != -1) {
 
-	    if (future_position.en_passant_square != -1) continue;
-
-	    /* Since the position resulted from a capture, we only want to consider future positions
-	     * where the side to move is not the side that captured.
-	     */
-
-	    if (future_position.side_to_move != tb->piece_color[captured_piece])
-		continue;
-
-	    /* Take the global position from the futurebase and translate it into a local position
-	     * for the current tablebase.  There should be one piece missing from the local
-	     * position: the piece that was captured.  There could possibly be one piece on a
-	     * restricted square, as well.  If so, then it must be the piece that moved in order to
-	     * capture.
-	     */
-
-	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
 	    restricted_piece = conversion_result >> 8;
 	    missing_piece = conversion_result & 0xff;
 
@@ -3115,6 +3098,21 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 		fprintf(stderr, "Conversion error during capture back-prop\n");
 		continue;
 	    }
+
+	    /* Since the last move had to have been a capture move, there is absolutely no way we
+	     * could have en passant capturable pawns in the futurebase position.
+	     */
+
+	    if (current_position.en_passant_square != -1) continue;
+
+	    /* Since the position resulted from a capture, we only want to consider future positions
+	     * where the side to move is not the side that captured.
+	     */
+
+	    if (current_position.side_to_move != tb->piece_color[captured_piece])
+		continue;
+
+	    /* We're going to back step a half move now */
 
 	    flip_side_to_move_local(&current_position);
 
