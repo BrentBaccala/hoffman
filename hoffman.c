@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.92 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.93 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1226,15 +1226,100 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
  */
 
 int translate_foreign_index_to_local_position(tablebase *tb1, int32 index1,
-					      tablebase *tb2, local_position_t *local2, int invert_colors)
+					      tablebase *tb2, local_position_t *local, int invert_colors)
 {
-    global_position_t global;
+    local_position_t foreign_position;
+    int foreign_piece;
+    int piece;
+    int restricted_piece = NONE;
+    int missing_piece1 = NONE;
+    int missing_piece2 = NONE;
+    int extra_piece = NONE;
+    short pieces_processed_bitvector = 0;
 
-    if (! index_to_global_position(tb1, index1, &global)) return -1;
+    if (! index_to_local_position(tb1, index1, &foreign_position)) return -1;
 
-    if (invert_colors) invert_colors_of_global_position(&global);
+    bzero(local, sizeof(local_position_t));
 
-    return global_position_to_local_position(tb2, &global, local2);
+    for (piece = 0; piece < tb2->num_mobiles; piece ++)
+	local->piece_position[piece] = -1;
+
+    local->en_passant_square = foreign_position.en_passant_square;
+    local->side_to_move = foreign_position.side_to_move;
+
+    if (invert_colors) flip_side_to_move_local(local);
+
+    for (foreign_piece = 0; foreign_piece < tb1->num_mobiles; foreign_piece ++) {
+
+	int sq = foreign_position.piece_position[foreign_piece];
+
+	if (invert_colors) sq = square(7 - ROW(sq), COL(sq));
+
+	for (piece = 0; piece < tb2->num_mobiles; piece ++) {
+
+	    if ((tb1->piece_type[foreign_piece] == tb2->piece_type[piece])
+		&& (invert_colors
+		    ? (tb1->piece_color[foreign_piece] != tb2->piece_color[piece])
+		    : (tb1->piece_color[foreign_piece] == tb2->piece_color[piece]))
+		&& !(pieces_processed_bitvector & (1 << piece))) {
+
+		local->piece_position[piece] = sq;
+		local->board_vector |= BITVECTOR(sq);
+		if (tb2->piece_color[piece] == WHITE)
+		    local->white_vector |= BITVECTOR(sq);
+		else
+		    local->black_vector |= BITVECTOR(sq);
+
+		pieces_processed_bitvector |= (1 << piece);
+
+		break;
+	    }
+	}
+
+	if (piece == tb2->num_mobiles) {
+	    if (extra_piece != NONE) {
+		fprintf(stderr, "More than one extra piece in translation\n");
+		return -1;
+	    }
+	    /* XXX I'd like to change this (for consistency) to be the piece index in the
+	     * futurebase, but since there is still an intermediate global position, that will
+	     * have to wait.
+	     */
+	    extra_piece = sq;
+	}
+    }
+
+
+    /* Make sure all the pieces but one have been accounted for.  We count a piece as "free" if
+     * either it hasn't been processed at all, or if it was processed but was outside its move
+     * restriction.
+     */
+
+    for (piece = 0; piece < tb2->num_mobiles; piece ++) {
+	if (!(pieces_processed_bitvector & (1 << piece))) {
+	    if (missing_piece1 == NONE) {
+		missing_piece1 = piece;
+	    } else if (missing_piece2 == NONE) {
+		if (tb2->piece_type[piece] == PAWN) {
+		    missing_piece2 = missing_piece1;
+		    missing_piece1 = piece;
+		} else {
+		    missing_piece2 = piece;
+		}
+	    } else {
+		fprintf(stderr, "More than one missing piece in translation\n");
+		return -1;
+	    }
+	} else if (!(tb2->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
+	    if (restricted_piece == NONE) restricted_piece = piece;
+	    else {
+		fprintf(stderr, "More than one restricted piece in translation\n");
+		return -1;
+	    }
+	}
+    }
+
+    return ((missing_piece2 << 24) | (extra_piece << 16) | (restricted_piece << 8) | missing_piece1);
 
 }
 
