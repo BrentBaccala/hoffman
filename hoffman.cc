@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.84 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.85 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1142,8 +1142,8 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
     int restricted_piece = NONE;
     int missing_piece = NONE;
     int extra_piece = NONE;
-    int extra_piece_color = -1;
-    int extra_piece_square = -1;
+    int extra_piece_color = 0;
+    int extra_piece_square = 0;
     int square;
     short pieces_processed_bitvector = 0;
 
@@ -1212,7 +1212,7 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
 	}
     }
 
-    return ((extra_piece_square << 24) | (extra_piece_color << 23) | (extra_piece << 16)
+    return ((extra_piece_color << 30) | (extra_piece_square << 24) | (extra_piece << 16)
 	    | (restricted_piece << 8) | missing_piece);
 }
 
@@ -2677,8 +2677,8 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
     int extra_piece_square, extra_piece_color, extra_piece, restricted_piece, missing_piece;
 
     conversion_result = global_position_to_local_position(tb, position, &local);
-    extra_piece_square = (conversion_result >> 24) & 0xff;
-    extra_piece_color = (conversion_result >> 23) & 1;
+    extra_piece_color = (conversion_result >> 30) & 1;
+    extra_piece_square = (conversion_result >> 24) & 0x3f;
     extra_piece = (conversion_result >> 16) & 0xff;
     restricted_piece = (conversion_result >> 8) & 0xff;
     missing_piece = conversion_result & 0xff;
@@ -3132,8 +3132,8 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 	if (conversion_result != -1) {
 
-	    extra_piece_square = (conversion_result >> 24) & 0xff;
-	    extra_piece_color = (conversion_result >> 23) & 1;
+	    extra_piece_color = (conversion_result >> 30) & 1;
+	    extra_piece_square = (conversion_result >> 24) & 0x3f;
 	    extra_piece = (conversion_result >> 16) & 0xff;
 	    restricted_piece = (conversion_result >> 8) & 0xff;
 	    missing_piece = conversion_result & 0xff;
@@ -3216,8 +3216,8 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 	     */
 
 	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
-	    extra_piece_square = (conversion_result >> 24) & 0xff;
-	    extra_piece_color = (conversion_result >> 23) & 1;
+	    extra_piece_color = (conversion_result >> 30) & 1;
+	    extra_piece_square = (conversion_result >> 24) & 0x3f;
 	    extra_piece = (conversion_result >> 16) & 0xff;
 	    restricted_piece = (conversion_result >> 8) & 0xff;
 	    missing_piece = conversion_result & 0xff;
