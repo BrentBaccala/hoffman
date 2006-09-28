@@ -613,7 +613,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.86 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.87 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1142,8 +1142,6 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
     int restricted_piece = NONE;
     int missing_piece = NONE;
     int extra_piece = NONE;
-    int extra_piece_color = 0;
-    int extra_piece_square = 0;
     int square;
     short pieces_processed_bitvector = 0;
 
@@ -1178,14 +1176,11 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
 		    fprintf(stderr, "More than one extra piece in translation\n");
 		    return -1;
 		}
-		extra_piece_color = (global->board[square] <= 'Z') ? WHITE : BLACK;
-		extra_piece = pieces[global->board[square]
-					  - ((extra_piece_color == WHITE) ? 'A' : 'a')];
-		if (extra_piece == -1) {
-		    fprintf(stderr, "Couldn't lookup piece in translation\n");
-		    return -1;
-		}
-		extra_piece_square = square;
+		/* XXX I'd like to change this (for consistency) to be the piece index in the
+		 * futurebase, but since there is still an intermediate global position, that will
+		 * have to wait.
+		 */
+		extra_piece = square;
 	    }
 	}
     }
@@ -1212,8 +1207,7 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
 	}
     }
 
-    return ((extra_piece_color << 30) | (extra_piece_square << 24) | (extra_piece << 16)
-	    | (restricted_piece << 8) | missing_piece);
+    return ((extra_piece << 16) | (restricted_piece << 8) | missing_piece);
 }
 
 /* Translate tb1/index1 into tb2/local2
@@ -2674,11 +2668,9 @@ void propagate_global_position_from_futurebase(tablebase *tb, tablebase *futureb
 #else
     local_position_t local;
     int32 conversion_result;
-    int extra_piece_square, extra_piece_color, extra_piece, restricted_piece, missing_piece;
+    int extra_piece, restricted_piece, missing_piece;
 
     conversion_result = global_position_to_local_position(tb, position, &local);
-    extra_piece_color = (conversion_result >> 30) & 1;
-    extra_piece_square = (conversion_result >> 24) & 0x3f;
     extra_piece = (conversion_result >> 16) & 0xff;
     restricted_piece = (conversion_result >> 8) & 0xff;
     missing_piece = conversion_result & 0xff;
@@ -2713,7 +2705,7 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
     int32 max_future_index_static = max_index(futurebase);
     local_position_t position;
     int32 conversion_result;
-    int extra_piece_square, extra_piece_color, extra_piece, restricted_piece, missing_piece;
+    int extra_piece, restricted_piece, missing_piece;
 
     int promotion_color = ((promoted_piece < 'a') ? WHITE : BLACK);
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
@@ -2742,8 +2734,6 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 
 	if (conversion_result != -1) {
 
-	    extra_piece_color = (conversion_result >> 30) & 1;
-	    extra_piece_square = (conversion_result >> 24) & 0x3f;
 	    extra_piece = (conversion_result >> 16) & 0xff;
 	    restricted_piece = (conversion_result >> 8) & 0xff;
 	    missing_piece = conversion_result & 0xff;
@@ -2767,23 +2757,15 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 
 	    /* The extra piece has to be on the back rank */
 
-	    if ((extra_piece_square < first_back_rank_square)
-		|| (extra_piece_square > last_back_rank_square)) continue;
+	    if ((extra_piece < first_back_rank_square) || (extra_piece > last_back_rank_square)) continue;
 
 	    /* There has to be an empty square right behind where the pawn came from. */
 
-	    if (position.board_vector & BITVECTOR(extra_piece_square - promotion_move)) continue;
+	    if (position.board_vector & BITVECTOR(extra_piece - promotion_move)) continue;
 
 	    /* And it has to be a legal (i.e, non-restricted) square for the pawn in our tablebase. */
 
-	    if (!(tb->piece_legal_squares[pawn] & BITVECTOR(extra_piece_square - promotion_move))) continue;
-
-	    /* Double check to make sure we've got the correct promoted piece. */
-
-	    if (global_pieces[extra_piece_color][extra_piece] != promoted_piece) {
-		fprintf(stderr, "Piece type/color doesn't match in promotion back prop\n");
-		continue;
-	    }
+	    if (!(tb->piece_legal_squares[pawn] & BITVECTOR(extra_piece - promotion_move))) continue;
 
 	    /* We're going to back step a half move now */
 
@@ -2794,8 +2776,8 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
 	     * seventh (or second).
 	     */
 
-	    position.piece_position[pawn] = extra_piece_square - promotion_move;
-	    position.board_vector |= BITVECTOR(extra_piece_square - promotion_move);
+	    position.piece_position[pawn] = extra_piece - promotion_move;
+	    position.board_vector |= BITVECTOR(extra_piece - promotion_move);
 
 	    /* Back propagate the resulting position */
 
@@ -3143,7 +3125,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
     local_position_t current_position;
     int piece;
     int32 conversion_result;
-    int extra_piece_square, extra_piece_color, extra_piece, restricted_piece, missing_piece;
+    int extra_piece, restricted_piece, missing_piece;
 
     for (future_index = 0; future_index < max_future_index_static; future_index ++) {
 
@@ -3165,8 +3147,6 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
 
 	if (conversion_result != -1) {
 
-	    extra_piece_color = (conversion_result >> 30) & 1;
-	    extra_piece_square = (conversion_result >> 24) & 0x3f;
 	    extra_piece = (conversion_result >> 16) & 0xff;
 	    restricted_piece = (conversion_result >> 8) & 0xff;
 	    missing_piece = conversion_result & 0xff;
@@ -3228,7 +3208,7 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
     int32 conversion_result;
-    int extra_piece_square, extra_piece_color, extra_piece, restricted_piece, missing_piece;
+    int extra_piece, restricted_piece, missing_piece;
     int piece;
     int dir;
     struct movement *movementptr;
@@ -3249,8 +3229,6 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
 	     */
 
 	    conversion_result = global_position_to_local_position(tb, &future_position, &current_position);
-	    extra_piece_color = (conversion_result >> 30) & 1;
-	    extra_piece_square = (conversion_result >> 24) & 0x3f;
 	    extra_piece = (conversion_result >> 16) & 0xff;
 	    restricted_piece = (conversion_result >> 8) & 0xff;
 	    missing_piece = conversion_result & 0xff;
