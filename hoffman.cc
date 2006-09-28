@@ -568,52 +568,32 @@ void unload_futurebase(tablebase *tb)
     tb->fileptr = NULL;
 }
 
-/* Given a tablebase, create an XML header describing its contents and return it.
+/* Given a tablebase, change its XML structure to reflect the fact that the tablebase has now
+ * actually been built.
  */
 
-xmlDocPtr create_XML_header(tablebase *tb)
+xmlDocPtr finalize_XML_header(tablebase *tb)
 {
-    xmlDocPtr doc;
-    xmlNodePtr tablebase, pieces, node;
-    int color;
-    int piece;
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+    xmlNodePtr tablebase, node;
     time_t creation_time;
     char hostname[256];
     struct hostent *he;
 
-    doc = xmlNewDoc((const xmlChar *) "1.0");
-    xmlCreateIntSubset(doc, BAD_CAST "tablebase", NULL, BAD_CAST "tablebase.dtd");
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression((const xmlChar *) "//tablebase", context);
+    tablebase = result->nodesetval->nodeTab[0];
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
-    tablebase = xmlNewDocNode(doc, NULL, (const xmlChar *) "tablebase", NULL);
     xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
     xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "fourbyte");
     xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive");
-    xmlDocSetRootElement(doc, tablebase);
-
-    pieces = xmlNewChild(tablebase, NULL, (const xmlChar *) "pieces", NULL);
-
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	xmlNodePtr mobile;
-
-	mobile = xmlNewChild(pieces, NULL, (const xmlChar *) "mobile", NULL);
-	xmlNewProp(mobile, (const xmlChar *) "color",
-		   (const xmlChar *) colors[tb->piece_color[piece]]);
-	xmlNewProp(mobile, (const xmlChar *) "type",
-		   (const xmlChar *) piece_name[tb->piece_type[piece]]);
-    }
-
-    for (color = 0; color < 2; color ++) {
-	if (tb->move_restrictions[color] != RESTRICTION_NONE) {
-	    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "move-restriction", NULL);
-	    xmlNewProp(node, (const xmlChar *) "color", (const xmlChar *) colors[color]);
-	    xmlNewProp(node, (const xmlChar *) "type",
-		       (const xmlChar *) restriction_types[tb->move_restrictions[color]]);
-	}
-    }
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.93 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.94 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -624,8 +604,7 @@ xmlDocPtr create_XML_header(tablebase *tb)
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-host", NULL);
     xmlNewProp(node, (const xmlChar *) "fqdn", (const xmlChar *) he->h_name);
 
-    /* xmlSaveFile("-", doc); */
-    return doc;
+    return tb->xml;
 }
 
 /* do_write() is like the system call write(), but keeps repeating until the write is complete */
@@ -653,11 +632,10 @@ void write_tablebase_to_file(tablebase *tb, char *filename)
 	return;
     }
 
-    doc = create_XML_header(tb);
+    doc = finalize_XML_header(tb);
     savectx = xmlSaveToFd(fd, NULL, 0);
     xmlSaveDoc(savectx, doc);
     xmlSaveClose(savectx);
-    xmlFreeDoc(doc);
 
     if (lseek(fd, 0x1000, SEEK_SET) != 0x1000) {
 	fprintf(stderr, "seek failed\n");
