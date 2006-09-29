@@ -352,6 +352,198 @@ int find_name_in_array(char * name, char * array[])
     return -1;
 }
 
+
+/***** INDICES *****/
+
+int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
+{
+    /* This function, given a local board position, returns an index into the tablebase.
+     *
+     * Initially, this function can be very simple (multiplying numbers together), but to build
+     * smaller tables it can be more precise.
+     *
+     * For example, two kings can never be next to each other.  Pieces can never be on top of each
+     * other, or on top of static pieces.  The side to move can not be in check.
+     *
+     * It also updates the position's board_vector (which doesn't have to be valid going in),
+     * but not the white_vector or black_vector.  It does this to check for illegal en passant
+     * positions.
+     *
+     * Returns either an index into the table, or -1 (probably) if the position is illegal.
+     *
+     * What exactly is an illegal position?  Well, for starters, one that index_to_local_position()
+     * reports as illegal, because that's the function that initialize_tablebase() uses to figure
+     * which positions are flagged illegal, as well as which positions to consider during back prop,
+     * and the program screams if you try to back prop into an illegal position.
+     *
+     * This function is currently used only during back propagation to generate indices, and during
+     * probing to convert "next move" positions into indices.
+     *
+     * When we back propagate a local position from either a futurebase or intratable, we generate
+     * en passant positions simply by running through the pawns on the fourth and fifth ranks.  If
+     * we don't look then to see if there was a piece behind the "en passant" pawn (that would have
+     * prevented it from moving), and we currently don't (correctly) because the board vectors
+     * aren't set right, then we have to detect that and return -1 here.  Otherwise, we would try to
+     * back propagate to a position that had been labeled illegal during initialization by
+     * index_to_local_position().
+     *
+     * This function is also used during probing to see if possible next positions are legal.
+     */
+
+    /* Keep it simple, for now */
+
+    int shift_count = 1;
+    int32 index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+    int piece;
+
+    pos->board_vector = 0;
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	/* I've added this pawn check because I've had some problems.  This makes the
+	 * return of this function match up with the return of index_to_global_position
+	 */
+	if ((tb->piece_type[piece] == PAWN)
+	    && ((pos->piece_position[piece] < 8) || (pos->piece_position[piece] >= 56))) {
+	    return -1;
+	}
+	if (pos->piece_position[piece] < 0)
+	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
+
+	/* The way we encode en passant capturable pawns is use the column number of the
+	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
+	 * this is completely legit.
+	 */
+	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
+	    && (((tb->piece_color[piece] == WHITE)
+		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		|| ((tb->piece_color[piece] == BLACK)
+		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+	    index |= COL(pos->en_passant_square) << shift_count;
+	} else {
+	    index |= pos->piece_position[piece] << shift_count;
+	}
+	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
+	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
+
+	shift_count += 6;  /* because 2^6=64 */
+    }
+
+    /* Check board_vector to make sure an en passant position is legal */
+
+    if (pos->en_passant_square != -1) {
+	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
+	if (pos->side_to_move == WHITE) {
+	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
+	} else {
+	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
+	}
+    }
+
+    /* Possibly a quicker check for position legality that all that en passant stuff */
+
+    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
+
+    return index;
+}
+
+boolean index_to_local_position(tablebase_t *tb, int32 index, local_position_t *p)
+{
+    /* Given an index, fill in a board position.  Obviously has to correspond to local_position_to_index()
+     * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
+     * succeeded (the index is at least minimally valid) and FALSE if the index is so blatantly
+     * illegal (two pieces on the same square) that we can't even fill in the position.
+     *
+     * Used by index_to_side_to_move() (which is currently only use to check move restrictions) to
+     * determine position legality.
+     *
+     * Used in propagate_move_within_table() to get from an index to a position, and its return
+     * value is ignored there, because a position that needs_propagation() couldn't have been marked
+     * illegal during initialization.
+     *
+     * Used in initialize_tablebase() to determine which positions are legal.
+     *
+     * Use to prepare a move list during probe.
+     *
+     * So how about a static 64-bit vector with bits set for the frozen pieces but not the mobiles?
+     * Everytime we call index_to_local_position, copy from the static vector into the position
+     * structure.  Then we compute the positions of the mobile pieces and plug their bits into the
+     * structure's vector at the right places.
+     */
+
+    int piece;
+
+    bzero(p, sizeof(local_position_t));
+    p->en_passant_square = -1;
+
+    p->side_to_move = index & 1;
+    index >>= 1;
+
+    for (piece = 0; piece < tb->num_mobiles; piece++) {
+
+	int square = index & 63;
+
+	/* En passant */
+	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
+	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
+	    if (tb->piece_color[piece] == WHITE) {
+		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = square + 2*8;
+		square += 3*8;
+	    } else {
+		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = square + 5*8;
+		square += 4*8;
+	    }
+	}
+
+	/* I've added this pawn check because I've had some problems.  This makes the
+	 * return of this function match up with the return of index_to_global_position
+	 */
+	if ((tb->piece_type[piece] == PAWN) && (square >= 56)) {
+	    return 0;
+	}
+
+	/* The first place we handle restricted pieces, and one of most important, too, because this
+	 * function is used during initialization to decide which positions are legal and which are
+	 * not.
+	 */
+
+	if (!(tb->piece_legal_squares[piece] & BITVECTOR(square))) {
+	    return 0;
+	}
+
+	p->piece_position[piece] = square;
+	if (p->board_vector & BITVECTOR(square)) {
+	    return 0;
+	}
+	p->board_vector |= BITVECTOR(square);
+	if (tb->piece_color[piece] == WHITE) {
+	    p->white_vector |= BITVECTOR(square);
+	} else {
+	    p->black_vector |= BITVECTOR(square);
+	}
+	index >>= 6;
+    }
+
+    /* If there is an en passant capturable pawn in this position, then there can't be anything
+     * on the capture square or on the square right behind it (where the pawn just came from),
+     * or its an illegal position.
+     */
+
+    if (p->en_passant_square != -1) {
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->side_to_move == WHITE) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	} else {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	}
+    }
+
+    return 1;
+}
+
+/***** XML TABLEBASE INTERACTION *****/
+
 /* Parses XML, creates a tablebase structure corresponding to it, and returns it.
  *
  * Eventually, I want to provide a DTD and validate the XML input, so there's very little error
@@ -609,7 +801,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.100 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.101 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -664,193 +856,6 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
 
 /***** INDICES AND POSITIONS *****/
-
-int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
-{
-    /* This function, given a local board position, returns an index into the tablebase.
-     *
-     * Initially, this function can be very simple (multiplying numbers together), but to build
-     * smaller tables it can be more precise.
-     *
-     * For example, two kings can never be next to each other.  Pieces can never be on top of each
-     * other, or on top of static pieces.  The side to move can not be in check.
-     *
-     * It also updates the position's board_vector (which doesn't have to be valid going in),
-     * but not the white_vector or black_vector.  It does this to check for illegal en passant
-     * positions.
-     *
-     * Returns either an index into the table, or -1 (probably) if the position is illegal.
-     *
-     * What exactly is an illegal position?  Well, for starters, one that index_to_local_position()
-     * reports as illegal, because that's the function that initialize_tablebase() uses to figure
-     * which positions are flagged illegal, as well as which positions to consider during back prop,
-     * and the program screams if you try to back prop into an illegal position.
-     *
-     * This function is currently used only during back propagation to generate indices, and during
-     * probing to convert "next move" positions into indices.
-     *
-     * When we back propagate a local position from either a futurebase or intratable, we generate
-     * en passant positions simply by running through the pawns on the fourth and fifth ranks.  If
-     * we don't look then to see if there was a piece behind the "en passant" pawn (that would have
-     * prevented it from moving), and we currently don't (correctly) because the board vectors
-     * aren't set right, then we have to detect that and return -1 here.  Otherwise, we would try to
-     * back propagate to a position that had been labeled illegal during initialization by
-     * index_to_local_position().
-     *
-     * This function is also used during probing to see if possible next positions are legal.
-     */
-
-    /* Keep it simple, for now */
-
-    int shift_count = 1;
-    int32 index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-    int piece;
-
-    pos->board_vector = 0;
-
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	/* I've added this pawn check because I've had some problems.  This makes the
-	 * return of this function match up with the return of index_to_global_position
-	 */
-	if ((tb->piece_type[piece] == PAWN)
-	    && ((pos->piece_position[piece] < 8) || (pos->piece_position[piece] >= 56))) {
-	    return -1;
-	}
-	if (pos->piece_position[piece] < 0)
-	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
-
-	/* The way we encode en passant capturable pawns is use the column number of the
-	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
-	 * this is completely legit.
-	 */
-	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
-	    && (((tb->piece_color[piece] == WHITE)
-		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->piece_color[piece] == BLACK)
-		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    index |= COL(pos->en_passant_square) << shift_count;
-	} else {
-	    index |= pos->piece_position[piece] << shift_count;
-	}
-	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
-	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
-
-	shift_count += 6;  /* because 2^6=64 */
-    }
-
-    /* Check board_vector to make sure an en passant position is legal */
-
-    if (pos->en_passant_square != -1) {
-	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
-	if (pos->side_to_move == WHITE) {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
-	} else {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
-	}
-    }
-
-    /* Possibly a quicker check for position legality that all that en passant stuff */
-
-    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
-
-    return index;
-}
-
-boolean index_to_local_position(tablebase_t *tb, int32 index, local_position_t *p)
-{
-    /* Given an index, fill in a board position.  Obviously has to correspond to local_position_to_index()
-     * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
-     * succeeded (the index is at least minimally valid) and FALSE if the index is so blatantly
-     * illegal (two pieces on the same square) that we can't even fill in the position.
-     *
-     * Used by index_to_side_to_move() (which is currently only use to check move restrictions) to
-     * determine position legality.
-     *
-     * Used in propagate_move_within_table() to get from an index to a position, and its return
-     * value is ignored there, because a position that needs_propagation() couldn't have been marked
-     * illegal during initialization.
-     *
-     * Used in initialize_tablebase() to determine which positions are legal.
-     *
-     * Use to prepare a move list during probe.
-     *
-     * So how about a static 64-bit vector with bits set for the frozen pieces but not the mobiles?
-     * Everytime we call index_to_local_position, copy from the static vector into the position
-     * structure.  Then we compute the positions of the mobile pieces and plug their bits into the
-     * structure's vector at the right places.
-     */
-
-    int piece;
-
-    bzero(p, sizeof(local_position_t));
-    p->en_passant_square = -1;
-
-    p->side_to_move = index & 1;
-    index >>= 1;
-
-    for (piece = 0; piece < tb->num_mobiles; piece++) {
-
-	int square = index & 63;
-
-	/* En passant */
-	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
-	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
-	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 2*8;
-		square += 3*8;
-	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 5*8;
-		square += 4*8;
-	    }
-	}
-
-	/* I've added this pawn check because I've had some problems.  This makes the
-	 * return of this function match up with the return of index_to_global_position
-	 */
-	if ((tb->piece_type[piece] == PAWN) && (square >= 56)) {
-	    return 0;
-	}
-
-	/* The first place we handle restricted pieces, and one of most important, too, because this
-	 * function is used during initialization to decide which positions are legal and which are
-	 * not.
-	 */
-
-	if (!(tb->piece_legal_squares[piece] & BITVECTOR(square))) {
-	    return 0;
-	}
-
-	p->piece_position[piece] = square;
-	if (p->board_vector & BITVECTOR(square)) {
-	    return 0;
-	}
-	p->board_vector |= BITVECTOR(square);
-	if (tb->piece_color[piece] == WHITE) {
-	    p->white_vector |= BITVECTOR(square);
-	} else {
-	    p->black_vector |= BITVECTOR(square);
-	}
-	index >>= 6;
-    }
-
-    /* If there is an en passant capturable pawn in this position, then there can't be anything
-     * on the capture square or on the square right behind it (where the pawn just came from),
-     * or its an illegal position.
-     */
-
-    if (p->en_passant_square != -1) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
-	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
-	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
-	}
-    }
-
-    return 1;
-}
 
 /* This function could be made a bit faster, but this simpler version is hopefully safer. */
 
