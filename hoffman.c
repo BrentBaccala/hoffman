@@ -593,7 +593,7 @@ xmlDocPtr finalize_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.94 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.95 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -738,80 +738,6 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
 	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
 	} else {
 	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
-	}
-    }
-
-    /* Possibly a quicker check for position legality that all that en passant stuff */
-
-    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
-
-    return index;
-}
-
-/* Like local_position_to_index(), this routine updates the position's board vector
- * so it can check en passant legality.
- *
- * Used during futurebase back-propagation.  Same problem there with the possibility of generating
- * illegal en passant positions.
- *
- * The only other place this function is currently used is in the probe code, when we have parsed
- * FEN into a global position and are searching for it.  There, we count on this routine returning
- * -1 for positions that aren't handled by the current tablebase.
- */
-
-int32 global_position_to_index(tablebase *tb, global_position_t *position)
-{
-    int32 index = position->side_to_move;  /* WHITE is 0; BLACK is 1 */
-    int piece;
-    int square;
-    short pieces_processed_bitvector = 0;
-
-    position->board_vector = 0;
-
-    for (square = 0; square < NUM_SQUARES; square ++) {
-	if ((position->board[square] != 0) && (position->board[square] != ' ')) {
-	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		if ((position->board[square]
-		     == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
-		    && !(pieces_processed_bitvector & (1 << piece))) {
-
-		    if ((tb->piece_type[piece] == PAWN) && (position->en_passant_square != -1)
-			&& (((tb->piece_color[piece] == WHITE)
-			     && (position->en_passant_square + 8 == square))
-			    || ((tb->piece_color[piece] == BLACK)
-				&& (position->en_passant_square - 8 == square)))) {
-			index |= COL(position->en_passant_square) << (1 + 6*piece);
-		    } else {
-			index |= square << (1 + 6*piece);
-		    }
-
-		    position->board_vector |= BITVECTOR(square);
-
-		    pieces_processed_bitvector |= (1 << piece);
-		    break;
-		}
-	    }
-	    /* If we didn't find a suitable matching piece... */
-	    if (piece == tb->num_mobiles) return -1;
-	}
-    }
-
-
-    /* Make sure all the pieces have been accounted for */
-
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	if (!(pieces_processed_bitvector & (1 << piece)))
-	    return -1;
-    }
-
-    /* Check board_vector to make sure an en passant position is legal */
-
-    if (position->en_passant_square != -1) {
-	if (position->board_vector & BITVECTOR(position->en_passant_square)) return -1;
-	if (position->side_to_move == WHITE) {
-	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return -1;
-	} else {
-	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return -1;
 	}
     }
 
@@ -1037,9 +963,10 @@ inline void flip_side_to_move_global(global_position_t *position)
 
 /* invert_colors_of_global_position - just what its name implies
  *
- * We use this when propagating from a futurebase built for the opposite colors, say a K+R vs K
- * endgame that we now want to propagate into a game where the rook is black, not white.  If there
- * are pawns in the game, this function has to reflect the board around a horizontal centerline.
+ * We used to use this when propagating from a futurebase, but now it's only use is in the probe
+ * code.  It translates a position for a tablebase built for the opposite colors, say a K+R vs K
+ * endgame that we now want to probe where the rook is black, not white.  If there are pawns in the
+ * game, this function has to reflect the board around a horizontal centerline.
  */
 
 void invert_colors_of_global_position(global_position_t *global)
@@ -1084,124 +1011,43 @@ void invert_colors_of_global_position(global_position_t *global)
     }
 }
 
-/* This function works a little bit different from taking a global position, calling
- * global_position_to_index(), and then calling index_to_local_position().  It is used during
- * back-propagation of capture positions, and will leave a single piece in the local position
- * unassigned if it wasn't in the global position.  It is also used during back-propagation of
- * normal futurebases, when the single piece unassigned is in a restricted position, according to
- * the current tablebase.  In any event, returns the piece number of the unassigned piece, or -1 if
- * something went wrong.
+/* translate_foreign_index_to_local_position() - one of our key, key functions, used extensively
+ * during futurebase back propagation.  It takes an index into a foreign tablebase and converts it
+ * to a position in the local tablebase (the tablebase we're processing).  Of course, the pieces
+ * might not match up between the two tablebases, but there are only a finite number of possible
+ * differences:
  *
- * This thing is really starting to evolve into one of our key, key functions during futurebase back
- * propagation.  There are, right now, three different modes in which it is used.  It can convert a
- * position with one piece completely missing (used during capture processing; returns the missing
- * piece number), it can convert a position with no pieces missing and all on legal squares (used
- * during other types of futurebase back prop; returns -1), or it can convert a position with no
- * pieces missing but one of them on a restricted square (used during normal futurebase back prop;
- * returns restricted piece number).  We also want it to convert positions with one piece missing
- * and one of the other pieces on a restricted square (this is a possibility during capture back
- * prop).
+ * 1. There can be an "extra" piece in the foreign tablebase that doesn't appear in the
+ * local tablebase.
  *
- * The return value is 0x8080 if all pieces converted OK; (0x8000 & missing_piece) if one piece was
- * missing but everything else was OK; ((restricted_piece << 8) | 0x0080) if one piece was on a
- * restricted square but everything else was OK; and ((restricted_piece << 8) | missing_piece) if
- * one piece was missing and one was on a restricted square, and -1 if something went wrong (more
- * than one piece missing and/or more than one piece on a restricted square).
+ * 2. There can be up to two "missing" pieces in the local tablebase that don't appear in
+ * the foreign tablebase.
  *
- * Reports up to two missing pieces (a missing pawn is always missing piece 1), a restricted piece,
- * and an extra piece.  None have to exist.
+ * 3. There can be one piece (the "restricted" piece) that matches up, but is on a square flagged
+ * illegal for it in the local tablebase.
+ *
+ * If there are additional differences not covered in this list (more than one extra piece, for
+ * example), or if the index isn't legal in the foreign tablebase, the function returns -1.
+ * Otherwise, the return value is a 32 bit integer split into four eight bit fields:
+ *
+ * bits 0-7:   local tb piece number of missing piece #1
+ * bits 8-15:  local tb piece number of restricted piece
+ * bits 16-23: square on chessboard of extra piece
+ * bits 24-31: local tb piece number of missing piece #2
+ *
+ * If any of the fields are unused (because there is no corresponding piece), it's value is 0x80.
+ * Also, if there are two missing pieces and only one of them is a pawn, the pawn will always be
+ * returned as missing piece #1.
+ *
+ * The function does not depend on the indexing scheme used by the foreign tablebase.  Instead, it
+ * uses index_to_local_position() on the foreign tablebase.
+ *
+ * The only thing I don't like about this function right now is that it returns -1 if there is more
+ * than one restricted piece, and we certainly could have liberal tablebases with lots of restricted
+ * pieces that we want to back-prop from.
  */
 
 #define NONE 0x80
-
-int pieces[26] = {-1, BISHOP /*B*/, -1, -1, -1, -1, -1, -1, -1, -1, KING /*K*/, -1, -1, KNIGHT /*N*/,
-		  -1, PAWN /*P*/, QUEEN /*Q*/, ROOK /*R*/, -1, -1, -1, -1, -1, -1, -1, -1};
-
-int32 global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
-{
-    int piece;
-    int restricted_piece = NONE;
-    int missing_piece1 = NONE;
-    int missing_piece2 = NONE;
-    int extra_piece = NONE;
-    int square;
-    short pieces_processed_bitvector = 0;
-
-    bzero(local, sizeof(local_position_t));
-
-    for (piece = 0; piece < tb->num_mobiles; piece ++)
-	local->piece_position[piece] = -1;
-
-    local->en_passant_square = global->en_passant_square;
-    local->side_to_move = global->side_to_move;
-
-    for (square = 0; square < NUM_SQUARES; square ++) {
-	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
-	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		if ((global->board[square] == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
-		    && !(pieces_processed_bitvector & (1 << piece))) {
-
-		    local->piece_position[piece] = square;
-		    local->board_vector |= BITVECTOR(square);
-		    if (tb->piece_color[piece] == WHITE)
-			local->white_vector |= BITVECTOR(square);
-		    else
-			local->black_vector |= BITVECTOR(square);
-
-		    pieces_processed_bitvector |= (1 << piece);
-
-		    break;
-		}
-	    }
-	    if (piece == tb->num_mobiles) {
-		if (extra_piece != NONE) {
-		    fprintf(stderr, "More than one extra piece in translation\n");
-		    return -1;
-		}
-		/* XXX I'd like to change this (for consistency) to be the piece index in the
-		 * futurebase, but since there is still an intermediate global position, that will
-		 * have to wait.
-		 */
-		extra_piece = square;
-	    }
-	}
-    }
-
-
-    /* Make sure all the pieces but one have been accounted for.  We count a piece as "free" if
-     * either it hasn't been processed at all, or if it was processed but was outside its move
-     * restriction.
-     */
-
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	if (!(pieces_processed_bitvector & (1 << piece))) {
-	    if (missing_piece1 == NONE) {
-		missing_piece1 = piece;
-	    } else if (missing_piece2 == NONE) {
-		if (tb->piece_type[piece] == PAWN) {
-		    missing_piece2 = missing_piece1;
-		    missing_piece1 = piece;
-		} else {
-		    missing_piece2 = piece;
-		}
-	    } else {
-		fprintf(stderr, "More than one missing piece in translation\n");
-		return -1;
-	    }
-	} else if (!(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
-	    if (restricted_piece == NONE) restricted_piece = piece;
-	    else {
-		fprintf(stderr, "More than one restricted piece in translation\n");
-		return -1;
-	    }
-	}
-    }
-
-    return ((missing_piece2 << 24) | (extra_piece << 16) | (restricted_piece << 8) | missing_piece1);
-}
-
-/* Translate tb1/index1 into tb2/local2
- */
 
 int translate_foreign_index_to_local_position(tablebase *tb1, int32 index1,
 					      tablebase *tb2, local_position_t *local, int invert_colors)
@@ -1299,6 +1145,107 @@ int translate_foreign_index_to_local_position(tablebase *tb1, int32 index1,
 
     return ((missing_piece2 << 24) | (extra_piece << 16) | (restricted_piece << 8) | missing_piece1);
 
+}
+
+/* This function works just like previous one.  So much so that I've considered wrapping them
+ * together, but since this one is already written, I'll just leave it alone for now.
+ *
+ * It's only use now is by the probing code (see next function).
+ */
+
+int32 global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
+{
+    int piece;
+    int restricted_piece = NONE;
+    int missing_piece1 = NONE;
+    int missing_piece2 = NONE;
+    int extra_piece = NONE;
+    int square;
+    short pieces_processed_bitvector = 0;
+
+    bzero(local, sizeof(local_position_t));
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++)
+	local->piece_position[piece] = -1;
+
+    local->en_passant_square = global->en_passant_square;
+    local->side_to_move = global->side_to_move;
+
+    for (square = 0; square < NUM_SQUARES; square ++) {
+	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
+	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		if ((global->board[square] == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
+		    && !(pieces_processed_bitvector & (1 << piece))) {
+
+		    local->piece_position[piece] = square;
+		    local->board_vector |= BITVECTOR(square);
+		    if (tb->piece_color[piece] == WHITE)
+			local->white_vector |= BITVECTOR(square);
+		    else
+			local->black_vector |= BITVECTOR(square);
+
+		    pieces_processed_bitvector |= (1 << piece);
+
+		    break;
+		}
+	    }
+	    if (piece == tb->num_mobiles) {
+		if (extra_piece != NONE) {
+		    /* This can happen if we're probing a whole bunch of radically different tablebases. */
+		    /* fprintf(stderr, "More than one extra piece in translation\n"); */
+		    return -1;
+		}
+		/* XXX I'd like to change this (for consistency) to be the piece index in the
+		 * futurebase, but since there is still an intermediate global position, that will
+		 * have to wait.
+		 */
+		extra_piece = square;
+	    }
+	}
+    }
+
+
+    /* Make sure all the pieces but one have been accounted for.  We count a piece as "free" if
+     * either it hasn't been processed at all, or if it was processed but was outside its move
+     * restriction.
+     */
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	if (!(pieces_processed_bitvector & (1 << piece))) {
+	    if (missing_piece1 == NONE) {
+		missing_piece1 = piece;
+	    } else if (missing_piece2 == NONE) {
+		if (tb->piece_type[piece] == PAWN) {
+		    missing_piece2 = missing_piece1;
+		    missing_piece1 = piece;
+		} else {
+		    missing_piece2 = piece;
+		}
+	    } else {
+		/* This can happen if we're probing a whole bunch of radically different tablebases. */
+		/* fprintf(stderr, "More than one missing piece in translation\n"); */
+		return -1;
+	    }
+	} else if (!(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
+	    if (restricted_piece == NONE) restricted_piece = piece;
+	    else {
+		/* This can happen if we're probing a whole bunch of radically different tablebases. */
+		/* fprintf(stderr, "More than one restricted piece in translation\n"); */
+		return -1;
+	    }
+	}
+    }
+
+    return ((missing_piece2 << 24) | (extra_piece << 16) | (restricted_piece << 8) | missing_piece1);
+}
+
+int32 global_position_to_index(tablebase *tb, global_position_t *global)
+{
+    local_position_t local;
+
+    if (global_position_to_local_position(tb, global, &local) != 0x80808080) return -1;
+
+    return local_position_to_index(tb, &local);
 }
 
 
