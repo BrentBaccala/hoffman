@@ -593,7 +593,7 @@ xmlDocPtr finalize_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.96 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.97 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -672,11 +672,8 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
      *
      * What exactly is an illegal position?  Well, for starters, one that index_to_local_position()
      * reports as illegal, because that's the function that initialize_tablebase() uses to figure
-     * which positions need to be flagged illegal, and the program screams if you try to back prop
-     * into one of them.  Since global_position_to_index() is also used to generate indices during
-     * back prop, its idea of illegality also has to match with index_to_local_position().  And
-     * since index_to_global_position() is used to decide which futurebase positions to back prop to
-     * begin with, its idea of legality also has to consistent.
+     * which positions are flagged illegal, as well as which positions to consider during back prop,
+     * and the program screams if you try to back prop into an illegal position.
      *
      * This function is currently used only during back propagation to generate indices, and during
      * probing to convert "next move" positions into indices.
@@ -1565,9 +1562,6 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  *
  */
 
-#define WHITE_TO_MOVE(index) (((index)&1)==WHITE)
-#define BLACK_TO_MOVE(index) (((index)&1)==BLACK)
-
 inline short does_PTM_win(tablebase *tb, int32 index)
 {
     return (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
@@ -1578,22 +1572,6 @@ inline short does_PNTM_win(tablebase *tb, int32 index)
 {
     return (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
 	|| (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE);
-}
-
-inline short does_white_win(tablebase *tb, int32 index)
-{
-    if (WHITE_TO_MOVE(index))
-	return does_PTM_win(tb, index);
-    else
-	return does_PNTM_win(tb,index);
-}
-
-inline short does_black_win(tablebase *tb, int32 index)
-{
-    if (BLACK_TO_MOVE(index))
-	return does_PTM_win(tb, index);
-    else
-	return does_PNTM_win(tb,index);
 }
 
 inline boolean needs_propagation(tablebase *tb, int32 index)
@@ -1618,7 +1596,7 @@ inline void mark_propagated(tablebase *tb, int32 index)
     }
 }
 
-/* get_mate_in_count() is also used as basically (does_white_win() || does_black_win()), so it has
+/* get_mate_in_count() is also used as basically (does_PTM_win() || does_PNTM_win()), so it has
  * to return -1 if there is no mate from this position
  */
 
@@ -1665,9 +1643,11 @@ void initialize_index_with_white_mated(tablebase *tb, int32 index)
     if (index == DEBUG_MOVE) printf("initialize_index_with_white_mated; index=%d\n", index);
 #endif
 
+#if 0
     if (WHITE_TO_MOVE(index)) {
 	fprintf(stderr, "initialize_index_with_white_mated in a white to move position!\n");
     }
+#endif
     tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
     tb->entries[index].mate_in_cnt = 0;
     tb->entries[index].stalemate_cnt = 0;
@@ -1681,9 +1661,11 @@ void initialize_index_with_black_mated(tablebase *tb, int32 index)
     if (index == DEBUG_MOVE) printf("initialize_index_with_black_mated; index=%d\n", index);
 #endif
 
+#if 0
     if (BLACK_TO_MOVE(index)) {
 	fprintf(stderr, "initialize_index_with_black_mated in a black to move position!\n");
     }
+#endif
     tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
     tb->entries[index].mate_in_cnt = 0;
     tb->entries[index].stalemate_cnt = 0;
@@ -3867,7 +3849,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
 		mate_in_count, get_mate_in_count(tb, parent_index));
     }
 
-    if (!does_white_win(tb, parent_index) && !does_black_win(tb, parent_index)) {
+    if (!does_PTM_win(tb, parent_index) && !does_PNTM_win(tb, parent_index)) {
 	fprintf(stderr, "Propagating position %d where neither side wins?!\n", parent_index);
     }
 
