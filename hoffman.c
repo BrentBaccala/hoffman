@@ -325,6 +325,7 @@ struct fourbyte_entry {
 char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
 
 typedef struct tablebase {
+    int32 max_index;
     xmlDocPtr xml;
     void *fileptr;
     size_t length;
@@ -386,6 +387,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	int i;
 
 	tb->num_mobiles = result->nodesetval->nodeNr;
+	tb->max_index = (2<<(6*tb->num_mobiles)) - 1;
 
 	for (i=0; i < result->nodesetval->nodeNr; i++) {
 	    xmlChar * color;
@@ -593,7 +595,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.98 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.99 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -648,11 +650,6 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
 
 /***** INDICES AND POSITIONS *****/
-
-int32 max_index(tablebase_t *tb)
-{
-    return (2<<(6*tb->num_mobiles)) - 1;
-}
 
 int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
 {
@@ -2556,7 +2553,6 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 					       int *mate_in_limit)
 {
     int32 future_index;
-    int32 max_future_index_static = max_index(futurebase);
     local_position_t position;
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
@@ -2568,7 +2564,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
     /* We could limit the range of future_index here */
 
-    for (future_index = 0; future_index < max_future_index_static; future_index ++) {
+    for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
 
 	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
@@ -2659,7 +2655,6 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 						       int *mate_in_limit)
 {
     int32 future_index;
-    int32 max_future_index_static = max_index(futurebase);
     local_position_t position;
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
@@ -2671,7 +2666,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
     /* We could limit the range of future_index here */
 
-    for (future_index = 0; future_index < max_future_index_static; future_index ++) {
+    for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
 
 	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
@@ -3017,13 +3012,12 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase_t *tb, tablebase_t
 						    int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
 {
     int32 future_index;
-    int32 max_future_index_static = max_index(futurebase);
     local_position_t current_position;
     int piece;
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
 
-    for (future_index = 0; future_index < max_future_index_static; future_index ++) {
+    for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
 
 	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
@@ -3104,7 +3098,6 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 					    int invert_colors_of_futurebase, int *mate_in_limit)
 {
     int32 future_index;
-    int32 max_future_index_static = max_index(futurebase);
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
     int32 conversion_result;
@@ -3113,7 +3106,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
     int dir;
     struct movement *movementptr;
 
-    for (future_index = 0; future_index < max_future_index_static; future_index ++) {
+    for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
 
 	/* Translate the futurebase index into a local position.  We have exactly the same number
 	 * and type of pieces here, but exactly one of them is on a restricted square (according to
@@ -3653,12 +3646,11 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 
-    int32 max_index_static = max_index(tb);
     int32 index;
     int all_futuremoves_handled = 1;
     int max_complaints = 10;
 
-    for (index = 0; index < max_index_static; index ++) {
+    for (index = 0; index <= tb->max_index; index ++) {
 	if (tb->entries[index].futuremove_cnt != 0) {
 	    switch (tb->move_restrictions[index_to_side_to_move(tb, index)]) {
 
@@ -4086,11 +4078,7 @@ void initialize_tablebase(tablebase_t *tb)
     int dir;
     struct movement *movementptr;
 
-    /* This is here because we don't want to be calling max_index() everytime through the loop below */
-
-    int32 max_index_static = max_index(tb);
-
-    for (index=0; index < max_index_static; index++) {
+    for (index=0; index <= tb->max_index; index++) {
 
 	if (! index_to_local_position(tb, index, &position)) {
 
@@ -4285,18 +4273,16 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int mate_in_limit)
 {
     int moves_to_win;
     int progress_made;
-    int32 max_index_static;
     int32 index;
 
     /* First we look for forced mates... */
 
     moves_to_win = 0;
     progress_made = 1;
-    max_index_static = max_index(tb);
 
     while (progress_made || moves_to_win <= mate_in_limit) {
 	progress_made = 0;
-	for (index=0; index < max_index_static; index++) {
+	for (index=0; index <= tb->max_index; index++) {
 	    if (needs_propagation(tb, index) && get_mate_in_count(tb, index) == moves_to_win) {
 #if 0
 		if (!progress_made)
@@ -4365,13 +4351,12 @@ char * nalimov_to_english(int score)
 void verify_tablebase_against_nalimov(tablebase_t *tb)
 {
     int32 index;
-    int32 max_index_static = max_index(tb);
     global_position_t global;
     int score;
 
     fprintf(stderr, "Verifying tablebase against Nalimov\n");
 
-    for (index = 0; index < max_index_static; index++) {
+    for (index = 0; index <= tb->max_index; index++) {
 	if (index_to_global_position(tb, index, &global)) {
 	    if (! is_position_valid(tb, index)) {
 
