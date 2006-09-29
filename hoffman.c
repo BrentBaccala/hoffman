@@ -593,7 +593,7 @@ xmlDocPtr finalize_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.95 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.96 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -838,97 +838,6 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
 	} else {
 	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
-	}
-    }
-
-    return 1;
-}
-
-/* index_to_global_position()
- *
- * Used during promotion, promotion capture, and mobile capture futurebase propagation.  Runs
- * through all the indices of a futurebase, and its return value is used to decide if the index
- * corresponds to a legal position, so its verdict on legal or illegal positions needs to match up
- * with the above functions.
- *
- * Also used during Nalimov tablebase verification in the same way (running through all indices in a
- * tablebase), as well as during probe code to consider possible captures and promotions because
- * they may lead out of the current tablebase.
- *
- * Seems never to be used on a tablebase under construction; only on a finished one.
- */
-
-boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *position)
-{
-    int piece;
-
-    /* This check somewhat violates principles of code isolation, but since this function is never
-     * used on a tablebase under construction, and we do need this to figure out which indices in a
-     * futurebase are legit, it seems reasonable to get out of it early with a quick check like
-     * this to speed up futurebase propagation.
-     *
-     * Since this is here, right now I don't bother checking piece restrictions in this function.
-     */
-
-    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return 0;
-
-    bzero(position, sizeof(global_position_t));
-
-    position->en_passant_square = -1;
-    position->side_to_move = index & 1;
-    index >>= 1;
-
-    for (piece = 0; piece < tb->num_mobiles; piece++) {
-
-	int square = index & 63;
-
-	/* There are other possibilities for illegal combinations, namely a king next to the other
-	 * king, but that possibility is taken care of with an is_position_valid() check.  I need
-	 * this check here to keep my Nalimov verification routine from screaming about pawns on the
-	 * eighth rank.
-	 */
-
-	/* En passant */
-	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
-	    if (position->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
-	    if (tb->piece_color[piece] == WHITE) {
-		if (position->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
-		position->en_passant_square = square + 2*8;
-		square += 3*8;
-	    } else {
-		if (position->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
-		position->en_passant_square = square + 5*8;
-		square += 4*8;
-	    }
-	}
-
-	if (position->board[square] != 0) {
-	    return 0;
-	}
-
-	if ((tb->piece_type[piece] == PAWN) && (square >= 56)) {
-	    return 0;
-	}
-
-	position->board[square]
-	    = global_pieces[tb->piece_color[piece]][tb->piece_type[piece]];
-
-	position->board_vector |= BITVECTOR(square);
-
-	index >>= 6;
-    }
-
-    /* If there is an en passant capturable pawn in this position, then there can't be anything
-     * on the capture square or on the square right behind it (where the pawn just came from),
-     * or its an illegal position.
-     */
-
-    if (position->en_passant_square != -1) {
-	if (position->board_vector & BITVECTOR(position->en_passant_square)) return 0;
-	if (position->side_to_move == WHITE) {
-	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return 0;
-	} else {
-	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return 0;
 	}
     }
 
@@ -1246,6 +1155,39 @@ int32 global_position_to_index(tablebase *tb, global_position_t *global)
     if (global_position_to_local_position(tb, global, &local) != 0x80808080) return -1;
 
     return local_position_to_index(tb, &local);
+}
+
+/* index_to_global_position()
+ *
+ * Used during Nalimov tablebase verification (by running through all indices in a tablebase), as
+ * well as during probe code to consider possible captures and promotions because they may lead out
+ * of the current tablebase.
+ *
+ * Massively simplified from an earlier implementation because I want to contain the details of
+ * indexing to the local position routines.  Probably a little bit slower now, but not too much.
+ *
+ * Seems never to be used on a tablebase under construction; only on a finished one.
+ */
+
+boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *global)
+{
+    local_position_t local;
+    int piece;
+
+    if (! index_to_local_position(tb, index, &local)) return 0;
+
+    bzero(global, sizeof(global_position_t));
+
+    global->side_to_move = local.side_to_move;
+    global->en_passant_square = local.en_passant_square;
+
+    for (piece = 0; piece < tb->num_mobiles; piece++) {
+	global->board[local.piece_position[piece]]
+	    = global_pieces[tb->piece_color[piece]][tb->piece_type[piece]];
+	global->board_vector |= BITVECTOR(local.piece_position[piece]);
+    }
+
+    return 1;
 }
 
 
