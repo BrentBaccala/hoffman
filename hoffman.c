@@ -399,15 +399,12 @@ int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
     pos->board_vector = 0;
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	/* I've added this pawn check because I've had some problems.  This makes the
-	 * return of this function match up with the return of index_to_global_position
-	 */
-	if ((tb->piece_type[piece] == PAWN)
-	    && ((pos->piece_position[piece] < 8) || (pos->piece_position[piece] >= 56))) {
+
+	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
+	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
+	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
 	    return -1;
 	}
-	if (pos->piece_position[piece] < 0)
-	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
@@ -494,13 +491,6 @@ boolean index_to_local_position(tablebase_t *tb, int32 index, local_position_t *
 		p->en_passant_square = square + 5*8;
 		square += 4*8;
 	    }
-	}
-
-	/* I've added this pawn check because I've had some problems.  This makes the
-	 * return of this function match up with the return of index_to_global_position
-	 */
-	if ((tb->piece_type[piece] == PAWN) && (square >= 56)) {
-	    return 0;
 	}
 
 	/* The first place we handle restricted pieces, and one of most important, too, because this
@@ -801,7 +791,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.101 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.102 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
