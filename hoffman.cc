@@ -379,12 +379,17 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     result = xmlXPathEvalExpression((const xmlChar *) "//mobile", context);
     if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	fprintf(stderr, "No mobile pieces!\n");
+	return NULL;
     } else if (result->nodesetval->nodeNr < 2) {
 	fprintf(stderr, "Too few mobile pieces!\n");
+	return NULL;
     } else if (result->nodesetval->nodeNr > MAX_MOBILES) {
 	fprintf(stderr, "Too many mobile pieces!\n");
+	return NULL;
     } else {
 	int i;
+
+	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
 
 	tb->num_mobiles = result->nodesetval->nodeNr;
 	tb->max_index = (2<<(6*tb->num_mobiles)) - 1;
@@ -410,6 +415,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		tb->piece_legal_squares[i] = BITVECTOR(square(location[1] - '1', location[0] - 'a'));
 	    } else {
 		fprintf(stderr, "Illegal location (%s) in mobile\n", location);
+		return NULL;
 	    }
 
 	    if ((tb->piece_color[i] == -1) || (tb->piece_type[i] == -1)) {
@@ -422,6 +428,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     if ((tb->piece_color[WHITE_KING] != WHITE) || (tb->piece_type[WHITE_KING] != KING)
 	|| (tb->piece_color[BLACK_KING] != BLACK) || (tb->piece_type[BLACK_KING] != KING)) {
 	fprintf(stderr, "Kings aren't where they need to be in mobiles!\n");
+	return NULL;
     }
 
     xmlXPathFreeContext(context);
@@ -443,9 +450,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    type = find_name_in_array((char *) type_str, restriction_types);
 	    if ((color == -1) || (type == -1)) {
 		fprintf(stderr, "Illegal move restriction\n");
+		return NULL;
 	    } else {
 		if ((tb->move_restrictions[color] > 0) && (tb->move_restrictions[color] != type)) {
 		    fprintf(stderr, "Incompatible move restrictions\n");
+		    return NULL;
 		} else {
 		    tb->move_restrictions[color] = type;
 		}
@@ -499,11 +508,13 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     tb = parse_XML_into_tablebase(doc);
 
-    /* The "1" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
+    if (tb != NULL) {
 
-    tb->entries = (struct fourbyte_entry *) calloc(1<<(1+6*tb->num_mobiles), sizeof(struct fourbyte_entry));
-    if (tb->entries == NULL) {
-	fprintf(stderr, "Can't malloc tablebase entries\n");
+	tb->entries = (struct fourbyte_entry *) calloc(tb->max_index + 1, sizeof(struct fourbyte_entry));
+	if (tb->entries == NULL) {
+	    fprintf(stderr, "Can't malloc tablebase entries\n");
+	}
+
     }
 
     /* We don't free the XML doc because the tablebase struct contains a pointer to it */
@@ -545,21 +556,24 @@ tablebase_t * load_futurebase_from_file(char *filename)
 
     tb = parse_XML_into_tablebase(doc);
 
-    tb->fileptr = fileptr;
-    tb->length = filestat.st_size;
+    if (tb != NULL) {
 
-    root_element = xmlDocGetRootElement(doc);
+	tb->fileptr = fileptr;
+	tb->length = filestat.st_size;
 
-    if (xmlStrcmp(root_element->name, (const xmlChar *) "tablebase")) {
-	fprintf(stderr, "'%s' failed XML parse\n", filename);
-	return NULL;
+	root_element = xmlDocGetRootElement(doc);
+
+	if (xmlStrcmp(root_element->name, (const xmlChar *) "tablebase")) {
+	    fprintf(stderr, "'%s' failed XML parse\n", filename);
+	    return NULL;
+	}
+
+	offsetstr = xmlGetProp(root_element, (const xmlChar *) "offset");
+
+	offset = strtol((const char *) offsetstr, NULL, 0);
+
+	tb->entries = (struct fourbyte_entry *) (fileptr + offset);
     }
-
-    offsetstr = xmlGetProp(root_element, (const xmlChar *) "offset");
-
-    offset = strtol((const char *) offsetstr, NULL, 0);
-
-    tb->entries = (struct fourbyte_entry *) (fileptr + offset);
 
     return tb;
 }
@@ -595,7 +609,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.99 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.100 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -4537,6 +4551,9 @@ int main(int argc, char *argv[])
 
 	tb = parse_XML_control_file(argv[optind]);
 
+	/* Hopefully, an error message has already been printed... */
+	if (tb == NULL) exit(EXIT_FAILURE);
+
 	fprintf(stderr, "Initializing tablebase\n");
 	initialize_tablebase(tb);
 
@@ -4572,10 +4589,14 @@ int main(int argc, char *argv[])
     for (argi=optind; argi<argc; argi++) {
 	fprintf(stderr, "Loading '%s'\n", argv[argi]);
 	tbs[i] = load_futurebase_from_file(argv[argi]);
+	if (tbs[i] == NULL) {
+	    fprintf(stderr, "Error loading '%s'\n", argv[argi]);
+	} else {
 #ifdef USE_NALIMOV
-	if (verify) verify_tablebase_against_nalimov(tbs[i]);
+	    if (verify) verify_tablebase_against_nalimov(tbs[i]);
 #endif
-	i++;
+	    i++;
+	}
     }
 
     if (!probing) exit(EXIT_SUCCESS);
