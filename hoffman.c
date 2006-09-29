@@ -334,9 +334,9 @@ typedef struct tablebase {
     short piece_color[MAX_MOBILES];
     int64 piece_legal_squares[MAX_MOBILES];
     struct fourbyte_entry *entries;
-} tablebase;
+} tablebase_t;
 
-boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int square, int color, int type);
+boolean place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type);
 
 int find_name_in_array(char * name, char * array[])
 {
@@ -357,18 +357,18 @@ int find_name_in_array(char * name, char * array[])
  * checking here.  The idea is that the validation will ultimately provide the error check.
  */
 
-tablebase * parse_XML_into_tablebase(xmlDocPtr doc)
+tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 {
-    tablebase *tb;
+    tablebase_t *tb;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
 
-    tb = malloc(sizeof(tablebase));
+    tb = malloc(sizeof(tablebase_t));
     if (tb == NULL) {
 	fprintf(stderr, "Can't malloc tablebase\n");
 	return NULL;
     }
-    bzero(tb, sizeof(tablebase));
+    bzero(tb, sizeof(tablebase_t));
 
     tb->xml = doc;
 
@@ -459,11 +459,11 @@ tablebase * parse_XML_into_tablebase(xmlDocPtr doc)
 /* Parses an XML control file.  This function allocates an entries array, as well.
  */
 
-tablebase * parse_XML_control_file(char *filename)
+tablebase_t * parse_XML_control_file(char *filename)
 {
     xmlParserCtxtPtr ctxt; /* the parser context */
     xmlDocPtr doc;
-    tablebase *tb;
+    tablebase_t *tb;
 
     /* create a parser context */
     ctxt = xmlNewParserCtxt();
@@ -513,7 +513,7 @@ tablebase * parse_XML_control_file(char *filename)
  * to the resulting tablebase structure after setting 'entries' to point into the mmap'ed data.
  */
 
-tablebase * load_futurebase_from_file(char *filename)
+tablebase_t * load_futurebase_from_file(char *filename)
 {
     int fd;
     struct stat filestat;
@@ -523,7 +523,7 @@ tablebase * load_futurebase_from_file(char *filename)
     xmlNodePtr root_element;
     xmlChar * offsetstr;
     long offset;
-    tablebase *tb;
+    tablebase_t *tb;
 
     fd = open(filename, O_RDONLY);
     if (fd == -1) {
@@ -562,7 +562,7 @@ tablebase * load_futurebase_from_file(char *filename)
     return tb;
 }
 
-void unload_futurebase(tablebase *tb)
+void unload_futurebase(tablebase_t *tb)
 {
     if (tb->fileptr != NULL) munmap(tb->fileptr, tb->length);
     tb->fileptr = NULL;
@@ -572,7 +572,7 @@ void unload_futurebase(tablebase *tb)
  * actually been built.
  */
 
-xmlDocPtr finalize_XML_header(tablebase *tb)
+xmlDocPtr finalize_XML_header(tablebase_t *tb)
 {
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
@@ -593,7 +593,7 @@ xmlDocPtr finalize_XML_header(tablebase *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.97 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.98 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -620,7 +620,7 @@ int do_write(int fd, void *ptr, int length)
     return 0;
 }
 
-void write_tablebase_to_file(tablebase *tb, char *filename)
+void write_tablebase_to_file(tablebase_t *tb, char *filename)
 {
     xmlDocPtr doc;
     xmlSaveCtxtPtr savectx;
@@ -649,12 +649,12 @@ void write_tablebase_to_file(tablebase *tb, char *filename)
 
 /***** INDICES AND POSITIONS *****/
 
-int32 max_index(tablebase *tb)
+int32 max_index(tablebase_t *tb)
 {
     return (2<<(6*tb->num_mobiles)) - 1;
 }
 
-int32 local_position_to_index(tablebase *tb, local_position_t *pos)
+int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
 {
     /* This function, given a local board position, returns an index into the tablebase.
      *
@@ -745,7 +745,7 @@ int32 local_position_to_index(tablebase *tb, local_position_t *pos)
     return index;
 }
 
-boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
+boolean index_to_local_position(tablebase_t *tb, int32 index, local_position_t *p)
 {
     /* Given an index, fill in a board position.  Obviously has to correspond to local_position_to_index()
      * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
@@ -843,7 +843,7 @@ boolean index_to_local_position(tablebase *tb, int32 index, local_position_t *p)
 
 /* This function could be made a bit faster, but this simpler version is hopefully safer. */
 
-int index_to_side_to_move(tablebase *tb, int32 index)
+int index_to_side_to_move(tablebase_t *tb, int32 index)
 {
     local_position_t position;
 
@@ -955,8 +955,8 @@ void invert_colors_of_global_position(global_position_t *global)
 
 #define NONE 0x80
 
-int translate_foreign_index_to_local_position(tablebase *tb1, int32 index1,
-					      tablebase *tb2, local_position_t *local, int invert_colors)
+int translate_foreign_index_to_local_position(tablebase_t *tb1, int32 index1,
+					      tablebase_t *tb2, local_position_t *local, int invert_colors)
 {
     local_position_t foreign_position;
     int foreign_piece;
@@ -1059,7 +1059,7 @@ int translate_foreign_index_to_local_position(tablebase *tb1, int32 index1,
  * It's only use now is by the probing code (see next function).
  */
 
-int32 global_position_to_local_position(tablebase *tb, global_position_t *global, local_position_t *local)
+int32 global_position_to_local_position(tablebase_t *tb, global_position_t *global, local_position_t *local)
 {
     int piece;
     int restricted_piece = NONE;
@@ -1145,7 +1145,7 @@ int32 global_position_to_local_position(tablebase *tb, global_position_t *global
     return ((missing_piece2 << 24) | (extra_piece << 16) | (restricted_piece << 8) | missing_piece1);
 }
 
-int32 global_position_to_index(tablebase *tb, global_position_t *global)
+int32 global_position_to_index(tablebase_t *tb, global_position_t *global)
 {
     local_position_t local;
 
@@ -1166,7 +1166,7 @@ int32 global_position_to_index(tablebase *tb, global_position_t *global)
  * Seems never to be used on a tablebase under construction; only on a finished one.
  */
 
-boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *global)
+boolean index_to_global_position(tablebase_t *tb, int32 index, global_position_t *global)
 {
     local_position_t local;
     int piece;
@@ -1190,7 +1190,7 @@ boolean index_to_global_position(tablebase *tb, int32 index, global_position_t *
 
 /***** PARSING FEN TO/FROM POSITION STRUCTURES *****/
 
-boolean place_piece_in_local_position(tablebase *tb, local_position_t *pos, int square, int color, int type)
+boolean place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type)
 {
     int piece;
 
@@ -1215,7 +1215,7 @@ boolean place_piece_in_global_position(global_position_t *position, int square, 
     return 1;
 }
 
-boolean parse_FEN_to_local_position(char *FEN_string, tablebase *tb, local_position_t *pos)
+boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_position_t *pos)
 {
     int row, col;
 
@@ -1562,30 +1562,30 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  *
  */
 
-inline short does_PTM_win(tablebase *tb, int32 index)
+inline short does_PTM_win(tablebase_t *tb, int32 index)
 {
     return (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
 	|| (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE);
 }
 
-inline short does_PNTM_win(tablebase *tb, int32 index)
+inline short does_PNTM_win(tablebase_t *tb, int32 index)
 {
     return (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
 	|| (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE);
 }
 
-inline boolean needs_propagation(tablebase *tb, int32 index)
+inline boolean needs_propagation(tablebase_t *tb, int32 index)
 {
     return (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
 	|| (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED);
 }
 
-inline boolean is_position_valid(tablebase *tb, int32 index)
+inline boolean is_position_valid(tablebase_t *tb, int32 index)
 {
     return (! (does_PTM_win(tb, index) && (tb->entries[index].mate_in_cnt == 0)));
 }
 
-inline void mark_propagated(tablebase *tb, int32 index)
+inline void mark_propagated(tablebase_t *tb, int32 index)
 {
     if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) {
 	tb->entries[index].movecnt = PTM_WINS_PROPAGATION_DONE;
@@ -1600,7 +1600,7 @@ inline void mark_propagated(tablebase *tb, int32 index)
  * to return -1 if there is no mate from this position
  */
 
-inline int get_mate_in_count(tablebase *tb, int32 index)
+inline int get_mate_in_count(tablebase_t *tb, int32 index)
 {
     if (tb->entries[index].movecnt >= 1 && tb->entries[index].movecnt <= MAX_MOVECNT) {
 	return -1;
@@ -1609,7 +1609,7 @@ inline int get_mate_in_count(tablebase *tb, int32 index)
     }
 }
 
-inline int get_stalemate_count(tablebase *tb, int32 index)
+inline int get_stalemate_count(tablebase_t *tb, int32 index)
 {
     return tb->entries[index].stalemate_cnt;
 }
@@ -1628,7 +1628,7 @@ inline int get_stalemate_count(tablebase *tb, int32 index)
  *  - any other position, with 'movecnt' possible moves out the position
  */
 
-void initialize_index_as_illegal(tablebase *tb, int32 index)
+void initialize_index_as_illegal(tablebase_t *tb, int32 index)
 {
     tb->entries[index].movecnt = ILLEGAL_POSITION;
     tb->entries[index].mate_in_cnt = 255;
@@ -1636,7 +1636,7 @@ void initialize_index_as_illegal(tablebase *tb, int32 index)
     tb->entries[index].futuremove_cnt = 0;
 }
 
-void initialize_index_with_white_mated(tablebase *tb, int32 index)
+void initialize_index_with_white_mated(tablebase_t *tb, int32 index)
 {
 
 #ifdef DEBUG_MOVE
@@ -1654,7 +1654,7 @@ void initialize_index_with_white_mated(tablebase *tb, int32 index)
     tb->entries[index].futuremove_cnt = 0;
 }
 
-void initialize_index_with_black_mated(tablebase *tb, int32 index)
+void initialize_index_with_black_mated(tablebase_t *tb, int32 index)
 {
 
 #ifdef DEBUG_MOVE
@@ -1672,7 +1672,7 @@ void initialize_index_with_black_mated(tablebase *tb, int32 index)
     tb->entries[index].futuremove_cnt = 0;
 }
 
-void initialize_index_with_stalemate(tablebase *tb, int32 index)
+void initialize_index_with_stalemate(tablebase_t *tb, int32 index)
 {
 
 #ifdef DEBUG_MOVE
@@ -1685,7 +1685,7 @@ void initialize_index_with_stalemate(tablebase *tb, int32 index)
     tb->entries[index].futuremove_cnt = 0;
 }
 
-void initialize_index_with_movecnt(tablebase *tb, int32 index, int movecnt, int futuremove_cnt)
+void initialize_index_with_movecnt(tablebase_t *tb, int32 index, int movecnt, int futuremove_cnt)
 {
 
 #ifdef DEBUG_MOVE
@@ -1698,7 +1698,7 @@ void initialize_index_with_movecnt(tablebase *tb, int32 index, int movecnt, int 
     tb->entries[index].futuremove_cnt = futuremove_cnt;
 }
 
-inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
+inline void PTM_wins(tablebase_t *tb, int32 index, int mate_in_count, int stalemate_count)
 {
 
 #ifdef DEBUG_MOVE
@@ -1730,7 +1730,7 @@ inline void PTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemat
     }
 }
 
-inline void add_one_to_PNTM_wins(tablebase *tb, int32 index, int mate_in_count, int stalemate_count)
+inline void add_one_to_PNTM_wins(tablebase_t *tb, int32 index, int mate_in_count, int stalemate_count)
 {
 
 #ifdef DEBUG_MOVE
@@ -2416,7 +2416,7 @@ void verify_movements()
  * set, but we didn't use it.
  */
 
-void propagate_index_from_futurebase(tablebase *tb, tablebase *futurebase,
+void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 				      int32 future_index, int32 current_index, int *mate_in_limit)
 {
     /* Skip everything else if the position isn't valid.  In particular,
@@ -2454,7 +2454,7 @@ void propagate_index_from_futurebase(tablebase *tb, tablebase *futurebase,
     }
 }
 
-void propagate_minilocal_position_from_futurebase(tablebase *tb, tablebase *futurebase,
+void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 						  int32 future_index, local_position_t *current_position,
 						  int *mate_in_limit)
 {
@@ -2473,7 +2473,7 @@ void propagate_minilocal_position_from_futurebase(tablebase *tb, tablebase *futu
     propagate_index_from_futurebase(tb, futurebase, future_index, current_index, mate_in_limit);
 }
 
-void propagate_local_position_from_futurebase(tablebase *tb, tablebase *futurebase,
+void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 					      int32 future_index, local_position_t *position,
 					      int *mate_in_limit)
 {
@@ -2550,7 +2550,7 @@ void propagate_local_position_from_futurebase(tablebase *tb, tablebase *futureba
  * futurebase for positions with that piece on the last rank and back-props.
  */
 
-void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futurebase,
+void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 					       int invert_colors_of_futurebase,
 					       unsigned char promoted_piece, int pawn,
 					       int *mate_in_limit)
@@ -2652,7 +2652,7 @@ void propagate_moves_from_promotion_futurebase(tablebase *tb, tablebase *futureb
     }
 }
 
-void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase *futurebase,
+void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 						       int invert_colors_of_futurebase,
 						       unsigned char promoted_piece,
 						       unsigned char captured_piece, int pawn,
@@ -2802,7 +2802,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase *tb, tablebase 
  * on invert_colors_of_global position.
  */
 
-void consider_possible_captures(tablebase *tb, tablebase *futurebase, int32 future_index,
+void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 future_index,
 				local_position_t *position,
 				int capturing_piece, int captured_piece, int *mate_in_limit)
 {
@@ -3013,7 +3013,7 @@ void consider_possible_captures(tablebase *tb, tablebase *futurebase, int32 futu
 
 }
 
-void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *futurebase,
+void propagate_moves_from_mobile_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 						    int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
 {
     int32 future_index;
@@ -3100,7 +3100,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase *tb, tablebase *fu
  * of pieces.  It differs only in the frozen positions of the pieces.
  */
 
-void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase,
+void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 					    int invert_colors_of_futurebase, int *mate_in_limit)
 {
     int32 future_index;
@@ -3324,7 +3324,7 @@ void propagate_moves_from_normal_futurebase(tablebase *tb, tablebase *futurebase
  * Returns maximum mate_in value, or -1 if something went wrong
  */
 
-int back_propagate_all_futurebases(tablebase *tb) {
+int back_propagate_all_futurebases(tablebase_t *tb) {
 
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
@@ -3343,7 +3343,7 @@ int back_propagate_all_futurebases(tablebase *tb) {
 	    xmlChar * filename;
 	    xmlChar * colors_property;
 	    xmlChar * type;
-	    tablebase * futurebase;
+	    tablebase_t * futurebase;
 	    int invert_colors = 0;
 	    int future_piece;
 	    int piece;
@@ -3651,7 +3651,7 @@ int back_propagate_all_futurebases(tablebase *tb) {
  * explicitly flag which side is which in the file header.
  */
 
-boolean have_all_futuremoves_been_handled(tablebase *tb) {
+boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 
     int32 max_index_static = max_index(tb);
     int32 index;
@@ -3697,7 +3697,7 @@ boolean have_all_futuremoves_been_handled(tablebase *tb) {
  * positions that could have gotten us here and update their counters in various obscure ways.
  */
 
-void propagate_one_minimove_within_table(tablebase *tb, int32 parent_index, local_position_t *current_position)
+void propagate_one_minimove_within_table(tablebase_t *tb, int32 parent_index, local_position_t *current_position)
 {
     int32 current_index;
 
@@ -3762,7 +3762,7 @@ void propagate_one_minimove_within_table(tablebase *tb, int32 parent_index, loca
 
 }
 
-void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_position_t *position)
+void propagate_one_move_within_table(tablebase_t *tb, int32 parent_index, local_position_t *position)
 {
     int piece;
 
@@ -3830,7 +3830,7 @@ void propagate_one_move_within_table(tablebase *tb, int32 parent_index, local_po
     }
 }
 
-void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_count)
+void propagate_move_within_table(tablebase_t *tb, int32 parent_index, int mate_in_count)
 {
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
@@ -4078,7 +4078,7 @@ void propagate_move_within_table(tablebase *tb, int32 parent_index, int mate_in_
  *
  */
 
-void initialize_tablebase(tablebase *tb)
+void initialize_tablebase(tablebase_t *tb)
 {
     local_position_t position;
     int32 index;
@@ -4281,7 +4281,7 @@ void initialize_tablebase(tablebase *tb)
     }
 }
 
-void propagate_all_moves_within_tablebase(tablebase *tb, int mate_in_limit)
+void propagate_all_moves_within_tablebase(tablebase_t *tb, int mate_in_limit)
 {
     int moves_to_win;
     int progress_made;
@@ -4362,7 +4362,7 @@ char * nalimov_to_english(int score)
     return buffer;
 }
 
-void verify_tablebase_against_nalimov(tablebase *tb)
+void verify_tablebase_against_nalimov(tablebase_t *tb)
 {
     int32 index;
     int32 max_index_static = max_index(tb);
@@ -4447,8 +4447,8 @@ void verify_tablebase_against_nalimov(tablebase *tb)
 /* Search an array of tablebases for a global position.  Array should be terminated with a NULL ptr.
  */
 
-boolean search_tablebases_for_global_position(tablebase **tbs, global_position_t *global_position,
-					      tablebase **tbptr, int32 *indexptr)
+boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position_t *global_position,
+					      tablebase_t **tbptr, int32 *indexptr)
 {
     int32 index;
 
@@ -4464,7 +4464,7 @@ boolean search_tablebases_for_global_position(tablebase **tbs, global_position_t
     return 0;
 }
 
-void print_score(tablebase *tb, int32 index, char *ptm, char *pntm)
+void print_score(tablebase_t *tb, int32 index, char *ptm, char *pntm)
 {
     switch (tb->entries[index].movecnt) {
     case ILLEGAL_POSITION:
@@ -4489,7 +4489,7 @@ void print_score(tablebase *tb, int32 index, char *ptm, char *pntm)
 int main(int argc, char *argv[])
 {
     /* Make sure this tablebase array is one bigger than we need, so it can be NULL terminated */
-    tablebase *tb, **tbs;
+    tablebase_t *tb, **tbs;
     global_position_t global_position;
     boolean global_position_valid = 0;
     int argi;
@@ -4582,7 +4582,7 @@ int main(int argc, char *argv[])
 
     i = 0;
     /* calloc (unlike malloc) zeros memory */
-    tbs = calloc(argc - optind + 1, sizeof(tablebase *));
+    tbs = calloc(argc - optind + 1, sizeof(tablebase_t *));
 
     for (argi=optind; argi<argc; argi++) {
 	fprintf(stderr, "Loading '%s'\n", argv[argi]);
@@ -4715,7 +4715,7 @@ int main(int argc, char *argv[])
 				/* printf("MATE\n"); */
 
 			    } else {
-				tablebase *tb2;
+				tablebase_t *tb2;
 				global_position_t reversed_position;
 
 				global_capture_position.board[pos.piece_position[piece]] = 0;
@@ -4787,7 +4787,7 @@ int main(int argc, char *argv[])
 
 			    /* non-capture promotion */
 
-			    tablebase *tb2;
+			    tablebase_t *tb2;
 			    global_position_t reversed_position;
 			    int *promoted_piece;
 
@@ -4838,7 +4838,7 @@ int main(int argc, char *argv[])
 
 			    /* en passant capture */
 
-			    tablebase *tb2;
+			    tablebase_t *tb2;
 			    global_position_t reversed_position;
 
 			    global_capture_position.board[pos.piece_position[piece]] = 0;
@@ -4883,7 +4883,7 @@ int main(int argc, char *argv[])
 
 			    /* promotion capture */
 
-			    tablebase *tb2;
+			    tablebase_t *tb2;
 			    global_position_t reversed_position;
 			    int *promoted_piece;
 
@@ -4931,7 +4931,7 @@ int main(int argc, char *argv[])
 			    /* printf("MATE\n"); */
 
 			} else {
-			    tablebase *tb2;
+			    tablebase_t *tb2;
 			    global_position_t reversed_position;
 
 			    global_capture_position.board[pos.piece_position[piece]] = 0;
