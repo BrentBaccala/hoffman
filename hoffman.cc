@@ -326,6 +326,7 @@ char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
 
 typedef struct tablebase {
     int32 max_index;
+    enum {NAIVE_INDEX=1} index_type;
     xmlDocPtr xml;
     void *fileptr;
     size_t length;
@@ -355,7 +356,7 @@ int find_name_in_array(char * name, char * array[])
 
 /***** INDICES *****/
 
-int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
+int32 local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 {
     /* This function, given a local board position, returns an index into the tablebase.
      *
@@ -443,7 +444,7 @@ int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
     return index;
 }
 
-boolean index_to_local_position(tablebase_t *tb, int32 index, local_position_t *p)
+boolean naive_index_to_local_position(tablebase_t *tb, int32 index, local_position_t *p)
 {
     /* Given an index, fill in a board position.  Obviously has to correspond to local_position_to_index()
      * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
@@ -532,6 +533,28 @@ boolean index_to_local_position(tablebase_t *tb, int32 index, local_position_t *
     return 1;
 }
 
+int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
+{
+    switch (tb->index_type) {
+    case NAIVE_INDEX:
+	return local_position_to_naive_index(tb, pos);
+    default:
+	fprintf(stderr, "Unknown index type in local_position_to_index()\n");  /* BREAKPOINT */
+	return -1;
+    }
+}
+
+boolean index_to_local_position(tablebase_t *tb, int32 index, local_position_t *p)
+{
+    switch (tb->index_type) {
+    case NAIVE_INDEX:
+	return naive_index_to_local_position(tb, index, p);
+    default:
+	fprintf(stderr, "Unknown index type in index_to_local_position()\n");  /* BREAKPOINT */
+	return 0;
+    }
+}
+
 /***** XML TABLEBASE INTERACTION *****/
 
 /* Parses XML, creates a tablebase structure corresponding to it, and returns it.
@@ -545,6 +568,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     tablebase_t *tb;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
+    xmlNodePtr tablebase;
+    xmlChar * index;
 
     tb = malloc(sizeof(tablebase_t));
     if (tb == NULL) {
@@ -554,6 +579,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     bzero(tb, sizeof(tablebase_t));
 
     tb->xml = doc;
+
+    /* Fetch tablebase from XML */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression((const xmlChar *) "//tablebase", context);
+    tablebase = result->nodesetval->nodeTab[0];
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
     /* Fetch the mobile pieces from the XML */
 
@@ -571,10 +604,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     } else {
 	int i;
 
-	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
-
 	tb->num_mobiles = result->nodesetval->nodeNr;
-	tb->max_index = (2<<(6*tb->num_mobiles)) - 1;
 
 	for (i=0; i < result->nodesetval->nodeNr; i++) {
 	    xmlChar * color;
@@ -613,7 +643,26 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	return NULL;
     }
 
+    xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
+
+    /* Fetch the index type and compute tb->max_index */
+
+    index = xmlGetProp(tablebase, (const xmlChar *) "index");
+    if ((index == NULL) || !strcasecmp((char *) index, "naive")) {
+	if (index == NULL) {
+	    xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive");
+	    fprintf(stderr, "Index type not expressly specified; assuming NAIVE\n");
+	}
+	tb->index_type = NAIVE_INDEX;
+	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
+	tb->max_index = (2<<(6*tb->num_mobiles)) - 1;
+    } else {
+	fprintf(stderr, "Unknown index type (%s) in XML\n", index);
+	return NULL;
+    }
+
+    /* Fetch the move restrictions */
 
     context = xmlXPathNewContext(doc);
     result = xmlXPathEvalExpression((const xmlChar *) "//move-restriction", context);
@@ -787,11 +836,13 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
     xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "fourbyte");
-    xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive");
+
+    /* 'index' should now either be specified in input, or set to its default value earlier */
+    /* xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive"); */
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.102 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.103 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
