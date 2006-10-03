@@ -710,7 +710,9 @@ void check_1000_positions(tablebase_t *tb)
 	position1.en_passant_square = -1;
 
 	for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	    position1.piece_position[piece] = rand() % 64;
+	    do {
+		position1.piece_position[piece] = rand() % 64;
+	    } while (! (BITVECTOR(position1.piece_position[piece]) & tb->piece_legal_squares[piece]));
 	}
 
 	index = local_position_to_index(tb, &position1);
@@ -843,6 +845,15 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
 		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
+
+		/* if the pawn is en-passant capturable, add an index for that */
+		if ((tb->piece_type[piece] == PAWN)
+		    && (((tb->piece_color[piece] == WHITE) && (ROW(square) == 3))
+			|| ((tb->piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
+		    tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = COL(square);
+		    tb->simple_piece_indices[piece][COL(square)] = tb->total_legal_piece_positions[piece];
+		    tb->total_legal_piece_positions[piece] ++;
+		}
 	    }
 	    tb->max_index *= tb->total_legal_piece_positions[piece];
 	}
@@ -1034,7 +1045,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.105 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.106 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1867,7 +1878,7 @@ inline int get_stalemate_count(tablebase_t *tb, int32 index)
  * doing to process a single move.
  */
 
-#define DEBUG_MOVE 262273
+/* #define DEBUG_MOVE 262273 */
 
 /* Five possible ways we can initialize an index for a position:
  *  - it's illegal
