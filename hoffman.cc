@@ -797,12 +797,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		} else {
 		    tb->piece_legal_squares[i] = allones_bitvector;
 		}
-	    } else if ((location[0] >= 'a') && (location[0] <= 'h')
-		       && (location[1] >= '1') && (location[1] <= '8') && (location[2] == '\0')) {
-		tb->piece_legal_squares[i] = BITVECTOR(square(location[1] - '1', location[0] - 'a'));
 	    } else {
-		fprintf(stderr, "Illegal location (%s) in mobile\n", location);
-		return NULL;
+		int j = 0;
+		tb->piece_legal_squares[i] = 0;
+		while ((location[j] >= 'a') && (location[j] <= 'h')
+		       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
+		    tb->piece_legal_squares[i] |= BITVECTOR(square(location[j+1] - '1', location[j] - 'a'));
+		    j += 2;
+		    while (location[j] == ' ') j ++;
+		}
+		if (location[j] != '\0') {
+		    fprintf(stderr, "Illegal location (%s) in mobile\n", location);
+		    return NULL;
+		}
 	    }
 
 	    if ((tb->piece_color[i] == -1) || (tb->piece_type[i] == -1)) {
@@ -1045,7 +1052,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.107 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.108 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1093,7 +1100,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	fprintf(stderr, "seek failed\n");
     }
 
-    do_write(fd, tb->entries, sizeof(struct fourbyte_entry) << (1 + 6*tb->num_mobiles));
+    do_write(fd, tb->entries, sizeof(struct fourbyte_entry) * (tb->max_index + 1));
 
     close(fd);
 }
