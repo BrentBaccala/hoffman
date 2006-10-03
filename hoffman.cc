@@ -134,7 +134,7 @@ inline int square(int row, int col)
  * severe restrictions on the movements of the pieces.  So "8" is enough.
  */
 
-#define MAX_MOBILES 8
+#define MAX_MOBILES 16
 
 /* Why 100?  Well, I just think it's less likely to introduce bugs into this code if I count
  * half-moves instead of moves.  So it takes 100 half-moves to stalemate.
@@ -1045,7 +1045,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.106 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.107 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -4911,8 +4911,8 @@ int main(int argc, char *argv[])
 	    }
 
 #ifdef USE_NALIMOV
-		printf("\nNalimov score: ");
 		if (EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
+		    printf("\nNalimov score: ");
 		    if (score > 0) {
 			printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
 		    } else if (score < 0) {
@@ -4920,8 +4920,6 @@ int main(int argc, char *argv[])
 		    } else {
 			printf("DRAW\n");
 		    }
-		} else {
-		    printf("ILLEGAL POSITION\n");
 		}
 #endif
 
