@@ -330,6 +330,7 @@ typedef struct tablebase {
     int total_legal_piece_positions[MAX_MOBILES];
     int simple_piece_positions[MAX_MOBILES][64];
     int simple_piece_indices[MAX_MOBILES][64];
+    int last_identical_piece[MAX_MOBILES];
 
     xmlDocPtr xml;
     void *fileptr;
@@ -400,13 +401,31 @@ int32 local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
     int shift_count = 1;
     int32 index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
     int piece;
+    int piece2;
 
     pos->board_vector = 0;
 
+    /* Sort any identical pieces so that the lowest square number always comes first.  We don't want
+     * to change around the original position, so we use a copy of it.
+     */
+
+    local_position_t copy = *pos;
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	piece2 = piece;
+	while ((tb->last_identical_piece[piece2] != -1)
+	       && (copy.piece_position[piece2] < copy.piece_position[tb->last_identical_piece[piece2]])) {
+	    int square = copy.piece_position[piece2];
+	    copy.piece_position[piece2] = copy.piece_position[tb->last_identical_piece[piece2]];
+	    copy.piece_position[tb->last_identical_piece[piece2]] = square;
+	    piece2 = tb->last_identical_piece[piece2];
+	}
+    }
+
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
 
-	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
-	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
+	if ((copy.piece_position[piece] < 0) || (copy.piece_position[piece] > 63)
+	    || !(tb->piece_legal_squares[piece] & BITVECTOR(copy.piece_position[piece]))) {
 	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
 	    return -1;
 	}
@@ -415,17 +434,17 @@ int32 local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	 * this is completely legit.
 	 */
-	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
+	if ((tb->piece_type[piece] == PAWN) && (copy.en_passant_square != -1)
 	    && (((tb->piece_color[piece] == WHITE)
-		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		 && (copy.en_passant_square + 8 == copy.piece_position[piece]))
 		|| ((tb->piece_color[piece] == BLACK)
-		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    index |= COL(pos->en_passant_square) << shift_count;
+		    && (copy.en_passant_square - 8 == copy.piece_position[piece])))) {
+	    index |= COL(copy.en_passant_square) << shift_count;
 	} else {
-	    index |= pos->piece_position[piece] << shift_count;
+	    index |= copy.piece_position[piece] << shift_count;
 	}
-	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
-	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
+	if (pos->board_vector & BITVECTOR(copy.piece_position[piece])) return -1;
+	pos->board_vector |= BITVECTOR(copy.piece_position[piece]);
 
 	shift_count += 6;  /* because 2^6=64 */
     }
@@ -511,6 +530,14 @@ boolean naive_index_to_local_position(tablebase_t *tb, int32 index, local_positi
 	if (p->board_vector & BITVECTOR(square)) {
 	    return 0;
 	}
+
+	/* Identical pieces have to appear in sorted order. */
+
+	if ((tb->last_identical_piece[piece] != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
+	    return 0;
+	}
+
 	p->board_vector |= BITVECTOR(square);
 	if (tb->piece_color[piece] == WHITE) {
 	    p->white_vector |= BITVECTOR(square);
@@ -778,6 +805,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	return NULL;
     } else {
 	int piece;
+	int piece2;
 
 	tb->num_mobiles = result->nodesetval->nodeNr;
 
@@ -816,6 +844,21 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
 		fprintf(stderr, "Illegal piece color (%s) or type (%s)\n", color, type);
 		return NULL;
+	    }
+
+	    /* Now we need to figure out if there are any other pieces identical to this one,
+	     * because if so, exchanging the two pieces would not change the position, and that has
+	     * to be taken into account in the index code.
+	     */
+
+	    tb->last_identical_piece[piece] = -1;
+	    for (piece2 = piece - 1; piece2 >= 0; piece2 --) {
+		if ((tb->piece_color[piece2] == tb->piece_color[piece])
+		    && (tb->piece_type[piece2] == tb->piece_type[piece])
+		    && (tb->piece_legal_squares[piece2] == tb->piece_legal_squares[piece])) {
+		    tb->last_identical_piece[piece] = piece2;
+		    break;
+		}
 	    }
 
 	    if (color != NULL) xmlFree(color);
@@ -1057,7 +1100,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.109 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.110 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
