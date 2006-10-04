@@ -734,8 +734,8 @@ void check_1000_positions(tablebase_t *tb)
 
 /* Parses XML, creates a tablebase structure corresponding to it, and returns it.
  *
- * Eventually, I want to provide a DTD and validate the XML input, so there's very little error
- * checking here.  The idea is that the validation will ultimately provide the error check.
+ * I use a DTD and validate the XML input, so there's very little error checking here.  The idea is
+ * that the validation provides most of the error checks.
  */
 
 tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
@@ -763,65 +763,70 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    /* Fetch the mobile pieces from the XML */
+    /* Fetch the pieces from the XML */
 
     context = xmlXPathNewContext(doc);
     result = xmlXPathEvalExpression((const xmlChar *) "//mobile", context);
     if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	fprintf(stderr, "No mobile pieces!\n");
+	fprintf(stderr, "No pieces!\n");
 	return NULL;
     } else if (result->nodesetval->nodeNr < 2) {
-	fprintf(stderr, "Too few mobile pieces!\n");
+	fprintf(stderr, "Too few pieces!\n");
 	return NULL;
     } else if (result->nodesetval->nodeNr > MAX_MOBILES) {
-	fprintf(stderr, "Too many mobile pieces!\n");
+	fprintf(stderr, "Too many pieces!\n");
 	return NULL;
     } else {
-	int i;
+	int piece;
 
 	tb->num_mobiles = result->nodesetval->nodeNr;
 
-	for (i=0; i < result->nodesetval->nodeNr; i++) {
+	for (piece = 0; piece < tb->num_mobiles; piece ++) {
 	    xmlChar * color;
 	    xmlChar * type;
 	    xmlChar * location;
-	    color = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "color");
-	    type = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "type");
-	    location = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "location");
-	    tb->piece_color[i] = find_name_in_array((char *) color, colors);
-	    tb->piece_type[i] = find_name_in_array((char *) type, piece_name);
+	    color = xmlGetProp(result->nodesetval->nodeTab[piece], (const xmlChar *) "color");
+	    type = xmlGetProp(result->nodesetval->nodeTab[piece], (const xmlChar *) "type");
+	    location = xmlGetProp(result->nodesetval->nodeTab[piece], (const xmlChar *) "location");
+	    tb->piece_color[piece] = find_name_in_array((char *) color, colors);
+	    tb->piece_type[piece] = find_name_in_array((char *) type, piece_name);
 
 	    if (location == NULL) {
-		if (tb->piece_type[i] == PAWN) {
-		    tb->piece_legal_squares[i] = LEGAL_PAWN_BITVECTOR;
+		if (tb->piece_type[piece] == PAWN) {
+		    tb->piece_legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
 		} else {
-		    tb->piece_legal_squares[i] = allones_bitvector;
+		    tb->piece_legal_squares[piece] = allones_bitvector;
 		}
 	    } else {
 		int j = 0;
-		tb->piece_legal_squares[i] = 0;
+		tb->piece_legal_squares[piece] = 0;
 		while ((location[j] >= 'a') && (location[j] <= 'h')
 		       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
-		    tb->piece_legal_squares[i] |= BITVECTOR(square(location[j+1] - '1', location[j] - 'a'));
+		    tb->piece_legal_squares[piece]
+			|= BITVECTOR(square(location[j+1] - '1', location[j] - 'a'));
 		    j += 2;
 		    while (location[j] == ' ') j ++;
 		}
 		if (location[j] != '\0') {
-		    fprintf(stderr, "Illegal location (%s) in mobile\n", location);
+		    fprintf(stderr, "Illegal piece location (%s)\n", location);
 		    return NULL;
 		}
 	    }
 
-	    if ((tb->piece_color[i] == -1) || (tb->piece_type[i] == -1)) {
-		fprintf(stderr, "Illegal color (%s) or type (%s) in mobile\n", color, type);
-		xmlFree(color);
+	    if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
+		fprintf(stderr, "Illegal piece color (%s) or type (%s)\n", color, type);
+		return NULL;
 	    }
+
+	    if (color != NULL) xmlFree(color);
+	    if (type != NULL) xmlFree(type);
+	    if (location != NULL) xmlFree(location);
 	}
     }
 
     if ((tb->piece_color[WHITE_KING] != WHITE) || (tb->piece_type[WHITE_KING] != KING)
 	|| (tb->piece_color[BLACK_KING] != BLACK) || (tb->piece_type[BLACK_KING] != KING)) {
-	fprintf(stderr, "Kings aren't where they need to be in mobiles!\n");
+	fprintf(stderr, "Kings aren't where they need to be in piece list!\n");
 	return NULL;
     }
 
@@ -1052,7 +1057,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.108 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.109 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
