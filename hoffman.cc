@@ -1142,7 +1142,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.112 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.113 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1400,7 +1400,8 @@ int translate_foreign_index_to_local_position(tablebase_t *tb1, int32 index1,
 	} else if (!(tb2->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
 	    if (restricted_piece == NONE) restricted_piece = piece;
 	    else {
-		fprintf(stderr, "More than one restricted piece in translation\n");
+		/* This can happen if the futurebase is more liberal */
+		/* fprintf(stderr, "More than one restricted piece in translation\n"); */
 		return -1;
 	    }
 	}
