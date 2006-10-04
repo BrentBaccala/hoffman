@@ -1100,7 +1100,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.110 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.111 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2767,8 +2767,10 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 
 	}
 
-	/* This is pretty primitive, but we need some way to figure how deep to look during
-	 * intra-table propagation.
+	/* This is pretty primitive, but we need to track the deepest mates during futurebase back
+	 * prop in order to know how deep we have to look during intra-table propagation.  We could
+	 * improve on this by only bumping mate_in_limit if we called PTM_wins(), or if we called
+	 * add_one_to_PNTM_wins() and the move count went to zero.
 	 */
 
 	if (get_mate_in_count(futurebase, future_index) > *mate_in_limit)
@@ -4881,8 +4883,13 @@ int main(int argc, char *argv[])
 	}
 	fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
+	/* We add one to mate_in_limit here because, even if there are intra-table passes with no
+	 * progress made, we want to process at least one pass beyond the maximum mate-in value we
+	 * saw during futurebase back-prop.
+	 */
+
 	fprintf(stderr, "Intra-table propagating\n");
-	propagate_all_moves_within_tablebase(tb, mate_in_limit);
+	propagate_all_moves_within_tablebase(tb, mate_in_limit+1);
 
 	write_tablebase_to_file(tb, output_filename);
 
