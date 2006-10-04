@@ -1142,7 +1142,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.113 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.114 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1295,7 +1295,7 @@ void invert_colors_of_global_position(global_position_t *global)
  *
  * bits 0-7:   local tb piece number of missing piece #1
  * bits 8-15:  local tb piece number of restricted piece
- * bits 16-23: square on chessboard of extra piece
+ * bits 16-23: foreign tb piece number of extra piece
  * bits 24-31: local tb piece number of missing piece #2
  *
  * If any of the fields are unused (because there is no corresponding piece), it's value is 0x80.
@@ -1312,10 +1312,10 @@ void invert_colors_of_global_position(global_position_t *global)
 
 #define NONE 0x80
 
-int translate_foreign_index_to_local_position(tablebase_t *tb1, int32 index1,
-					      tablebase_t *tb2, local_position_t *local, int invert_colors)
+int translate_foreign_position_to_local_position(tablebase_t *tb1, local_position_t *foreign,
+						 tablebase_t *tb2, local_position_t *local,
+						 int invert_colors)
 {
-    local_position_t foreign_position;
     int foreign_piece;
     int piece;
     int restricted_piece = NONE;
@@ -1324,21 +1324,19 @@ int translate_foreign_index_to_local_position(tablebase_t *tb1, int32 index1,
     int extra_piece = NONE;
     short pieces_processed_bitvector = 0;
 
-    if (! index_to_local_position(tb1, index1, &foreign_position)) return -1;
-
     bzero(local, sizeof(local_position_t));
 
     for (piece = 0; piece < tb2->num_mobiles; piece ++)
 	local->piece_position[piece] = -1;
 
-    local->en_passant_square = foreign_position.en_passant_square;
-    local->side_to_move = foreign_position.side_to_move;
+    local->en_passant_square = foreign->en_passant_square;
+    local->side_to_move = foreign->side_to_move;
 
     if (invert_colors) flip_side_to_move_local(local);
 
     for (foreign_piece = 0; foreign_piece < tb1->num_mobiles; foreign_piece ++) {
 
-	int sq = foreign_position.piece_position[foreign_piece];
+	int sq = foreign->piece_position[foreign_piece];
 
 	if (invert_colors) sq = square(7 - ROW(sq), COL(sq));
 
@@ -1368,11 +1366,7 @@ int translate_foreign_index_to_local_position(tablebase_t *tb1, int32 index1,
 		fprintf(stderr, "More than one extra piece in translation\n");
 		return -1;
 	    }
-	    /* XXX I'd like to change this (for consistency) to be the piece index in the
-	     * futurebase, but since there is still an intermediate global position, that will
-	     * have to wait.
-	     */
-	    extra_piece = sq;
+	    extra_piece = foreign_piece;
 	}
     }
 
@@ -1409,6 +1403,16 @@ int translate_foreign_index_to_local_position(tablebase_t *tb1, int32 index1,
 
     return ((missing_piece2 << 24) | (extra_piece << 16) | (restricted_piece << 8) | missing_piece1);
 
+}
+
+int translate_foreign_index_to_local_position(tablebase_t *tb1, int32 index1,
+					      tablebase_t *tb2, local_position_t *local, int invert_colors)
+{
+    local_position_t foreign_position;
+
+    if (! index_to_local_position(tb1, index1, &foreign_position)) return -1;
+
+    return translate_foreign_position_to_local_position(tb1, &foreign_position, tb2, local, invert_colors);
 }
 
 /* This function works just like previous one.  So much so that I've considered wrapping them
@@ -2923,6 +2927,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 					       int *mate_in_limit)
 {
     int32 future_index;
+    local_position_t foreign_position;
     local_position_t position;
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
@@ -2948,9 +2953,11 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	 * restricted squares.
 	 */
 
-	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
-								      tb, &position,
-								      invert_colors_of_futurebase);
+	if (! index_to_local_position(futurebase, future_index, &foreign_position)) continue;
+
+	conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
+									 tb, &position,
+									 invert_colors_of_futurebase);
 
 	if (conversion_result != -1) {
 
@@ -2982,15 +2989,18 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 	    /* The extra piece has to be on the back rank */
 
-	    if ((extra_piece < first_back_rank_square) || (extra_piece > last_back_rank_square)) continue;
+	    if ((foreign_position.piece_position[extra_piece] < first_back_rank_square)
+		|| (foreign_position.piece_position[extra_piece] > last_back_rank_square)) continue;
 
 	    /* There has to be an empty square right behind where the pawn came from. */
 
-	    if (position.board_vector & BITVECTOR(extra_piece - promotion_move)) continue;
+	    if (position.board_vector
+		& BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move)) continue;
 
 	    /* And it has to be a legal (i.e, non-restricted) square for the pawn in our tablebase. */
 
-	    if (!(tb->piece_legal_squares[pawn] & BITVECTOR(extra_piece - promotion_move))) continue;
+	    if (!(tb->piece_legal_squares[pawn]
+		  & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move))) continue;
 
 	    /* We're going to back step a half move now */
 
@@ -3001,8 +3011,8 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	     * seventh (or second).
 	     */
 
-	    position.piece_position[pawn] = extra_piece - promotion_move;
-	    position.board_vector |= BITVECTOR(extra_piece - promotion_move);
+	    position.piece_position[pawn] = foreign_position.piece_position[extra_piece] - promotion_move;
+	    position.board_vector |= BITVECTOR(position.piece_position[pawn]);
 
 	    /* Back propagate the resulting position */
 
@@ -3025,6 +3035,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 						       int *mate_in_limit)
 {
     int32 future_index;
+    local_position_t foreign_position;
     local_position_t position;
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
@@ -3050,9 +3061,11 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	 * can be no pieces on restricted squares.
 	 */
 
-	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
-								      tb, &position,
-								      invert_colors_of_futurebase);
+	if (! index_to_local_position(futurebase, future_index, &foreign_position)) continue;
+
+	conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
+									 tb, &position,
+									 invert_colors_of_futurebase);
 
 	if (conversion_result != -1) {
 
@@ -3084,7 +3097,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 	    /* The extra piece has to be on the back rank */
 
-	    if ((extra_piece < first_back_rank_square) || (extra_piece > last_back_rank_square)) continue;
+	    if ((foreign_position.piece_position[extra_piece] < first_back_rank_square)
+		|| (foreign_position.piece_position[extra_piece] > last_back_rank_square)) continue;
 
 	    /* We're going to back step a half move now */
 
@@ -3092,8 +3106,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 	    /* Put the piece that was captured onto the board on the queening square. */
 
-	    position.piece_position[missing_piece2] = extra_piece;
-	    position.board_vector |= BITVECTOR(extra_piece);
+	    position.piece_position[missing_piece2] = foreign_position.piece_position[extra_piece];
+	    position.board_vector |= BITVECTOR(position.piece_position[missing_piece2]);
 
 	    /* Consider first a capture to the left (white's left).  There has to be an empty square
 	     * where the pawn came from, and it has to be a legal (i.e, non-restricted) square for
@@ -3101,16 +3115,19 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	     */
 
 	    if ((COL(extra_piece) != 0)
-		&& !(position.board_vector & BITVECTOR(extra_piece - promotion_move - 1))
-		&& (tb->piece_legal_squares[pawn] & BITVECTOR(extra_piece - promotion_move - 1))) {
+		&& !(position.board_vector
+		     & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move - 1))
+		&& (tb->piece_legal_squares[pawn]
+		    & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move - 1))) {
 
 		/* Because the promoted piece was 'extra' it doesn't appear in the local position,
 		 * so we don't have to worry about taking it off the board.  Put the missing pawn on
 		 * the seventh (or second).
 		 */
 
-		position.piece_position[pawn] = extra_piece - promotion_move - 1;
-		position.board_vector |= BITVECTOR(extra_piece - promotion_move - 1);
+		position.piece_position[pawn]
+		    = foreign_position.piece_position[extra_piece] - promotion_move - 1;
+		position.board_vector |= BITVECTOR(position.piece_position[pawn]);
 
 		/* Back propagate the resulting position */
 
@@ -3122,7 +3139,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		/* We're about to use this position again, so put the board_vector back... */
 
-		position.board_vector &= ~BITVECTOR(extra_piece - promotion_move - 1);
+		position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
 	    }
 
 	    /* Now consider a capture to the right (white's right).  Again, there has to be an empty
@@ -3131,16 +3148,19 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	     */
 
 	    if ((COL(extra_piece) != 7)
-		&& !(position.board_vector & BITVECTOR(extra_piece - promotion_move + 1))
-		&& (tb->piece_legal_squares[pawn] & BITVECTOR(extra_piece - promotion_move + 1))) {
+		&& !(position.board_vector
+		     & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move + 1))
+		&& (tb->piece_legal_squares[pawn]
+		    & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move + 1))) {
 
 		/* Because the promoted piece was 'extra' it doesn't appear in the local position,
 		 * so we don't have to worry about taking it off the board.  Put the missing pawn on
 		 * the seventh (or second).
 		 */
 
-		position.piece_position[pawn] = extra_piece - promotion_move + 1;
-		position.board_vector |= BITVECTOR(extra_piece - promotion_move + 1);
+		position.piece_position[pawn]
+		    = foreign_position.piece_position[extra_piece] - promotion_move + 1;
+		position.board_vector |= BITVECTOR(position.piece_position[pawn]);
 
 		/* Back propagate the resulting position */
 
