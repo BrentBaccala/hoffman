@@ -361,71 +361,70 @@ int find_name_in_array(char * name, char * array[])
 
 /***** INDICES *****/
 
+/* Basically there are two functions here - one converts an index to a local position, the other
+ * converts a local position to an index - but they exist in several different versions, depending
+ * on the type of index we're using for a particular tablebase.  These functions are used
+ * extensively during all types of back propagation.
+ *
+ * local_position_to_index() also updates the position's board_vector (which doesn't have to be
+ * valid going in), but not the white_vector or black_vector.  It does this to check for illegal en
+ * passant positions.  It returns either an index into the table, or -1 if the position is illegal.
+ *
+ * Actually, it doesn't update the board vector anymore because we work on a copy of the position.
+ *
+ * index_to_local_position(), given an index, fill in a board position.  Obviously has to correspond
+ * to local_position_to_index() and it's a big bug if it doesn't.  The boolean that gets returned is
+ * TRUE if the operation succeeded and FALSE if the index was illegal.
+ *
+ * Several issues crop up for all index types.
+ *
+ * What exactly is an illegal position?  Well, for starters, one that index_to_local_position()
+ * reports as illegal, because that's the function that initialize_tablebase() uses to figure which
+ * positions are flagged illegal, as well as which positions to consider during back prop, and the
+ * program screams if you try to back prop into an illegal position.  So the two functions have to
+ * agree on illegality.  But there's also a subtle interaction between the legality tests here and
+ * the move counting code in initialize_tablebase().  If we count a move, and it's not considered a
+ * futuremove, then it'd better lead to a legal position, because we'll never backprop from an
+ * illegal one, and that would imbalance the forward and reverse move counting.  For speed purposes,
+ * the move counting code currently does not actually check positions to see if they are illegal.
+ * So we can't, for example, flag positions with adjacent kings as illegal without updating that
+ * code.
+ *
+ * En passant.  This is another case where subtle concepts of "legality" show up.  When we back
+ * propagate a local position from either a futurebase or intratable, we generate en passant
+ * positions simply by running through the pawns on the fourth and fifth ranks.  We look then to see
+ * if there was a piece behind the "en passant" pawn (that would have prevented it from moving), but
+ * (unlike Nalimov) we don't check if there is an enemy pawn that actually could have captured.
+ * Again, the code has to match up between the two places, or we would try to back propagate to a
+ * position that had been labeled illegal during initialization by index_to_local_position().
+ *
+ * Identical pieces.  Identical positions need to generate identical indices.  If we have two
+ * identical pieces, then transposing them in a position can't affect the outcome of
+ * local_position_to_index().  Right now, I deal with this by making a copy of the local position
+ * and sorting identical pieces into ascending position numbers.
+ *
+ * So how about a static 64-bit vector with bits set for the frozen pieces but not the mobiles?
+ * Everytime we call index_to_local_position, copy from the static vector into the position
+ * structure.  Then we compute the positions of the mobile pieces and plug their bits into the
+ * structure's vector at the right places.  Might implement this some day.
+ */
+
+/* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and
+ * multiplies them together for the various pieces.  Simple and fast.
+ */
+
 int32 local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 {
-    /* This function, given a local board position, returns an index into the tablebase.
-     *
-     * Initially, this function can be very simple (multiplying numbers together), but to build
-     * smaller tables it can be more precise.
-     *
-     * For example, two kings can never be next to each other.  Pieces can never be on top of each
-     * other, or on top of static pieces.  The side to move can not be in check.
-     *
-     * It also updates the position's board_vector (which doesn't have to be valid going in),
-     * but not the white_vector or black_vector.  It does this to check for illegal en passant
-     * positions.
-     *
-     * Returns either an index into the table, or -1 (probably) if the position is illegal.
-     *
-     * What exactly is an illegal position?  Well, for starters, one that index_to_local_position()
-     * reports as illegal, because that's the function that initialize_tablebase() uses to figure
-     * which positions are flagged illegal, as well as which positions to consider during back prop,
-     * and the program screams if you try to back prop into an illegal position.
-     *
-     * This function is currently used only during back propagation to generate indices, and during
-     * probing to convert "next move" positions into indices.
-     *
-     * When we back propagate a local position from either a futurebase or intratable, we generate
-     * en passant positions simply by running through the pawns on the fourth and fifth ranks.  If
-     * we don't look then to see if there was a piece behind the "en passant" pawn (that would have
-     * prevented it from moving), and we currently don't (correctly) because the board vectors
-     * aren't set right, then we have to detect that and return -1 here.  Otherwise, we would try to
-     * back propagate to a position that had been labeled illegal during initialization by
-     * index_to_local_position().
-     *
-     * This function is also used during probing to see if possible next positions are legal.
-     */
-
-    /* Keep it simple, for now */
-
     int shift_count = 1;
     int32 index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
     int piece;
-    int piece2;
 
     pos->board_vector = 0;
 
-    /* Sort any identical pieces so that the lowest square number always comes first.  We don't want
-     * to change around the original position, so we use a copy of it.
-     */
-
-    local_position_t copy = *pos;
-
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-	piece2 = piece;
-	while ((tb->last_identical_piece[piece2] != -1)
-	       && (copy.piece_position[piece2] < copy.piece_position[tb->last_identical_piece[piece2]])) {
-	    int square = copy.piece_position[piece2];
-	    copy.piece_position[piece2] = copy.piece_position[tb->last_identical_piece[piece2]];
-	    copy.piece_position[tb->last_identical_piece[piece2]] = square;
-	    piece2 = tb->last_identical_piece[piece2];
-	}
-    }
-
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
 
-	if ((copy.piece_position[piece] < 0) || (copy.piece_position[piece] > 63)
-	    || !(tb->piece_legal_squares[piece] & BITVECTOR(copy.piece_position[piece]))) {
+	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
+	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
 	    return -1;
 	}
@@ -434,17 +433,17 @@ int32 local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	 * this is completely legit.
 	 */
-	if ((tb->piece_type[piece] == PAWN) && (copy.en_passant_square != -1)
+	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
 	    && (((tb->piece_color[piece] == WHITE)
-		 && (copy.en_passant_square + 8 == copy.piece_position[piece]))
+		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		|| ((tb->piece_color[piece] == BLACK)
-		    && (copy.en_passant_square - 8 == copy.piece_position[piece])))) {
-	    index |= COL(copy.en_passant_square) << shift_count;
+		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+	    index |= COL(pos->en_passant_square) << shift_count;
 	} else {
-	    index |= copy.piece_position[piece] << shift_count;
+	    index |= pos->piece_position[piece] << shift_count;
 	}
-	if (pos->board_vector & BITVECTOR(copy.piece_position[piece])) return -1;
-	pos->board_vector |= BITVECTOR(copy.piece_position[piece]);
+	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
+	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
 
 	shift_count += 6;  /* because 2^6=64 */
     }
@@ -469,28 +468,6 @@ int32 local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 
 boolean naive_index_to_local_position(tablebase_t *tb, int32 index, local_position_t *p)
 {
-    /* Given an index, fill in a board position.  Obviously has to correspond to local_position_to_index()
-     * and it's a big bug if it doesn't.  The boolean that gets returned is TRUE if the operation
-     * succeeded (the index is at least minimally valid) and FALSE if the index is so blatantly
-     * illegal (two pieces on the same square) that we can't even fill in the position.
-     *
-     * Used by index_to_side_to_move() (which is currently only use to check move restrictions) to
-     * determine position legality.
-     *
-     * Used in propagate_move_within_table() to get from an index to a position, and its return
-     * value is ignored there, because a position that needs_propagation() couldn't have been marked
-     * illegal during initialization.
-     *
-     * Used in initialize_tablebase() to determine which positions are legal.
-     *
-     * Use to prepare a move list during probe.
-     *
-     * So how about a static 64-bit vector with bits set for the frozen pieces but not the mobiles?
-     * Everytime we call index_to_local_position, copy from the static vector into the position
-     * structure.  Then we compute the positions of the mobile pieces and plug their bits into the
-     * structure's vector at the right places.
-     */
-
     int piece;
 
     bzero(p, sizeof(local_position_t));
@@ -563,6 +540,11 @@ boolean naive_index_to_local_position(tablebase_t *tb, int32 index, local_positi
 
     return 1;
 }
+
+/* "Simple" index.  Like naive, but only assigns numbers to squares that are legal for a particular
+ * piece.  Slower to compute than naive, but more compact for tablebases with lots of movement
+ * restrictions on the pieces.
+ */
 
 int32 local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
 {
@@ -663,11 +645,21 @@ boolean simple_index_to_local_position(tablebase_t *tb, int32 index, local_posit
 	if (p->board_vector & BITVECTOR(square)) {
 	    return 0;
 	}
+
 	p->board_vector |= BITVECTOR(square);
 	if (tb->piece_color[piece] == WHITE) {
 	    p->white_vector |= BITVECTOR(square);
 	} else {
 	    p->black_vector |= BITVECTOR(square);
+	}
+    }
+
+    /* Identical pieces have to appear in sorted order. */
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	if ((tb->last_identical_piece[piece] != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
+	    return 0;
 	}
     }
 
@@ -695,6 +687,27 @@ boolean simple_index_to_local_position(tablebase_t *tb, int32 index, local_posit
 
 int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
 {
+    int piece;
+    int piece2;
+
+    /* Sort any identical pieces so that the lowest square number always comes first.  We don't want
+     * to change around the original position, so we use a copy of it.
+     */
+
+    local_position_t copy = *pos;
+    pos = &copy;
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	piece2 = piece;
+	while ((tb->last_identical_piece[piece2] != -1)
+	       && (pos->piece_position[piece2] < pos->piece_position[tb->last_identical_piece[piece2]])) {
+	    int square = pos->piece_position[piece2];
+	    pos->piece_position[piece2] = pos->piece_position[tb->last_identical_piece[piece2]];
+	    pos->piece_position[tb->last_identical_piece[piece2]] = square;
+	    piece2 = tb->last_identical_piece[piece2];
+	}
+    }
+
     switch (tb->index_type) {
     case NAIVE_INDEX:
 	return local_position_to_naive_index(tb, pos);
@@ -719,7 +732,11 @@ boolean index_to_local_position(tablebase_t *tb, int32 index, local_position_t *
     }
 }
 
-/* Used just to double check the code above. */
+/* check_1000_positions(); check_1000_indices() - used just to double check the code above.
+ *
+ * I don't use check_1000_positions() anymore because it barks if there are identical pieces in a
+ * position that come back sorted after being run through a position->index->position conversion.
+ */
 
 void check_1000_positions(tablebase_t *tb)
 {
@@ -752,6 +769,26 @@ void check_1000_positions(tablebase_t *tb)
 		|| (position2.white_vector = 0, position2.black_vector = 0,
 		    memcmp(&position1, &position2, sizeof(position1)))) {
 		fprintf(stderr, "Mismatch in check_1000_positions()\n");  /* BREAKPOINT */
+	    }
+	}
+    }
+}
+
+void check_1000_indices(tablebase_t *tb)
+{
+    local_position_t position;
+    int32 index;
+    int32 index2;
+    int positions;
+
+    for (positions=0; positions < 1000; positions ++) {
+
+	index = rand() % (tb->max_index + 1);
+
+	if (index_to_local_position(tb, index, &position)) {
+	    index2 = local_position_to_index(tb, &position);
+	    if (index != index2) {
+		fprintf(stderr, "Mismatch in check_1000_indices()\n");  /* BREAKPOINT */
 	    }
 	}
     }
@@ -848,16 +885,21 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 	    /* Now we need to figure out if there are any other pieces identical to this one,
 	     * because if so, exchanging the two pieces would not change the position, and that has
-	     * to be taken into account in the index code.
+	     * to be taken into account in the index code.  Move restrictions on the pieces
+	     * complicate this, unless they are either identical or completely non-overlapping.
 	     */
 
 	    tb->last_identical_piece[piece] = -1;
 	    for (piece2 = piece - 1; piece2 >= 0; piece2 --) {
 		if ((tb->piece_color[piece2] == tb->piece_color[piece])
-		    && (tb->piece_type[piece2] == tb->piece_type[piece])
-		    && (tb->piece_legal_squares[piece2] == tb->piece_legal_squares[piece])) {
-		    tb->last_identical_piece[piece] = piece2;
-		    break;
+		    && (tb->piece_type[piece2] == tb->piece_type[piece])) {
+		    if (tb->piece_legal_squares[piece2] == tb->piece_legal_squares[piece]) {
+			tb->last_identical_piece[piece] = piece2;
+			break;
+		    } else if (tb->piece_legal_squares[piece2] & tb->piece_legal_squares[piece]) {
+			fprintf(stderr, "Identical pieces with overlapping non-identical move restrictions not allowed\n");
+			return NULL;
+		    }
 		}
 	    }
 
@@ -1100,7 +1142,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.111 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.112 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -4870,7 +4912,7 @@ int main(int argc, char *argv[])
 	fprintf(stderr, "Initializing tablebase\n");
 	initialize_tablebase(tb);
 
-	check_1000_positions(tb);
+	check_1000_indices(tb);
 
 	mate_in_limit = back_propagate_all_futurebases(tb);
 
