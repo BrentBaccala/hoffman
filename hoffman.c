@@ -1142,7 +1142,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.114 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.115 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2987,42 +2987,91 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 	    if (position.side_to_move == promotion_color) continue;
 
-	    /* The extra piece has to be on the back rank */
-
-	    if ((foreign_position.piece_position[extra_piece] < first_back_rank_square)
-		|| (foreign_position.piece_position[extra_piece] > last_back_rank_square)) continue;
-
-	    /* There has to be an empty square right behind where the pawn came from. */
-
-	    if (position.board_vector
-		& BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move)) continue;
-
-	    /* And it has to be a legal (i.e, non-restricted) square for the pawn in our tablebase. */
-
-	    if (!(tb->piece_legal_squares[pawn]
-		  & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move))) continue;
-
 	    /* We're going to back step a half move now */
 
 	    flip_side_to_move_local(&position);
 
-	    /* Because the promoted piece was 'extra' it doesn't appear in the local position, so we
-	     * don't have to worry about taking it off the board.  Put the missing pawn on the
-	     * seventh (or second).
+	    /* We need an extra loop in here to handle futurebases with multiple identical pieces.
+	     * Let's say we're back propagating from a Q+Q endgame into a Q+P endgame.  If we've got
+	     * a futurebase position with both queens on the back rank, then we have to consider the
+	     * possibility that the pawn could promote into either of them.
+	     *
+	     * Move restrictions can really mess with this, but right now we don't compute
+	     * tablebases with non-identical overlapping move restrictions on otherwise identical
+	     * pieces, and with that caveat we're OK.  If the move restrictions don't overlap, then
+	     * there's no way the pieces can swap with each other.  And if the move restrictions are
+	     * identical, then that will be noted in the last_identical_piece array that we use
+	     * below.
 	     */
 
-	    position.piece_position[pawn] = foreign_position.piece_position[extra_piece] - promotion_move;
-	    position.board_vector |= BITVECTOR(position.piece_position[pawn]);
+	    do {
 
-	    /* Back propagate the resulting position */
+		/* The extra piece has to be on the back rank.  We can safely 'break' here due to
+		 * identical pieces being sorted into ascending square number.  If we've backed up
+		 * to an extra piece that isn't on the back rank, then there can't be any more
+		 * identical pieces on the back rank.
+		 */
 
-	    /* This function also back props any similar positions with one of the pawns
-	     * from the side that didn't promote in an en passant state.
-	     */
+		if ((foreign_position.piece_position[extra_piece] < first_back_rank_square)
+		    || (foreign_position.piece_position[extra_piece] > last_back_rank_square)) break;
 
-	    propagate_local_position_from_futurebase(tb, futurebase, future_index, &position, mate_in_limit);
+		/* There has to be an empty square right behind where the pawn came from, and it has
+		 * to be a legal (i.e, non-restricted) square for the pawn in our tablebase.
+		 */
 
-	    /* Don't bother to put anything back since we recompute a new position next time around. */
+		if (!(position.board_vector
+		      & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move))
+		    && (tb->piece_legal_squares[pawn]
+			& BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move))) {
+
+		    /* Because the promoted piece was 'extra' it doesn't appear in the local
+		     * position, so we don't have to worry about taking it off the board.  Put the
+		     * missing pawn on the seventh (or second).
+		     */
+
+		    position.piece_position[pawn]
+			= foreign_position.piece_position[extra_piece] - promotion_move;
+		    position.board_vector |= BITVECTOR(position.piece_position[pawn]);
+
+		    /* Back propagate the resulting position */
+
+		    /* This function also back props any similar positions with one of the pawns from
+		     * the side that didn't promote in an en passant state.
+		     */
+
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index, &position, mate_in_limit);
+
+		    /* We may be about to use this position again, so put the board_vector back... */
+
+		    position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
+		}
+
+		/* If there's an piece identical to the extra piece in the futurebase's position,
+		 * then figure out which of our pieces it was mapped to, swap them, and try again.
+		 */
+
+		if (futurebase->last_identical_piece[extra_piece] != -1) {
+
+		    int piece;
+
+		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+
+			if (position.piece_position[piece] == foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]]) {
+
+			    position.piece_position[piece] = foreign_position.piece_position[extra_piece];
+			    break;
+			}
+		    }
+
+		    if (piece == tb->num_mobiles) {
+			fprintf(stderr, "Couldn't back up to an identical piece in promotion back prop\n");
+			break;
+		    }
+		}
+
+		extra_piece = futurebase->last_identical_piece[extra_piece];
+
+	    } while (extra_piece != -1);
 
 	}
     }
