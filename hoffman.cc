@@ -146,7 +146,7 @@ inline int square(int row, int col)
  * problems, as I've learned the hard (and embarrassing) way.
  */
 
-#define PROMOTION_POSSIBILITIES 3
+#define PROMOTION_POSSIBILITIES 4
 
 /* seven possible pieces: KQRBNP; 64 possible squares, up to 8 directions per piece, up to 7
  * movements in one direction
@@ -1142,7 +1142,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.115 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.116 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -5192,7 +5192,7 @@ int main(int argc, char *argv[])
 
 		    /* PAWNs */
 
-		    int promoted_pieces[] = {QUEEN, ROOK, KNIGHT, 0};
+		    int promoted_pieces[] = {QUEEN, ROOK, KNIGHT, BISHOP, 0};
 
 		    index_to_local_position(tb, index, &pos);
 		    nextpos = pos;
