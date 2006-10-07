@@ -1142,7 +1142,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.118 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.119 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -3006,31 +3006,33 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 	    do {
 
+		int promotion_sq = foreign_position.piece_position[extra_piece];
+
+		if (invert_colors_of_futurebase)
+		    promotion_sq = square(7 - ROW(promotion_sq), COL(promotion_sq));
+
 		/* The extra piece has to be on the back rank.  We can safely 'break' here due to
 		 * identical pieces being sorted into ascending square number.  If we've backed up
 		 * to an extra piece that isn't on the back rank, then there can't be any more
 		 * identical pieces on the back rank.
 		 */
 
-		if ((foreign_position.piece_position[extra_piece] < first_back_rank_square)
-		    || (foreign_position.piece_position[extra_piece] > last_back_rank_square)) break;
+		if ((promotion_sq < first_back_rank_square) || (promotion_sq > last_back_rank_square))
+		    break;
 
 		/* There has to be an empty square right behind where the pawn came from, and it has
 		 * to be a legal (i.e, non-restricted) square for the pawn in our tablebase.
 		 */
 
-		if (!(position.board_vector
-		      & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move))
-		    && (tb->piece_legal_squares[pawn]
-			& BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move))) {
+		if (!(position.board_vector & BITVECTOR(promotion_sq - promotion_move))
+		    && (tb->piece_legal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put the
 		     * missing pawn on the seventh (or second).
 		     */
 
-		    position.piece_position[pawn]
-			= foreign_position.piece_position[extra_piece] - promotion_move;
+		    position.piece_position[pawn] = promotion_sq - promotion_move;
 		    position.board_vector |= BITVECTOR(position.piece_position[pawn]);
 
 		    /* Back propagate the resulting position */
@@ -3043,7 +3045,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 		    /* We may be about to use this position again, so put the board_vector back... */
 
-		    position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
+		    position.board_vector &=~ BITVECTOR(position.piece_position[pawn]);
 		}
 
 		/* If there's an piece identical to the extra piece in the futurebase's position,
@@ -3054,11 +3056,15 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 		    int piece;
 
+		    int new_promotion_sq
+			= foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]];
+
+		    if (invert_colors_of_futurebase)
+			new_promotion_sq = square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
+
 		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-
-			if (position.piece_position[piece] == foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]]) {
-
-			    position.piece_position[piece] = foreign_position.piece_position[extra_piece];
+			if (position.piece_position[piece] == new_promotion_sq) {
+			    position.piece_position[piece] = promotion_sq;
 			    break;
 			}
 		    }
@@ -3162,6 +3168,11 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 	    do {
 
+		int promotion_sq = foreign_position.piece_position[extra_piece];
+
+		if (invert_colors_of_futurebase)
+		    promotion_sq = square(7 - ROW(promotion_sq), COL(promotion_sq));
+
 		/* The extra piece has to be on the back rank.  We can safely 'break' here due to
 		 * identical pieces being sorted into ascending square number.  If we've backed up
 		 * to an extra piece that isn't on the back rank, then there can't be any more
@@ -3169,32 +3180,29 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		 */
 
 
-		if ((foreign_position.piece_position[extra_piece] < first_back_rank_square)
-		    || (foreign_position.piece_position[extra_piece] > last_back_rank_square)) break;
+		if ((promotion_sq < first_back_rank_square) || (promotion_sq > last_back_rank_square))
+		    break;
 
-		/* Put the piece that was captured onto the board on the queening square. */
+		/* Put the piece that was captured onto the board on the promotion square. */
 
-		position.piece_position[missing_piece2] = foreign_position.piece_position[extra_piece];
-		position.board_vector |= BITVECTOR(position.piece_position[missing_piece2]);
+		position.piece_position[missing_piece2] = promotion_sq;
+		position.board_vector |= BITVECTOR(promotion_sq);
 
 		/* Consider first a capture to the left (white's left).  There has to be an empty
 		 * square where the pawn came from, and it has to be a legal (i.e, non-restricted)
 		 * square for the pawn in our tablebase.
 		 */
 
-		if ((COL(extra_piece) != 0)
-		    && !(position.board_vector
-			 & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move - 1))
-		    && (tb->piece_legal_squares[pawn]
-			& BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move - 1))) {
+		if ((COL(promotion_sq) != 0)
+		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
+		    && (tb->piece_legal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put the
 		     * missing pawn on the seventh (or second).
 		     */
 
-		    position.piece_position[pawn]
-			= foreign_position.piece_position[extra_piece] - promotion_move - 1;
+		    position.piece_position[pawn] = promotion_sq - promotion_move - 1;
 		    position.board_vector |= BITVECTOR(position.piece_position[pawn]);
 
 		    /* Back propagate the resulting position */
@@ -3215,19 +3223,16 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		 * non-restricted) square for the pawn in our tablebase.
 		 */
 
-		if ((COL(extra_piece) != 7)
-		    && !(position.board_vector
-			 & BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move + 1))
-		    && (tb->piece_legal_squares[pawn]
-			& BITVECTOR(foreign_position.piece_position[extra_piece] - promotion_move + 1))) {
+		if ((COL(promotion_sq) != 7)
+		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
+		    && (tb->piece_legal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put the
 		     * missing pawn on the seventh (or second).
 		     */
 
-		    position.piece_position[pawn]
-			= foreign_position.piece_position[extra_piece] - promotion_move + 1;
+		    position.piece_position[pawn] = promotion_sq - promotion_move + 1;
 		    position.board_vector |= BITVECTOR(position.piece_position[pawn]);
 
 		    /* Back propagate the resulting position */
@@ -3243,12 +3248,12 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		    position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
 		}
 
-		/* Remove the piece from the queening square, at least in board_vector.  We'll
+		/* Remove the piece from the promotion square, at least in board_vector.  We'll
 		 * change its position next time around this do/while loop, if there's another
 		 * possibility for the "extra" piece.
 		 */
 
-		position.board_vector &= ~BITVECTOR(position.piece_position[missing_piece2]);
+		position.board_vector &= ~BITVECTOR(promotion_sq);
 
 		/* If there's an piece identical to the extra piece in the futurebase's position,
 		 * then figure out which of our pieces it was mapped to, swap them, and try again.
@@ -3258,11 +3263,15 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    int piece;
 
+		    int new_promotion_sq
+			= foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]];
+
+		    if (invert_colors_of_futurebase)
+			new_promotion_sq = square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
+
 		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-
-			if (position.piece_position[piece] == foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]]) {
-
-			    position.piece_position[piece] = foreign_position.piece_position[extra_piece];
+			if (position.piece_position[piece] == new_promotion_sq) {
+			    position.piece_position[piece] = promotion_sq;
 			    break;
 			}
 		    }
