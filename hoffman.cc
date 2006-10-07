@@ -1142,7 +1142,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.117 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.118 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -2923,7 +2923,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 
 void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 					       int invert_colors_of_futurebase,
-					       unsigned char promoted_piece, int pawn,
+					       int pawn,
 					       int *mate_in_limit)
 {
     int32 future_index;
@@ -2932,7 +2932,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
 
-    int promotion_color = ((promoted_piece < 'a') ? WHITE : BLACK);
+    int promotion_color = tb->piece_color[pawn];
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
     int last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
     int promotion_move = ((promotion_color == WHITE) ? 8 : -8);
@@ -3079,8 +3079,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 						       int invert_colors_of_futurebase,
-						       unsigned char promoted_piece,
-						       unsigned char captured_piece, int pawn,
+						       int pawn,
 						       int *mate_in_limit)
 {
     int32 future_index;
@@ -3089,7 +3088,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
 
-    int promotion_color = ((promoted_piece < 'a') ? WHITE : BLACK);
+    int promotion_color = tb->piece_color[pawn];
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
     int last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
     int promotion_move = ((promotion_color == WHITE) ? 8 : -8);
@@ -3836,10 +3835,9 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 	    int piece;
 	    int color;
 	    int piece_vector;
-	    int pawn;
-	    int promoted_piece = -1;
-	    unsigned char captured_piece_char;
-	    unsigned char promoted_piece_char;
+	    int extra_piece = -1;
+	    int missing_pawn = -1;
+	    int missing_non_pawn = -1;
 
 	    filename = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "filename");
 
@@ -3865,55 +3863,87 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 		}
 	    }
 
-	    type = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "type");
+	    /* The futurebase can have different pieces than the current tablebase.  There can be a
+	     * single extra piece, as well as a missing pawn and/or a missing non-pawn.  Find them.
+	     */
 
-	    if ((type != NULL) && !strcasecmp((char *) type, "capture")) {
+	    /* piece_vector - set a bit for every piece in current tablebase */
+	    piece_vector = (1 << tb->num_mobiles) - 1;
 
-		/* It's a capture futurebase.  Futurebase should have exactly one less mobile than
-		 * the current tablebase.  Find it.
-		 */
-
-		/* piece_vector - set a bit for every mobile piece in current tablebase */
-		piece_vector = (1 << tb->num_mobiles) - 1;
-
-		for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
-		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-			if (! (piece_vector & (1 << piece))) continue;
-			if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
-			    && ((!invert_colors &&
-				 (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
-				|| (invert_colors &&
-				    (tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-			    if ((tb->piece_legal_squares[piece] & futurebase->piece_legal_squares[future_piece])
-				!= tb->piece_legal_squares[piece]) {
-				fprintf(stderr, "WARNING: matched a piece but futurebase is more restrictive\n");
-			    } else {
-				piece_vector ^= (1 << piece);
-				break;
-			    }
+	    for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
+		for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		    if (! (piece_vector & (1 << piece))) continue;
+		    if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
+			&& ((!invert_colors &&
+			     (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
+			    || (invert_colors &&
+				(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
+			if ((tb->piece_legal_squares[piece] & futurebase->piece_legal_squares[future_piece])
+			    != tb->piece_legal_squares[piece]) {
+			    fprintf(stderr, "WARNING: matched a piece but futurebase is more restrictive\n");
+			} else {
+			    piece_vector ^= (1 << piece);
+			    break;
 			}
 		    }
-		    if (piece == tb->num_mobiles) {
+		}
+		if (piece == tb->num_mobiles) {
+		    if ((extra_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
+			extra_piece = future_piece;
+		    } else {
 			fprintf(stderr, "'%s': Couldn't find future piece in tablebase\n", filename);
 			return -1;
 		    }
 		}
+	    }
 
-		for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		    if ((piece_vector & (1 << piece))) break;
-		}
-
-		if (piece == tb->num_mobiles) {
-		    fprintf(stderr, "'%s': No extra mobile piece in futurebase\n", filename);
-		    return -1;
-		}
-
+	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		if ((tb->piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
+	    }
+	    if (piece != tb->num_mobiles) {
+		missing_pawn = piece;
 		piece_vector ^= (1 << piece);
+	    }
 
-		if (piece_vector != 0) {
-		    fprintf(stderr, "'%s': Too many extra mobile pieces in futurebase\n", filename);
+	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		if ((tb->piece_type[piece] != PAWN) && (piece_vector & (1 << piece))) break;
+	    }
+	    if (piece != tb->num_mobiles) {
+		missing_non_pawn = piece;
+		piece_vector ^= (1 << piece);
+	    }
+
+	    if (piece_vector != 0) {
+		fprintf(stderr, "'%s': Too many missing pieces in futurebase\n", filename);
+		return -1;
+	    }
+
+	    /* Various combinations of missing/extra pieces are legal for different futurebase
+	     * types.
+	     */
+
+	    type = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "type");
+
+	    if ((type != NULL) && !strcasecmp((char *) type, "capture")) {
+
+		/* It's a capture futurebase.  Futurebase should have exactly one less piece than
+		 * the current tablebase.
+		 */
+
+		if (extra_piece != -1) {
+		    fprintf(stderr, "'%s': Extra piece in capture futurebase\n", filename);
 		    return -1;
 		}
+
+		if ((missing_pawn != -1) && (missing_non_pawn != -1)) {
+		    fprintf(stderr, "'%s': Too many missing pieces in capture futurebase\n", filename);
+		}
+
+		if ((missing_pawn == -1) && (missing_non_pawn == -1)) {
+		    fprintf(stderr, "'%s': No missing pieces in capture futurebase\n", filename);
+		}
+
+		piece = (missing_pawn != -1) ? missing_pawn : missing_non_pawn;
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
@@ -3926,152 +3956,65 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 		 * something else.  Determine what the pawn promoted into.
 		 */
 
-		/* piece_vector - set a bit for every mobile piece in current tablebase */
-		piece_vector = (1 << tb->num_mobiles) - 1;
-
-		for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
-		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-			if (! (piece_vector & (1 << piece))) continue;
-			if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
-			    && ((!invert_colors &&
-				 (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
-				|| (invert_colors &&
-				    (tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-			    if ((tb->piece_legal_squares[piece] & futurebase->piece_legal_squares[future_piece])
-				!= tb->piece_legal_squares[piece]) {
-				fprintf(stderr, "WARNING: matched a piece but futurebase is more restrictive\n");
-			    } else {
-				piece_vector ^= (1 << piece);
-				break;
-			    }
-			}
-		    }
-		    if (piece == tb->num_mobiles) {
-			if ((promoted_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
-			    promoted_piece = future_piece;
-			} else {
-			    fprintf(stderr, "'%s': Couldn't find future piece in tablebase\n", filename);
-			    return -1;
-			}
-		    }
-		}
-
-		/* The only thing left unaccounted for in the current tablebase should be a pawn. */
-
-		for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		    if ((tb->piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
-		}
-
-		if (piece == tb->num_mobiles) {
-		    fprintf(stderr, "'%s': No extra pawn in tablebase\n", filename);
+		if (extra_piece == -1) {
+		    fprintf(stderr, "'%s': No extra piece in promotion futurebase\n", filename);
 		    return -1;
 		}
 
-		piece_vector ^= (1 << piece);
-
-		if (piece_vector != 0) {
-		    fprintf(stderr, "'%s': Too many extra mobile pieces in futurebase\n", filename);
-		    return -1;
+		if (missing_non_pawn != -1) {
+		    fprintf(stderr, "'%s': Missing non-pawn in promotion futurebase\n", filename);
 		}
 
-		/* Ready to go.
-		 *
-		 * I use the color of 'piece' (the pawn) here because the futurebase might have
-		 * colors inverted.
-		 */
+		if (missing_pawn == -1) {
+		    fprintf(stderr, "'%s': No missing pawn in promotion futurebase\n", filename);
+		}
 
-		promoted_piece_char = global_pieces[tb->piece_color[piece]][futurebase->piece_type[promoted_piece]];
+		/* Ready to go. */
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
 		propagate_moves_from_promotion_futurebase(tb, futurebase, invert_colors,
-							  promoted_piece_char, piece, &mate_in_limit);
+							  missing_pawn, &mate_in_limit);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion-capture")) {
 
 		/* It's a promotion capture futurebase.  Futurebase should have exactly one less
 		 * mobile than the current tablebase, and one of our pawns should have promoted
-		 * into something else.  Find the missing piece in the current tablebase, and
-		 * determine what the pawn promoted into.
+		 * into something else.
 		 */
 
-		/* piece_vector - set a bit for every mobile piece in current tablebase */
-		piece_vector = (1 << tb->num_mobiles) - 1;
-
-		for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
-		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
-			if (! (piece_vector & (1 << piece))) continue;
-			if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
-			    && ((!invert_colors &&
-				 (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
-				|| (invert_colors &&
-				    (tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-			    piece_vector ^= (1 << piece);
-			    break;
-			}
-		    }
-		    if (piece == tb->num_mobiles) {
-			if ((promoted_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
-			    promoted_piece = future_piece;
-			} else {
-			    fprintf(stderr, "'%s': Couldn't find future piece in tablebase\n", filename);
-			    return -1;
-			}
-		    }
-		}
-
-		/* The only things left unaccounted for in the current tablebase should be
-		 * one of our pawns and one of our non-pawns.
-		 */
-
-		for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		    if ((tb->piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
-		}
-
-		if (piece == tb->num_mobiles) {
-		    fprintf(stderr, "'%s': No extra pawn in tablebase\n", filename);
+		if (extra_piece == -1) {
+		    fprintf(stderr, "'%s': No extra piece in promotion capture futurebase\n", filename);
 		    return -1;
 		}
 
-		pawn = piece;
-
-		piece_vector ^= (1 << piece);
-
-		for (piece = 0; piece < tb->num_mobiles; piece ++) {
-		    if ((tb->piece_type[piece] != PAWN) && (piece_vector & (1 << piece))) break;
+		if (missing_non_pawn == -1) {
+		    fprintf(stderr, "'%s': No missing non-pawn in promotion capture futurebase\n", filename);
 		}
 
-		if (piece == tb->num_mobiles) {
-		    fprintf(stderr, "'%s': No captured non-pawn in tablebase\n", filename);
-		    return -1;
+		if (missing_pawn == -1) {
+		    fprintf(stderr, "'%s': No missing pawn in promotion capture futurebase\n", filename);
 		}
 
-		piece_vector ^= (1 << piece);
 
-		if (piece_vector != 0) {
-		    fprintf(stderr, "'%s': Too many extra mobile pieces in futurebase\n", filename);
-		    return -1;
-		}
-
-		/* Ready to go.
-		 *
-		 * I use the color of 'piece' (the captured piece) here, and invert it, because the
-		 * futurebase might have colors inverted.
-		 */
-		/* XXX this "BLACK -" business has to go */
-
-
-		promoted_piece_char = global_pieces[BLACK - tb->piece_color[piece]][futurebase->piece_type[promoted_piece]];
-		captured_piece_char = global_pieces[tb->piece_color[piece]][tb->piece_type[piece]];
+		/* Ready to go. */
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
 		propagate_moves_from_promotion_capture_futurebase(tb, futurebase, invert_colors,
-								  promoted_piece_char,
-								  captured_piece_char, pawn,
+								  missing_pawn,
 								  &mate_in_limit);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "normal")) {
+
+		if (extra_piece != -1) {
+		    fprintf(stderr, "'%s': Extra piece in normal futurebase\n", filename);
+		    return -1;
+		}
+
+		if ((missing_pawn != -1) || (missing_non_pawn != -1)) {
+		    fprintf(stderr, "'%s': Missing pieces in normal futurebase\n", filename);
+		}
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
