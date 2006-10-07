@@ -425,7 +425,10 @@ int32 local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 
 	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
 	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
+	    /* This can happen if we're probing a restricted tablebase */
+#if 0
 	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
+#endif
 	    return -1;
 	}
 
@@ -560,7 +563,10 @@ int32 local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
 
 	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
 	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
+	    /* This can happen if we're probing a restricted tablebase */
+#if 0
 	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
+#endif
 	    return -1;
 	}
 
@@ -1142,7 +1148,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.119 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.120 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -3889,7 +3895,10 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 				(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
 			if ((tb->piece_legal_squares[piece] & futurebase->piece_legal_squares[future_piece])
 			    != tb->piece_legal_squares[piece]) {
-			    fprintf(stderr, "WARNING: matched a piece but futurebase is more restrictive\n");
+			    /* This can be OK if we have piece and/or move restrictions in effect */
+			    /* fprintf(stderr, "WARNING: matched a piece but futurebase is more restrictive\n"); */
+			    piece_vector ^= (1 << piece);
+			    break;
 			} else {
 			    piece_vector ^= (1 << piece);
 			    break;
