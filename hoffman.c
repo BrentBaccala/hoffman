@@ -1191,7 +1191,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.121 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.122 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -4191,6 +4191,13 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
     return all_futuremoves_handled;
 }
 
+/* check_pruning()
+ *
+ * A form of error checking.  We could just dismiss any moves that aren't handled by our
+ * futurebases, but I've found this to be a source of error, since moves tend to get overlooked this
+ * way.
+ */
+
 boolean check_pruning(tablebase_t *tb) {
 
     tablebase_t **futurebases;
@@ -4201,6 +4208,8 @@ boolean check_pruning(tablebase_t *tb) {
     int captured_piece;
     int capturing_piece;
     int prune;
+
+    /* Check pruning statements for consistency */
 
     /* First, preload all futurebases */
 
@@ -4286,6 +4295,9 @@ boolean check_pruning(tablebase_t *tb) {
 			} else {
 			    for (movementptr = capture_pawn_movements[sq][tb->piece_color[capturing_piece]];
 				 movementptr->square != -1; movementptr++) {
+				/* exclude pawn moves that result in promotion - they're handled later */
+				if ((ROW(movementptr->square) == 0) || (ROW(movementptr->square) == 7))
+				    break;
 				if (movementptr->vector & tb->piece_legal_squares[captured_piece])
 				    goto checkprune;
 			    }
@@ -4320,6 +4332,36 @@ boolean check_pruning(tablebase_t *tb) {
 		    return 0;
 		}
 	    }
+
+	} else {
+
+	    /* Otherwise, a futurebase matched the capture.  Now keep looking to see if any other
+	     * futurebases match the same capture.  This is an error because then we might have two
+	     * futurebases that would back prop into the same position with the same move.  Since we
+	     * determine PNTM mates by counting down moves, this could result in the same move
+	     * getting counted down twice.  We deal with this by making sure that only one
+	     * futurebase of any given piece combo can exist.
+	     */
+
+	    for (fbnum ++; fbnum < num_futurebases; fbnum ++) {
+		if (tb->piece_type[captured_piece] == PAWN) {
+		    if ((futurebases[fbnum]->extra_piece == -1)
+			&& (futurebases[fbnum]->missing_pawn == captured_piece)
+			&& (futurebases[fbnum]->missing_non_pawn == -1)) break;
+		} else {
+		    if ((futurebases[fbnum]->extra_piece == -1)
+			&& (futurebases[fbnum]->missing_non_pawn == captured_piece)
+			&& (futurebases[fbnum]->missing_pawn == -1)) break;
+		}
+	    }
+
+	    if (fbnum != num_futurebases) {
+		fprintf(stderr, "Multiple futurebases for capturing %s's %s\n",
+			colors[tb->piece_color[captured_piece]],
+			piece_name[tb->piece_type[captured_piece]]);
+		return 0;
+	    }
+
 	}
     }
 
