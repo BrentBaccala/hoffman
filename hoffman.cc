@@ -1191,7 +1191,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.122 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.123 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -4198,6 +4198,9 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
  * way.
  */
 
+int num_futuremoves = 0;
+int futurecaptures[MAX_MOBILES][MAX_MOBILES];
+
 boolean check_pruning(tablebase_t *tb) {
 
     tablebase_t **futurebases;
@@ -4245,10 +4248,103 @@ boolean check_pruning(tablebase_t *tb) {
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+    /* Next, consider all possible pairs of pieces that might capture, and assign a number (in the
+     * futurecaptures array) to each pair.  We'll ultimately use this number as an index into a bit
+     * vector to determine if this capture has been handled in any particular position.  However,
+     * there's a common enough "special" case: the two pieces are frozen (or at least sufficiently
+     * restricted) so that the capture can never occur.  Go to the trouble of checking for this.
+     */
+
+    for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
+
+	for (capturing_piece = 0; capturing_piece < tb->num_mobiles; capturing_piece ++) {
+
+	    int sq;
+	    int dir;
+	    struct movement *movementptr;
+
+	    futurecaptures[capturing_piece][captured_piece] = -1;
+
+	    if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) continue;
+
+	    /* We run through the board either from end to start (if the capturing piece is white)
+	     * or from start to end (if it's black) in order to make sure that pawn captures that
+	     * result in promotions are considered before any other pawn captures, since promotion
+	     * captures are treated as multiple moves, not just one.
+	     */
+
+	    for (sq = (tb->piece_color[capturing_piece] == WHITE ? 63 : 0);
+		 sq <= (tb->piece_color[capturing_piece] == WHITE ? 0 : 63);
+		 tb->piece_color[capturing_piece] == WHITE ? sq-- : sq++) {
+
+		if (tb->piece_legal_squares[capturing_piece] & BITVECTOR(sq)) {
+		    if (tb->piece_type[capturing_piece] != PAWN) {
+			for (dir = 0; dir < number_of_movement_directions[tb->piece_type[capturing_piece]]; dir++) {
+			    for (movementptr = movements[tb->piece_type[capturing_piece]][sq][dir];
+				 movementptr->square != -1; movementptr++) {
+				if (movementptr->vector & tb->piece_legal_squares[captured_piece]) {
+				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
+				    num_futuremoves ++;
+				    goto next_pair_of_pieces;
+				}
+			    }
+			}
+		    } else {
+			for (movementptr = capture_pawn_movements[sq][tb->piece_color[capturing_piece]];
+			     movementptr->square != -1; movementptr++) {
+
+			    /* a pawn capture that results in promotion - PROMOTION_POSSIBILTIES moves */
+
+			    if ((ROW(movementptr->square) == 0) || (ROW(movementptr->square) == 7)) {
+				futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
+				num_futuremoves += PROMOTION_POSSIBILITIES;
+				goto next_pair_of_pieces;
+			    }
+
+			    if (movementptr->vector & tb->piece_legal_squares[captured_piece]) {
+				futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
+				num_futuremoves ++;
+				goto next_pair_of_pieces;
+			    }
+
+			    /* if it's a pawn-takes-pawn situation, check for en passant as well */
+
+			    if (tb->piece_type[captured_piece] == PAWN) {
+
+				if ((tb->piece_type[capturing_piece] == WHITE) && (ROW(sq) == 4)
+				    && (tb->piece_legal_squares[captured_piece]
+					& BITVECTOR(movementptr->square - 8))) {
+				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
+				    num_futuremoves ++;
+				    goto next_pair_of_pieces;
+				}
+				if ((tb->piece_type[capturing_piece] == BLACK) && (ROW(sq) == 3)
+				    && (tb->piece_legal_squares[captured_piece]
+					& BITVECTOR(movementptr->square + 8))) {
+				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
+				    num_futuremoves ++;
+				    goto next_pair_of_pieces;
+				}
+			    }
+
+			}
+		    }
+		}
+	    }
+	next_pair_of_pieces: ;
+	}
+    }
+
+    /* Now, check the futurebases to see if there are any for a given captured piece.  If not, check
+     * to make sure all possible captures of that piece are pruned.  Otherwise, signal an error and
+     * exit right now.  Just because this test is passed doesn't mean a particular futuremove is
+     * handled in a particular position (that's why we use the bit vector), but if the test fails,
+     * well, then we know for sure that we'd get to the end of program with unhandled futurebases,
+     * so we can save ourselves a long computation by making this basic check now.
+     */
+
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
-
-    /* Next, consider all possible captures */
 
     for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
 
@@ -4266,70 +4362,39 @@ boolean check_pruning(tablebase_t *tb) {
 	    }
 	}
 
-	/* If none exist, then check pruning for all pieces on opposing side capturing.  For each
-	 * possible capturing piece, see if the piece restrictions would permit it to capture the
-	 * enemy piece in question.  If so, there must be a prune statement, or it's an error.
+	/* If no such futurebase exists, then for every other piece, see if the piece restrictions
+	 * would permit it to capture the original piece in question.  If so, there must be a prune
+	 * statement, or it's an error.
 	 */
 
 	if (fbnum == num_futurebases) {
 	    for (capturing_piece = 0; capturing_piece < tb->num_mobiles; capturing_piece ++) {
 
-		int sq;
-		int dir;
-		struct movement *movementptr;
+		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
-		if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) continue;
+		    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
+			xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
+							   (const xmlChar *) "color");
+			xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
+							  (const xmlChar *) "move");
+			int color = find_name_in_array((char *) prune_color, colors);
 
-		for (sq = 0; sq < 64; sq ++) {
-		    if (tb->piece_legal_squares[capturing_piece] & BITVECTOR(sq)) {
-			if (tb->piece_type[capturing_piece] != PAWN) {
-			    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[capturing_piece]]; dir++) {
-				for (movementptr = movements[tb->piece_type[capturing_piece]][sq][dir];
-				     movementptr->square != -1; movementptr++) {
-				    if (movementptr->vector & tb->piece_legal_squares[captured_piece])
-					goto checkprune;
-				}
-
-				if (movementptr->square != -1) goto checkprune;
-			    }
-			} else {
-			    for (movementptr = capture_pawn_movements[sq][tb->piece_color[capturing_piece]];
-				 movementptr->square != -1; movementptr++) {
-				/* exclude pawn moves that result in promotion - they're handled later */
-				if ((ROW(movementptr->square) == 0) || (ROW(movementptr->square) == 7))
-				    break;
-				if (movementptr->vector & tb->piece_legal_squares[captured_piece])
-				    goto checkprune;
+			if (color != tb->piece_color[captured_piece]) {
+			    if ((prune_move[0] == piece_char[tb->piece_type[capturing_piece]])
+				&& (prune_move[1] == 'x')
+				&& (prune_move[2] == piece_char[tb->piece_type[captured_piece]])
+				&& (prune_move[3] == '\0')) {
+				break;
 			    }
 			}
 		    }
-		}
-		continue;
-
-	    checkprune:
-
-		for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
-		    xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-						       (const xmlChar *) "color");
-		    xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-						      (const xmlChar *) "move");
-		    int color = find_name_in_array((char *) prune_color, colors);
-
-		    if (color != tb->piece_color[captured_piece]) {
-			if ((prune_move[0] == piece_char[tb->piece_type[capturing_piece]])
-			    && (prune_move[1] == 'x')
-			    && (prune_move[2] == piece_char[tb->piece_type[captured_piece]])
-			    && (prune_move[3] == '\0')) {
-			    break;
-			}
+		    if (prune == result->nodesetval->nodeNr) {
+			fprintf(stderr, "No futurebase or pruning for %s move %cx%c\n",
+				colors[tb->piece_color[capturing_piece]],
+				piece_char[tb->piece_type[capturing_piece]],
+				piece_char[tb->piece_type[captured_piece]]);
+			return 0;
 		    }
-		}
-		if (prune == result->nodesetval->nodeNr) {
-		    fprintf(stderr, "No futurebase or pruning for %s move %cx%c\n",
-			    colors[tb->piece_color[capturing_piece]],
-			    piece_char[tb->piece_type[capturing_piece]],
-			    piece_char[tb->piece_type[captured_piece]]);
-		    return 0;
 		}
 	    }
 
@@ -4341,6 +4406,9 @@ boolean check_pruning(tablebase_t *tb) {
 	     * determine PNTM mates by counting down moves, this could result in the same move
 	     * getting counted down twice.  We deal with this by making sure that only one
 	     * futurebase of any given piece combo can exist.
+	     *
+	     * Once we get the bitvector working, we'll be able to make this check during
+	     * move back propagation and won't need this code anymore.
 	     */
 
 	    for (fbnum ++; fbnum < num_futurebases; fbnum ++) {
@@ -4364,6 +4432,9 @@ boolean check_pruning(tablebase_t *tb) {
 
 	}
     }
+
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
     /* We also want to consider all promotions. */
 
