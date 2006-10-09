@@ -1191,7 +1191,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.123 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.124 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -4200,6 +4200,8 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 
 int num_futuremoves = 0;
 int futurecaptures[MAX_MOBILES][MAX_MOBILES];
+int promotions[MAX_MOBILES];
+int futuremoves[MAX_MOBILES][64];
 
 boolean check_pruning(tablebase_t *tb) {
 
@@ -4208,9 +4210,14 @@ boolean check_pruning(tablebase_t *tb) {
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
     int fbnum;
+    int piece;
     int captured_piece;
     int capturing_piece;
     int prune;
+    int sq;
+    int dir;
+    struct movement *movementptr;
+
 
     /* Check pruning statements for consistency */
 
@@ -4259,10 +4266,6 @@ boolean check_pruning(tablebase_t *tb) {
 
 	for (capturing_piece = 0; capturing_piece < tb->num_mobiles; capturing_piece ++) {
 
-	    int sq;
-	    int dir;
-	    struct movement *movementptr;
-
 	    futurecaptures[capturing_piece][captured_piece] = -1;
 
 	    if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) continue;
@@ -4274,7 +4277,7 @@ boolean check_pruning(tablebase_t *tb) {
 	     */
 
 	    for (sq = (tb->piece_color[capturing_piece] == WHITE ? 63 : 0);
-		 sq <= (tb->piece_color[capturing_piece] == WHITE ? 0 : 63);
+		 tb->piece_color[capturing_piece] == WHITE ? (sq >= 0) : (sq <= 63);
 		 tb->piece_color[capturing_piece] == WHITE ? sq-- : sq++) {
 
 		if (tb->piece_legal_squares[capturing_piece] & BITVECTOR(sq)) {
@@ -4438,7 +4441,78 @@ boolean check_pruning(tablebase_t *tb) {
 
     /* We also want to consider all promotions. */
 
-    /* And all piece moves outside their restriction. */
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	promotions[piece] = -1;
+	if (tb->piece_type[piece] == PAWN) {
+	    for (sq = (tb->piece_color[piece] == WHITE ? 48 : 8);
+		 sq <= (tb->piece_color[piece] == WHITE ? 55 : 15); sq++) {
+		if (tb->piece_legal_squares[piece] & BITVECTOR(sq)) {
+		    promotions[piece] = num_futuremoves;
+		    num_futuremoves += PROMOTION_POSSIBILITIES;
+		    break;
+		}
+	    }
+	}
+    }
+
+    /* And now all piece moves outside their restriction.  We record a futuremove for each possible
+     * destination square that the piece can reach outside its move restriction.
+     */
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+
+	for (sq = 0; sq < 64; sq ++) futuremoves[piece][sq] = -1;
+
+	for (sq = 0; sq < 64; sq ++) {
+
+	    if (! (tb->piece_legal_squares[piece] & BITVECTOR(sq))) continue;
+
+	    if (tb->piece_type[piece] != PAWN) {
+
+		for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+
+		    for (movementptr = movements[tb->piece_type[piece]][sq][dir];
+			 movementptr->square != -1; movementptr++) {
+
+			/* If the piece is moving outside its restricted squares, it's a futuremove */
+
+			if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			    if (futuremoves[piece][movementptr->square] == -1) {
+				futuremoves[piece][movementptr->square] = num_futuremoves;
+				num_futuremoves ++;
+			    }
+			}
+		    }
+		}
+
+	    } else {
+
+		/* Pawns, as always, are special */
+
+		for (movementptr = normal_pawn_movements[sq][tb->piece_color[piece]];
+		     movementptr->square != -1; movementptr++) {
+
+		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+
+			/* might want to put the promotion code here */
+
+		    } else {
+
+			/* If the pawn is moving outside its restricted squares, it's a futuremove */
+
+			if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			    if (futuremoves[piece][movementptr->square] == -1) {
+				futuremoves[piece][movementptr->square] = num_futuremoves;
+				num_futuremoves ++;
+			    }
+			}
+		    }
+		}
+	    }
+	}
+    }
+
+    fprintf(stderr, "%d possible futuremoves\n", num_futuremoves);
 
     return 1;
 }
