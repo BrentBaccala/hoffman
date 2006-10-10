@@ -1195,7 +1195,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.128 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.129 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -5377,11 +5377,13 @@ int FTbSetCacheSize(void    *pv, unsigned long   cbSize );
 
 void *EGTB_cache;
 
+char *nalimov_path = ".";
+
 void init_nalimov_code(void)
 {
     int nalimov_num;
 
-    nalimov_num = IInitializeTb(".");
+    nalimov_num = IInitializeTb(nalimov_path);
     printf("%d piece Nalimov tablebases found\n", nalimov_num);
     EGTB_cache = malloc(EGTB_CACHE_DEFAULT);
     if (EGTB_cache == NULL) {
@@ -5549,7 +5551,7 @@ int main(int argc, char *argv[])
     verify_movements();
 
     while (1) {
-	c = getopt(argc, argv, "gpvo:");
+	c = getopt(argc, argv, "gpvo:n:");
 
 	if (c == -1) break;
 
@@ -5563,6 +5565,9 @@ int main(int argc, char *argv[])
 	    break;
 	case 'v':
 	    verify = 1;
+	    break;
+	case 'n':
+	    nalimov_path = optarg;
 	    break;
 	case 'o':
 	    output_filename = optarg;
