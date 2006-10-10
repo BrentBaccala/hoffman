@@ -1190,18 +1190,14 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     /* 'index' should now either be specified in input, or set to its default value earlier */
     /* xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive"); */
 
-    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
-    xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.127 $");
-
-    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
-    xmlNewProp(node, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
-
     gethostname(hostname, sizeof(hostname));
     he = gethostbyname(hostname);
-    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-host", NULL);
-    xmlNewProp(node, (const xmlChar *) "fqdn", (const xmlChar *) he->h_name);
+
+    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.128 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
+    xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
     return tb->xml;
 }
