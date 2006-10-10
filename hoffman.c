@@ -1193,7 +1193,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.125 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.126 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -4197,7 +4197,8 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
  *
  * A form of error checking.  We could just dismiss any moves that aren't handled by our
  * futurebases, but I've found this to be a source of error, since moves tend to get overlooked this
- * way.
+ * way.  We're also concerned with the more sobering possibility of a single move getting processed
+ * twice.
  */
 
 int num_futuremoves = 0;
@@ -4222,9 +4223,8 @@ boolean check_pruning(tablebase_t *tb) {
     struct movement *movementptr;
     int futurebase_cnt;
     int i;
+    int64 frozen_vector = 0LL;
 
-
-    /* Check pruning statements for consistency */
 
     /* First, preload all futurebases */
 
@@ -4260,11 +4260,25 @@ boolean check_pruning(tablebase_t *tb) {
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+    /* Now, compute a bitvector for all the pieces that are frozen on single squares. */
+
+    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	for (sq = 0; sq < 64; sq ++) {
+	    if (BITVECTOR(sq) == tb->piece_legal_squares[piece]) {
+		frozen_vector |= tb->piece_legal_squares[piece];
+		break;
+	    }
+	}
+    }
+
     /* Next, consider all possible pairs of pieces that might capture, and assign a number (in the
      * futurecaptures array) to each pair.  We'll ultimately use this number as an index into a bit
      * vector to determine if this capture has been handled in any particular position.  However,
      * there's a common enough "special" case: the two pieces are frozen (or at least sufficiently
      * restricted) so that the capture can never occur.  Go to the trouble of checking for this.
+     *
+     * Doesn't check if movement was blocked by a frozen piece, so could decide that capture is
+     * possible even if it isn't.
      */
 
     for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
@@ -4295,6 +4309,8 @@ boolean check_pruning(tablebase_t *tb) {
 				    num_futuremoves ++;
 				    goto next_pair_of_pieces;
 				}
+				/* If we hit a frozen piece, then this movement direction ends here */
+				if (movementptr->vector & frozen_vector) break;
 			    }
 			}
 		    } else {
@@ -4343,7 +4359,15 @@ boolean check_pruning(tablebase_t *tb) {
 	}
     }
 
-    /* We also want to consider all promotions. */
+    /* We also want to consider all promotions.  We don't wrap this into the pawn code that follows
+     * because we want to count all promotions together, not a set for each destination square.
+     * This is a special case of a more general problem that this code doesn't address yet.  We want
+     * minimum numbers assigned in the futuremove bit vector to keep it small, so we want to reuse
+     * those numbers if we're sure that two moves (say) can't happen from different squares.  I.e,
+     * if a king is restricted to the f1/h3 rectangle, then it can move to e1 from f1 and it can
+     * move to h4 from h3, but there is no single position from which it can move to both e1 and h4.
+     * So we can use the same position in the bit vector for Ke1 and Kh4.  But we don't (yet).
+     */
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
 	promotions[piece] = -1;
@@ -4378,6 +4402,12 @@ boolean check_pruning(tablebase_t *tb) {
 		    for (movementptr = movements[tb->piece_type[piece]][sq][dir];
 			 movementptr->square != -1; movementptr++) {
 
+			/* If we hit a frozen piece, movement has to stop.  We don't consider
+			 * captures here; they were handled above.
+			 */
+
+			if (movementptr->vector & frozen_vector) break;
+
 			/* If the piece is moving outside its restricted squares, it's a futuremove */
 
 			if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
@@ -4395,6 +4425,12 @@ boolean check_pruning(tablebase_t *tb) {
 
 		for (movementptr = normal_pawn_movements[sq][tb->piece_color[piece]];
 		     movementptr->square != -1; movementptr++) {
+
+		    /* If we hit a frozen piece, movement has to stop.  We don't consider captures
+		     * here; they were handled above.
+		     */
+
+		    if (movementptr->vector & frozen_vector) break;
 
 		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
@@ -4428,6 +4464,21 @@ boolean check_pruning(tablebase_t *tb) {
 
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
+
+    /* Check pruning statements for consistency */
+
+    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
+	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
+					   (const xmlChar *) "color");
+	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
+					  (const xmlChar *) "type");
+	int color = find_name_in_array((char *) prune_color, colors);
+	int type = find_name_in_array((char *) prune_type, restriction_types);
+
+	if (type != tb->move_restrictions[color]) {
+	    fprintf(stderr, "Pruning restrictions don't match tablebase restrictions\n");
+	}
+    }
 
     for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
 
@@ -4516,11 +4567,22 @@ boolean check_pruning(tablebase_t *tb) {
 
 	for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
 
+	    /* Check to see if the pawn can even be on a square where a promotion capture is
+	     * possible.  Even if it is, it's still possible that the other piece can't be on a
+	     * square where it could be promotion captured, but we leave that possibility unchecked.
+	     */
+
+	    if (tb->piece_color[pawn] == WHITE) {
+		if (! (tb->piece_legal_squares[pawn] & 0x00ff000000000000LL)) break;
+	    } else {
+		if (! (tb->piece_legal_squares[pawn] & 0x000000000000ff00LL)) break;
+	    }
+
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
 
 	    promoted_pieces_handled = 0;
 
-	    if (futurecaptures[pawn][captured_piece] == -1) break;
+	    if (futurecaptures[pawn][captured_piece] == -1) continue;
 
 	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		if ((futurebases[fbnum]->extra_piece != -1)
@@ -4535,7 +4597,7 @@ boolean check_pruning(tablebase_t *tb) {
 			return 0;
 		    }
 		    promoted_pieces_handled
-			&= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
+			|= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
 		}
 	    }
 
@@ -4594,7 +4656,7 @@ boolean check_pruning(tablebase_t *tb) {
 		    return 0;
 		}
 		promoted_pieces_handled
-		    &= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
+		    |= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
 	    }
 	}
 
