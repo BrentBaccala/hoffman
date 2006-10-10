@@ -255,6 +255,8 @@ char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
 
 char * colors[3] = {"WHITE", "BLACK", NULL};
 
+int promoted_pieces[] = {QUEEN, ROOK, KNIGHT, BISHOP, 0};
+
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
 
@@ -1191,7 +1193,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.124 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.125 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -4213,10 +4215,13 @@ boolean check_pruning(tablebase_t *tb) {
     int piece;
     int captured_piece;
     int capturing_piece;
+    int pawn;
     int prune;
     int sq;
     int dir;
     struct movement *movementptr;
+    int futurebase_cnt;
+    int i;
 
 
     /* Check pruning statements for consistency */
@@ -4338,107 +4343,6 @@ boolean check_pruning(tablebase_t *tb) {
 	}
     }
 
-    /* Now, check the futurebases to see if there are any for a given captured piece.  If not, check
-     * to make sure all possible captures of that piece are pruned.  Otherwise, signal an error and
-     * exit right now.  Just because this test is passed doesn't mean a particular futuremove is
-     * handled in a particular position (that's why we use the bit vector), but if the test fails,
-     * well, then we know for sure that we'd get to the end of program with unhandled futurebases,
-     * so we can save ourselves a long computation by making this basic check now.
-     */
-
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
-
-    for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
-
-	/* check all futurebases for a 'capture' with captured_piece missing */
-
-	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	    if (tb->piece_type[captured_piece] == PAWN) {
-		if ((futurebases[fbnum]->extra_piece == -1)
-		    && (futurebases[fbnum]->missing_pawn == captured_piece)
-		    && (futurebases[fbnum]->missing_non_pawn == -1)) break;
-	    } else {
-		if ((futurebases[fbnum]->extra_piece == -1)
-		    && (futurebases[fbnum]->missing_non_pawn == captured_piece)
-		    && (futurebases[fbnum]->missing_pawn == -1)) break;
-	    }
-	}
-
-	/* If no such futurebase exists, then for every other piece, see if the piece restrictions
-	 * would permit it to capture the original piece in question.  If so, there must be a prune
-	 * statement, or it's an error.
-	 */
-
-	if (fbnum == num_futurebases) {
-	    for (capturing_piece = 0; capturing_piece < tb->num_mobiles; capturing_piece ++) {
-
-		if (futurecaptures[capturing_piece][captured_piece] != -1) {
-
-		    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
-			xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-							   (const xmlChar *) "color");
-			xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-							  (const xmlChar *) "move");
-			int color = find_name_in_array((char *) prune_color, colors);
-
-			if (color != tb->piece_color[captured_piece]) {
-			    if ((prune_move[0] == piece_char[tb->piece_type[capturing_piece]])
-				&& (prune_move[1] == 'x')
-				&& (prune_move[2] == piece_char[tb->piece_type[captured_piece]])
-				&& (prune_move[3] == '\0')) {
-				break;
-			    }
-			}
-		    }
-		    if (prune == result->nodesetval->nodeNr) {
-			fprintf(stderr, "No futurebase or pruning for %s move %cx%c\n",
-				colors[tb->piece_color[capturing_piece]],
-				piece_char[tb->piece_type[capturing_piece]],
-				piece_char[tb->piece_type[captured_piece]]);
-			return 0;
-		    }
-		}
-	    }
-
-	} else {
-
-	    /* Otherwise, a futurebase matched the capture.  Now keep looking to see if any other
-	     * futurebases match the same capture.  This is an error because then we might have two
-	     * futurebases that would back prop into the same position with the same move.  Since we
-	     * determine PNTM mates by counting down moves, this could result in the same move
-	     * getting counted down twice.  We deal with this by making sure that only one
-	     * futurebase of any given piece combo can exist.
-	     *
-	     * Once we get the bitvector working, we'll be able to make this check during
-	     * move back propagation and won't need this code anymore.
-	     */
-
-	    for (fbnum ++; fbnum < num_futurebases; fbnum ++) {
-		if (tb->piece_type[captured_piece] == PAWN) {
-		    if ((futurebases[fbnum]->extra_piece == -1)
-			&& (futurebases[fbnum]->missing_pawn == captured_piece)
-			&& (futurebases[fbnum]->missing_non_pawn == -1)) break;
-		} else {
-		    if ((futurebases[fbnum]->extra_piece == -1)
-			&& (futurebases[fbnum]->missing_non_pawn == captured_piece)
-			&& (futurebases[fbnum]->missing_pawn == -1)) break;
-		}
-	    }
-
-	    if (fbnum != num_futurebases) {
-		fprintf(stderr, "Multiple futurebases for capturing %s's %s\n",
-			colors[tb->piece_color[captured_piece]],
-			piece_name[tb->piece_type[captured_piece]]);
-		return 0;
-	    }
-
-	}
-    }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
-
     /* We also want to consider all promotions. */
 
     for (piece = 0; piece < tb->num_mobiles; piece ++) {
@@ -4513,6 +4417,270 @@ boolean check_pruning(tablebase_t *tb) {
     }
 
     fprintf(stderr, "%d possible futuremoves\n", num_futuremoves);
+
+    /* Now, check the futurebases to see if there are any for a given captured piece.  If not, check
+     * to make sure all possible captures of that piece are pruned.  Otherwise, signal an error and
+     * exit right now.  Just because this test is passed doesn't mean a particular futuremove is
+     * handled in a particular position (that's why we use the bit vector), but if the test fails,
+     * well, then we know for sure that we'd get to the end of program with unhandled futurebases,
+     * so we can save ourselves a long computation by making this basic check now.
+     */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
+
+    for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
+
+	/* check all futurebases for a 'capture' with captured_piece missing */
+
+	futurebase_cnt = 0;
+
+	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	    if (tb->piece_type[captured_piece] == PAWN) {
+		if ((futurebases[fbnum]->extra_piece == -1)
+		    && (futurebases[fbnum]->missing_pawn == captured_piece)
+		    && (futurebases[fbnum]->missing_non_pawn == -1)) futurebase_cnt ++;
+	    } else {
+		if ((futurebases[fbnum]->extra_piece == -1)
+		    && (futurebases[fbnum]->missing_non_pawn == captured_piece)
+		    && (futurebases[fbnum]->missing_pawn == -1)) futurebase_cnt ++;
+	    }
+	}
+
+	/* If no such futurebase exists, then for every other piece, see if the piece restrictions
+	 * would permit it to capture the original piece in question.  If so, there must be a prune
+	 * statement, or it's an error.
+	 */
+
+	if (futurebase_cnt == 0) {
+
+	    for (capturing_piece = 0; capturing_piece < tb->num_mobiles; capturing_piece ++) {
+
+		if (futurecaptures[capturing_piece][captured_piece] != -1) {
+
+		    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
+			xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
+							   (const xmlChar *) "color");
+			xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
+							  (const xmlChar *) "move");
+			int color = find_name_in_array((char *) prune_color, colors);
+
+			if (color != tb->piece_color[captured_piece]) {
+			    if ((prune_move[0] == piece_char[tb->piece_type[capturing_piece]])
+				&& (prune_move[1] == 'x')
+				&& (prune_move[2] == piece_char[tb->piece_type[captured_piece]])
+				&& (prune_move[3] == '\0')) {
+				break;
+			    }
+			}
+		    }
+		    if (prune == result->nodesetval->nodeNr) {
+			fprintf(stderr, "No futurebase or pruning for %s move %cx%c\n",
+				colors[tb->piece_color[capturing_piece]],
+				piece_char[tb->piece_type[capturing_piece]],
+				piece_char[tb->piece_type[captured_piece]]);
+			return 0;
+		    }
+		}
+	    }
+
+	} else if (futurebase_cnt > 1) {
+
+	    /* Otherwise, a futurebase matched the capture.  Did more than one?  This is an error
+	     * because then we might have two futurebases that would back prop into the same
+	     * position with the same move.  Since we determine PNTM mates by counting down moves,
+	     * this could result in the same move getting counted down twice.  We deal with this by
+	     * making sure that only one futurebase of any given piece combo can exist.
+	     *
+	     * Once we get the bitvector working, we'll be able to make this check during
+	     * move back propagation and won't need this code anymore.
+	     */
+
+	    fprintf(stderr, "Multiple futurebases for capturing %s's %s\n",
+		    colors[tb->piece_color[captured_piece]],
+		    piece_name[tb->piece_type[captured_piece]]);
+	    return 0;
+
+	}
+    }
+
+    /* Pawns - check for both promotion and promotion capture futurebases here.  Same idea. */
+
+    for (pawn = 0; pawn < tb->num_mobiles; pawn ++) {
+
+	int promoted_pieces_handled;
+
+	if (tb->piece_type[pawn] != PAWN) continue;
+
+	/* First, we're looking for promotion capture futurebases. */
+
+	for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
+
+	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
+
+	    promoted_pieces_handled = 0;
+
+	    if (futurecaptures[pawn][captured_piece] == -1) break;
+
+	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+		if ((futurebases[fbnum]->extra_piece != -1)
+		    && (futurebases[fbnum]->missing_non_pawn == captured_piece)
+		    && (futurebases[fbnum]->missing_pawn == pawn)) {
+		    if (promoted_pieces_handled
+			& (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece])) {
+			fprintf(stderr, "Multiple promotion capture futurebases for %s's Px%c=%c\n",
+				colors[tb->piece_color[pawn]],
+				piece_char[tb->piece_type[futurebases[fbnum]->missing_non_pawn]],
+				piece_char[futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]]);
+			return 0;
+		    }
+		    promoted_pieces_handled
+			&= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
+		}
+	    }
+
+	    /* If no such futurebase exists, then for every other piece, see if the piece
+	     * restrictions would permit it to capture the original piece in question.  If so, there
+	     * must be a prune statement, or it's an error.
+	     */
+
+	    for (i = 0; promoted_pieces[i] != 0; i ++) {
+
+		if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
+
+		for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
+		    xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
+						       (const xmlChar *) "color");
+		    xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
+						      (const xmlChar *) "move");
+		    int color = find_name_in_array((char *) prune_color, colors);
+
+		    if (color == tb->piece_color[pawn]) {
+			if ((prune_move[0] == 'P')
+			    && (prune_move[1] == 'x')
+			    && (prune_move[2] == piece_char[tb->piece_type[captured_piece]])
+			    && (prune_move[3] == '=')
+			    && (prune_move[4] == piece_char[promoted_pieces[i]])
+			    && (prune_move[5] == '\0')) {
+			    break;
+			}
+		    }
+		}
+		if (prune == result->nodesetval->nodeNr) {
+		    fprintf(stderr, "No futurebase or pruning for %s move Px%c=%c\n",
+			    colors[tb->piece_color[pawn]],
+			    piece_char[tb->piece_type[captured_piece]],
+			    piece_char[promoted_pieces[i]]);
+		    return 0;
+		}
+	    }
+	}
+
+	/* straight promotion futurebases */
+
+	if (promotions[pawn] == -1) continue;
+
+	promoted_pieces_handled = 0;
+
+	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	    if ((futurebases[fbnum]->extra_piece != -1)
+		&& (futurebases[fbnum]->missing_non_pawn == -1)
+		&& (futurebases[fbnum]->missing_pawn == pawn)) {
+		if (promoted_pieces_handled
+		    & (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece])) {
+		    fprintf(stderr, "Multiple promotion futurebases for %s's P=%c\n",
+			    colors[tb->piece_color[pawn]],
+			    piece_char[futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]]);
+		    return 0;
+		}
+		promoted_pieces_handled
+		    &= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
+	    }
+	}
+
+	for (i = 0; promoted_pieces[i] != 0; i ++) {
+
+	    if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
+
+	    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
+		xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
+						   (const xmlChar *) "color");
+		xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
+						  (const xmlChar *) "move");
+		int color = find_name_in_array((char *) prune_color, colors);
+
+		if (color == tb->piece_color[pawn]) {
+		    if ((prune_move[0] == 'P')
+			&& (prune_move[1] == '=')
+			&& (prune_move[2] == piece_char[promoted_pieces[i]])
+			&& (prune_move[3] == '\0')) {
+			break;
+		    }
+		}
+	    }
+	    if (prune == result->nodesetval->nodeNr) {
+		fprintf(stderr, "No futurebase or pruning for %s move P=%c\n",
+			colors[tb->piece_color[pawn]],
+			piece_char[promoted_pieces[i]]);
+		return 0;
+	    }
+	}
+    }
+
+    futurebase_cnt = 0;
+
+    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	if ((futurebases[fbnum]->extra_piece == -1)
+	    && (futurebases[fbnum]->missing_pawn == -1)
+	    && (futurebases[fbnum]->missing_non_pawn == -1)) futurebase_cnt ++;
+    }
+
+    if (futurebase_cnt == 0) {
+	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	    for (sq = 0; sq < 64; sq ++) {
+		if (futuremoves[piece][sq] != -1) {
+
+		    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
+			xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
+							   (const xmlChar *) "color");
+			xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
+							  (const xmlChar *) "move");
+			int color = find_name_in_array((char *) prune_color, colors);
+
+			if (color == tb->piece_color[piece]) {
+			    if ((prune_move[0] == piece_char[tb->piece_type[piece]])
+				&& (prune_move[1] == 'a')
+				&& (prune_move[2] == 'n')
+				&& (prune_move[3] == 'y')
+				&& (prune_move[4] == '\0')) {
+				break;
+			    }
+			    if ((prune_move[0] == piece_char[tb->piece_type[piece]])
+				&& (prune_move[1] == 'a' + COL(sq))
+				&& (prune_move[2] == '1' + ROW(sq))
+				&& (prune_move[3] == '\0')) {
+				break;
+			    }
+			}
+		    }
+
+		    if (prune == result->nodesetval->nodeNr) {
+			fprintf(stderr, "No futurebase or pruning for %s move %c%c%c\n",
+				colors[tb->piece_color[piece]],
+				piece_char[tb->piece_type[piece]],
+				'a' + COL(sq), '1' + ROW(sq));
+			return 0;
+		    }
+		}
+	    }
+	}
+    } else if (futurebase_cnt > 1) {
+	fprintf(stderr, "Multiple futurebases for restricted moves\n");
+	return 0;
+    }
+
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
     return 1;
 }
@@ -5591,8 +5759,6 @@ int main(int argc, char *argv[])
 		} else {
 
 		    /* PAWNs */
-
-		    int promoted_pieces[] = {QUEEN, ROOK, KNIGHT, BISHOP, 0};
 
 		    index_to_local_position(tb, index, &pos);
 		    nextpos = pos;
