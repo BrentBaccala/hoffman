@@ -127,14 +127,14 @@ inline int square(int row, int col)
 
 /***** GLOBAL CONSTANTS *****/
 
-/* Maximum number of mobile pieces; used to simplify various arrays
+/* Maximum number of pieces; used to simplify various arrays
  *
  * "8" may seem absurd, but it's probably about right.  "4" is easily doable in memory.  "5"
  * requires sweeping passes across a file on disk.  "6" and "7" are worse than "5", but doable with
  * severe restrictions on the movements of the pieces.  So "8" is enough.
  */
 
-#define MAX_MOBILES 16
+#define MAX_PIECES 16
 
 /* Why 100?  Well, I just think it's less likely to introduce bugs into this code if I count
  * half-moves instead of moves.  So it takes 100 half-moves to stalemate.
@@ -168,14 +168,13 @@ inline int square(int row, int col)
  * Both types use a 64-bit board_vector with one bit for each board position, in addition to a flag
  * to indicate which side is to move and the en passant capture square (or -1 if no en passant
  * capture is possible).  We use board_vector to easily check if possible moves are legal by looking
- * for pieces that block our moving piece.  This is done during futurebase propagation (mobile
- * capture only), during intratable propagation, and during initialization.  It could be used to
- * check if en passant positions are legal (are the two squares behind the pawn blocked or not), but
- * that is problematic now because the board_vector isn't correct at the point where we need to
- * make that check.
+ * for pieces that block our moving piece.  This is done during futurebase propagation, during
+ * intratable propagation, and during initialization.  It could be used to check if en passant
+ * positions are legal (are the two squares behind the pawn blocked or not), but that is problematic
+ * now because the board_vector isn't correct at the point where we need to make that check.
  *
- * Local positions use numbers (0-63) indicating the positions of the mobile pieces, and also have a
- * quick way to check captures using a black_vector and a white_vector.  You have to look into the
+ * Local positions use numbers (0-63) indicating the positions of the pieces, and also have a quick
+ * way to check captures using a black_vector and a white_vector.  You have to look into the
  * tablebase structure to figure out what piece corresponds to each number.  "black_vector" and
  * "white_vector" are only used during tablebase initialization and in the probe code.  It's
  * starting to look like these vectors would be better arranged as PTM_vector and PNTM_vector
@@ -197,7 +196,7 @@ inline int square(int row, int col)
  *
  */
 
-/* Where are the kings located in the mobile piece list? */
+/* Where are the kings located in the piece list? */
 
 #define WHITE_KING 0
 #define BLACK_KING 1
@@ -209,7 +208,7 @@ typedef struct {
     int64 black_vector;
     short side_to_move;
     short en_passant_square;
-    short piece_position[MAX_MOBILES];
+    short piece_position[MAX_PIECES];
 } local_position_t;
 
 /* This is a global position, that doesn't depend on a particular tablebase.  It's slower to
@@ -329,10 +328,10 @@ char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
 typedef struct tablebase {
     int32 max_index;
     enum {NAIVE_INDEX=1, SIMPLE_INDEX} index_type;
-    int total_legal_piece_positions[MAX_MOBILES];
-    int simple_piece_positions[MAX_MOBILES][64];
-    int simple_piece_indices[MAX_MOBILES][64];
-    int last_identical_piece[MAX_MOBILES];
+    int total_legal_piece_positions[MAX_PIECES];
+    int simple_piece_positions[MAX_PIECES][64];
+    int simple_piece_indices[MAX_PIECES][64];
+    int last_identical_piece[MAX_PIECES];
 
     /* for futurebases only */
     int invert_colors;
@@ -343,11 +342,11 @@ typedef struct tablebase {
     xmlDocPtr xml;
     void *fileptr;
     size_t length;
-    int num_mobiles;
+    int num_pieces;
     int move_restrictions[2];		/* one for each color */
-    short piece_type[MAX_MOBILES];
-    short piece_color[MAX_MOBILES];
-    int64 piece_legal_squares[MAX_MOBILES];
+    short piece_type[MAX_PIECES];
+    short piece_color[MAX_PIECES];
+    int64 piece_legal_squares[MAX_PIECES];
     struct fourbyte_entry *entries;
 } tablebase_t;
 
@@ -411,7 +410,7 @@ int find_name_in_array(char * name, char * array[])
  * local_position_to_index().  Right now, I deal with this by making a copy of the local position
  * and sorting identical pieces into ascending position numbers.
  *
- * So how about a static 64-bit vector with bits set for the frozen pieces but not the mobiles?
+ * So how about a static 64-bit vector with bits set for pieces frozen on a single square?
  * Everytime we call index_to_local_position, copy from the static vector into the position
  * structure.  Then we compute the positions of the mobile pieces and plug their bits into the
  * structure's vector at the right places.  Might implement this some day.
@@ -429,13 +428,13 @@ int32 local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 
     pos->board_vector = 0;
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
 	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
-	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
+	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
 #endif
 	    return -1;
 	}
@@ -487,7 +486,7 @@ boolean naive_index_to_local_position(tablebase_t *tb, int32 index, local_positi
     p->side_to_move = index & 1;
     index >>= 1;
 
-    for (piece = 0; piece < tb->num_mobiles; piece++) {
+    for (piece = 0; piece < tb->num_pieces; piece++) {
 
 	int square = index & 63;
 
@@ -565,7 +564,7 @@ int32 local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
     index = 0;
     pos->board_vector = 0;
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	index *= tb->total_legal_piece_positions[piece];
 
@@ -573,7 +572,7 @@ int32 local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
 	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
-	    fprintf(stderr, "Bad mobile piece position in local_position_to_index()\n");  /* BREAKPOINT */
+	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
 #endif
 	    return -1;
 	}
@@ -629,7 +628,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, int32 index, local_posit
     p->side_to_move = index % 2;
     index /= 2;
 
-    for (piece = tb->num_mobiles - 1; piece >= 0; piece --) {
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
 	int square = tb->simple_piece_positions[piece][index % tb->total_legal_piece_positions[piece]];
 	index /= tb->total_legal_piece_positions[piece];
@@ -670,7 +669,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, int32 index, local_posit
 
     /* Identical pieces have to appear in sorted order. */
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if ((tb->last_identical_piece[piece] != -1)
 	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
 	    return 0;
@@ -711,7 +710,7 @@ int32 local_position_to_index(tablebase_t *tb, local_position_t *pos)
     local_position_t copy = *pos;
     pos = &copy;
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
 	while ((tb->last_identical_piece[piece2] != -1)
 	       && (pos->piece_position[piece2] < pos->piece_position[tb->last_identical_piece[piece2]])) {
@@ -767,7 +766,7 @@ void check_1000_positions(tablebase_t *tb)
 	position1.side_to_move = rand() % 2;
 	position1.en_passant_square = -1;
 
-	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    do {
 		position1.piece_position[piece] = rand() % 64;
 	    } while (! (BITVECTOR(position1.piece_position[piece]) & tb->piece_legal_squares[piece]));
@@ -844,23 +843,23 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     /* Fetch the pieces from the XML */
 
     context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression((const xmlChar *) "//mobile", context);
+    result = xmlXPathEvalExpression((const xmlChar *) "//piece", context);
     if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	fprintf(stderr, "No pieces!\n");
 	return NULL;
     } else if (result->nodesetval->nodeNr < 2) {
 	fprintf(stderr, "Too few pieces!\n");
 	return NULL;
-    } else if (result->nodesetval->nodeNr > MAX_MOBILES) {
+    } else if (result->nodesetval->nodeNr > MAX_PIECES) {
 	fprintf(stderr, "Too many pieces!\n");
 	return NULL;
     } else {
 	int piece;
 	int piece2;
 
-	tb->num_mobiles = result->nodesetval->nodeNr;
+	tb->num_pieces = result->nodesetval->nodeNr;
 
-	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    xmlChar * color;
 	    xmlChar * type;
 	    xmlChar * location;
@@ -942,7 +941,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
 	tb->index_type = NAIVE_INDEX;
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
-	tb->max_index = (2<<(6*tb->num_mobiles)) - 1;
+	tb->max_index = (2<<(6*tb->num_pieces)) - 1;
     } else if (!strcasecmp((char *) index, "simple")) {
 	int piece, square;
 
@@ -950,7 +949,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	tb->index_type = SIMPLE_INDEX;
 	tb->max_index = 2;
 
-	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    for (square = 0; square < 64; square ++) {
 		if (! (tb->piece_legal_squares[piece] & BITVECTOR(square))) continue;
 		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
@@ -1193,7 +1192,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-program", NULL);
     xmlNewProp(node, (const xmlChar *) "name", (const xmlChar *) "Hoffman");
-    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.126 $");
+    xmlNewProp(node, (const xmlChar *) "version", (const xmlChar *) "$Revision: 1.127 $");
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generating-time", NULL);
     time(&creation_time);
@@ -1377,7 +1376,7 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
     bzero(local, sizeof(local_position_t));
 
-    for (piece = 0; piece < tb2->num_mobiles; piece ++)
+    for (piece = 0; piece < tb2->num_pieces; piece ++)
 	local->piece_position[piece] = -1;
 
     local->en_passant_square = foreign->en_passant_square;
@@ -1385,13 +1384,13 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
     if (invert_colors) flip_side_to_move_local(local);
 
-    for (foreign_piece = 0; foreign_piece < tb1->num_mobiles; foreign_piece ++) {
+    for (foreign_piece = 0; foreign_piece < tb1->num_pieces; foreign_piece ++) {
 
 	int sq = foreign->piece_position[foreign_piece];
 
 	if (invert_colors) sq = square(7 - ROW(sq), COL(sq));
 
-	for (piece = 0; piece < tb2->num_mobiles; piece ++) {
+	for (piece = 0; piece < tb2->num_pieces; piece ++) {
 
 	    if ((tb1->piece_type[foreign_piece] == tb2->piece_type[piece])
 		&& (invert_colors
@@ -1412,7 +1411,7 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 	    }
 	}
 
-	if (piece == tb2->num_mobiles) {
+	if (piece == tb2->num_pieces) {
 	    if (extra_piece != NONE) {
 		fprintf(stderr, "More than one extra piece in translation\n");
 		return -1;
@@ -1427,7 +1426,7 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
      * restriction.
      */
 
-    for (piece = 0; piece < tb2->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb2->num_pieces; piece ++) {
 	if (!(pieces_processed_bitvector & (1 << piece))) {
 	    if (missing_piece1 == NONE) {
 		missing_piece1 = piece;
@@ -1484,7 +1483,7 @@ int32 global_position_to_local_position(tablebase_t *tb, global_position_t *glob
 
     bzero(local, sizeof(local_position_t));
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++)
+    for (piece = 0; piece < tb->num_pieces; piece ++)
 	local->piece_position[piece] = -1;
 
     local->en_passant_square = global->en_passant_square;
@@ -1492,7 +1491,7 @@ int32 global_position_to_local_position(tablebase_t *tb, global_position_t *glob
 
     for (square = 0; square < NUM_SQUARES; square ++) {
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
-	    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	    for (piece = 0; piece < tb->num_pieces; piece ++) {
 		if ((global->board[square] == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
 		    && !(pieces_processed_bitvector & (1 << piece))) {
 
@@ -1508,7 +1507,7 @@ int32 global_position_to_local_position(tablebase_t *tb, global_position_t *glob
 		    break;
 		}
 	    }
-	    if (piece == tb->num_mobiles) {
+	    if (piece == tb->num_pieces) {
 		if (extra_piece != NONE) {
 		    /* This can happen if we're probing a whole bunch of radically different tablebases. */
 		    /* fprintf(stderr, "More than one extra piece in translation\n"); */
@@ -1529,7 +1528,7 @@ int32 global_position_to_local_position(tablebase_t *tb, global_position_t *glob
      * restriction.
      */
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if (!(pieces_processed_bitvector & (1 << piece))) {
 	    if (missing_piece1 == NONE) {
 		missing_piece1 = piece;
@@ -1591,7 +1590,7 @@ boolean index_to_global_position(tablebase_t *tb, int32 index, global_position_t
     global->side_to_move = local.side_to_move;
     global->en_passant_square = local.en_passant_square;
 
-    for (piece = 0; piece < tb->num_mobiles; piece++) {
+    for (piece = 0; piece < tb->num_pieces; piece++) {
 	global->board[local.piece_position[piece]]
 	    = global_pieces[tb->piece_color[piece]][tb->piece_type[piece]];
 	global->board_vector |= BITVECTOR(local.piece_position[piece]);
@@ -1609,7 +1608,7 @@ boolean place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, in
 
     if (pos->board_vector & BITVECTOR(square)) return 0;
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if ((tb->piece_type[piece] == type) && (tb->piece_color[piece] == color)) {
 	    pos->piece_position[piece] = square;
 	    pos->board_vector |= BITVECTOR(square);
@@ -2915,7 +2914,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 
     if (position->en_passant_square == -1) {
 
-	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    if (tb->piece_color[piece] == position->side_to_move) continue;
 	    if (tb->piece_type[piece] != PAWN) continue;
@@ -3113,14 +3112,14 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		    if (invert_colors_of_futurebase)
 			new_promotion_sq = square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
 
-		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		    for (piece = 0; piece < tb->num_pieces; piece ++) {
 			if (position.piece_position[piece] == new_promotion_sq) {
 			    position.piece_position[piece] = promotion_sq;
 			    break;
 			}
 		    }
 
-		    if (piece == tb->num_mobiles) {
+		    if (piece == tb->num_pieces) {
 			fprintf(stderr, "Couldn't back up to an identical piece in promotion back prop\n");
 			break;
 		    }
@@ -3320,14 +3319,14 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		    if (invert_colors_of_futurebase)
 			new_promotion_sq = square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
 
-		    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+		    for (piece = 0; piece < tb->num_pieces; piece ++) {
 			if (position.piece_position[piece] == new_promotion_sq) {
 			    position.piece_position[piece] = promotion_sq;
 			    break;
 			}
 		    }
 
-		    if (piece == tb->num_mobiles) {
+		    if (piece == tb->num_pieces) {
 			fprintf(stderr, "Couldn't back up to an identical piece in promotion back prop\n");
 			break;
 		    }
@@ -3341,8 +3340,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
     }
 }
 
-/* Propagate moves from a futurebase that resulted from capturing one of the mobile
- * pieces in the current tablebase.
+/* Propagate moves from a futurebase that resulted from capturing one of the pieces in the current
+ * tablebase.
  *
  * I'm thinking of changing that "invert_colors_of_futurebase" flag to be a subroutine that gets
  * passed in.  It could be a pointer to invert_colors_of_global_position to do what it does now.  Or
@@ -3561,8 +3560,8 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 
 
 }
 
-void propagate_moves_from_mobile_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-						    int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
+void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
+					     int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
 {
     int32 future_index;
     local_position_t current_position;
@@ -3625,7 +3624,7 @@ void propagate_moves_from_mobile_capture_futurebase(tablebase_t *tb, tablebase_t
 
 		/* No pieces were on restricted squares.  Check them all. */
 
-		for (piece = 0; piece < tb->num_mobiles; piece++) {
+		for (piece = 0; piece < tb->num_pieces; piece++) {
 		    consider_possible_captures(tb, futurebase, future_index, &current_position,
 					       piece, captured_piece, mate_in_limit);
 		}
@@ -3897,10 +3896,10 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
      */
 
     /* piece_vector - set a bit for every piece in current tablebase */
-    piece_vector = (1 << tb->num_mobiles) - 1;
+    piece_vector = (1 << tb->num_pieces) - 1;
 
-    for (future_piece = 0; future_piece < futurebase->num_mobiles; future_piece ++) {
-	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (future_piece = 0; future_piece < futurebase->num_pieces; future_piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (! (piece_vector & (1 << piece))) continue;
 	    if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
 		&& ((!futurebase->invert_colors &&
@@ -3919,7 +3918,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 		}
 	    }
 	}
-	if (piece == tb->num_mobiles) {
+	if (piece == tb->num_pieces) {
 	    if ((futurebase->extra_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
 		futurebase->extra_piece = future_piece;
 	    } else {
@@ -3929,18 +3928,18 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 	}
     }
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if ((tb->piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
     }
-    if (piece != tb->num_mobiles) {
+    if (piece != tb->num_pieces) {
 	futurebase->missing_pawn = piece;
 	piece_vector ^= (1 << piece);
     }
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if ((tb->piece_type[piece] != PAWN) && (piece_vector & (1 << piece))) break;
     }
-    if (piece != tb->num_mobiles) {
+    if (piece != tb->num_pieces) {
 	futurebase->missing_non_pawn = piece;
 	piece_vector ^= (1 << piece);
     }
@@ -3963,7 +3962,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression((const xmlChar *) "//futurebase", context);
-    if ((tb->num_mobiles > 2) && xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+    if ((tb->num_pieces > 2) && xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	fprintf(stderr, "No futurebases!\n");
     } else {
 	int i;
@@ -4021,7 +4020,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
-		propagate_moves_from_mobile_capture_futurebase(tb, futurebase, futurebase->invert_colors, piece, &mate_in_limit);
+		propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors, piece, &mate_in_limit);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion")) {
 
@@ -4053,8 +4052,8 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion-capture")) {
 
 		/* It's a promotion capture futurebase.  Futurebase should have exactly one less
-		 * mobile than the current tablebase, and one of our pawns should have promoted
-		 * into something else.
+		 * piece than the current tablebase, and one of our pawns should have promoted into
+		 * something else.
 		 */
 
 		if (futurebase->extra_piece == -1) {
@@ -4202,9 +4201,9 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
  */
 
 int num_futuremoves = 0;
-int futurecaptures[MAX_MOBILES][MAX_MOBILES];
-int promotions[MAX_MOBILES];
-int futuremoves[MAX_MOBILES][64];
+int futurecaptures[MAX_PIECES][MAX_PIECES];
+int promotions[MAX_PIECES];
+int futuremoves[MAX_PIECES][64];
 
 boolean check_pruning(tablebase_t *tb) {
 
@@ -4262,7 +4261,7 @@ boolean check_pruning(tablebase_t *tb) {
 
     /* Now, compute a bitvector for all the pieces that are frozen on single squares. */
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 	for (sq = 0; sq < 64; sq ++) {
 	    if (BITVECTOR(sq) == tb->piece_legal_squares[piece]) {
 		frozen_vector |= tb->piece_legal_squares[piece];
@@ -4281,9 +4280,9 @@ boolean check_pruning(tablebase_t *tb) {
      * possible even if it isn't.
      */
 
-    for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
+    for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
 
-	for (capturing_piece = 0; capturing_piece < tb->num_mobiles; capturing_piece ++) {
+	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
 	    futurecaptures[capturing_piece][captured_piece] = -1;
 
@@ -4369,7 +4368,7 @@ boolean check_pruning(tablebase_t *tb) {
      * So we can use the same position in the bit vector for Ke1 and Kh4.  But we don't (yet).
      */
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 	promotions[piece] = -1;
 	if (tb->piece_type[piece] == PAWN) {
 	    for (sq = (tb->piece_color[piece] == WHITE ? 48 : 8);
@@ -4387,7 +4386,7 @@ boolean check_pruning(tablebase_t *tb) {
      * destination square that the piece can reach outside its move restriction.
      */
 
-    for (piece = 0; piece < tb->num_mobiles; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	for (sq = 0; sq < 64; sq ++) futuremoves[piece][sq] = -1;
 
@@ -4480,7 +4479,7 @@ boolean check_pruning(tablebase_t *tb) {
 	}
     }
 
-    for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
+    for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
 
 	/* check all futurebases for a 'capture' with captured_piece missing */
 
@@ -4505,7 +4504,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 	if (futurebase_cnt == 0) {
 
-	    for (capturing_piece = 0; capturing_piece < tb->num_mobiles; capturing_piece ++) {
+	    for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
 		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
@@ -4557,7 +4556,7 @@ boolean check_pruning(tablebase_t *tb) {
 
     /* Pawns - check for both promotion and promotion capture futurebases here.  Same idea. */
 
-    for (pawn = 0; pawn < tb->num_mobiles; pawn ++) {
+    for (pawn = 0; pawn < tb->num_pieces; pawn ++) {
 
 	int promoted_pieces_handled;
 
@@ -4565,7 +4564,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 	/* First, we're looking for promotion capture futurebases. */
 
-	for (captured_piece = 2; captured_piece < tb->num_mobiles; captured_piece ++) {
+	for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
 
 	    /* Check to see if the pawn can even be on a square where a promotion capture is
 	     * possible.  Even if it is, it's still possible that the other piece can't be on a
@@ -4698,7 +4697,7 @@ boolean check_pruning(tablebase_t *tb) {
     }
 
     if (futurebase_cnt == 0) {
-	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    for (sq = 0; sq < 64; sq ++) {
 		if (futuremoves[piece][sq] != -1) {
 
@@ -4837,7 +4836,7 @@ void propagate_one_move_within_table(tablebase_t *tb, int32 parent_index, local_
 
     if (position->en_passant_square == -1) {
 
-	for (piece = 0; piece < tb->num_mobiles; piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    if (tb->piece_color[piece] == position->side_to_move) continue;
 	    if (tb->piece_type[piece] != PAWN) continue;
@@ -4923,7 +4922,7 @@ void propagate_move_within_table(tablebase_t *tb, int32 parent_index, int mate_i
 
 	int en_passant_pawn = -1;
 
-	for (piece = 0; piece < tb->num_mobiles; piece++) {
+	for (piece = 0; piece < tb->num_pieces; piece++) {
 
 	    if (tb->piece_color[piece] == parent_position.side_to_move) continue;
 	    if (tb->piece_type[piece] != PAWN) continue;
@@ -4972,7 +4971,7 @@ void propagate_move_within_table(tablebase_t *tb, int32 parent_index, int mate_i
 
     /* foreach (mobile piece of player NOT TO PLAY) { */
 
-    for (piece = 0; piece < tb->num_mobiles; piece++) {
+    for (piece = 0; piece < tb->num_pieces; piece++) {
 
 	/* We've moving BACKWARDS in the game, so we want the pieces of the player who is NOT TO
 	 * PLAY here - this is the LAST move we're considering, not the next move.
@@ -5165,7 +5164,7 @@ void initialize_tablebase(tablebase_t *tb)
 	     */
 
 
-	    for (piece = 0; piece < tb->num_mobiles; piece++) {
+	    for (piece = 0; piece < tb->num_pieces; piece++) {
 
 		/* We only want to consider pieces of the side which is to move... */
 
@@ -5201,8 +5200,6 @@ void initialize_tablebase(tablebase_t *tb)
 			 *
 			 * We also check to see if the capture was against the enemy king! in which case
 			 * this position is a "mate in 0" (i.e, illegal)
-			 *
-			 * XXX ASSUMES THAT THE ENEMY KING IS ONE OF THE MOBILE PIECES XXX
 			 */
 
 			if (position.side_to_move == WHITE) {
@@ -5729,7 +5726,7 @@ int main(int argc, char *argv[])
 
 	    /* Now we want to print a move list */
 
-	    for (piece = 0; piece < tb->num_mobiles; piece++) {
+	    for (piece = 0; piece < tb->num_pieces; piece++) {
 
 		/* We only want to consider pieces of the side which is to move... */
 
