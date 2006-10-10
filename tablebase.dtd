@@ -1,20 +1,20 @@
-<!ELEMENT tablebase (move-restriction*, pieces, futurebase*, prune*, generating-program?, generating-time?, generating-host?)>
-<!ELEMENT pieces (mobile+)>
+<!ELEMENT tablebase (move-restriction*, piece+, futurebase*, prune*, generated-by?)>
 <!ELEMENT move-restriction EMPTY>
-<!ELEMENT mobile EMPTY>
+<!ELEMENT piece EMPTY>
 <!ELEMENT futurebase EMPTY>
 <!ELEMENT prune EMPTY>
 
-<!ELEMENT generating-program EMPTY>
-<!ELEMENT generating-time EMPTY>
-<!ELEMENT generating-host EMPTY>
+<!ELEMENT generated-by (program, time, host)>
+<!ELEMENT program EMPTY>
+<!ELEMENT time EMPTY>
+<!ELEMENT host EMPTY>
 
 <!ATTLIST tablebase
 	offset	CDATA		#IMPLIED
 	format	(fourbyte)	#IMPLIED
 	index	(naive|simple)	#IMPLIED>
 
-<!ATTLIST mobile
+<!ATTLIST piece
 	color	(white|black)	#REQUIRED
 	type	(king|queen|rook|bishop|knight|pawn)	#REQUIRED
 	location CDATA		#IMPLIED>
