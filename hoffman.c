@@ -1195,7 +1195,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.129 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.130 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -4188,12 +4188,18 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
     return all_futuremoves_handled;
 }
 
-/* check_pruning()
+/* assign_numbers_to_futuremoves()
  *
- * A form of error checking.  We could just dismiss any moves that aren't handled by our
- * futurebases, but I've found this to be a source of error, since moves tend to get overlooked this
- * way.  We're also concerned with the more sobering possibility of a single move getting processed
- * twice.
+ * We could just dismiss any moves that aren't handled by our futurebases, but I've found this to be
+ * a source of error, since moves tend to get overlooked this way.  We're also concerned with the
+ * more sobering possibility of a single move getting processed twice.
+ *
+ * So we assign numbers, bit positions in a bit vector, actually, to each futuremove.  When we
+ * initialize the tablebase, we set bits in the vector (each position has its own vector) for each
+ * futuremove possible from that position.  As we back propagate futuremoves, we check the bit to
+ * make sure it's still set, then clear it.  After we've back propagated all the futurebases, we run
+ * through the entire tablebase, making sure that the only bits that remain set correspond to prune
+ * statements.
  */
 
 int num_futuremoves = 0;
@@ -4201,61 +4207,18 @@ int futurecaptures[MAX_PIECES][MAX_PIECES];
 int promotions[MAX_PIECES];
 int futuremoves[MAX_PIECES][64];
 
-boolean check_pruning(tablebase_t *tb) {
+void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
-    tablebase_t **futurebases;
-    int num_futurebases;
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
-    int fbnum;
+    int64 frozen_vector = 0LL;
     int piece;
     int captured_piece;
     int capturing_piece;
-    int pawn;
-    int prune;
     int sq;
     int dir;
     struct movement *movementptr;
-    int futurebase_cnt;
-    int i;
-    int64 frozen_vector = 0LL;
 
 
-    /* First, preload all futurebases */
-
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//futurebase", context);
-    num_futurebases = result->nodesetval->nodeNr;
-    futurebases = malloc(sizeof(tablebase_t *) * num_futurebases);
-    if (futurebases == NULL) {
-	fprintf(stderr, "Can't malloc futurebases array\n");
-	return 0;
-    }
-
-    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	xmlChar * filename;
-	xmlChar * colors_property;
-
-	filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], (const xmlChar *) "filename");
-	futurebases[fbnum] = preload_futurebase_from_file((char *) filename);
-
-	/* load_futurebase_from_file() already printed some kind of error message */
-	if (futurebases[fbnum] == NULL) return 0;
-
-	futurebases[fbnum]->invert_colors = 0;
-	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], (const xmlChar *) "colors");
-	if (colors_property != NULL) {
-	    if (!strcasecmp((char *) colors_property, "invert")) futurebases[fbnum]->invert_colors = 1;
-	    xmlFree(colors_property);
-	}
-
-	compute_extra_and_missing_pieces(tb, futurebases[fbnum], (char *)filename);
-    }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
-
-    /* Now, compute a bitvector for all the pieces that are frozen on single squares. */
+    /* First, compute a bitvector for all the pieces that are frozen on single squares. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	for (sq = 0; sq < 64; sq ++) {
@@ -4271,9 +4234,6 @@ boolean check_pruning(tablebase_t *tb) {
      * vector to determine if this capture has been handled in any particular position.  However,
      * there's a common enough "special" case: the two pieces are frozen (or at least sufficiently
      * restricted) so that the capture can never occur.  Go to the trouble of checking for this.
-     *
-     * Doesn't check if movement was blocked by a frozen piece, so could decide that capture is
-     * possible even if it isn't.
      */
 
     for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
@@ -4357,11 +4317,11 @@ boolean check_pruning(tablebase_t *tb) {
     /* We also want to consider all promotions.  We don't wrap this into the pawn code that follows
      * because we want to count all promotions together, not a set for each destination square.
      * This is a special case of a more general problem that this code doesn't address yet.  We want
-     * minimum numbers assigned in the futuremove bit vector to keep it small, so we want to reuse
-     * those numbers if we're sure that two moves (say) can't happen from different squares.  I.e,
-     * if a king is restricted to the f1/h3 rectangle, then it can move to e1 from f1 and it can
-     * move to h4 from h3, but there is no single position from which it can move to both e1 and h4.
-     * So we can use the same position in the bit vector for Ke1 and Kh4.  But we don't (yet).
+     * to minimize the assigned numbers to keep the futuremove bit vector small, so we want to reuse
+     * those numbers if we're sure that two moves can't happen from different squares.  I.e, if a
+     * king is restricted to the f1/h3 rectangle, then it can move to e1 from f1 and it can move to
+     * h4 from h3, but there is no single position from which it can move to both e1 and h4.  So we
+     * can use the same position in the bit vector for Ke1 and Kh4.  But we don't (yet).
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -4448,14 +4408,76 @@ boolean check_pruning(tablebase_t *tb) {
     }
 
     fprintf(stderr, "%d possible futuremoves\n", num_futuremoves);
+}
 
-    /* Now, check the futurebases to see if there are any for a given captured piece.  If not, check
-     * to make sure all possible captures of that piece are pruned.  Otherwise, signal an error and
-     * exit right now.  Just because this test is passed doesn't mean a particular futuremove is
-     * handled in a particular position (that's why we use the bit vector), but if the test fails,
-     * well, then we know for sure that we'd get to the end of program with unhandled futurebases,
-     * so we can save ourselves a long computation by making this basic check now.
-     */
+/* check_pruning()
+ *
+ * We run this function after we've assigned numbers to the futuremoves, but before we initialize
+ * the tablebase.
+ *
+ * Check the futurebases to see if there are any for a given futuremove.  If not, check to make sure
+ * the futuremove is pruned.  Otherwise, signal an error and exit right now.  Just because this test
+ * is passed doesn't mean a particular futuremove is handled in a particular position (that's why we
+ * use the bit vector), but if the test fails, well, then we know (almost) for sure that we'd get to
+ * the end of program with unhandled futurebases, so we can save ourselves a long computation by
+ * making this basic check now.
+ *
+ * There is an off chance that piece restrictions will prevent a futuremove from taking place, but
+ * this code will conclude nevertheless that it is possible and demand either a prune statement or a
+ * futurebase.  In this rare case, introducing an extraneous prune statement or two should solve the
+ * problem.
+ */
+
+boolean check_pruning(tablebase_t *tb) {
+
+    tablebase_t **futurebases;
+    int num_futurebases;
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+    int fbnum;
+    int piece;
+    int captured_piece;
+    int capturing_piece;
+    int pawn;
+    int prune;
+    int sq;
+    int futurebase_cnt;
+    int i;
+
+
+    /* First, preload all futurebases */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression((const xmlChar *) "//futurebase", context);
+    num_futurebases = result->nodesetval->nodeNr;
+    futurebases = malloc(sizeof(tablebase_t *) * num_futurebases);
+    if (futurebases == NULL) {
+	fprintf(stderr, "Can't malloc futurebases array\n");
+	return 0;
+    }
+
+    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	xmlChar * filename;
+	xmlChar * colors_property;
+
+	filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], (const xmlChar *) "filename");
+	futurebases[fbnum] = preload_futurebase_from_file((char *) filename);
+
+	/* load_futurebase_from_file() already printed some kind of error message */
+	if (futurebases[fbnum] == NULL) return 0;
+
+	futurebases[fbnum]->invert_colors = 0;
+	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], (const xmlChar *) "colors");
+	if (colors_property != NULL) {
+	    if (!strcasecmp((char *) colors_property, "invert")) futurebases[fbnum]->invert_colors = 1;
+	    xmlFree(colors_property);
+	}
+
+	compute_extra_and_missing_pieces(tb, futurebases[fbnum], (char *)filename);
+    }
+
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
@@ -4475,9 +4497,11 @@ boolean check_pruning(tablebase_t *tb) {
 	}
     }
 
-    for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
+    /* for each possible captured_piece (i.e, everything but the two kings in piece numbers 0 and 1)
+     * check for capture futurebases
+     */
 
-	/* check all futurebases for a 'capture' with captured_piece missing */
+    for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
 
 	futurebase_cnt = 0;
 
@@ -5608,6 +5632,7 @@ int main(int argc, char *argv[])
 
 	check_1000_indices(tb);
 
+	assign_numbers_to_futuremoves(tb);
 	if (! check_pruning(tb)) {
 	    exit(EXIT_FAILURE);
 	}
