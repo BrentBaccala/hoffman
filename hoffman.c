@@ -1195,7 +1195,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.130 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.131 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -4410,6 +4410,41 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     fprintf(stderr, "%d possible futuremoves\n", num_futuremoves);
 }
 
+/* does_pruning_statement_exist() - a helper function for check_pruning()
+ *
+ * searches the tablebase's XML pruning statements for one matching (more or less identically) the
+ * specified color and string.  Return TRUE if such a prune statement exists; FALSE otherwise.
+ */
+
+boolean does_pruning_statement_exist(tablebase_t *tb, int color, char *pruning_statement)
+{
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+    int prune;
+    int retval;
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
+
+    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
+	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
+					   (const xmlChar *) "color");
+	xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
+					  (const xmlChar *) "move");
+
+	if (find_name_in_array((char *) prune_color, colors) != color) continue;
+
+	if (!strcasecmp((char *) prune_move, pruning_statement)) break;
+    }
+
+    retval = (prune != result->nodesetval->nodeNr);
+
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
+    return retval;
+}
+
 /* check_pruning()
  *
  * We run this function after we've assigned numbers to the futuremoves, but before we initialize
@@ -4443,6 +4478,8 @@ boolean check_pruning(tablebase_t *tb) {
     int sq;
     int futurebase_cnt;
     int i;
+    char movestr1[16];
+    char movestr2[16];
 
 
     /* First, preload all futurebases */
@@ -4479,10 +4516,10 @@ boolean check_pruning(tablebase_t *tb) {
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+    /* Check pruning statements for consistency */
+
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
-
-    /* Check pruning statements for consistency */
 
     for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
 	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
@@ -4496,6 +4533,9 @@ boolean check_pruning(tablebase_t *tb) {
 	    fprintf(stderr, "Pruning restrictions don't match tablebase restrictions\n");
 	}
     }
+
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
     /* for each possible captured_piece (i.e, everything but the two kings in piece numbers 0 and 1)
      * check for capture futurebases
@@ -4528,27 +4568,13 @@ boolean check_pruning(tablebase_t *tb) {
 
 		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
-		    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
-			xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-							   (const xmlChar *) "color");
-			xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-							  (const xmlChar *) "move");
-			int color = find_name_in_array((char *) prune_color, colors);
+		    sprintf(movestr1, "%cx%c",
+			    piece_char[tb->piece_type[capturing_piece]],
+			    piece_char[tb->piece_type[captured_piece]]);
 
-			if (color != tb->piece_color[captured_piece]) {
-			    if ((prune_move[0] == piece_char[tb->piece_type[capturing_piece]])
-				&& (prune_move[1] == 'x')
-				&& (prune_move[2] == piece_char[tb->piece_type[captured_piece]])
-				&& (prune_move[3] == '\0')) {
-				break;
-			    }
-			}
-		    }
-		    if (prune == result->nodesetval->nodeNr) {
-			fprintf(stderr, "No futurebase or pruning for %s move %cx%c\n",
-				colors[tb->piece_color[capturing_piece]],
-				piece_char[tb->piece_type[capturing_piece]],
-				piece_char[tb->piece_type[captured_piece]]);
+		    if (! does_pruning_statement_exist(tb, tb->piece_color[capturing_piece], movestr1)) {
+			fprintf(stderr, "No futurebase or pruning for %s move %s\n",
+				colors[tb->piece_color[capturing_piece]], movestr1);
 			return 0;
 		    }
 		}
@@ -4629,29 +4655,13 @@ boolean check_pruning(tablebase_t *tb) {
 
 		if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
 
-		for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
-		    xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-						       (const xmlChar *) "color");
-		    xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-						      (const xmlChar *) "move");
-		    int color = find_name_in_array((char *) prune_color, colors);
+		sprintf(movestr1, "Px%c=%c",
+			piece_char[tb->piece_type[captured_piece]],
+			piece_char[promoted_pieces[i]]);
 
-		    if (color == tb->piece_color[pawn]) {
-			if ((prune_move[0] == 'P')
-			    && (prune_move[1] == 'x')
-			    && (prune_move[2] == piece_char[tb->piece_type[captured_piece]])
-			    && (prune_move[3] == '=')
-			    && (prune_move[4] == piece_char[promoted_pieces[i]])
-			    && (prune_move[5] == '\0')) {
-			    break;
-			}
-		    }
-		}
-		if (prune == result->nodesetval->nodeNr) {
-		    fprintf(stderr, "No futurebase or pruning for %s move Px%c=%c\n",
-			    colors[tb->piece_color[pawn]],
-			    piece_char[tb->piece_type[captured_piece]],
-			    piece_char[promoted_pieces[i]]);
+		if (! does_pruning_statement_exist(tb, tb->piece_color[pawn], movestr1)) {
+		    fprintf(stderr, "No futurebase or pruning for %s move %s\n",
+			    colors[tb->piece_color[pawn]], movestr1);
 		    return 0;
 		}
 	    }
@@ -4683,30 +4693,19 @@ boolean check_pruning(tablebase_t *tb) {
 
 	    if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
 
-	    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
-		xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-						   (const xmlChar *) "color");
-		xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-						  (const xmlChar *) "move");
-		int color = find_name_in_array((char *) prune_color, colors);
+	    sprintf(movestr1, "P=%c", piece_char[promoted_pieces[i]]);
 
-		if (color == tb->piece_color[pawn]) {
-		    if ((prune_move[0] == 'P')
-			&& (prune_move[1] == '=')
-			&& (prune_move[2] == piece_char[promoted_pieces[i]])
-			&& (prune_move[3] == '\0')) {
-			break;
-		    }
-		}
-	    }
-	    if (prune == result->nodesetval->nodeNr) {
-		fprintf(stderr, "No futurebase or pruning for %s move P=%c\n",
-			colors[tb->piece_color[pawn]],
-			piece_char[promoted_pieces[i]]);
+	    if (! does_pruning_statement_exist(tb, tb->piece_color[pawn], movestr1)) {
+		fprintf(stderr, "No futurebase or pruning for %s move %s\n",
+			colors[tb->piece_color[pawn]], movestr1);
 		return 0;
 	    }
 	}
     }
+
+    /* Check for any futurebases that match our piece types exactly.  It (or they) must correspond
+     * to restricted piece movements.
+     */
 
     futurebase_cnt = 0;
 
@@ -4721,35 +4720,14 @@ boolean check_pruning(tablebase_t *tb) {
 	    for (sq = 0; sq < 64; sq ++) {
 		if (futuremoves[piece][sq] != -1) {
 
-		    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
-			xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-							   (const xmlChar *) "color");
-			xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-							  (const xmlChar *) "move");
-			int color = find_name_in_array((char *) prune_color, colors);
+		    sprintf(movestr1, "%c%c%c", piece_char[tb->piece_type[piece]],
+			    'a' + COL(sq), '1' + ROW(sq));
+		    sprintf(movestr2, "%cany", piece_char[tb->piece_type[piece]]);
 
-			if (color == tb->piece_color[piece]) {
-			    if ((prune_move[0] == piece_char[tb->piece_type[piece]])
-				&& (prune_move[1] == 'a')
-				&& (prune_move[2] == 'n')
-				&& (prune_move[3] == 'y')
-				&& (prune_move[4] == '\0')) {
-				break;
-			    }
-			    if ((prune_move[0] == piece_char[tb->piece_type[piece]])
-				&& (prune_move[1] == 'a' + COL(sq))
-				&& (prune_move[2] == '1' + ROW(sq))
-				&& (prune_move[3] == '\0')) {
-				break;
-			    }
-			}
-		    }
-
-		    if (prune == result->nodesetval->nodeNr) {
-			fprintf(stderr, "No futurebase or pruning for %s move %c%c%c\n",
-				colors[tb->piece_color[piece]],
-				piece_char[tb->piece_type[piece]],
-				'a' + COL(sq), '1' + ROW(sq));
+		    if (! does_pruning_statement_exist(tb, tb->piece_color[piece], movestr1)
+			&& ! does_pruning_statement_exist(tb, tb->piece_color[piece], movestr2)) {
+			fprintf(stderr, "No futurebase or pruning for %s move %s\n",
+				colors[tb->piece_color[piece]], movestr1);
 			return 0;
 		    }
 		}
@@ -4759,9 +4737,6 @@ boolean check_pruning(tablebase_t *tb) {
 	fprintf(stderr, "Multiple futurebases for restricted moves\n");
 	return 0;
     }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     return 1;
 }
