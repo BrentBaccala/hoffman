@@ -160,6 +160,17 @@ inline int square(int row, int col)
 
 /***** DATA STRUCTURES *****/
 
+/* These arrays hold the bit locations in the futurevector of various futuremoves. */
+
+typedef unsigned int futurevector_t;
+
+int num_futuremoves = 0;
+int futurecaptures[MAX_PIECES][MAX_PIECES];
+int promotions[MAX_PIECES];
+int futuremoves[MAX_PIECES][64];
+
+futurevector_t pruned_futuremoves = 0;
+
 /* position - the data structures that represents a board position
  *
  * There are two kinds of positions: local and global.  Locals are faster but are tied to a specific
@@ -348,6 +359,7 @@ typedef struct tablebase {
     short piece_color[MAX_PIECES];
     int64 piece_legal_squares[MAX_PIECES];
     struct fourbyte_entry *entries;
+    futurevector_t *futurevectors;
 } tablebase_t;
 
 boolean place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type);
@@ -1059,6 +1071,11 @@ tablebase_t * parse_XML_control_file(char *filename)
 	    fprintf(stderr, "Can't malloc tablebase entries\n");
 	}
 
+	tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
+	if (tb->futurevectors == NULL) {
+	    fprintf(stderr, "Can't malloc tablebase futurevectors\n");
+	}
+
     }
 
     /* We don't free the XML doc because the tablebase struct contains a pointer to it */
@@ -1195,7 +1212,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.131 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.132 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2096,7 +2113,8 @@ void initialize_index_with_stalemate(tablebase_t *tb, int32 index)
     tb->entries[index].futuremove_cnt = 0;
 }
 
-void initialize_index_with_movecnt(tablebase_t *tb, int32 index, int movecnt, int futuremove_cnt)
+void initialize_index_with_movecnt(tablebase_t *tb, int32 index, int movecnt,
+				   int futuremove_cnt, futurevector_t futurevector)
 {
 
 #ifdef DEBUG_MOVE
@@ -2107,6 +2125,7 @@ void initialize_index_with_movecnt(tablebase_t *tb, int32 index, int movecnt, in
     tb->entries[index].mate_in_cnt = 255;
     tb->entries[index].stalemate_cnt = 255;
     tb->entries[index].futuremove_cnt = futuremove_cnt;
+    tb->futurevectors[index] = futurevector;
 }
 
 inline void PTM_wins(tablebase_t *tb, int32 index, int mate_in_count, int stalemate_count)
@@ -4202,11 +4221,6 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
  * statements.
  */
 
-int num_futuremoves = 0;
-int futurecaptures[MAX_PIECES][MAX_PIECES];
-int promotions[MAX_PIECES];
-int futuremoves[MAX_PIECES][64];
-
 void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
     int64 frozen_vector = 0LL;
@@ -5136,6 +5150,7 @@ void initialize_tablebase(tablebase_t *tb)
     int piece;
     int dir;
     struct movement *movementptr;
+    int i;
 
     for (index=0; index <= tb->max_index; index++) {
 
@@ -5148,6 +5163,7 @@ void initialize_tablebase(tablebase_t *tb)
 	    /* Now we need to count moves.  FORWARD moves. */
 	    int movecnt = 0;
 	    int futuremove_cnt = 0;
+	    futurevector_t futurevector = 0;
 
 	    /* En passant:
 	     *
@@ -5179,6 +5195,10 @@ void initialize_tablebase(tablebase_t *tb)
 			     */
 
 			    if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+				if (futurevector & (1 << futuremoves[piece][movementptr->square])) {
+				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				}
+				futurevector |= (1 << futuremoves[piece][movementptr->square]);
 				futuremove_cnt ++;
 			    }
 
@@ -5205,6 +5225,18 @@ void initialize_tablebase(tablebase_t *tb)
 				    initialize_index_with_black_mated(tb, index);
 				    goto mated;
 				}
+				for (i = 2; i < tb->num_pieces; i ++) {
+				    if (movementptr->square == position.piece_position[i]) {
+					if (futurevector & (1 << futurecaptures[piece][i])) {
+					    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+					}
+					futurevector |= (1 << futurecaptures[piece][i]);
+					break;
+				    }
+				}
+				if (i == tb->num_pieces) {
+				    fprintf(stderr, "Couldn't match capture!\n"); /* BREAKPOINT */
+				}
 			    }
 			} else {
 			    if ((movementptr->vector & position.black_vector) == 0) {
@@ -5213,6 +5245,18 @@ void initialize_tablebase(tablebase_t *tb)
 				if (movementptr->square == position.piece_position[WHITE_KING]) {
 				    initialize_index_with_white_mated(tb, index);
 				    goto mated;
+				}
+				for (i = 2; i < tb->num_pieces; i ++) {
+				    if (movementptr->square == position.piece_position[i]) {
+					if (futurevector & (1 << futurecaptures[piece][i])) {
+					    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+					}
+					futurevector |= (1 << futurecaptures[piece][i]);
+					break;
+				    }
+				}
+				if (i == tb->num_pieces) {
+				    fprintf(stderr, "Couldn't match capture!\n"); /* BREAKPOINT */
 				}
 			    }
 			}
@@ -5235,6 +5279,13 @@ void initialize_tablebase(tablebase_t *tb)
 
 			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
+			    if (futurevector & (((1 << PROMOTION_POSSIBILITIES) - 1)
+						<< promotions[piece])) {
+				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+			    }
+			    futurevector |= (((1 << PROMOTION_POSSIBILITIES) - 1)
+					     << promotions[piece]);
+
 			    futuremove_cnt += PROMOTION_POSSIBILITIES;
 			    movecnt += PROMOTION_POSSIBILITIES;
 
@@ -5245,6 +5296,10 @@ void initialize_tablebase(tablebase_t *tb)
 			     */
 
 			    if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+				if (futurevector & (1 << futuremoves[piece][movementptr->square])) {
+				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				}
+				futurevector |= (1 << futuremoves[piece][movementptr->square]);
 				futuremove_cnt ++;
 			    }
 
@@ -5273,6 +5328,16 @@ void initialize_tablebase(tablebase_t *tb)
 			if (movementptr->square == position.en_passant_square) {
 			    movecnt ++;
 			    futuremove_cnt ++;
+			    for (i = 2; i < tb->num_pieces; i ++) {
+				if (movementptr->square + (tb->piece_color[piece] == WHITE ? -8 : 8)
+				    == position.piece_position[i]) {
+				    if (futurevector & (1 << futurecaptures[piece][i])) {
+					fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				    }
+				    futurevector |= (1 << futurecaptures[piece][i]);
+				    break;
+				}
+			    }
 			    continue;
 			}
 
@@ -5304,10 +5369,38 @@ void initialize_tablebase(tablebase_t *tb)
 			    futuremove_cnt += PROMOTION_POSSIBILITIES;
 			    movecnt += PROMOTION_POSSIBILITIES;
 
+			    for (i = 2; i < tb->num_pieces; i ++) {
+				if (movementptr->square == position.piece_position[i]) {
+				    if (futurevector & (((1 << PROMOTION_POSSIBILITIES) - 1)
+							<< futurecaptures[piece][i])) {
+					fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				    }
+				    futurevector |= (((1 << PROMOTION_POSSIBILITIES) - 1)
+						     << futurecaptures[piece][i]);
+				    break;
+				}
+			    }
+			    if (i == tb->num_pieces) {
+				fprintf(stderr, "Couldn't match promotion capture!\n"); /* BREAKPOINT */
+			    }
+
 			} else {
 
 			    movecnt ++;
 			    futuremove_cnt ++;
+
+			    for (i = 2; i < tb->num_pieces; i ++) {
+				if (movementptr->square == position.piece_position[i]) {
+				    if (futurevector & (1 << futurecaptures[piece][i])) {
+					fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				    }
+				    futurevector |= (1 << futurecaptures[piece][i]);
+				    break;
+				}
+			    }
+			    if (i == tb->num_pieces) {
+				fprintf(stderr, "Couldn't match pawn capture!\n"); /* BREAKPOINT */
+			    }
 
 			}
 
@@ -5318,7 +5411,7 @@ void initialize_tablebase(tablebase_t *tb)
 	    }
 
 	    if (movecnt == 0) initialize_index_with_stalemate(tb, index);
-	    else initialize_index_with_movecnt(tb, index, movecnt, futuremove_cnt);
+	    else initialize_index_with_movecnt(tb, index, movecnt, futuremove_cnt, futurevector);
 
 	mated: ;
 				
@@ -5602,15 +5695,15 @@ int main(int argc, char *argv[])
 	/* Hopefully, an error message has already been printed... */
 	if (tb == NULL) exit(EXIT_FAILURE);
 
-	fprintf(stderr, "Initializing tablebase\n");
-	initialize_tablebase(tb);
-
-	check_1000_indices(tb);
-
 	assign_numbers_to_futuremoves(tb);
 	if (! check_pruning(tb)) {
 	    exit(EXIT_FAILURE);
 	}
+
+	fprintf(stderr, "Initializing tablebase\n");
+	initialize_tablebase(tb);
+
+	check_1000_indices(tb);
 
 	mate_in_limit = back_propagate_all_futurebases(tb);
 
