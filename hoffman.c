@@ -265,7 +265,12 @@ char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
 
 char * colors[3] = {"WHITE", "BLACK", NULL};
 
-int promoted_pieces[] = {QUEEN, ROOK, KNIGHT, BISHOP, 0};
+/* We make a tacit assumption later (during promotion back propagation, when we compute the
+ * futuremove number) that these numbers (QUEEN to KNIGHT) range from 1 to 4, and that they appear
+ * in this array in numerical order.
+ */
+
+int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, 0};
 
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
@@ -1212,7 +1217,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.132 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.133 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2846,8 +2851,8 @@ void verify_movements()
  * set, but we didn't use it.
  */
 
-void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-				      int32 future_index, int32 current_index, int *mate_in_limit)
+void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, int32 future_index,
+				     int futuremove, int32 current_index, int *mate_in_limit)
 {
     /* Skip everything else if the position isn't valid.  In particular,
      * we don't track futuremove propagation for illegal positions.
@@ -2862,6 +2867,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 	}
 
 	tb->entries[current_index].futuremove_cnt --;
+
+	if (! (tb->futurevectors[current_index] & (1 << futuremove))) {
+	    fprintf(stderr, "Futuremove already handled!\n");
+	}
+	tb->futurevectors[current_index] &= ~(1 << futuremove);
 
 	/* ...and propagate the win */
 
@@ -2890,8 +2900,8 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase,
     }
 }
 
-void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-						  int32 future_index, local_position_t *current_position,
+void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, int32 future_index,
+						  int futuremove, local_position_t *current_position,
 						  int *mate_in_limit)
 {
     int32 current_index;
@@ -2906,11 +2916,11 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *
 	return;
     }
 
-    propagate_index_from_futurebase(tb, futurebase, future_index, current_index, mate_in_limit);
+    propagate_index_from_futurebase(tb, futurebase, future_index, futuremove, current_index, mate_in_limit);
 }
 
-void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-					      int32 future_index, local_position_t *position,
+void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, int32 future_index,
+					      int futuremove, local_position_t *position,
 					      int *mate_in_limit)
 {
     int piece;
@@ -2925,7 +2935,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
      * en passant positions.
      */
 
-    propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+    propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position, mate_in_limit);
 
     if (position->en_passant_square == -1) {
 
@@ -2934,9 +2944,8 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 	    if (tb->piece_color[piece] == position->side_to_move) continue;
 	    if (tb->piece_type[piece] != PAWN) continue;
 
-#if 1
-	    /* XXX I've taken care to update board_vector specifically so we can check for en
-	     * passant legality here.
+	    /* I took care in the calling routines to update board_vector specifically so we can
+	     * check for en passant legality here.
 	     */
 
 	    if ((tb->piece_color[piece] == WHITE)
@@ -2944,7 +2953,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
 		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position, mate_in_limit);
 	    }
 
 	    if ((tb->piece_color[piece] == BLACK)
@@ -2952,28 +2961,8 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
 		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position, mate_in_limit);
 	    }
-
-#else
-
-	    /* XXX The problem is that the board vector might not be correct, because we moved the
-	     * capturing piece without updating it.  We get around this by checking in
-	     * local_position_to_index() for illegal en passant positions.
-	     */
-
-	    if ((tb->piece_color[piece] == WHITE)
-		&& (ROW(position->piece_position[piece]) == 3)) {
-		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
-	    }
-
-	    if ((tb->piece_color[piece] == BLACK)
-		&& (ROW(position->piece_position[piece]) == 4)) {
-		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
-	    }
-#endif
 
 	    position->en_passant_square = -1;
 	}
@@ -3106,7 +3095,8 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		     * the side that didn't promote in an en passant state.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, futurebase, future_index, &position, mate_in_limit);
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+							     promotions[pawn] + futurebase->piece_type[extra_piece] - 1, &position, mate_in_limit);
 
 		    /* We may be about to use this position again, so put the board_vector back... */
 
@@ -3276,7 +3266,9 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		     * from the side that didn't promote in an en passant state.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, futurebase, future_index, &position, mate_in_limit);
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+							     futurecaptures[pawn][missing_piece2] + futurebase->piece_type[extra_piece] - 1,
+							     &position, mate_in_limit);
 
 		    /* We're about to use this position again, so put the board_vector back... */
 
@@ -3306,7 +3298,9 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		     * from the side that didn't promote in an en passant state.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, futurebase, future_index, &position, mate_in_limit);
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+							     futurecaptures[pawn][missing_piece2] + futurebase->piece_type[extra_piece] - 1,
+							     &position, mate_in_limit);
 
 		    /* We're about to use this position again, so put the board_vector back... */
 
@@ -3429,7 +3423,9 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 
 		 * the side that didn't capture in an en passant state.
 		 */
 
-		propagate_local_position_from_futurebase(tb, futurebase, future_index, position, mate_in_limit);
+		propagate_local_position_from_futurebase(tb, futurebase, future_index,
+							 futurecaptures[capturing_piece][captured_piece],
+							 position, mate_in_limit);
 
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
@@ -3475,6 +3471,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 
 		 */
 
 		propagate_local_position_from_futurebase(tb, futurebase, future_index,
+							 futurecaptures[capturing_piece][captured_piece],
 							 position, mate_in_limit);
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
@@ -3512,6 +3509,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 
 			position->board_vector |= BITVECTOR(movementptr->square);
 
 			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+								 futurecaptures[capturing_piece][captured_piece],
 								 position, mate_in_limit);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
@@ -3545,6 +3543,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 
 			position->board_vector |= BITVECTOR(movementptr->square);
 
 			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+								 futurecaptures[capturing_piece][captured_piece],
 								 position, mate_in_limit);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
@@ -3672,6 +3671,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
     int piece;
     int dir;
     struct movement *movementptr;
+    int origin_square;
 
     for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
 
@@ -3704,6 +3704,8 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	    }
 
 	    piece = restricted_piece;
+
+	    origin_square = current_position.piece_position[piece];
 
 	    /* We've moving BACKWARDS in the game, so this has to be a piece of the player who is
 	     * NOT TO PLAY here - this is the LAST move we're considering, not the next move.
@@ -3755,7 +3757,9 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 		    continue;
 		}
 
-		propagate_local_position_from_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
+		propagate_local_position_from_futurebase(tb, futurebase, future_index,
+							 futuremoves[piece][origin_square],
+							 &current_position, mate_in_limit);
 
 		continue;
 
@@ -3812,7 +3816,9 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 			current_position.board_vector |= BITVECTOR(movementptr->square);
 
-			propagate_local_position_from_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
+			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+								 futuremoves[piece][origin_square],
+								 &current_position, mate_in_limit);
 		    }
 		}
 
@@ -3866,7 +3872,9 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		    current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
 
-		    propagate_local_position_from_futurebase(tb, futurebase, future_index, &current_position, mate_in_limit);
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+							     futuremoves[piece][origin_square],
+							     &current_position, mate_in_limit);
 
 		}
 	    }
