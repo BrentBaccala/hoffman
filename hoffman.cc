@@ -1208,6 +1208,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
     xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "fourbyte");
+    /* xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "one-byte-dtm"); */
 
     /* 'index' should now either be specified in input, or set to its default value earlier */
     /* xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive"); */
@@ -1217,7 +1218,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.134 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.135 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -1240,8 +1241,15 @@ int do_write(int fd, void *ptr, int length)
 void write_tablebase_to_file(tablebase_t *tb, char *filename)
 {
     xmlDocPtr doc;
-    xmlSaveCtxtPtr savectx;
     int fd;
+    int index;
+    FILE *file;
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+    xmlChar *buf;
+    int size;
+    int padded_size;
+    char str[16];
 
     fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd == -1) {
@@ -1250,17 +1258,53 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     }
 
     doc = finalize_XML_header(tb);
-    savectx = xmlSaveToFd(fd, NULL, 0);
-    xmlSaveDoc(savectx, doc);
-    xmlSaveClose(savectx);
 
-    if (lseek(fd, 0x1000, SEEK_SET) != 0x1000) {
+    /* We want at least one zero byte after the XML header, because that's how we figure out where
+     * it ends when we read it back it, and I also want to align the tablebase on a four-byte
+     * boundary for the hell of it.  (size+5)&(~3) achieves these goals.  I then modify the XML
+     * header with the updated string that gives the offset to the tablebase, and make sure that its
+     * size hasn't changed.
+     */
+
+    xmlDocDumpMemory(doc, &buf, &size);
+    padded_size = (size+5)&(~3);
+
+    sprintf(str, "0x%04x", padded_size);
+
+    context = xmlXPathNewContext(doc);
+    result = xmlXPathEvalExpression((const xmlChar *) "//tablebase", context);
+    xmlSetProp(result->nodesetval->nodeTab[0], (const xmlChar *) "offset", (const xmlChar *) str);
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
+    xmlDocDumpMemory(doc, &buf, &size);
+
+    if (padded_size != ((size+5)&(~3))) {
+	fprintf(stderr, "sizes don't match in write_tablebase_to_file\n");
+    }
+
+    do_write(fd, buf, size);
+    xmlFree(buf);
+
+    if (lseek(fd, padded_size, SEEK_SET) != padded_size) {
 	fprintf(stderr, "seek failed\n");
     }
 
+#if 0
+    file = fdopen(fd, "a");
+    if (file == NULL) {
+	fprintf(stderr, "Can't fdopen output file\n");
+    } else {
+	for (index = 0; index <= tb->max_index; index ++) {
+	    fputc(get_result(tb, index), file);
+	}
+    }
+    fclose(file);
+#else
     do_write(fd, tb->entries, sizeof(struct fourbyte_entry) * (tb->max_index + 1));
-
     close(fd);
+#endif
+
 }
 
 
@@ -2042,6 +2086,29 @@ inline int get_mate_in_count(tablebase_t *tb, int32 index)
 inline int get_stalemate_count(tablebase_t *tb, int32 index)
 {
     return tb->entries[index].stalemate_cnt;
+}
+
+/* Get the result in a format suitable for a one-byte DTM tablebase
+ *
+ * 0 = draw
+ * 1 = PNTM in check (illegal position)
+ * N = mate in N-1
+ * -1 = PTM checkmated
+ * -N = PNTM will have a mate in N-1 after this move
+ */
+
+int get_result(tablebase_t *tb, int32 index)
+{
+    int retval;
+
+    if (does_PTM_win(tb,index)) retval =  1 + tb->entries[index].mate_in_cnt/2;
+    else if (does_PNTM_win(tb,index)) retval =  -(1 + tb->entries[index].mate_in_cnt/2);
+    else retval = 0;
+
+    if ((retval < -128) || (retval > 127)) {
+	fprintf(stderr, "Out-of-bound result in get_result()\n");
+    }
+    return retval;
 }
 
 /* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
