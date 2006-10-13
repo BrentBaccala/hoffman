@@ -1259,7 +1259,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.136 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.137 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2975,7 +2975,7 @@ void verify_movements()
  * set, but we didn't use it.
  */
 
-void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, int32 future_index,
+void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 				     int futuremove, int32 current_index, int *mate_in_limit)
 {
     /* Skip everything else if the position isn't valid.  In particular,
@@ -3001,15 +3001,14 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
 	/* XXX might want to look more closely at the stalemate options here */
 
-	if (does_PTM_win(futurebase, future_index)) {
+	/* if (does_PTM_win(futurebase, future_index)) { */
+	if (dtm > 0) {
 
-	    add_one_to_PNTM_wins(tb, current_index,
-				 get_mate_in_count(futurebase, future_index)+1, 0);
+	    add_one_to_PNTM_wins(tb, current_index, 2*(dtm-1), 0);
 
-	} else if (does_PNTM_win(futurebase, future_index)) {
+	} else if (dtm < 0) {
 
-	    PTM_wins(tb, current_index,
-		     get_mate_in_count(futurebase, future_index)+1, 0);
+	    PTM_wins(tb, current_index, 2*(-dtm-1)+1, 0);
 
 	}
 
@@ -3019,12 +3018,17 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	 * add_one_to_PNTM_wins() and the move count went to zero.
 	 */
 
-	if (get_mate_in_count(futurebase, future_index) > *mate_in_limit)
-	    *mate_in_limit = get_mate_in_count(futurebase, future_index);
+	if (dtm > 0) {
+	    if (2*(dtm-1) > *mate_in_limit)
+		*mate_in_limit = 2*(dtm-1);
+	} else {
+	    if (2*(-dtm-1)+1 > *mate_in_limit)
+		*mate_in_limit = 2*(-dtm-1)+1;
+	}
     }
 }
 
-void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, int32 future_index,
+void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm,
 						  int futuremove, local_position_t *current_position,
 						  int *mate_in_limit)
 {
@@ -3040,10 +3044,10 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *
 	return;
     }
 
-    propagate_index_from_futurebase(tb, futurebase, future_index, futuremove, current_index, mate_in_limit);
+    propagate_index_from_futurebase(tb, dtm, futuremove, current_index, mate_in_limit);
 }
 
-void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, int32 future_index,
+void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
 					      int futuremove, local_position_t *position,
 					      int *mate_in_limit)
 {
@@ -3059,7 +3063,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
      * en passant positions.
      */
 
-    propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position, mate_in_limit);
+    propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, mate_in_limit);
 
     if (position->en_passant_square == -1) {
 
@@ -3077,7 +3081,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
 		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position, mate_in_limit);
+		propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, mate_in_limit);
 	    }
 
 	    if ((tb->piece_color[piece] == BLACK)
@@ -3085,7 +3089,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
 		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position, mate_in_limit);
+		propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, mate_in_limit);
 	    }
 
 	    position->en_passant_square = -1;
@@ -3105,6 +3109,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 					       int *mate_in_limit)
 {
     int32 future_index;
+    int dtm;
     local_position_t foreign_position;
     local_position_t position;
     int32 conversion_result;
@@ -3123,6 +3128,8 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
+
+	dtm = get_DTM(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -3219,7 +3226,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		     * the side that didn't promote in an en passant state.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+		    propagate_local_position_from_futurebase(tb, dtm,
 							     promotions[pawn] + futurebase->piece_type[extra_piece] - 1, &position, mate_in_limit);
 
 		    /* We may be about to use this position again, so put the board_vector back... */
@@ -3268,6 +3275,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 						       int *mate_in_limit)
 {
     int32 future_index;
+    int dtm;
     local_position_t foreign_position;
     local_position_t position;
     int32 conversion_result;
@@ -3286,6 +3294,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
+
+	dtm = get_DTM(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -3390,7 +3400,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		     * from the side that didn't promote in an en passant state.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+		    propagate_local_position_from_futurebase(tb, dtm,
 							     futurecaptures[pawn][missing_piece2] + futurebase->piece_type[extra_piece] - 1,
 							     &position, mate_in_limit);
 
@@ -3422,7 +3432,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		     * from the side that didn't promote in an en passant state.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+		    propagate_local_position_from_futurebase(tb, dtm,
 							     futurecaptures[pawn][missing_piece2] + futurebase->piece_type[extra_piece] - 1,
 							     &position, mate_in_limit);
 
@@ -3482,7 +3492,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
  * on invert_colors_of_global position.
  */
 
-void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 future_index,
+void consider_possible_captures(tablebase_t *tb, int dtm,
 				local_position_t *position,
 				int capturing_piece, int captured_piece, int *mate_in_limit)
 {
@@ -3547,7 +3557,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 
 		 * the side that didn't capture in an en passant state.
 		 */
 
-		propagate_local_position_from_futurebase(tb, futurebase, future_index,
+		propagate_local_position_from_futurebase(tb, dtm,
 							 futurecaptures[capturing_piece][captured_piece],
 							 position, mate_in_limit);
 
@@ -3594,7 +3604,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 
 		 * the side that didn't capture in an en passant state.
 		 */
 
-		propagate_local_position_from_futurebase(tb, futurebase, future_index,
+		propagate_local_position_from_futurebase(tb, dtm,
 							 futurecaptures[capturing_piece][captured_piece],
 							 position, mate_in_limit);
 
@@ -3632,7 +3642,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 
 			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
 			position->board_vector |= BITVECTOR(movementptr->square);
 
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+			propagate_local_position_from_futurebase(tb, dtm,
 								 futurecaptures[capturing_piece][captured_piece],
 								 position, mate_in_limit);
 
@@ -3666,7 +3676,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, int32 
 			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
 			position->board_vector |= BITVECTOR(movementptr->square);
 
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+			propagate_local_position_from_futurebase(tb, dtm,
 								 futurecaptures[capturing_piece][captured_piece],
 								 position, mate_in_limit);
 
@@ -3702,6 +3712,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 					     int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
 {
     int32 future_index;
+    int dtm;
     local_position_t current_position;
     int piece;
     int32 conversion_result;
@@ -3713,6 +3724,8 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
+
+	dtm = get_DTM(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -3763,7 +3776,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		/* No pieces were on restricted squares.  Check them all. */
 
 		for (piece = 0; piece < tb->num_pieces; piece++) {
-		    consider_possible_captures(tb, futurebase, future_index, &current_position,
+		    consider_possible_captures(tb, dtm, &current_position,
 					       piece, captured_piece, mate_in_limit);
 		}
 
@@ -3771,7 +3784,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 
 		/* One piece was on a restricted square.  It's the only possible capturing piece. */
 
-		consider_possible_captures(tb, futurebase, future_index, &current_position,
+		consider_possible_captures(tb, dtm, &current_position,
 					   restricted_piece, captured_piece, mate_in_limit);
 
 	    }
@@ -3788,6 +3801,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 					    int invert_colors_of_futurebase, int *mate_in_limit)
 {
     int32 future_index;
+    int dtm;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
     int32 conversion_result;
@@ -3806,6 +3820,8 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	 * if none of them were on restricted squares, then this would be a position in the current
 	 * tablebase.
 	 */
+
+	dtm = get_DTM(futurebase, future_index);
 
 	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
 	 * with multiple restricted pieces that should be quietly ignored.
@@ -3881,7 +3897,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 		    continue;
 		}
 
-		propagate_local_position_from_futurebase(tb, futurebase, future_index,
+		propagate_local_position_from_futurebase(tb, dtm,
 							 futuremoves[piece][origin_square],
 							 &current_position, mate_in_limit);
 
@@ -3940,7 +3956,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 			current_position.board_vector |= BITVECTOR(movementptr->square);
 
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+			propagate_local_position_from_futurebase(tb, dtm,
 								 futuremoves[piece][origin_square],
 								 &current_position, mate_in_limit);
 		    }
@@ -3996,7 +4012,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		    current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
 
-		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+		    propagate_local_position_from_futurebase(tb, dtm,
 							     futuremoves[piece][origin_square],
 							     &current_position, mate_in_limit);
 
