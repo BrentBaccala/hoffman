@@ -341,6 +341,11 @@ struct fourbyte_entry {
 
 char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
 
+#define FORMAT_FOURBYTE 0
+#define FORMAT_ONE_BYTE_DTM 1
+
+char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
+
 typedef struct tablebase {
     int32 max_index;
     enum {NAIVE_INDEX=1, SIMPLE_INDEX} index_type;
@@ -363,6 +368,11 @@ typedef struct tablebase {
     short piece_type[MAX_PIECES];
     short piece_color[MAX_PIECES];
     int64 piece_legal_squares[MAX_PIECES];
+
+    int format;
+
+    char *DTMs;
+
     struct fourbyte_entry *entries;
     futurevector_t *futurevectors;
 } tablebase_t;
@@ -486,9 +496,12 @@ int32 local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 	}
     }
 
+#if 0
     /* Possibly a quicker check for position legality that all that en passant stuff */
+    /* The problem is that the entries array might not be valid */
 
     if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
+#endif
 
     return index;
 }
@@ -628,9 +641,12 @@ int32 local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
     index *= 2;
     index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
 
+#if 0
     /* Possibly a quicker check for position legality that all that en passant stuff */
+    /* The problem is that the entries array might not be valid */
 
     if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
+#endif
 
     return index;
 }
@@ -838,6 +854,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
     xmlNodePtr tablebase;
+    xmlChar * format;
     xmlChar * index;
 
     tb = malloc(sizeof(tablebase_t));
@@ -947,6 +964,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
+
+    format = xmlGetProp(tablebase, (const xmlChar *) "format");
+    if (format == NULL) {
+	tb->format = FORMAT_FOURBYTE;
+	xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) formats[tb->format]);
+	fprintf(stderr, "Format not expressly specified; assuming FOURBYTE\n");
+    } else {
+	tb->format = find_name_in_array((char *) format, formats);
+	if (tb->format == -1) {
+	    fprintf(stderr, "Unknown tablebase format '%s'\n", format);
+	    return NULL;
+	}
+    }
 
     /* Fetch the index type and compute tb->max_index */
 
@@ -1069,6 +1099,9 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     tb = parse_XML_into_tablebase(doc);
 
+    /* XXX We use fourbyte during calculation even if it's a one-byte-DTM tablebase */
+    tb->format = FORMAT_FOURBYTE;
+
     if (tb != NULL) {
 
 	tb->entries = (struct fourbyte_entry *) calloc(tb->max_index + 1, sizeof(struct fourbyte_entry));
@@ -1173,7 +1206,13 @@ tablebase_t * load_futurebase_from_file(char *filename)
 
 	offset = strtol((const char *) offsetstr, NULL, 0);
 
-	tb->entries = (struct fourbyte_entry *) (fileptr + offset);
+	if (tb->format == FORMAT_FOURBYTE) {
+	    tb->entries = (struct fourbyte_entry *) (fileptr + offset);
+	} else if (tb->format == FORMAT_ONE_BYTE_DTM) {
+	    tb->DTMs = (char *) (fileptr + offset);
+	} else {
+	    fprintf(stderr, "Unknown format in load_futurebase_from_file()\n");
+	}
     }
 
     return tb;
@@ -1207,7 +1246,9 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     xmlXPathFreeContext(context);
 
     xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
-    xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "fourbyte");
+
+    /* 'format' should now either be specified in input, or set to its default value earlier */
+    /* xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "fourbyte"); */
     /* xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "one-byte-dtm"); */
 
     /* 'index' should now either be specified in input, or set to its default value earlier */
@@ -1218,7 +1259,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.135 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.136 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -1244,9 +1285,9 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     int fd;
     int index;
     FILE *file;
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
+    xmlNodePtr tablebase;
     xmlChar *buf;
+    xmlChar *format;
     int size;
     int padded_size;
     char str[16];
@@ -1271,11 +1312,8 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
     sprintf(str, "0x%04x", padded_size);
 
-    context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression((const xmlChar *) "//tablebase", context);
-    xmlSetProp(result->nodesetval->nodeTab[0], (const xmlChar *) "offset", (const xmlChar *) str);
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
+    tablebase = xmlDocGetRootElement(doc);
+    xmlSetProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) str);
 
     xmlDocDumpMemory(doc, &buf, &size);
 
@@ -1286,24 +1324,35 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     do_write(fd, buf, size);
     xmlFree(buf);
 
-    if (lseek(fd, padded_size, SEEK_SET) != padded_size) {
-	fprintf(stderr, "seek failed\n");
-    }
+    /* We set the format to fourbyte during calcuation no matter what, so reset it here */
+    format = xmlGetProp(tablebase, (const xmlChar *) "format");
+    tb->format = find_name_in_array((char *) format, formats);
 
-#if 0
-    file = fdopen(fd, "a");
-    if (file == NULL) {
-	fprintf(stderr, "Can't fdopen output file\n");
-    } else {
-	for (index = 0; index <= tb->max_index; index ++) {
-	    fputc(get_result(tb, index), file);
+    if (tb->format == FORMAT_FOURBYTE) {
+	if (lseek(fd, padded_size, SEEK_SET) != padded_size) {
+	    fprintf(stderr, "seek failed\n");
 	}
+	do_write(fd, tb->entries, sizeof(struct fourbyte_entry) * (tb->max_index + 1));
+	close(fd);
+    } else if (tb->format == FORMAT_ONE_BYTE_DTM) {
+	close(fd);
+	file = fopen(filename, "a");
+	if (file == NULL) {
+	    fprintf(stderr, "Can't fopen output file\n");
+	} else {
+	    while (ftell(file) < padded_size) {
+		fputc(0, file);
+	    }
+	    tb->format = FORMAT_FOURBYTE;
+	    for (index = 0; index <= tb->max_index; index ++) {
+		fputc(get_DTM(tb, index), file);
+	    }
+	    tb->format = FORMAT_ONE_BYTE_DTM;
+	}
+	fclose(file);
+    } else {
+	fprintf(stderr, "Unknown format in write_tablebase_to_file()\n");
     }
-    fclose(file);
-#else
-    do_write(fd, tb->entries, sizeof(struct fourbyte_entry) * (tb->max_index + 1));
-    close(fd);
-#endif
 
 }
 
@@ -2056,7 +2105,8 @@ inline boolean needs_propagation(tablebase_t *tb, int32 index)
 
 inline boolean is_position_valid(tablebase_t *tb, int32 index)
 {
-    return (! (does_PTM_win(tb, index) && (tb->entries[index].mate_in_cnt == 0)));
+    return (get_DTM(tb,index) != 1);
+    /* return (! (does_PTM_win(tb, index) && (tb->entries[index].mate_in_cnt == 0))); */
 }
 
 inline void mark_propagated(tablebase_t *tb, int32 index)
@@ -2097,17 +2147,24 @@ inline int get_stalemate_count(tablebase_t *tb, int32 index)
  * -N = PNTM will have a mate in N-1 after this move
  */
 
-int get_result(tablebase_t *tb, int32 index)
+int get_DTM(tablebase_t *tb, int32 index)
 {
     int retval;
 
-    if (does_PTM_win(tb,index)) retval =  1 + tb->entries[index].mate_in_cnt/2;
-    else if (does_PNTM_win(tb,index)) retval =  -(1 + tb->entries[index].mate_in_cnt/2);
-    else retval = 0;
+    if (tb->format == FORMAT_FOURBYTE) {
 
-    if ((retval < -128) || (retval > 127)) {
-	fprintf(stderr, "Out-of-bound result in get_result()\n");
+	if (does_PTM_win(tb,index)) retval =  1 + tb->entries[index].mate_in_cnt/2;
+	else if (does_PNTM_win(tb,index)) retval =  -(1 + tb->entries[index].mate_in_cnt/2);
+	else retval = 0;
+
+	if ((retval < -128) || (retval > 127)) {
+	    fprintf(stderr, "Out-of-bound result in get_DTM()\n");
+	}
+
+    } else {
+	retval = tb->DTMs[index];
     }
+
     return retval;
 }
 
@@ -5709,7 +5766,10 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
     for (index = 0; index <= tb->max_index; index++) {
 	if (index_to_global_position(tb, index, &global)) {
-	    if (! is_position_valid(tb, index)) {
+
+	    int dtm = get_DTM(tb, index);
+
+	    if (dtm == 1) {
 
 		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
 
@@ -5733,44 +5793,34 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 	    } else if (EGTBProbe(global.side_to_move == WHITE, global.board, global.en_passant_square, &score) == 1) {
 
-		if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
-		    /* Make sure mate_in_cnt is greater than zero here, since the Nalimov tablebase
-		     * doesn't appear to handle illegal positions.  PTM wins in 0 would mean that
-		     * PNTM is in check, so the king can just be captured.
-		     */
-		    if (tb->entries[index].mate_in_cnt > 0) {
-			if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)-score+1) {
+		/* Make sure dtm is greater than one here, since the Nalimov tablebase doesn't
+		 * appear to handle illegal positions.  PTM wins in 0 (dtm 1) would mean that PNTM
+		 * is in check, so the king can just be captured.
+		 */
 
-			    printf("%s (%d): Nalimov says %s (%d), but we say mate in %d\n",
-				   global_position_to_FEN(&global), index,
-				   nalimov_to_english(score), score, tb->entries[index].mate_in_cnt/2);
-			}
+		if (dtm > 1) {
+		    if ((dtm-1) != ((65536-4)/2)-score+1) {
+			printf("%s (%d): Nalimov says %s (%d), but we say mate in %d\n",
+			       global_position_to_FEN(&global), index,
+			       nalimov_to_english(score), score, dtm-1);
 		    }
-		} else if (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE) {
-		    if ((tb->entries[index].mate_in_cnt/2) != ((65536-4)/2)+score) {
-
+		} else if (dtm < 0) {
+		    if ((-dtm-1) != ((65536-4)/2)+score) {
 			printf("%s (%d): Nalimov says %s (%d), but we say mated in %d\n",
 			       global_position_to_FEN(&global), index,
-			       nalimov_to_english(score), score, tb->entries[index].mate_in_cnt/2);
+			       nalimov_to_english(score), score, -dtm-1);
 		    }
-		} else {
+		} else if (dtm == 0) {
 		    if (score != 0) {
-
 			printf("%s (%d): Nalimov says %s (%d), but we say draw\n",
 			       global_position_to_FEN(&global), index,
 			       nalimov_to_english(score), ((65536-4)/2)+score);
 		    }
 		}
 	    } else {
-		if (((tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE)
-		     && (tb->entries[index].movecnt != PTM_WINS_PROPAGATION_DONE))
-		    || tb->entries[index].mate_in_cnt != 0) {
-
-		    fprintf(stderr, "%s (%d): Nalimov says illegal, but we say %d %d\n",
-			    global_position_to_FEN(&global), index,
-			    tb->entries[index].movecnt, tb->entries[index].mate_in_cnt);
-		} else {
-		    /* printf("Illegal OK\n"); */
+		if (dtm == 1) {
+		    fprintf(stderr, "%s (%d): Nalimov says illegal, but we say %d\n",
+			    global_position_to_FEN(&global), index, dtm);
 		}
 	    }
 	}
@@ -5802,23 +5852,16 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
 
 void print_score(tablebase_t *tb, int32 index, char *ptm, char *pntm)
 {
-    switch (tb->entries[index].movecnt) {
-    case ILLEGAL_POSITION:
-	printf("Illegal position\n");
-	break;
-    case PTM_WINS_PROPAGATION_DONE:
-	printf("%s moves and wins in %d\n", ptm, tb->entries[index].mate_in_cnt/2);
-	break;
-    case PNTM_WINS_PROPAGATION_DONE:
-	printf("%s wins in %d\n", pntm, tb->entries[index].mate_in_cnt/2);
-	break;
-    case PTM_WINS_PROPAGATION_NEEDED:
-    case PNTM_WINS_PROPAGATION_NEEDED:
-	printf("Propagation needed!?\n");
-	break;
-    default:
+    int dtm = get_DTM(tb, index);
+
+    if (dtm == 0) {
 	printf("Draw\n");
-	break;
+    } else if (dtm == 1) {
+	printf("Illegal position\n");
+    } else if (dtm > 1) {
+	printf("%s moves and wins in %d\n", ptm, dtm-1);
+    } else if (dtm < 0) {
+	printf("%s wins in %d\n", pntm, -dtm-1);
     }
 }
 
@@ -6001,9 +6044,7 @@ int main(int argc, char *argv[])
 		pntm = "White";
 	    }
 
-	    if (is_position_valid(tb, index)) {
-		print_score(tb, index, ptm, pntm);
-	    }
+	    print_score(tb, index, ptm, pntm);
 
 #ifdef USE_NALIMOV
 		if (EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
