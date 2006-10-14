@@ -363,6 +363,7 @@ typedef struct tablebase {
 
     /* for futurebases only */
     gzFile file;
+    long offset;
     int invert_colors;
     int extra_piece;
     int missing_pawn;
@@ -1145,7 +1146,6 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     tablebase_t *tb = NULL;
     xmlNodePtr tablebase;
     xmlChar * offsetstr;
-    long offset;
 
     file = gzopen(filename, "r");
 
@@ -1166,9 +1166,9 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 	tablebase = xmlDocGetRootElement(doc);
 
 	offsetstr = xmlGetProp(tablebase, (const xmlChar *) "offset");
-	offset = strtol((const char *) offsetstr, NULL, 0);
+	tb->offset = strtol((const char *) offsetstr, NULL, 0);
 
-	gzseek(file, offset, SEEK_SET);
+	gzseek(file, tb->offset, SEEK_SET);
     }
 
     return tb;
@@ -1181,7 +1181,32 @@ char fetch_next_DTM_from_disk(tablebase_t *tb)
     if (tb->file == NULL) {
 	fprintf(stderr, "Attempt to fetch_next_DTM_from_disk() from a non-preloaded tablebase\n");
 	return 0;
+    } else if (tb->format != FORMAT_ONE_BYTE_DTM) {
+	fprintf(stderr, "Can't fetch_next_DTM_from_disk() on anything but a one-byte-dtm (yet)\n");
+	return 0;
     } else {
+	retval = gzgetc(tb->file);
+	if (retval == EOF) {
+	    fprintf(stderr, "fetch_next_DTM_from_disk() hit EOF\n");
+	    return 0;
+	} else {
+	    return (char) retval;
+	}
+    }
+}
+
+char fetch_DTM_from_disk(tablebase_t *tb, int32 index)
+{
+    int retval;
+
+    if (tb->file == NULL) {
+	fprintf(stderr, "Attempt to fetch_DTM_from_disk() from a non-preloaded tablebase\n");
+	return 0;
+    } else if (tb->format != FORMAT_ONE_BYTE_DTM) {
+	fprintf(stderr, "Can't fetch_DTM_from_disk() on anything but a one-byte-dtm (yet)\n");
+	return 0;
+    } else {
+	gzseek(tb->file, tb->offset + index, SEEK_SET);
 	retval = gzgetc(tb->file);
 	if (retval == EOF) {
 	    fprintf(stderr, "fetch_next_DTM_from_disk() hit EOF\n");
@@ -1293,7 +1318,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.141 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.142 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2139,7 +2164,7 @@ inline boolean needs_propagation(tablebase_t *tb, int32 index)
 
 inline boolean is_position_valid(tablebase_t *tb, int32 index)
 {
-    return (get_DTM(tb,index) != 1);
+    return ((tb->DTMs != NULL) ? get_DTM(tb,index) : fetch_DTM_from_disk(tb,index)) != 1;
     /* return (! (does_PTM_win(tb, index) && (tb->entries[index].mate_in_cnt == 0))); */
 }
 
@@ -5837,7 +5862,8 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
     for (index = 0; index <= tb->max_index; index++) {
 	if (index_to_global_position(tb, index, &global)) {
 
-	    int dtm = get_DTM(tb, index);
+	    /* int dtm = get_DTM(tb, index); */
+	    int dtm = fetch_DTM_from_disk(tb, index);
 
 	    if (dtm == 1) {
 
@@ -5922,7 +5948,8 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
 
 void print_score(tablebase_t *tb, int32 index, char *ptm, char *pntm)
 {
-    int dtm = get_DTM(tb, index);
+    /* int dtm = get_DTM(tb, index); */
+    int dtm = fetch_DTM_from_disk(tb, index);
 
     if (dtm == 0) {
 	printf("Draw\n");
@@ -6054,7 +6081,7 @@ int main(int argc, char *argv[])
 
     for (argi=optind; argi<argc; argi++) {
 	fprintf(stderr, "Loading '%s'\n", argv[argi]);
-	tbs[i] = load_futurebase_from_file(argv[argi]);
+	tbs[i] = preload_futurebase_from_file(argv[argi]);
 	if (tbs[i] == NULL) {
 	    fprintf(stderr, "Error loading '%s'\n", argv[argi]);
 	} else {
