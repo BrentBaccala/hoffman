@@ -1262,7 +1262,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.138 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.139 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3007,11 +3007,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 	/* if (does_PTM_win(futurebase, future_index)) { */
 	if (dtm > 0) {
 
-	    add_one_to_PNTM_wins(tb, current_index, 2*(dtm-1), 0);
+	    add_one_to_PNTM_wins(tb, current_index, (2*(dtm-1))+1, 0);
 
 	} else if (dtm < 0) {
 
-	    PTM_wins(tb, current_index, 2*(-dtm-1)+1, 0);
+	    PTM_wins(tb, current_index, (2*(-dtm-1)+1)+1, 0);
 
 	}
 
