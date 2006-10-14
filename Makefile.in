@@ -13,3 +13,34 @@ CPPFLAGS=$(CFLAGS)
 hoffman: hoffman.o probe.o egtb.o
 	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' > .gdbinit
+
+%.htb: %.xml
+	./hoffman -g -o $@ $<
+	./hoffman -v -n Nalimov $@
+
+kpk.htb: kqk.htb krk.htb knk.htb kbk.htb
+
+kqkq.htb: kqk.htb
+
+kqkr.htb: kqk.htb krk.htb
+kqkn.htb: kqk.htb knk.htb
+kqkb.htb: kqk.htb kbk.htb
+
+kqkp.htb: kqkq.htb kqkr.htb kqkn.htb kqkb.htb
+
+krkr.htb: krk.htb
+krkn.htb: krk.htb knk.htb
+krkb.htb: krk.htb kbk.htb
+
+krkp.htb: kqkr.htb krkr.htb krkb.htb krkn.htb
+
+kbkb.htb: kbk.htb
+kbkn.htb: kbk.htb knk.htb
+
+kbkp.htb: kqkb.htb krkb.htb kbkb.htb kbkn.htb
+
+knkn.htb: knk.htb
+
+knkp.htb: kqkn.htb krkn.htb kbkn.htb knkn.htb
+
+kpkp.htb: kqkp.htb krkp.htb kbkp.htb knkp.htb
