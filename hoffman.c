@@ -107,6 +107,10 @@
 #include <libxml/xpath.h>
 #include <libxml/xmlsave.h>
 
+/* The ZLIB compression library */
+
+#include <zlib.h>
+
 /* According the GCC documentation, "long long" ints are supported by the C99 standard as well as
  * the GCC compiler.  In any event, since chess boards have 64 squares, being able to use 64 bit
  * integers makes a bunch of stuff a lot easier.  Might have to be careful with this if porting.
@@ -358,7 +362,7 @@ typedef struct tablebase {
     int last_identical_piece[MAX_PIECES];
 
     /* for futurebases only */
-    FILE *file;
+    gzFile file;
     int invert_colors;
     int extra_piece;
     int missing_pawn;
@@ -1134,47 +1138,37 @@ tablebase_t * parse_XML_control_file(char *filename)
 
 tablebase_t * preload_futurebase_from_file(char *filename)
 {
-    int fd;
-    struct stat filestat;
-    char *fileptr;
+    gzFile file;
     int xml_size;
+    char fileptr[16384];	/* XXX hardwired max size of XML */
     xmlDocPtr doc;
-    tablebase_t *tb;
+    tablebase_t *tb = NULL;
+    xmlNodePtr tablebase;
+    xmlChar * offsetstr;
+    long offset;
 
-    fd = open(filename, O_RDONLY);
-    if (fd == -1) {
-	fprintf(stderr, "Can not open futurebase '%s'\n", filename);
-	return NULL;
-    }
+    file = gzopen(filename, "r");
 
-    fstat(fd, &filestat);
+    if (file == NULL) {
 
-    fileptr = mmap(0, filestat.st_size, PROT_READ, MAP_SHARED, fd, 0);
+	fprintf(stderr, "Can't gzopen file '%s'\n", filename);
 
-    close(fd);
-
-    for (xml_size = 0; fileptr[xml_size] != '\0'; xml_size ++) ;
-
-    doc = xmlReadMemory(fileptr, xml_size, NULL, NULL, 0);
-
-    tb = parse_XML_into_tablebase(doc);
-
-    munmap(fileptr, filestat.st_size);
-
-    tb->file = fopen(filename, "r");
-    if (tb->file == NULL) {
-	fprintf(stderr, "Can't fopen file '%s'\n", filename);
     } else {
-	xmlNodePtr tablebase;
-	xmlChar * offsetstr;
-	long offset;
+
+	for (xml_size = 0; (fileptr[xml_size] = gzgetc(file)) != '\0'; xml_size ++) ;
+
+	doc = xmlReadMemory(fileptr, xml_size, NULL, NULL, 0);
+
+	tb = parse_XML_into_tablebase(doc);
+
+	tb->file = file;
 
 	tablebase = xmlDocGetRootElement(doc);
 
 	offsetstr = xmlGetProp(tablebase, (const xmlChar *) "offset");
 	offset = strtol((const char *) offsetstr, NULL, 0);
 
-	fseek(tb->file, offset, SEEK_SET);
+	gzseek(file, offset, SEEK_SET);
     }
 
     return tb;
@@ -1188,7 +1182,7 @@ char fetch_next_DTM_from_disk(tablebase_t *tb)
 	fprintf(stderr, "Attempt to fetch_next_DTM_from_disk() from a non-preloaded tablebase\n");
 	return 0;
     } else {
-	retval = fgetc(tb->file);
+	retval = gzgetc(tb->file);
 	if (retval == EOF) {
 	    fprintf(stderr, "fetch_next_DTM_from_disk() hit EOF\n");
 	    return 0;
@@ -1262,7 +1256,7 @@ void unload_futurebase(tablebase_t *tb)
     tb->fileptr = NULL;
     if (tb->xml != NULL) xmlFreeDoc(tb->xml);
     tb->xml = NULL;
-    if (tb->file != NULL) fclose(tb->file);
+    if (tb->file != NULL) gzclose(tb->file);
     tb->file = NULL;
 }
 
@@ -1299,7 +1293,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.140 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.141 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
