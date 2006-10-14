@@ -177,7 +177,7 @@ futurevector_t pruned_futuremoves = 0;
 /* position - the data structures that represents a board position
  *
  * There are two kinds of positions: local and global.  Locals are faster but are tied to a specific
- * tablebase.  Globals are more general and are used to translate between different tablebases.
+ * tablebase.  Globals are more general and are used for probing.
  *
  * Both types use a 64-bit board_vector with one bit for each board position, in addition to a flag
  * to indicate which side is to move and the en passant capture square (or -1 if no en passant
@@ -226,8 +226,8 @@ typedef struct {
 } local_position_t;
 
 /* This is a global position, that doesn't depend on a particular tablebase.  It's slower to
- * manipulate, but is suitable for translating positions between tablebases.  Each char in the array
- * is either 0 or ' ' for an empty square, and one of the FEN characters for a chess piece.
+ * manipulate, but is suitable for probing tablebases.  Each char in the array is either 0 for an
+ * empty square, and one of the FEN characters for a chess piece.
  */
 
 typedef struct {
@@ -358,6 +358,7 @@ typedef struct tablebase {
     int last_identical_piece[MAX_PIECES];
 
     /* for futurebases only */
+    FILE *file;
     int invert_colors;
     int extra_piece;
     int missing_pawn;
@@ -1128,7 +1129,7 @@ tablebase_t * parse_XML_control_file(char *filename)
  * to the resulting tablebase structure after setting 'entries' to point into the mmap'ed data.
  *
  * preload_futurebase_from_file() does the same thing, except that it just parses the XML and
- * doesn't keep the mmap around
+ * doesn't keep the mmap around.  It then open a FILE * and fseeks it to the beginning of the data.
  */
 
 tablebase_t * preload_futurebase_from_file(char *filename)
@@ -1160,7 +1161,41 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
     munmap(fileptr, filestat.st_size);
 
+    tb->file = fopen(filename, "r");
+    if (tb->file == NULL) {
+	fprintf(stderr, "Can't fopen file '%s'\n", filename);
+    } else {
+	xmlNodePtr tablebase;
+	xmlChar * offsetstr;
+	long offset;
+
+	tablebase = xmlDocGetRootElement(doc);
+
+	offsetstr = xmlGetProp(tablebase, (const xmlChar *) "offset");
+	offset = strtol((const char *) offsetstr, NULL, 0);
+
+	fseek(tb->file, offset, SEEK_SET);
+    }
+
     return tb;
+}
+
+char fetch_next_DTM_from_disk(tablebase_t *tb)
+{
+    int retval;
+
+    if (tb->file == NULL) {
+	fprintf(stderr, "Attempt to fetch_next_DTM_from_disk() from a non-preloaded tablebase\n");
+	return 0;
+    } else {
+	retval = fgetc(tb->file);
+	if (retval == EOF) {
+	    fprintf(stderr, "fetch_next_DTM_from_disk() hit EOF\n");
+	    return 0;
+	} else {
+	    return (char) retval;
+	}
+    }
 }
 
 tablebase_t * load_futurebase_from_file(char *filename)
@@ -1227,6 +1262,8 @@ void unload_futurebase(tablebase_t *tb)
     tb->fileptr = NULL;
     if (tb->xml != NULL) xmlFreeDoc(tb->xml);
     tb->xml = NULL;
+    if (tb->file != NULL) fclose(tb->file);
+    tb->file = NULL;
 }
 
 /* Given a tablebase, change its XML structure to reflect the fact that the tablebase has now
@@ -1262,7 +1299,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.139 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.140 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3132,7 +3169,8 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	dtm = get_DTM(futurebase, future_index);
+	/* dtm = get_DTM(futurebase, future_index); */
+	dtm = fetch_next_DTM_from_disk(futurebase);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -3298,7 +3336,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	dtm = get_DTM(futurebase, future_index);
+	/* dtm = get_DTM(futurebase, future_index); */
+	dtm = fetch_next_DTM_from_disk(futurebase);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -3728,7 +3767,8 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	dtm = get_DTM(futurebase, future_index);
+	/* dtm = get_DTM(futurebase, future_index); */
+	dtm = fetch_next_DTM_from_disk(futurebase);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -3824,7 +3864,8 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	 * tablebase.
 	 */
 
-	dtm = get_DTM(futurebase, future_index);
+	/* dtm = get_DTM(futurebase, future_index); */
+	dtm = fetch_next_DTM_from_disk(futurebase);
 
 	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
 	 * with multiple restricted pieces that should be quietly ignored.
@@ -4142,7 +4183,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    filename = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "filename");
 
-	    futurebase = load_futurebase_from_file((char *) filename);
+	    futurebase = preload_futurebase_from_file((char *) filename);
 
 	    /* load_futurebase_from_file() already printed some kind of error message */
 	    if (futurebase == NULL) return -1;
@@ -5035,6 +5076,12 @@ boolean check_pruning(tablebase_t *tb) {
     } else if (futurebase_cnt > 1) {
 	fprintf(stderr, "Multiple futurebases for restricted moves\n");
 	return 0;
+    }
+
+    /* Unload the futurebases (for now; we'll need them again later) */
+
+    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	unload_futurebase(futurebases[fbnum]);
     }
 
     return 1;
