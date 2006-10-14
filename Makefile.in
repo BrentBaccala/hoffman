@@ -18,29 +18,37 @@ hoffman: hoffman.o probe.o egtb.o
 	./hoffman -g -o $@ $<
 	./hoffman -v -n Nalimov $@
 
-kpk.htb: kqk.htb krk.htb knk.htb kbk.htb
+# %.htb.gz: %.xml
+#	./hoffman -g -o $*.htb $<
+#	./hoffman -v -n Nalimov $*.htb
+#	gzip $*.htb
 
-kqkq.htb: kqk.htb
+%.gz: %
+	gzip $<
 
-kqkr.htb: kqk.htb krk.htb
-kqkn.htb: kqk.htb knk.htb
-kqkb.htb: kqk.htb kbk.htb
+kpk.htb.gz: kqk.htb.gz krk.htb.gz knk.htb.gz kbk.htb.gz
 
-kqkp.htb: kqkq.htb kqkr.htb kqkn.htb kqkb.htb
+kqkq.htb.gz: kqk.htb.gz
 
-krkr.htb: krk.htb
-krkn.htb: krk.htb knk.htb
-krkb.htb: krk.htb kbk.htb
+kqkr.htb.gz: kqk.htb.gz krk.htb.gz
+kqkn.htb.gz: kqk.htb.gz knk.htb.gz
+kqkb.htb.gz: kqk.htb.gz kbk.htb.gz
 
-krkp.htb: kqkr.htb krkr.htb krkb.htb krkn.htb
+kqkp.htb.gz: kqkq.htb.gz kqkr.htb.gz kqkn.htb.gz kqkb.htb.gz
 
-kbkb.htb: kbk.htb
-kbkn.htb: kbk.htb knk.htb
+krkr.htb.gz: krk.htb.gz
+krkn.htb.gz: krk.htb.gz knk.htb.gz
+krkb.htb.gz: krk.htb.gz kbk.htb.gz
 
-kbkp.htb: kqkb.htb krkb.htb kbkb.htb kbkn.htb
+krkp.htb.gz: kqkr.htb.gz krkr.htb.gz krkb.htb.gz krkn.htb.gz
 
-knkn.htb: knk.htb
+kbkb.htb.gz: kbk.htb.gz
+kbkn.htb.gz: kbk.htb.gz knk.htb.gz
 
-knkp.htb: kqkn.htb krkn.htb kbkn.htb knkn.htb
+kbkp.htb.gz: kqkb.htb.gz krkb.htb.gz kbkb.htb.gz kbkn.htb.gz
 
-kpkp.htb: kqkp.htb krkp.htb kbkp.htb knkp.htb
+knkn.htb.gz: knk.htb.gz
+
+knkp.htb.gz: kqkn.htb.gz krkn.htb.gz kbkn.htb.gz knkn.htb.gz
+
+kpkp.htb.gz: kqkp.htb.gz krkp.htb.gz kbkp.htb.gz knkp.htb.gz
