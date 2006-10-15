@@ -1238,7 +1238,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.144 $ $Locker$");
+		(const xmlChar *) "Hoffman $Revision: 1.145 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -4420,17 +4420,17 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			for (movementptr = capture_pawn_movements[sq][tb->piece_color[capturing_piece]];
 			     movementptr->square != -1; movementptr++) {
 
-			    /* a pawn capture that results in promotion - PROMOTION_POSSIBILTIES moves */
-
-			    if ((ROW(movementptr->square) == 0) || (ROW(movementptr->square) == 7)) {
-				futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
-				num_futuremoves += PROMOTION_POSSIBILITIES;
-				goto next_pair_of_pieces;
-			    }
-
 			    if (movementptr->vector & tb->piece_legal_squares[captured_piece]) {
+
 				futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
-				num_futuremoves ++;
+
+				/* a pawn capture that results in promotion - PROMOTION_POSSIBILTIES moves */
+
+				if ((ROW(movementptr->square) == 0) || (ROW(movementptr->square) == 7)) {
+				    num_futuremoves += PROMOTION_POSSIBILITIES;
+				} else {
+				    num_futuremoves ++;
+				}
 				goto next_pair_of_pieces;
 			    }
 
@@ -4665,14 +4665,27 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 	for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
 
 	    /* Check to see if the pawn can even be on a square where a promotion capture is
-	     * possible.  Even if it is, it's still possible that the other piece can't be on a
-	     * square where it could be promotion captured, but we leave that possibility unchecked.
+	     * possible.
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
 		if (! (tb->piece_legal_squares[pawn] & 0x00ff000000000000LL)) break;
 	    } else {
 		if (! (tb->piece_legal_squares[pawn] & 0x000000000000ff00LL)) break;
+	    }
+
+	    /* Check to see that the other piece can be on a square where it could be promotion
+	     * captured.  It's still possible that the other piece could be on a back rank, but
+	     * never on a square where it could be captured by the pawn, but we leave that
+	     * possibility unchecked.  It'd probably be best to tie this code in with the code in
+	     * assign_numbers_to_futuremoves() - maybe by flagging which captures it was determined
+	     * that promotion was possible in?
+	     */
+
+	    if (tb->piece_color[pawn] == WHITE) {
+		if (! (tb->piece_legal_squares[captured_piece] & 0xff00000000000000LL)) continue;
+	    } else {
+		if (! (tb->piece_legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
 	    }
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
@@ -4874,14 +4887,27 @@ boolean check_pruning(tablebase_t *tb) {
 	for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
 
 	    /* Check to see if the pawn can even be on a square where a promotion capture is
-	     * possible.  Even if it is, it's still possible that the other piece can't be on a
-	     * square where it could be promotion captured, but we leave that possibility unchecked.
+	     * possible.
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
 		if (! (tb->piece_legal_squares[pawn] & 0x00ff000000000000LL)) break;
 	    } else {
 		if (! (tb->piece_legal_squares[pawn] & 0x000000000000ff00LL)) break;
+	    }
+
+	    /* Check to see that the other piece can be on a square where it could be promotion
+	     * captured.  It's still possible that the other piece could be on a back rank, but
+	     * never on a square where it could be captured by the pawn, but we leave that
+	     * possibility unchecked.  It'd probably be best to tie this code in with the code in
+	     * assign_numbers_to_futuremoves() - maybe by flagging which captures it was determined
+	     * that promotion was possible in?
+	     */
+
+	    if (tb->piece_color[pawn] == WHITE) {
+		if (! (tb->piece_legal_squares[captured_piece] & 0xff00000000000000LL)) continue;
+	    } else {
+		if (! (tb->piece_legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
 	    }
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
