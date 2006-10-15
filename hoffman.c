@@ -1200,10 +1200,10 @@ char fetch_DTM_from_disk(tablebase_t *tb, int32 index)
     int retval;
 
     if (tb->file == NULL) {
-	fprintf(stderr, "Attempt to fetch_DTM_from_disk() from a non-preloaded tablebase\n");
+	fprintf(stderr, "Attempt to fetch_DTM_from_disk() from a non-preloaded tablebase\n");/* BREAKPOINT */
 	return 0;
     } else if (tb->format != FORMAT_ONE_BYTE_DTM) {
-	fprintf(stderr, "Can't fetch_DTM_from_disk() on anything but a one-byte-dtm (yet)\n");
+	fprintf(stderr, "Can't fetch_DTM_from_disk() on anything but a one-byte-dtm\n");  /* BREAKPOINT */
 	return 0;
     } else {
 	gzseek(tb->file, tb->offset + index, SEEK_SET);
@@ -1318,7 +1318,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.142 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.143 $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2164,7 +2164,8 @@ inline boolean needs_propagation(tablebase_t *tb, int32 index)
 
 inline boolean is_position_valid(tablebase_t *tb, int32 index)
 {
-    return ((tb->DTMs != NULL) ? get_DTM(tb,index) : fetch_DTM_from_disk(tb,index)) != 1;
+    if ((tb->entries != NULL) || (tb->DTMs != NULL)) return (get_DTM(tb,index) != 1);
+    else return (fetch_DTM_from_disk(tb,index) != 1);
     /* return (! (does_PTM_win(tb, index) && (tb->entries[index].mate_in_cnt == 0))); */
 }
 
