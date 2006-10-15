@@ -84,8 +84,6 @@
 #include <unistd.h>	/* for write(), lseek(), gethostname() */
 #include <time.h>	/* for putting timestamps on the output tablebases */
 #include <fcntl.h>	/* for O_RDONLY */
-#include <sys/stat.h>	/* for stat'ing the length of the tablebase file */
-#include <sys/mman.h>	/* for mmap */
 #include <netdb.h>	/* for gethostbyname() */
 
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
@@ -236,7 +234,6 @@ typedef struct {
 
 typedef struct {
     unsigned char board[64];
-    int64 board_vector;
     short side_to_move;
     short en_passant_square;
 } global_position_t;
@@ -370,8 +367,6 @@ typedef struct tablebase {
     int missing_non_pawn;
 
     xmlDocPtr xml;
-    void *fileptr;
-    size_t length;
     int num_pieces;
     int move_restrictions[2];		/* one for each color */
     short piece_type[MAX_PIECES];
@@ -379,8 +374,6 @@ typedef struct tablebase {
     int64 piece_legal_squares[MAX_PIECES];
 
     int format;
-
-    char *DTMs;
 
     struct fourbyte_entry *entries;
     futurevector_t *futurevectors;
@@ -1130,11 +1123,8 @@ tablebase_t * parse_XML_control_file(char *filename)
     return tb;
 }
 
-/* Loads a futurebase, by mmap'ing it into memory, parsing the XML header, and returning a pointer
- * to the resulting tablebase structure after setting 'entries' to point into the mmap'ed data.
- *
- * preload_futurebase_from_file() does the same thing, except that it just parses the XML and
- * doesn't keep the mmap around.  It then open a FILE * and fseeks it to the beginning of the data.
+/* preload_futurebase_from_file() reads a tablebase's XML header and parses it, leaving the file
+ * open and ready to begin reading the first entry with fetch_next_DTM_from_disk().
  */
 
 tablebase_t * preload_futurebase_from_file(char *filename)
@@ -1217,68 +1207,8 @@ char fetch_DTM_from_disk(tablebase_t *tb, int32 index)
     }
 }
 
-tablebase_t * load_futurebase_from_file(char *filename)
-{
-    int fd;
-    struct stat filestat;
-    char *fileptr;
-    int xml_size;
-    xmlDocPtr doc;
-    xmlNodePtr root_element;
-    xmlChar * offsetstr;
-    long offset;
-    tablebase_t *tb;
-
-    fd = open(filename, O_RDONLY);
-    if (fd == -1) {
-	fprintf(stderr, "Can not open futurebase '%s'\n", filename);
-	return NULL;
-    }
-
-    fstat(fd, &filestat);
-
-    fileptr = mmap(0, filestat.st_size, PROT_READ, MAP_SHARED, fd, 0);
-
-    close(fd);
-
-    for (xml_size = 0; fileptr[xml_size] != '\0'; xml_size ++) ;
-
-    doc = xmlReadMemory(fileptr, xml_size, NULL, NULL, 0);
-
-    tb = parse_XML_into_tablebase(doc);
-
-    if (tb != NULL) {
-
-	tb->fileptr = fileptr;
-	tb->length = filestat.st_size;
-
-	root_element = xmlDocGetRootElement(doc);
-
-	if (xmlStrcmp(root_element->name, (const xmlChar *) "tablebase")) {
-	    fprintf(stderr, "'%s' failed XML parse\n", filename);
-	    return NULL;
-	}
-
-	offsetstr = xmlGetProp(root_element, (const xmlChar *) "offset");
-
-	offset = strtol((const char *) offsetstr, NULL, 0);
-
-	if (tb->format == FORMAT_FOURBYTE) {
-	    tb->entries = (struct fourbyte_entry *) (fileptr + offset);
-	} else if (tb->format == FORMAT_ONE_BYTE_DTM) {
-	    tb->DTMs = (char *) (fileptr + offset);
-	} else {
-	    fprintf(stderr, "Unknown format in load_futurebase_from_file()\n");
-	}
-    }
-
-    return tb;
-}
-
 void unload_futurebase(tablebase_t *tb)
 {
-    if (tb->fileptr != NULL) munmap(tb->fileptr, tb->length);
-    tb->fileptr = NULL;
     if (tb->xml != NULL) xmlFreeDoc(tb->xml);
     tb->xml = NULL;
     if (tb->file != NULL) gzclose(tb->file);
@@ -1286,39 +1216,29 @@ void unload_futurebase(tablebase_t *tb)
 }
 
 /* Given a tablebase, change its XML structure to reflect the fact that the tablebase has now
- * actually been built.
+ * actually been built.  Adds a dummy "offset" property to the root element which will be adjusted
+ * later to reflect the actual byte offset of the tablebase entries, and a "generated-by" block
+ * indicating the program, time, and host that generated the data.
  */
 
 xmlDocPtr finalize_XML_header(tablebase_t *tb)
 {
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
     xmlNodePtr tablebase, node;
     time_t creation_time;
     char hostname[256];
     struct hostent *he;
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//tablebase", context);
-    tablebase = result->nodesetval->nodeTab[0];
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
+    tablebase = xmlDocGetRootElement(tb->xml);
 
     xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
-
-    /* 'format' should now either be specified in input, or set to its default value earlier */
-    /* xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "fourbyte"); */
-    /* xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "one-byte-dtm"); */
-
-    /* 'index' should now either be specified in input, or set to its default value earlier */
-    /* xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive"); */
 
     time(&creation_time);
     gethostname(hostname, sizeof(hostname));
     he = gethostbyname(hostname);
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
-    xmlNewChild(node, NULL, (const xmlChar *) "program", (const xmlChar *) "Hoffman $Revision: 1.143 $");
+    xmlNewChild(node, NULL, (const xmlChar *) "program",
+		(const xmlChar *) "Hoffman $Revision: 1.144 $ $Locker$");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -1402,11 +1322,9 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    while (ftell(file) < padded_size) {
 		fputc(0, file);
 	    }
-	    tb->format = FORMAT_FOURBYTE;
 	    for (index = 0; index <= tb->max_index; index ++) {
-		fputc(get_DTM(tb, index), file);
+		fputc(convert_entry_to_DTM(tb, index), file);
 	    }
-	    tb->format = FORMAT_ONE_BYTE_DTM;
 	}
 	fclose(file);
     } else {
@@ -1456,8 +1374,6 @@ void invert_colors_of_global_position(global_position_t *global)
 {
     int squareA;
 
-    global->board_vector = 0;
-
     for (squareA=0; squareA < NUM_SQUARES/2; squareA++) {
 	unsigned char pieceA;
 	unsigned char pieceB;
@@ -1480,9 +1396,6 @@ void invert_colors_of_global_position(global_position_t *global)
 	
 	global->board[squareA] = pieceB;
 	global->board[squareB] = pieceA;
-
-	if (pieceB >= 'A') global->board_vector |= BITVECTOR(squareA);
-	if (pieceA >= 'A') global->board_vector |= BITVECTOR(squareB);
     }
 
     if (global->side_to_move == WHITE) {
@@ -1763,7 +1676,6 @@ boolean index_to_global_position(tablebase_t *tb, int32 index, global_position_t
     for (piece = 0; piece < tb->num_pieces; piece++) {
 	global->board[local.piece_position[piece]]
 	    = global_pieces[tb->piece_color[piece]][tb->piece_type[piece]];
-	global->board_vector |= BITVECTOR(local.piece_position[piece]);
     }
 
     return 1;
@@ -2122,8 +2034,6 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 	global->en_passant_square = destination_square + 8;
     }
 
-    /* XXX doesn't modify board vector */
-
     return 1;
 }
 
@@ -2164,7 +2074,7 @@ inline boolean needs_propagation(tablebase_t *tb, int32 index)
 
 inline boolean is_position_valid(tablebase_t *tb, int32 index)
 {
-    if ((tb->entries != NULL) || (tb->DTMs != NULL)) return (get_DTM(tb,index) != 1);
+    if (tb->entries != NULL) return (convert_entry_to_DTM(tb,index) != 1);
     else return (fetch_DTM_from_disk(tb,index) != 1);
     /* return (! (does_PTM_win(tb, index) && (tb->entries[index].mate_in_cnt == 0))); */
 }
@@ -2207,22 +2117,16 @@ inline int get_stalemate_count(tablebase_t *tb, int32 index)
  * -N = PNTM will have a mate in N-1 after this move
  */
 
-int get_DTM(tablebase_t *tb, int32 index)
+int convert_entry_to_DTM(tablebase_t *tb, int32 index)
 {
     int retval;
 
-    if (tb->format == FORMAT_FOURBYTE) {
+    if (does_PTM_win(tb,index)) retval =  1 + tb->entries[index].mate_in_cnt/2;
+    else if (does_PNTM_win(tb,index)) retval =  -(1 + tb->entries[index].mate_in_cnt/2);
+    else retval = 0;
 
-	if (does_PTM_win(tb,index)) retval =  1 + tb->entries[index].mate_in_cnt/2;
-	else if (does_PNTM_win(tb,index)) retval =  -(1 + tb->entries[index].mate_in_cnt/2);
-	else retval = 0;
-
-	if ((retval < -128) || (retval > 127)) {
-	    fprintf(stderr, "Out-of-bound result in get_DTM()\n");
-	}
-
-    } else {
-	retval = tb->DTMs[index];
+    if ((retval < -128) || (retval > 127)) {
+	fprintf(stderr, "Out-of-bound result in convert_entry_to_DTM()\n");
     }
 
     return retval;
@@ -3189,7 +3093,6 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	/* dtm = get_DTM(futurebase, future_index); */
 	dtm = fetch_next_DTM_from_disk(futurebase);
 
 	/* Take the position from the futurebase and translate it into a local position for the
@@ -3356,7 +3259,6 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	/* dtm = get_DTM(futurebase, future_index); */
 	dtm = fetch_next_DTM_from_disk(futurebase);
 
 	/* Take the position from the futurebase and translate it into a local position for the
@@ -3787,7 +3689,6 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	/* dtm = get_DTM(futurebase, future_index); */
 	dtm = fetch_next_DTM_from_disk(futurebase);
 
 	/* Take the position from the futurebase and translate it into a local position for the
@@ -3884,7 +3785,6 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	 * tablebase.
 	 */
 
-	/* dtm = get_DTM(futurebase, future_index); */
 	dtm = fetch_next_DTM_from_disk(futurebase);
 
 	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
@@ -5118,22 +5018,6 @@ void propagate_one_minimove_within_table(tablebase_t *tb, int32 parent_index, lo
 {
     int32 current_index;
 
-    /* local_position_to_index() only requires the square numbers of the pieces, not the board
-     * vectors.
-     */
-
-#if NEEDED
-		current_position.board_vector &= ~BITVECTOR(parent_position.piece_position[piece]);
-		current_position.board_vector |= BITVECTOR(movementptr->square);
-		if (tb->piece_color[piece] == WHITE) {
-		    current_position.white_vector &= ~BITVECTOR(parent_position.piece_position[piece]);
-		    current_position.white_vector |= BITVECTOR(movementptr->square);
-		} else {
-		    current_position.black_vector &= ~BITVECTOR(parent_position.piece_position[piece]);
-		    current_position.black_vector |= BITVECTOR(movementptr->square);
-		}
-#endif
-
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == -1) {
@@ -5202,9 +5086,8 @@ void propagate_one_move_within_table(tablebase_t *tb, int32 parent_index, local_
 	    if (tb->piece_color[piece] == position->side_to_move) continue;
 	    if (tb->piece_type[piece] != PAWN) continue;
 
-#if 1
-	    /* XXX I've taken care to update board_vector specifically so we can check for en
-	     * passant legality here.
+	    /* I've taken care to update board_vector in the routine that calls here specifically so
+	     * we can check for en passant legality here.
 	     */
 
 	    if ((tb->piece_color[piece] == WHITE)
@@ -5222,25 +5105,6 @@ void propagate_one_move_within_table(tablebase_t *tb, int32 parent_index, local_
 		position->en_passant_square = position->piece_position[piece] + 8;
 		propagate_one_minimove_within_table(tb, parent_index, position);
 	    }
-
-#else
-	    /* XXX The problem is that the board vectors might not be correct, because we moved the
-	     * piece without updating them.  We don't even bother to use them here.  We get around
-	     * this by checking in local_position_to_index() for illegal en passant positions.
-	     */
-
-	    if ((tb->piece_color[piece] == WHITE)
-		&& (ROW(position->piece_position[piece]) == 3)) {
-		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_one_minimove_within_table(tb, parent_index, position);
-	    }
-
-	    if ((tb->piece_color[piece] == BLACK)
-		&& (ROW(position->piece_position[piece]) == 4)) {
-		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_one_minimove_within_table(tb, parent_index, position);
-	    }
-#endif
 
 	    position->en_passant_square = -1;
 	}
@@ -5863,7 +5727,6 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
     for (index = 0; index <= tb->max_index; index++) {
 	if (index_to_global_position(tb, index, &global)) {
 
-	    /* int dtm = get_DTM(tb, index); */
 	    int dtm = fetch_DTM_from_disk(tb, index);
 
 	    if (dtm == 1) {
@@ -5949,7 +5812,6 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
 
 void print_score(tablebase_t *tb, int32 index, char *ptm, char *pntm)
 {
-    /* int dtm = get_DTM(tb, index); */
     int dtm = fetch_DTM_from_disk(tb, index);
 
     if (dtm == 0) {
