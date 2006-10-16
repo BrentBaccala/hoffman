@@ -357,6 +357,7 @@ typedef struct tablebase {
     int simple_piece_positions[MAX_PIECES][64];
     int simple_piece_indices[MAX_PIECES][64];
     int last_identical_piece[MAX_PIECES];
+    int next_identical_piece[MAX_PIECES];
 
     /* for futurebases only */
     gzFile file;
@@ -939,11 +940,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	     */
 
 	    tb->last_identical_piece[piece] = -1;
+	    tb->next_identical_piece[piece] = -1;
+
 	    for (piece2 = piece - 1; piece2 >= 0; piece2 --) {
 		if ((tb->piece_color[piece2] == tb->piece_color[piece])
 		    && (tb->piece_type[piece2] == tb->piece_type[piece])) {
 		    if (tb->piece_legal_squares[piece2] == tb->piece_legal_squares[piece]) {
 			tb->last_identical_piece[piece] = piece2;
+			tb->next_identical_piece[piece2] = piece;
 			break;
 		    } else if (tb->piece_legal_squares[piece2] & tb->piece_legal_squares[piece]) {
 			fprintf(stderr, "Identical pieces with overlapping non-identical move restrictions not allowed\n");
@@ -1238,7 +1242,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.145 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.146 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -1432,8 +1436,9 @@ void invert_colors_of_global_position(global_position_t *global)
  * bits 24-31: local tb piece number of missing piece #2
  *
  * If any of the fields are unused (because there is no corresponding piece), it's value is 0x80.
- * Also, if there are two missing pieces and only one of them is a pawn, the pawn will always be
- * returned as missing piece #1.
+ * If there are two missing pieces and only one of them is a pawn, the pawn will always be returned
+ * as missing piece #1.  If there are multiple identical missing pieces, the last one will always be
+ * returned as the missing piece(s).
  *
  * The function does not depend on the indexing scheme used by the foreign tablebase.  Instead, it
  * uses index_to_local_position() on the foreign tablebase.
@@ -2956,9 +2961,20 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 
 	tb->entries[current_index].futuremove_cnt --;
 
-	if (! (tb->futurevectors[current_index] & (1 << futuremove))) {
-	    fprintf(stderr, "Futuremove already handled!\n");
+	if ((futuremove == -1) || ! (tb->futurevectors[current_index] & (1 << futuremove))) {
+	    static int errors = 0;
+	    global_position_t global;
+
+	    if (futuremove == -1) fprintf(stderr, "Futuremove never assigned: ");
+	    else fprintf(stderr, "Futuremove already handled: ");
+
+	    index_to_global_position(tb, current_index, &global);
+	    fprintf(stderr, "%s %s\n", global_position_to_FEN(&global), movestr[futuremove]);
+
+	    if (errors++ == 10) exit(EXIT_FAILURE);
+	    return;
 	}
+
 	tb->futurevectors[current_index] &= ~(1 << futuremove);
 
 	/* ...and propagate the win */
@@ -3244,6 +3260,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
     local_position_t position;
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
+    int true_captured_piece;
 
     int promotion_color = tb->piece_color[pawn];
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
@@ -3341,6 +3358,21 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		position.piece_position[missing_piece2] = promotion_sq;
 		position.board_vector |= BITVECTOR(promotion_sq);
 
+		/* When we finally convert the position to an index (in local_position_to_index()),
+		 * we'll make a copy of the position and normalize it by sorting the identical
+		 * pieces so that they are in ascending order.  But we have to at least be aware of
+		 * this here, in order to figure out which piece "actually" got captured (we're
+		 * always called with captured_piece set to the last piece number of any identical
+		 * pieces), so we can figure out which futuremove number to use.
+		 */
+
+		true_captured_piece = missing_piece2;
+		while ((tb->last_identical_piece[true_captured_piece] != -1)
+		       && (position.piece_position[true_captured_piece]
+			   < position.piece_position[tb->last_identical_piece[true_captured_piece]])) {
+		    true_captured_piece = tb->last_identical_piece[true_captured_piece];
+		}
+
 		/* Consider first a capture to the left (white's left).  There has to be an empty
 		 * square where the pawn came from, and it has to be a legal (i.e, non-restricted)
 		 * square for the pawn in our tablebase.
@@ -3365,7 +3397,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		     */
 
 		    propagate_local_position_from_futurebase(tb, dtm,
-							     futurecaptures[pawn][missing_piece2] + futurebase->piece_type[extra_piece] - 1,
+							     futurecaptures[pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 							     &position, mate_in_limit);
 
 		    /* We're about to use this position again, so put the board_vector back... */
@@ -3397,7 +3429,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		     */
 
 		    propagate_local_position_from_futurebase(tb, dtm,
-							     futurecaptures[pawn][missing_piece2] + futurebase->piece_type[extra_piece] - 1,
+							     futurecaptures[pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 							     &position, mate_in_limit);
 
 		    /* We're about to use this position again, so put the board_vector back... */
@@ -3462,6 +3494,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 {
     int dir;
     struct movement *movementptr;
+    int true_captured_piece;
 
     /* We only want to consider pieces of the side which captured... */
 
@@ -3470,6 +3503,20 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
     /* Put the captured piece on the capturing piece's square (from the future position).  */
 
     position->piece_position[captured_piece] = position->piece_position[capturing_piece];
+
+    /* When we finally convert the position to an index (in local_position_to_index()), we'll make a
+     * copy of the position and normalize it by sorting the identical pieces so that they are in
+     * ascending order.  But we have to at least be aware of this here, in order to figure out which
+     * piece "actually" got captured (we're always called with captured_piece set to the last piece
+     * number of any identical pieces), so we can figure out which futuremove number to use.
+     */
+
+    true_captured_piece = captured_piece;
+    while ((tb->last_identical_piece[true_captured_piece] != -1)
+	   && (position->piece_position[true_captured_piece]
+	       < position->piece_position[tb->last_identical_piece[true_captured_piece]])) {
+	true_captured_piece = tb->last_identical_piece[true_captured_piece];
+    }
 
     /* Now consider all possible backwards movements of the capturing piece. */
 
@@ -3522,7 +3569,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		 */
 
 		propagate_local_position_from_futurebase(tb, dtm,
-							 futurecaptures[capturing_piece][captured_piece],
+							 futurecaptures[capturing_piece][true_captured_piece],
 							 position, mate_in_limit);
 
 
@@ -3569,7 +3616,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		 */
 
 		propagate_local_position_from_futurebase(tb, dtm,
-							 futurecaptures[capturing_piece][captured_piece],
+							 futurecaptures[capturing_piece][true_captured_piece],
 							 position, mate_in_limit);
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
@@ -3606,8 +3653,17 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
 			position->board_vector |= BITVECTOR(movementptr->square);
 
+			/* Since the captured piece is on a different square, we do this again. */
+
+			true_captured_piece = captured_piece;
+			while ((tb->last_identical_piece[true_captured_piece] != -1)
+			       && (position->piece_position[true_captured_piece]
+				   < position->piece_position[tb->last_identical_piece[true_captured_piece]])) {
+			    true_captured_piece = tb->last_identical_piece[true_captured_piece];
+			}
+
 			propagate_local_position_from_futurebase(tb, dtm,
-								 futurecaptures[capturing_piece][captured_piece],
+								 futurecaptures[capturing_piece][true_captured_piece],
 								 position, mate_in_limit);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
@@ -3640,8 +3696,17 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
 			position->board_vector |= BITVECTOR(movementptr->square);
 
+			/* Since the captured piece is on a different square, we do this again. */
+
+			true_captured_piece = captured_piece;
+			while ((tb->last_identical_piece[true_captured_piece] != -1)
+			       && (position->piece_position[true_captured_piece]
+				   < position->piece_position[tb->last_identical_piece[true_captured_piece]])) {
+			    true_captured_piece = tb->last_identical_piece[true_captured_piece];
+			}
+
 			propagate_local_position_from_futurebase(tb, dtm,
-								 futurecaptures[capturing_piece][captured_piece],
+								 futurecaptures[capturing_piece][true_captured_piece],
 								 position, mate_in_limit);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
@@ -3986,14 +4051,11 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
     }
 }
 
-/* Back propagates from all the futurebases.
+/* compute_extra_and_missing_piece()
  *
- * Should be called after the tablebase has been initialized, but before intra-table propagation.
- *
- * Runs through the parsed XML control file, pulls out all the futurebases, and back-propagates each
- * one.
- *
- * Returns maximum mate_in value, or -1 if something went wrong
+ * See comments for translate_foreign_position_to_local_position(), since this function mimicks that
+ * one, except that this function works on an entire tablebase, while the other one works on a
+ * single position within the tablebase.
  */
 
 boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, char *filename)
@@ -4078,6 +4140,16 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 
     return 1;
 }
+
+/* Back propagates from all the futurebases.
+ *
+ * Should be called after the tablebase has been initialized, but before intra-table propagation.
+ *
+ * Runs through the parsed XML control file, pulls out all the futurebases, and back-propagates each
+ * one.
+ *
+ * Returns maximum mate_in value, or -1 if something went wrong
+ */
 
 int back_propagate_all_futurebases(tablebase_t *tb) {
 
@@ -4818,6 +4890,12 @@ boolean check_pruning(tablebase_t *tb) {
 
 	futurebase_cnt = 0;
 
+	/* If we've going to consider a captured piece identical to this one, skip it.  Remember
+	 * that compute_extra_and_missing_pieces() uses the LAST identical piece, so we want to skip
+	 * everything before it.
+	 */
+	if (tb->next_identical_piece[captured_piece] != -1) continue;
+
 	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 	    if (tb->piece_type[captured_piece] == PAWN) {
 		if ((futurebases[fbnum]->extra_piece == -1)
@@ -4838,6 +4916,12 @@ boolean check_pruning(tablebase_t *tb) {
 	if (futurebase_cnt == 0) {
 
 	    for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
+
+		/* If we've going to consider a capturing piece identical to this one, skip it.
+		 * Again, compute_extra_and_missing_pieces() uses the LAST identical piece, so we
+		 * want to skip everything before it.
+		 */
+		if (tb->next_identical_piece[capturing_piece] != -1) continue;
 
 		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
