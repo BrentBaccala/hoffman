@@ -391,6 +391,36 @@ typedef struct tablebase {
 } tablebase_t;
 
 
+/* Propagation table
+ *
+ * This is used to optimize back propagation for large tablebases where the entire entries array
+ * can't fit in memory.  Back propagation is done by first building proptable entries and sorting
+ * them into a proptable.  The sorted proptable is then merged into the entries array.
+ *
+ * Currently, proptable entries are 16 bytes (128 bits) - a 32 bit index, 32 more bits of
+ * housekeeping, and a 64 bit futurevector.  This is significant because many Pentium architectures
+ * use 64 byte cache lines.
+ */
+
+typedef struct {
+    index_t index;
+    short dtm;
+    unsigned char dtc;
+    unsigned char movecnt;
+    futurevector_t futurevector;
+} proptable_entry_t;
+
+proptable_entry_t *proptable = NULL;
+
+tablebase_t *proptable_tb = NULL;
+
+#define MAX_ZEROOFFSET 100
+#define PROPTABLE_BITS 8
+#define NUM_PROPENTRIES (1 << PROPTABLE_BITS)
+#define MAX_PROPENTRY (NUM_PROPENTRIES - 1)
+#define PROPTABLE_INDEX_MASK MAX_PROPENTRY
+
+
 /***** UTILITY FUNCTIONS *****/
 
 /* Matches a string against a NULL-terminated array of strings using case insensitive match.
@@ -1257,7 +1287,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.149 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.150 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2946,6 +2976,175 @@ void verify_movements()
 }
 
 
+/***** PROPAGATION TABLE *****/
+
+/* We insert into the propagation table using an "address calculation insertion sort".
+ */
+
+void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char dtc,
+			 futurevector_t futurevector)
+{
+    proptable[propentry].index = index;
+    proptable[propentry].dtm = dtm;
+    proptable[propentry].dtc = dtc;
+    proptable[propentry].movecnt = 1;
+    proptable[propentry].futurevector = futurevector;
+}
+
+void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevector_t futurevector)
+{
+    if (dtm > 0) {
+	/* DTM > 0 - this move lets PTM mate from this position.  Update the proptable entry if
+	 * either we don't have any PTM mates yet (table's dtm < 0), or if this new mate is faster
+	 * than the old one.
+	 */
+	if ((proptable[propentry].dtm < 0) || (dtm < proptable[propentry].dtm)) {
+	    proptable[propentry].dtm = dtm;
+	    proptable[propentry].dtc = dtc;
+	}
+    } else {
+	/* DTM < 0 - this move lets PNTM mate from this position.  Update the proptable entry only
+	 * if we don't have any PTM mates (table's dtm < 0) and this PNTM mate is slower than the
+	 * old one.
+	 */
+	if ((proptable[propentry].dtm < 0) && (dtm < proptable[propentry].dtm)) {
+	    proptable[propentry].dtm = dtm;
+	    proptable[propentry].dtc = dtc;
+	}
+    }
+    proptable[propentry].movecnt ++;
+    proptable[propentry].futurevector |= futurevector;
+}
+
+void commit_proptable_entry(int propentry)
+{
+    int dtm = proptable[propentry].dtm;
+    int i;
+
+    if (dtm > 0) {
+	PTM_wins(proptable_tb, proptable[propentry].index, (2*(dtm-1)), proptable[propentry].dtc);
+    } else {
+	for (i=0; i<proptable[propentry].movecnt; i++) {
+	    add_one_to_PNTM_wins(proptable_tb, proptable[propentry].index, (2*(-dtm-1))+1, proptable[propentry].dtc);
+	}
+    }
+}
+
+void proptable_full(void)
+{
+    /* dump out to disk and empty table */
+    /* for now, just commit into the entries array */
+
+    int propentry;
+
+    for (propentry = 0; propentry <= MAX_PROPENTRY; propentry ++) {
+	if (proptable[propentry].index != 0) commit_proptable_entry(propentry);
+    }
+
+    bzero(proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
+}
+
+void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futurevector_t futurevector)
+{
+    int propentry;
+    int zerooffset;
+
+ retry:
+
+    propentry = index & PROPTABLE_INDEX_MASK;
+
+    if (proptable[propentry].index == 0) {
+	/* empty slot: insert at propentry */
+	insert_at_propentry(propentry, index, dtm, dtc, futurevector);
+	return;
+    } else if (proptable[propentry].index == index) {
+	/* entry at slot with identical index: merge at propentry */
+	merge_at_propentry(propentry, dtm, dtc, futurevector);
+	return;
+    } else if (proptable[propentry].index > index) {
+	/* entry at slot greater than index to be inserted */
+	while ((proptable[propentry].index > index) && (propentry > 0)) propentry --;
+	if (proptable[propentry].index == 0) {
+	    /* empty slot at lower end of a block all gt than index: insert there */
+	    insert_at_propentry(propentry, index, dtm, dtc, futurevector);
+	    return;
+	} else if (proptable[propentry].index == index) {
+	    /* identical slot in a block: merge there */
+	    merge_at_propentry(propentry, dtm, dtc, futurevector);
+	    return;
+	} else if (proptable[propentry].index > index) {
+	    /* we're at the beginning of the table and the first entry is gt index */
+	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
+		if (proptable[zerooffset].index == 0) {
+		    memmove(proptable + 1, proptable,
+			    (zerooffset) * sizeof(proptable_entry_t));
+		    insert_at_propentry(0, index, dtm, dtc, futurevector);
+		    return;
+		}
+	    }
+	    /* ran out of space - table is "full" */
+	    proptable_full();
+	    goto retry;
+	} else {
+	    /* still in the block; propentry is lt index and propentry+1 is gt index: fall through */
+	}
+    } else {
+	/* entry at slot less than index to be inserted */
+	while ((proptable[propentry].index != 0) && (proptable[propentry].index < index)
+	       && (propentry < MAX_PROPENTRY)) propentry ++;
+	if (proptable[propentry].index == 0) {
+	    /* empty slot at upper end of a block all lt than index: insert there */
+	    insert_at_propentry(propentry, index, dtm, dtc, futurevector);
+	    return;
+	} else if (proptable[propentry].index == index) {
+	    /* identical slot in a block: merge there */
+	    merge_at_propentry(propentry, dtm, dtc, futurevector);
+	    return;
+	} else if (proptable[propentry].index < index) {
+	    /* we're at the end of the table and the last entry is lt index */
+	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
+		if (proptable[MAX_PROPENTRY - zerooffset].index == 0) {
+		    memmove(proptable + MAX_PROPENTRY - zerooffset,
+			    proptable + MAX_PROPENTRY - zerooffset + 1,
+			    (zerooffset) * sizeof(proptable_entry_t));
+		    insert_at_propentry(MAX_PROPENTRY, index, dtm, dtc, futurevector);
+		    return;
+		}
+	    }
+	    /* ran out of space - table is "full" */
+	    proptable_full();
+	    goto retry;
+	} else {
+	    /* propentry is gt index and propentry-1 is lt index */
+	    propentry --;
+	}
+    }
+
+    /* We found a boundary within a block: propentry is lt index and propentry+1 is gt index */
+
+    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
+	if ((propentry + zerooffset < MAX_PROPENTRY)
+	    && (proptable[propentry+zerooffset].index == 0)) {
+	    memmove(proptable + propentry + 2, proptable + propentry + 1,
+		    (zerooffset-1) * sizeof(proptable_entry_t));
+	    insert_at_propentry(propentry+1, index, dtm, dtc, futurevector);
+	    return;
+	}
+	if ((propentry - zerooffset >= 0)
+	    && (proptable[propentry-zerooffset].index == 0)) {
+	    memmove(proptable + propentry - zerooffset, proptable + propentry - zerooffset + 1,
+		    zerooffset * sizeof(proptable_entry_t));
+	    insert_at_propentry(propentry, index, dtm, dtc, futurevector);
+	    return;
+	}
+    }
+
+    /* zerooffset > MAX_ZEROOFFSET: ran of space - table is "full" */
+    proptable_full();
+    goto retry;
+}
+
+
 /***** FUTUREBASES *****/
 
 /* Subroutines to backpropagate an individual index, or an individual local position (these are the
@@ -2996,7 +3195,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 
 	/* XXX might want to look more closely at the stalemate options here */
 
-	/* if (does_PTM_win(futurebase, future_index)) { */
+#if 0
 	if (dtm > 0) {
 
 	    add_one_to_PNTM_wins(tb, current_index, (2*(dtm-1))+1, 0);
@@ -3006,6 +3205,13 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 	    PTM_wins(tb, current_index, (2*(-dtm-1)+1)+1, 0);
 
 	}
+#else
+	if (dtm > 0) {
+	    insert_into_proptable(current_index, -dtm, 0, 0);
+	} else if (dtm < 0) {
+	    insert_into_proptable(current_index, -dtm+1, 0, 0);
+	}
+#endif
 
 	/* This is pretty primitive, but we need to track the deepest mates during futurebase back
 	 * prop in order to know how deep we have to look during intra-table propagation.  We could
@@ -4321,6 +4527,8 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
     xmlXPathFreeContext(context);
 
+    proptable_full();
+
     return mate_in_limit;
 
 }
@@ -5172,6 +5380,7 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t parent_index, 
      * These stalemate and mate counts increment by one every HALF MOVE.
      */
 
+#if 0
     if (does_PTM_win(tb, parent_index)) {
 
 	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
@@ -5189,6 +5398,23 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t parent_index, 
 	}
 
     }
+#else
+    if (does_PTM_win(tb, parent_index)) {
+
+	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+	    insert_into_proptable(current_index, -(1 + tb->entries[parent_index].mate_in_cnt/2),
+				  get_stalemate_count(tb, parent_index), 0);
+	}
+
+    } else if (does_PNTM_win(tb, parent_index)) {
+
+	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
+	    insert_into_proptable(current_index, (1 + tb->entries[parent_index].mate_in_cnt/2)+1,
+				  get_stalemate_count(tb, parent_index)+1, 0);
+	}
+
+    }
+#endif
 
 }
 
@@ -5786,6 +6012,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int mate_in_limit)
 	    }
 	}
 	fprintf(stderr, "Pass %d complete; %d positions processed\n", moves_to_win, progress_made);
+	proptable_full();
 	moves_to_win ++;
     }
 
@@ -6023,6 +6250,13 @@ int main(int argc, char *argv[])
 
 	/* Hopefully, an error message has already been printed... */
 	if (tb == NULL) exit(EXIT_FAILURE);
+
+	proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
+	if (proptable == NULL) {
+	    fprintf(stderr, "Can't calloc proptable\n");
+	    exit(EXIT_FAILURE);
+	}
+	proptable_tb = tb;
 
 	assign_numbers_to_futuremoves(tb);
 	compute_pruned_futuremoves(tb);
