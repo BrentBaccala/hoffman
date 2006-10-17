@@ -344,7 +344,7 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 
 struct fourbyte_entry {
     unsigned char movecnt;
-    unsigned char mate_in_cnt;
+    char dtm;
     unsigned char stalemate_cnt;
     unsigned char futuremove_cnt;
 };
@@ -1287,7 +1287,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.150 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.151 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2146,10 +2146,15 @@ inline void mark_propagated(tablebase_t *tb, index_t index)
 
 inline int get_mate_in_count(tablebase_t *tb, index_t index)
 {
-    if (tb->entries[index].movecnt >= 1 && tb->entries[index].movecnt <= MAX_MOVECNT) {
-	return -1;
+    int dtm = tb->entries[index].dtm;
+
+    if (dtm > 0) {
+	return (2*(dtm-1));
+    } else if (dtm < 0) {
+	return (2*(-dtm-1)+1);
     } else {
-	return tb->entries[index].mate_in_cnt;
+	fprintf(stderr, "get_mate_in_count() called on drawn position\n");
+	return 0;
     }
 }
 
@@ -2169,17 +2174,7 @@ inline int get_stalemate_count(tablebase_t *tb, index_t index)
 
 int convert_entry_to_DTM(tablebase_t *tb, index_t index)
 {
-    int retval;
-
-    if (does_PTM_win(tb,index)) retval =  1 + tb->entries[index].mate_in_cnt/2;
-    else if (does_PNTM_win(tb,index)) retval =  -(1 + tb->entries[index].mate_in_cnt/2);
-    else retval = 0;
-
-    if ((retval < -128) || (retval > 127)) {
-	fprintf(stderr, "Out-of-bound result in convert_entry_to_DTM()\n");
-    }
-
-    return retval;
+    return (does_PTM_win(tb,index) || does_PNTM_win(tb,index)) ? tb->entries[index].dtm : 0;
 }
 
 /* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
@@ -2202,7 +2197,7 @@ void initialize_index_as_illegal(tablebase_t *tb, index_t index)
     if (index == DEBUG_MOVE) printf("initialize_index_as_illegal; index=%d\n", index);
 #endif
     tb->entries[index].movecnt = ILLEGAL_POSITION;
-    tb->entries[index].mate_in_cnt = 255;
+    tb->entries[index].dtm = 0;
     tb->entries[index].stalemate_cnt = 255;
     tb->entries[index].futuremove_cnt = 0;
 }
@@ -2220,7 +2215,7 @@ void initialize_index_with_white_mated(tablebase_t *tb, index_t index)
     }
 #endif
     tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
-    tb->entries[index].mate_in_cnt = 0;
+    tb->entries[index].dtm = 1;
     tb->entries[index].stalemate_cnt = 0;
     tb->entries[index].futuremove_cnt = 0;
 }
@@ -2238,7 +2233,7 @@ void initialize_index_with_black_mated(tablebase_t *tb, index_t index)
     }
 #endif
     tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
-    tb->entries[index].mate_in_cnt = 0;
+    tb->entries[index].dtm = 1;
     tb->entries[index].stalemate_cnt = 0;
     tb->entries[index].futuremove_cnt = 0;
 }
@@ -2251,7 +2246,7 @@ void initialize_index_with_stalemate(tablebase_t *tb, index_t index)
 #endif
 
     tb->entries[index].movecnt = 251; /* use this as stalemate for now */
-    tb->entries[index].mate_in_cnt = 255;
+    tb->entries[index].dtm = 0;
     tb->entries[index].stalemate_cnt = 0;
     tb->entries[index].futuremove_cnt = 0;
 }
@@ -2265,32 +2260,34 @@ void initialize_index_with_movecnt(tablebase_t *tb, index_t index, int movecnt,
 #endif
 
     tb->entries[index].movecnt = movecnt;
-    tb->entries[index].mate_in_cnt = 255;
+    tb->entries[index].dtm = 0;
     tb->entries[index].stalemate_cnt = 255;
     tb->entries[index].futuremove_cnt = futuremove_cnt;
     tb->futurevectors[index] = futurevector;
 }
 
-inline void PTM_wins(tablebase_t *tb, index_t index, int mate_in_count, int stalemate_count)
+inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int stalemate_count)
 {
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("PTM_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
-	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
+	printf("PTM_wins; index=%d; movecnt=%d; old dtm=%d, dtm=%d\n",
+	       index, tb->entries[index].movecnt, tb->entries[index].dtm, dtm);
 #endif
 
-    if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
-	if (mate_in_count < tb->entries[index].mate_in_cnt) {
-	    fprintf(stderr, "Mate in count dropped in PTM_wins after propagation done!?\n"); /* BREAKPOINT */
+    if (dtm < 0) {
+	fprintf(stderr, "Negative distance to mate in PTM_wins!?\n"); /* BREAKPOINT */
+    } else if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
+	if (dtm < tb->entries[index].dtm) {
+	    fprintf(stderr, "Distance to mate dropped in PTM_wins after propagation done!?\n"); /* BREAKPOINT */
 	}
     } else if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) {
-	if (mate_in_count < tb->entries[index].mate_in_cnt) {
+	if (dtm < tb->entries[index].dtm) {
 	    /* This can happen if we're propagating in from a futurebase, since the propagation runs
 	     * through the futurebase in index order, not mate-in order.
 	     */
 	    /* fprintf(stderr, "Mate in count dropped in PTM_wins!?\n"); */
-	    tb->entries[index].mate_in_cnt = mate_in_count;
+	    tb->entries[index].dtm = dtm;
 	    tb->entries[index].stalemate_cnt = stalemate_count;
 	}
     } else if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
@@ -2298,21 +2295,23 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int mate_in_count, int stal
 	fprintf(stderr, "PTM_wins in a position where PNTM already won?!\n");   /* BREAKPOINT */
     } else {
 	tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
-	tb->entries[index].mate_in_cnt = mate_in_count;
+	tb->entries[index].dtm = dtm;
 	tb->entries[index].stalemate_cnt = stalemate_count;
     }
 }
 
-inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int mate_in_count, int stalemate_count)
+inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int stalemate_count)
 {
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("add_one_to_PNTM_wins; index=%d; movecnt=%d; old mate_in=%d, mate_in=%d\n",
-	       index, tb->entries[index].movecnt, tb->entries[index].mate_in_cnt, mate_in_count);
+	printf("add_one_to_PNTM_wins; index=%d; movecnt=%d; old dtm=%d, dtm=%d\n",
+	       index, tb->entries[index].movecnt, tb->entries[index].dtm, dtm);
 #endif
 
-    if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) ||
+    if (dtm > 0) {
+	fprintf(stderr, "Positive distance to mate in PNTM_wins!?\n"); /* BREAKPOINT */
+    } else if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) ||
 	(tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
 	/* This is OK.  PTM already found a way to win.  Do nothing. */
     } else if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
@@ -2322,31 +2321,24 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int mate_in_cou
 	 * no extra check needed here
 	 */
 	tb->entries[index].movecnt --;
-	if ((mate_in_count < tb->entries[index].mate_in_cnt) && (tb->entries[index].mate_in_cnt != 255)) {
-	    /* (255 means we haven't found any mates yet in this position) As above, this can
-	     * happen during a futurebase back propagation, and if it does... we do nothing!
-	     * Since this is PNTM wins, PTM will make the move leading to the slowest mate.
-	     */
+	if (dtm < tb->entries[index].dtm) {
+	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
 	    /* XXX need to think more about the stalemates */
-	    /* fprintf(stderr, "mate-in count dropped in add_one_to_PNTM_wins?\n"); */
-	    /* tb->entries[index].mate_in_cnt = mate_in_count; */
-	    /* tb->entries[index].stalemate_cnt = stalemate_count; */
-	} else {
-	    tb->entries[index].mate_in_cnt = mate_in_count;
+	    tb->entries[index].dtm = dtm;
 	    tb->entries[index].stalemate_cnt = stalemate_count;
 	}
 
 	if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-	    && (tb->entries[index].mate_in_cnt == 1)) {
-	    /* In this case, the only moves at PTM's disposal move him into check (mate_in_cnt is
+	    && (tb->entries[index].dtm == -1)) {
+	    /* In this case, the only moves at PTM's disposal move him into check (DTM is
 	     * now one, so it would drop to zero on next move).  So we need to distinguish here
 	     * between being in check (it's checkmate) and not being in check (stalemate).  The
 	     * simplest way to do this is to flip the side-to-move flag and look at the position
 	     * with the other side to move.  If the king can be taken, then that other position
-	     * will be PTM_WINS (of either flavor) with a zero mate_in_cnt.
+	     * will be PTM_WINS (of either flavor) with a DTM of 1.
 	     */
 	    /* XXX assumes that flipping lowest bit in index flips side-to-move flag */
-	    if (does_PTM_win(tb, index^1) && (tb->entries[index^1].mate_in_cnt == 0)) {
+	    if (does_PTM_win(tb, index^1) && (tb->entries[index^1].dtm == 1)) {
 	    } else {
 		initialize_index_with_stalemate(tb, index);
 	    }
@@ -3022,10 +3014,10 @@ void commit_proptable_entry(int propentry)
     int i;
 
     if (dtm > 0) {
-	PTM_wins(proptable_tb, proptable[propentry].index, (2*(dtm-1)), proptable[propentry].dtc);
+	PTM_wins(proptable_tb, proptable[propentry].index, dtm, proptable[propentry].dtc);
     } else {
 	for (i=0; i<proptable[propentry].movecnt; i++) {
-	    add_one_to_PNTM_wins(proptable_tb, proptable[propentry].index, (2*(-dtm-1))+1, proptable[propentry].dtc);
+	    add_one_to_PNTM_wins(proptable_tb, proptable[propentry].index, dtm, proptable[propentry].dtc);
 	}
     }
 }
@@ -3195,23 +3187,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 
 	/* XXX might want to look more closely at the stalemate options here */
 
-#if 0
-	if (dtm > 0) {
-
-	    add_one_to_PNTM_wins(tb, current_index, (2*(dtm-1))+1, 0);
-
-	} else if (dtm < 0) {
-
-	    PTM_wins(tb, current_index, (2*(-dtm-1)+1)+1, 0);
-
-	}
-#else
 	if (dtm > 0) {
 	    insert_into_proptable(current_index, -dtm, 0, 0);
 	} else if (dtm < 0) {
 	    insert_into_proptable(current_index, -dtm+1, 0, 0);
 	}
-#endif
 
 	/* This is pretty primitive, but we need to track the deepest mates during futurebase back
 	 * prop in order to know how deep we have to look during intra-table propagation.  We could
@@ -5380,41 +5360,21 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t parent_index, 
      * These stalemate and mate counts increment by one every HALF MOVE.
      */
 
-#if 0
     if (does_PTM_win(tb, parent_index)) {
 
 	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-	    add_one_to_PNTM_wins(tb, current_index,
-				 get_mate_in_count(tb, parent_index)+1,
-				 get_stalemate_count(tb, parent_index)+1);
-	}
-
-    } else if (does_PNTM_win(tb, parent_index)) {
-
-	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-	    PTM_wins(tb, current_index,
-		     get_mate_in_count(tb, parent_index)+1,
-		     get_stalemate_count(tb, parent_index)+1);
-	}
-
-    }
-#else
-    if (does_PTM_win(tb, parent_index)) {
-
-	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-	    insert_into_proptable(current_index, -(1 + tb->entries[parent_index].mate_in_cnt/2),
+	    insert_into_proptable(current_index, -tb->entries[parent_index].dtm,
 				  get_stalemate_count(tb, parent_index), 0);
 	}
 
     } else if (does_PNTM_win(tb, parent_index)) {
 
 	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-	    insert_into_proptable(current_index, (1 + tb->entries[parent_index].mate_in_cnt/2)+1,
+	    insert_into_proptable(current_index, -tb->entries[parent_index].dtm+1,
 				  get_stalemate_count(tb, parent_index)+1, 0);
 	}
 
     }
-#endif
 
 }
 
@@ -5466,7 +5426,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t parent_index, loca
     }
 }
 
-void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int mate_in_count)
+void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int dtm)
 {
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
@@ -5480,9 +5440,8 @@ void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int mate
      * in order.
      */
 
-    if (get_mate_in_count(tb, parent_index) != mate_in_count) {
-	fprintf(stderr, "Mate-in counts don't match: %d %d\n",
-		mate_in_count, get_mate_in_count(tb, parent_index));
+    if (tb->entries[parent_index].dtm != dtm) {
+	fprintf(stderr, "DTMs don't match: %d %d\n", dtm, tb->entries[parent_index].dtm);
     }
 
     if (!does_PTM_win(tb, parent_index) && !does_PNTM_win(tb, parent_index)) {
@@ -6007,7 +5966,13 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int mate_in_limit)
 		if (!progress_made)
 		    fprintf(stderr, "Pass %d starts with %d\n", moves_to_win, index);
 #endif
-		propagate_move_within_table(tb, index, moves_to_win);
+		if ((moves_to_win % 2) == 0) {
+		    /* PTM wins */
+		    propagate_move_within_table(tb, index, 1 + moves_to_win/2);
+		} else {
+		    /* PNTM wins */
+		    propagate_move_within_table(tb, index, -1 - moves_to_win/2);
+		}
 		progress_made ++;
 	    }
 	}
