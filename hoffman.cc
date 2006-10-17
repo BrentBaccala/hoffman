@@ -293,9 +293,9 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 #define BLACK 1
 
 
-/**** TABLEBASE STRUCTURE AND OPERATIONS ****/
-
-/* The 'xml' in the tablebase is authoritative; much of the other info is extracted from it
+/* tablebase_t
+ *
+ * The 'xml' in the tablebase is authoritative; much of the other info is extracted from it
  * for efficiency.
  *
  * movecnt - 0 if this entry is ready to propagate; 255 if it has been propagated
@@ -390,7 +390,12 @@ typedef struct tablebase {
     futurevector_t *futurevectors;
 } tablebase_t;
 
-boolean place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type);
+
+/***** UTILITY FUNCTIONS *****/
+
+/* Matches a string against a NULL-terminated array of strings using case insensitive match.
+ * Returns index in array of matching string, or -1 if there was no match.
+ */
 
 int find_name_in_array(char * name, char * array[])
 {
@@ -1252,7 +1257,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.148 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.149 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
