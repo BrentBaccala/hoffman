@@ -1287,7 +1287,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.151 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.152 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -1372,7 +1372,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 		fputc(0, file);
 	    }
 	    for (index = 0; index <= tb->max_index; index ++) {
-		fputc(convert_entry_to_DTM(tb, index), file);
+		fputc(get_DTM(tb, index), file);
 	    }
 	}
 	fclose(file);
@@ -2124,9 +2124,8 @@ inline boolean needs_propagation(tablebase_t *tb, index_t index)
 
 inline boolean is_position_valid(tablebase_t *tb, index_t index)
 {
-    if (tb->entries != NULL) return (convert_entry_to_DTM(tb,index) != 1);
+    if (tb->entries != NULL) return (get_DTM(tb,index) != 1);
     else return (fetch_DTM_from_disk(tb,index) != 1);
-    /* return (! (does_PTM_win(tb, index) && (tb->entries[index].mate_in_cnt == 0))); */
 }
 
 inline void mark_propagated(tablebase_t *tb, index_t index)
@@ -2137,24 +2136,6 @@ inline void mark_propagated(tablebase_t *tb, index_t index)
 	tb->entries[index].movecnt = PNTM_WINS_PROPAGATION_DONE;
     } else {
 	fprintf(stderr, "Propagation attempt on a completed or unresolved position\n");   /* BREAKPOINT */
-    }
-}
-
-/* get_mate_in_count() is also used as basically (does_PTM_win() || does_PNTM_win()), so it has
- * to return -1 if there is no mate from this position
- */
-
-inline int get_mate_in_count(tablebase_t *tb, index_t index)
-{
-    int dtm = tb->entries[index].dtm;
-
-    if (dtm > 0) {
-	return (2*(dtm-1));
-    } else if (dtm < 0) {
-	return (2*(-dtm-1)+1);
-    } else {
-	fprintf(stderr, "get_mate_in_count() called on drawn position\n");
-	return 0;
     }
 }
 
@@ -2172,7 +2153,7 @@ inline int get_stalemate_count(tablebase_t *tb, index_t index)
  * -N = PNTM will have a mate in N-1 after this move
  */
 
-int convert_entry_to_DTM(tablebase_t *tb, index_t index)
+int get_DTM(tablebase_t *tb, index_t index)
 {
     return (does_PTM_win(tb,index) || does_PNTM_win(tb,index)) ? tb->entries[index].dtm : 0;
 }
@@ -3151,7 +3132,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
  */
 
 void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
-				     int futuremove, index_t current_index, int *mate_in_limit)
+				     int futuremove, index_t current_index, int *dtm_limit)
 {
     /* Skip everything else if the position isn't valid.  In particular,
      * we don't track futuremove propagation for illegal positions.
@@ -3195,23 +3176,18 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 
 	/* This is pretty primitive, but we need to track the deepest mates during futurebase back
 	 * prop in order to know how deep we have to look during intra-table propagation.  We could
-	 * improve on this by only bumping mate_in_limit if we called PTM_wins(), or if we called
+	 * improve on this by only bumping dtm_limit if we called PTM_wins(), or if we called
 	 * add_one_to_PNTM_wins() and the move count went to zero.
 	 */
 
-	if (dtm > 0) {
-	    if (2*(dtm-1) > *mate_in_limit)
-		*mate_in_limit = 2*(dtm-1);
-	} else {
-	    if (2*(-dtm-1)+1 > *mate_in_limit)
-		*mate_in_limit = 2*(-dtm-1)+1;
-	}
+	if ((dtm > 0) && (*dtm_limit < dtm)) *dtm_limit = dtm;
+	if ((dtm < 0) && (*dtm_limit < -dtm)) *dtm_limit = -dtm;
     }
 }
 
 void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm,
 						  int futuremove, local_position_t *current_position,
-						  int *mate_in_limit)
+						  int *dtm_limit)
 {
     index_t current_index;
 
@@ -3225,12 +3201,12 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm,
 	return;
     }
 
-    propagate_index_from_futurebase(tb, dtm, futuremove, current_index, mate_in_limit);
+    propagate_index_from_futurebase(tb, dtm, futuremove, current_index, dtm_limit);
 }
 
 void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
 					      int futuremove, local_position_t *position,
-					      int *mate_in_limit)
+					      int *dtm_limit)
 {
     int piece;
 
@@ -3244,7 +3220,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
      * en passant positions.
      */
 
-    propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, mate_in_limit);
+    propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, dtm_limit);
 
     if (position->en_passant_square == -1) {
 
@@ -3262,7 +3238,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
 		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, mate_in_limit);
+		propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, dtm_limit);
 	    }
 
 	    if ((tb->piece_color[piece] == BLACK)
@@ -3270,7 +3246,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
 		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, mate_in_limit);
+		propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, dtm_limit);
 	    }
 
 	    position->en_passant_square = -1;
@@ -3287,7 +3263,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
 void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 					       int invert_colors_of_futurebase,
 					       int pawn,
-					       int *mate_in_limit)
+					       int *dtm_limit)
 {
     index_t future_index;
     int dtm;
@@ -3408,7 +3384,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		     */
 
 		    propagate_local_position_from_futurebase(tb, dtm,
-							     promotions[pawn] + futurebase->piece_type[extra_piece] - 1, &position, mate_in_limit);
+							     promotions[pawn] + futurebase->piece_type[extra_piece] - 1, &position, dtm_limit);
 
 		    /* We may be about to use this position again, so put the board_vector back... */
 
@@ -3453,7 +3429,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 						       int invert_colors_of_futurebase,
 						       int pawn,
-						       int *mate_in_limit)
+						       int *dtm_limit)
 {
     index_t future_index;
     int dtm;
@@ -3599,7 +3575,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    propagate_local_position_from_futurebase(tb, dtm,
 							     futurecaptures[pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
-							     &position, mate_in_limit);
+							     &position, dtm_limit);
 
 		    /* We're about to use this position again, so put the board_vector back... */
 
@@ -3631,7 +3607,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    propagate_local_position_from_futurebase(tb, dtm,
 							     futurecaptures[pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
-							     &position, mate_in_limit);
+							     &position, dtm_limit);
 
 		    /* We're about to use this position again, so put the board_vector back... */
 
@@ -3691,7 +3667,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 void consider_possible_captures(tablebase_t *tb, int dtm,
 				local_position_t *position,
-				int capturing_piece, int captured_piece, int *mate_in_limit)
+				int capturing_piece, int captured_piece, int *dtm_limit)
 {
     int dir;
     struct movement *movementptr;
@@ -3771,7 +3747,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 		propagate_local_position_from_futurebase(tb, dtm,
 							 futurecaptures[capturing_piece][true_captured_piece],
-							 position, mate_in_limit);
+							 position, dtm_limit);
 
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
@@ -3818,7 +3794,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 		propagate_local_position_from_futurebase(tb, dtm,
 							 futurecaptures[capturing_piece][true_captured_piece],
-							 position, mate_in_limit);
+							 position, dtm_limit);
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
 
@@ -3865,7 +3841,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 			propagate_local_position_from_futurebase(tb, dtm,
 								 futurecaptures[capturing_piece][true_captured_piece],
-								 position, mate_in_limit);
+								 position, dtm_limit);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
 			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
@@ -3908,7 +3884,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 			propagate_local_position_from_futurebase(tb, dtm,
 								 futurecaptures[capturing_piece][true_captured_piece],
-								 position, mate_in_limit);
+								 position, dtm_limit);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
 			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
@@ -3939,7 +3915,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 }
 
 void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-					     int invert_colors_of_futurebase, int captured_piece, int *mate_in_limit)
+					     int invert_colors_of_futurebase, int captured_piece, int *dtm_limit)
 {
     index_t future_index;
     int dtm;
@@ -4007,7 +3983,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 
 		for (piece = 0; piece < tb->num_pieces; piece++) {
 		    consider_possible_captures(tb, dtm, &current_position,
-					       piece, captured_piece, mate_in_limit);
+					       piece, captured_piece, dtm_limit);
 		}
 
 	    } else {
@@ -4015,7 +3991,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		/* One piece was on a restricted square.  It's the only possible capturing piece. */
 
 		consider_possible_captures(tb, dtm, &current_position,
-					   restricted_piece, captured_piece, mate_in_limit);
+					   restricted_piece, captured_piece, dtm_limit);
 
 	    }
 
@@ -4028,7 +4004,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
  */
 
 void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-					    int invert_colors_of_futurebase, int *mate_in_limit)
+					    int invert_colors_of_futurebase, int *dtm_limit)
 {
     index_t future_index;
     int dtm;
@@ -4129,7 +4105,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		propagate_local_position_from_futurebase(tb, dtm,
 							 futuremoves[piece][origin_square],
-							 &current_position, mate_in_limit);
+							 &current_position, dtm_limit);
 
 		continue;
 
@@ -4188,7 +4164,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 			propagate_local_position_from_futurebase(tb, dtm,
 								 futuremoves[piece][origin_square],
-								 &current_position, mate_in_limit);
+								 &current_position, dtm_limit);
 		    }
 		}
 
@@ -4244,7 +4220,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		    propagate_local_position_from_futurebase(tb, dtm,
 							     futuremoves[piece][origin_square],
-							     &current_position, mate_in_limit);
+							     &current_position, dtm_limit);
 
 		}
 	    }
@@ -4356,7 +4332,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
-    int mate_in_limit = 0;
+    int dtm_limit = 0;
 
     /* Fetch the futurebases from the XML */
 
@@ -4420,7 +4396,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
-		propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors, piece, &mate_in_limit);
+		propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors, piece, &dtm_limit);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion")) {
 
@@ -4447,7 +4423,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
 		propagate_moves_from_promotion_futurebase(tb, futurebase, futurebase->invert_colors,
-							  futurebase->missing_pawn, &mate_in_limit);
+							  futurebase->missing_pawn, &dtm_limit);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion-capture")) {
 
@@ -4476,7 +4452,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 		propagate_moves_from_promotion_capture_futurebase(tb, futurebase, futurebase->invert_colors,
 								  futurebase->missing_pawn,
-								  &mate_in_limit);
+								  &dtm_limit);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "normal")) {
 
@@ -4491,7 +4467,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
-		propagate_moves_from_normal_futurebase(tb, futurebase, futurebase->invert_colors, &mate_in_limit);
+		propagate_moves_from_normal_futurebase(tb, futurebase, futurebase->invert_colors, &dtm_limit);
 
 	    } else {
 
@@ -4509,7 +4485,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
     proptable_full();
 
-    return mate_in_limit;
+    return dtm_limit;
 
 }
 
@@ -5947,45 +5923,43 @@ void initialize_tablebase(tablebase_t *tb)
     }
 }
 
-void propagate_all_moves_within_tablebase(tablebase_t *tb, int mate_in_limit)
+void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 {
-    int moves_to_win;
+    int dtm;
     int progress_made;
     index_t index;
 
-    /* First we look for forced mates... */
-
-    moves_to_win = 0;
+    dtm = 1;
     progress_made = 1;
 
-    while (progress_made || moves_to_win <= mate_in_limit) {
+    while (progress_made || dtm <= dtm_limit) {
+
+	/* PTM wins */
 	progress_made = 0;
 	for (index=0; index <= tb->max_index; index++) {
-	    if (needs_propagation(tb, index) && get_mate_in_count(tb, index) == moves_to_win) {
-#if 0
-		if (!progress_made)
-		    fprintf(stderr, "Pass %d starts with %d\n", moves_to_win, index);
-#endif
-		if ((moves_to_win % 2) == 0) {
-		    /* PTM wins */
-		    propagate_move_within_table(tb, index, 1 + moves_to_win/2);
-		} else {
-		    /* PNTM wins */
-		    propagate_move_within_table(tb, index, -1 - moves_to_win/2);
-		}
+	    if (needs_propagation(tb, index) && get_DTM(tb, index) == dtm) {
+		propagate_move_within_table(tb, index, dtm);
 		progress_made ++;
 	    }
 	}
-	fprintf(stderr, "Pass %d complete; %d positions processed\n", moves_to_win, progress_made);
+	fprintf(stderr, "Pass PTM  %d complete; %d positions processed\n", dtm, progress_made);
 	proptable_full();
-	moves_to_win ++;
+
+	/* PNTM wins */
+	progress_made = 0;
+	for (index=0; index <= tb->max_index; index++) {
+	    if (needs_propagation(tb, index) && get_DTM(tb, index) == -dtm) {
+		propagate_move_within_table(tb, index, -dtm);
+		progress_made ++;
+	    }
+	}
+	fprintf(stderr, "Pass PNTM %d complete; %d positions processed\n", dtm, progress_made);
+	proptable_full();
+
+	dtm ++;
     }
 
     /* Everything else allows both sides to draw with best play. */
-
-    /* flag_everything_else_drawn_by_repetition(); */
-
-    /* write_output_tablebase(); */
 
 }
 
@@ -6209,7 +6183,7 @@ int main(int argc, char *argv[])
     }
 
     if (generating) {
-	int mate_in_limit;
+	int dtm_limit;
 
 	tb = parse_XML_control_file(argv[optind]);
 
@@ -6234,10 +6208,10 @@ int main(int argc, char *argv[])
 
 	check_1000_indices(tb);
 
-	mate_in_limit = back_propagate_all_futurebases(tb);
+	dtm_limit = back_propagate_all_futurebases(tb);
 
 	/* back_propagate_all_futurebases() printed some kind of error message already */
-	if (mate_in_limit == -1) exit(EXIT_FAILURE);
+	if (dtm_limit == -1) exit(EXIT_FAILURE);
 
 	fprintf(stderr, "Checking futuremoves...\n");
 	if (! have_all_futuremoves_been_handled(tb)) {
@@ -6245,13 +6219,13 @@ int main(int argc, char *argv[])
 	}
 	fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
-	/* We add one to mate_in_limit here because, even if there are intra-table passes with no
+	/* We add one to dtm_limit here because, even if there are intra-table passes with no
 	 * progress made, we want to process at least one pass beyond the maximum mate-in value we
 	 * saw during futurebase back-prop.
 	 */
 
 	fprintf(stderr, "Intra-table propagating\n");
-	propagate_all_moves_within_tablebase(tb, mate_in_limit+1);
+	propagate_all_moves_within_tablebase(tb, dtm_limit+1);
 
 	write_tablebase_to_file(tb, output_filename);
 
