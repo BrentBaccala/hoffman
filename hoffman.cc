@@ -185,6 +185,8 @@ int futuremoves[MAX_PIECES][64];
 char movestr[100][16];
 
 futurevector_t pruned_futuremoves = 0;
+futurevector_t conceded_futuremoves = 0;
+futurevector_t discarded_futuremoves = 0;
 
 /* position - the data structures that represents a board position
  *
@@ -1287,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.155 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.156 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -4580,35 +4582,22 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 	    all_futuremoves_handled = 0;		/* BREAKPOINT */
 	}
 
-	if (tb->entries[index].futuremove_cnt != 0) {
+	/* concede - we treat these unhandled futuremoves as forced wins for PTM */
 
-	    switch (tb->move_restrictions[index_to_side_to_move(tb, index)]) {
+	if (tb->futurevectors[index] & conceded_futuremoves) {
+	    PTM_wins(tb, index, 1, 1);
+	}
 
-	    case RESTRICTION_NONE:
-#if 0
-		{
-		    global_position_t global;
-		    index_to_global_position(tb, index, &global);
-		    if (all_futuremoves_handled)
-			fprintf(stderr, "ERROR: Some futuremoves not handled under move restrictions!\n");
-		    fprintf(stderr, "%s\n", global_position_to_FEN(&global));
-		    if ((-- max_complaints) == 0) return 0;
-		    all_futuremoves_handled = 0;		/* BREAKPOINT */
+	/* discard - we ignore these unhandled futuremoves by decrementing movecnt */
+
+	if (tb->futurevectors[index] & discarded_futuremoves) {
+	    for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
+		if (tb->futurevectors[index] & discarded_futuremoves & FUTUREVECTOR(futuremove)) {
+		    tb->entries[index].movecnt --;
 		}
-#endif
-		break;
-
-	    case RESTRICTION_DISCARD:
-		/* discard - we discard any unhandled futuremoves this side might have */
-		tb->entries[index].movecnt -= tb->entries[index].futuremove_cnt;
-		break;
-
-	    case RESTRICTION_CONCEDE:
-		/* concede - we treat any unhandled futuremoves as forced wins for this side */
-		PTM_wins(tb, index, 1, 1);
-		break;
 	    }
 	}
+
     }
 
     return all_futuremoves_handled;
@@ -4835,18 +4824,22 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     }
 }
 
-/* does_pruning_statement_exist() - a helper function for check_pruning()
+/* assign_pruning_statement() - a helper function for compute_pruned_futuremoves()
  *
  * searches the tablebase's XML pruning statements for one matching (more or less identically) the
- * specified color and string.  Return TRUE if such a prune statement exists; FALSE otherwise.
+ * specified color and string.  If there is a match, set the corresponding bit in the
+ * pruned_futuremoves bit vector.  The function can be called more than once for a given bit.  For
+ * example, the function might be called on the same bit for both "Pf6" and "Pany" (assuming there
+ * is a white pawn frozen on f5).  If there are multiple prune statements that match a given bit, it
+ * is currently undefined what happens, so we print an error message.
  */
 
-boolean does_pruning_statement_exist(tablebase_t *tb, int color, char *pruning_statement)
+void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statement, int futuremove)
 {
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
     int prune;
-    int retval;
+    int type;
 
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
@@ -4856,18 +4849,32 @@ boolean does_pruning_statement_exist(tablebase_t *tb, int color, char *pruning_s
 					   (const xmlChar *) "color");
 	xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
 					  (const xmlChar *) "move");
+	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
+					  (const xmlChar *) "type");
 
 	if (find_name_in_array((char *) prune_color, colors) != color) continue;
+
+	type = find_name_in_array((char *) prune_type, restriction_types);
 
 	if (!strcasecmp((char *) prune_move, pruning_statement)) break;
     }
 
-    retval = (prune != result->nodesetval->nodeNr);
+    if (prune != result->nodesetval->nodeNr) {
+	if (pruned_futuremoves & FUTUREVECTOR(futuremove)) {
+	    fprintf(stderr, "WARNING: Multiple pruning statements ('%s') match a futuremove\n",
+		    pruning_statement);
+	}
+	pruned_futuremoves |= FUTUREVECTOR(futuremove);
+	if (type == RESTRICTION_CONCEDE) {
+	    conceded_futuremoves |= FUTUREVECTOR(futuremove);
+	}
+	if (type == RESTRICTION_DISCARD) {
+	    discarded_futuremoves |= FUTUREVECTOR(futuremove);
+	}
+    }
 
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
-
-    return retval;
 }
 
 /* This is where we parse pruning statements.  Fill in the pruned_futuremoves bit vector with bits
@@ -4923,10 +4930,9 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 			piece_char[tb->piece_type[capturing_piece]],
 			piece_char[tb->piece_type[captured_piece]]);
 
-		if (does_pruning_statement_exist(tb, tb->piece_color[capturing_piece],
-						 movestr[futurecaptures[capturing_piece][captured_piece]])) {
-		    pruned_futuremoves |= (1 << futurecaptures[capturing_piece][captured_piece]);
-		}
+		assign_pruning_statement(tb, tb->piece_color[capturing_piece],
+					 movestr[futurecaptures[capturing_piece][captured_piece]],
+					 futurecaptures[capturing_piece][captured_piece]);
 	    }
 	}
     }
@@ -4975,10 +4981,9 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 			piece_char[tb->piece_type[captured_piece]],
 			piece_char[promoted_pieces[i]]);
 
-		if (does_pruning_statement_exist(tb, tb->piece_color[pawn],
-						 movestr[futurecaptures[pawn][captured_piece] + i])) {
-		    pruned_futuremoves |= (1 << (futurecaptures[pawn][captured_piece] + i));
-		}
+		assign_pruning_statement(tb, tb->piece_color[pawn],
+					 movestr[futurecaptures[pawn][captured_piece] + i],
+					 futurecaptures[pawn][captured_piece] + i);
 	    }
 	}
 
@@ -4990,9 +4995,8 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 
 	    sprintf(movestr[promotions[pawn] + i], "P=%c", piece_char[promoted_pieces[i]]);
 
-	    if (does_pruning_statement_exist(tb, tb->piece_color[pawn], movestr[promotions[pawn] + i])) {
-		pruned_futuremoves |= (1 << (promotions[pawn] + i));
-	    }
+	    assign_pruning_statement(tb, tb->piece_color[pawn], movestr[promotions[pawn] + i],
+				     promotions[pawn] + i);
 	}
     }
 
@@ -5008,10 +5012,9 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 			'a' + COL(sq), '1' + ROW(sq));
 		sprintf(movestr2, "%cany", piece_char[tb->piece_type[piece]]);
 
-		if (does_pruning_statement_exist(tb, tb->piece_color[piece], movestr[futuremoves[piece][sq]])
-		    || does_pruning_statement_exist(tb, tb->piece_color[piece], movestr2)) {
-		    pruned_futuremoves |= (1 << futuremoves[piece][sq]);
-		}
+		assign_pruning_statement(tb, tb->piece_color[piece], movestr[futuremoves[piece][sq]],
+					 futuremoves[piece][sq]);
+		assign_pruning_statement(tb, tb->piece_color[piece], movestr2, futuremoves[piece][sq]);
 	    }
 	}
     }
