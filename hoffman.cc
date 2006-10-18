@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.158 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.159 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3156,7 +3156,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
  * set, but we didn't use it.
  */
 
-void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
+void propagate_index_from_futurebase(tablebase_t *tb, int dtm, int dtc,
 				     int futuremove, index_t current_index, int *dtm_limit)
 {
     if (futuremove == -1) {
@@ -3171,14 +3171,12 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 	return;
     }
 
-    /* XXX might want to look more closely at the stalemate options here */
-
     /* We insert even if dtm is zero because we have to track futuremoves */
 
     if (dtm > 0) {
-	insert_into_proptable(current_index, -dtm, 0, FUTUREVECTOR(futuremove));
+	insert_into_proptable(current_index, -dtm, dtc, FUTUREVECTOR(futuremove));
     } else if (dtm < 0) {
-	insert_into_proptable(current_index, -dtm+1, 0, FUTUREVECTOR(futuremove));
+	insert_into_proptable(current_index, -dtm+1, dtc+1, FUTUREVECTOR(futuremove));
     } else {
 	insert_into_proptable(current_index, 0, 0, FUTUREVECTOR(futuremove));
     }
@@ -3193,7 +3191,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
     if ((dtm < 0) && (*dtm_limit < -dtm)) *dtm_limit = -dtm;
 }
 
-void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm,
+void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
 						  int futuremove, local_position_t *current_position,
 						  int *dtm_limit)
 {
@@ -3209,10 +3207,10 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm,
 	return;
     }
 
-    propagate_index_from_futurebase(tb, dtm, futuremove, current_index, dtm_limit);
+    propagate_index_from_futurebase(tb, dtm, dtc, futuremove, current_index, dtm_limit);
 }
 
-void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
+void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
 					      int futuremove, local_position_t *position,
 					      int *dtm_limit)
 {
@@ -3228,7 +3226,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
      * en passant positions.
      */
 
-    propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, dtm_limit);
+    propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position, dtm_limit);
 
     if (position->en_passant_square == -1) {
 
@@ -3246,7 +3244,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
 		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, dtm_limit);
+		propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position, dtm_limit);
 	    }
 
 	    if ((tb->piece_color[piece] == BLACK)
@@ -3254,7 +3252,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm,
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
 		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_minilocal_position_from_futurebase(tb, dtm, futuremove, position, dtm_limit);
+		propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position, dtm_limit);
 	    }
 
 	    position->en_passant_square = -1;
@@ -3388,10 +3386,11 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		    /* Back propagate the resulting position */
 
 		    /* This function also back props any similar positions with one of the pawns from
-		     * the side that didn't promote in an en passant state.
+		     * the side that didn't promote in an en passant state.  DTC is zero because
+		     * this is a pawn move.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, dtm,
+		    propagate_local_position_from_futurebase(tb, dtm, 0,
 							     promotions[pawn] + futurebase->piece_type[extra_piece] - 1, &position, dtm_limit);
 
 		    /* We may be about to use this position again, so put the board_vector back... */
@@ -3578,10 +3577,11 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		    /* Back propagate the resulting position */
 
 		    /* This function also back props any similar positions with one of the pawns
-		     * from the side that didn't promote in an en passant state.
+		     * from the side that didn't promote in an en passant state.  DTC is zero
+		     * because this is a pawn move.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, dtm,
+		    propagate_local_position_from_futurebase(tb, dtm, 0,
 							     futurecaptures[pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 							     &position, dtm_limit);
 
@@ -3610,10 +3610,11 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		    /* Back propagate the resulting position */
 
 		    /* This function also back props any similar positions with one of the pawns
-		     * from the side that didn't promote in an en passant state.
+		     * from the side that didn't promote in an en passant state.  DTC is zero
+		     * because this is a pawn move.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, dtm,
+		    propagate_local_position_from_futurebase(tb, dtm, 0,
 							     futurecaptures[pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 							     &position, dtm_limit);
 
@@ -3750,10 +3751,11 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		position->board_vector |= BITVECTOR(movementptr->square);
 
 		/* This function also back props any similar positions with one of the pawns from
-		 * the side that didn't capture in an en passant state.
+		 * the side that didn't capture in an en passant state.  DTC is zero because this is
+		 * a capture.
 		 */
 
-		propagate_local_position_from_futurebase(tb, dtm,
+		propagate_local_position_from_futurebase(tb, dtm, 0,
 							 futurecaptures[capturing_piece][true_captured_piece],
 							 position, dtm_limit);
 
@@ -3797,10 +3799,11 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		position->board_vector |= BITVECTOR(movementptr->square);
 
 		/* This function also back props any similar positions with one of the pawns from
-		 * the side that didn't capture in an en passant state.
+		 * the side that didn't capture in an en passant state.  DTC is zero because
+		 * this is a capture (and a pawn move).
 		 */
 
-		propagate_local_position_from_futurebase(tb, dtm,
+		propagate_local_position_from_futurebase(tb, dtm, 0,
 							 futurecaptures[capturing_piece][true_captured_piece],
 							 position, dtm_limit);
 
@@ -3847,7 +3850,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 			    true_captured_piece = tb->last_identical_piece[true_captured_piece];
 			}
 
-			propagate_local_position_from_futurebase(tb, dtm,
+			propagate_local_position_from_futurebase(tb, dtm, 0,
 								 futurecaptures[capturing_piece][true_captured_piece],
 								 position, dtm_limit);
 
@@ -3890,7 +3893,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 			    true_captured_piece = tb->last_identical_piece[true_captured_piece];
 			}
 
-			propagate_local_position_from_futurebase(tb, dtm,
+			propagate_local_position_from_futurebase(tb, dtm, 0,
 								 futurecaptures[capturing_piece][true_captured_piece],
 								 position, dtm_limit);
 
@@ -4016,6 +4019,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 {
     index_t future_index;
     int dtm;
+    int dtc;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
     int32 conversion_result;
@@ -4036,6 +4040,10 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	 */
 
 	dtm = fetch_next_DTM_from_disk(futurebase);
+
+	/* XXX have to fetch DTC as well */
+
+	dtc = 0;
 
 	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
 	 * with multiple restricted pieces that should be quietly ignored.
@@ -4111,7 +4119,9 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 		    continue;
 		}
 
-		propagate_local_position_from_futurebase(tb, dtm,
+		/* DTC is zero because this is a pawn move */
+
+		propagate_local_position_from_futurebase(tb, dtm, 0,
 							 futuremoves[piece][origin_square],
 							 &current_position, dtm_limit);
 
@@ -4170,7 +4180,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 			current_position.board_vector |= BITVECTOR(movementptr->square);
 
-			propagate_local_position_from_futurebase(tb, dtm,
+			propagate_local_position_from_futurebase(tb, dtm, dtc,
 								 futuremoves[piece][origin_square],
 								 &current_position, dtm_limit);
 		    }
@@ -4226,7 +4236,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		    current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
 
-		    propagate_local_position_from_futurebase(tb, dtm,
+		    propagate_local_position_from_futurebase(tb, dtm, 0,
 							     futuremoves[piece][origin_square],
 							     &current_position, dtm_limit);
 
