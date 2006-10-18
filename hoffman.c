@@ -1287,7 +1287,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.153 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.154 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -5050,7 +5050,6 @@ boolean check_pruning(tablebase_t *tb) {
     int sq;
     int futurebase_cnt;
     int i;
-    char movestr[16];
 
 
     /* First, preload all futurebases */
@@ -5131,13 +5130,9 @@ boolean check_pruning(tablebase_t *tb) {
 		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
 		    if (! (pruned_futuremoves & (1 << futurecaptures[capturing_piece][captured_piece]))) {
-
-			sprintf(movestr, "%cx%c",
-				piece_char[tb->piece_type[capturing_piece]],
-				piece_char[tb->piece_type[captured_piece]]);
-
 			fprintf(stderr, "No futurebase or pruning for %s move %s\n",
-				colors[tb->piece_color[capturing_piece]], movestr);
+				colors[tb->piece_color[capturing_piece]],
+				movestr[futurecaptures[capturing_piece][captured_piece]]);
 			return 0;
 		    }
 		}
@@ -5232,13 +5227,9 @@ boolean check_pruning(tablebase_t *tb) {
 		if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
 
 		if (! (pruned_futuremoves & (1 << (futurecaptures[pawn][captured_piece] + i)))) {
-
-		    sprintf(movestr, "Px%c=%c",
-			    piece_char[tb->piece_type[captured_piece]],
-			    piece_char[promoted_pieces[i]]);
-
 		    fprintf(stderr, "No futurebase or pruning for %s move %s\n",
-			    colors[tb->piece_color[pawn]], movestr);
+			    colors[tb->piece_color[pawn]],
+			    movestr[futurecaptures[pawn][captured_piece] + i]);
 		    return 0;
 		}
 	    }
@@ -5272,10 +5263,8 @@ boolean check_pruning(tablebase_t *tb) {
 
 	    if (! (pruned_futuremoves & (1 << (promotions[piece] + i)))) {
 
-		sprintf(movestr, "P=%c", piece_char[promoted_pieces[i]]);
-
 		fprintf(stderr, "No futurebase or pruning for %s move %s\n",
-			colors[tb->piece_color[pawn]], movestr);
+			colors[tb->piece_color[pawn]], movestr[promotions[piece] + i]);
 		return 0;
 	    }
 	}
@@ -5299,10 +5288,8 @@ boolean check_pruning(tablebase_t *tb) {
 		if (futuremoves[piece][sq] != -1) {
 
 		    if (! (pruned_futuremoves & (1 << (futuremoves[piece][sq])))) {
-			sprintf(movestr, "%c%c%c", piece_char[tb->piece_type[piece]],
-				'a' + COL(sq), '1' + ROW(sq));
 			fprintf(stderr, "No futurebase or pruning for %s move %s\n",
-				colors[tb->piece_color[piece]], movestr);
+				colors[tb->piece_color[piece]], movestr[futuremoves[piece][sq]]);
 			return 0;
 		    }
 		}
