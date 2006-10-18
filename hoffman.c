@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.159 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.160 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3028,18 +3028,56 @@ void commit_proptable_entry(int propentry)
     }
 }
 
+struct proptable_list_entry {
+    proptable_entry_t *proptable;
+    struct proptable_list_entry *last;
+};
+
+struct proptable_list_entry * proptable_list = NULL;
+
 void proptable_full(void)
 {
+    struct proptable_list_entry * new_list_entry;
+
+    new_list_entry = (struct proptable_list_entry *) malloc(sizeof(struct proptable_list_entry));
+    new_list_entry->proptable = proptable;
+    new_list_entry->last = proptable_list;
+    proptable_list = new_list_entry;
+
+    proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
+    if (proptable == NULL) {
+	fprintf(stderr, "Can't calloc proptable\n");
+    }
+}
+
+void proptable_finalize(void)
+{
+    int propentry;
+
     /* dump out to disk and empty table */
     /* for now, just commit into the entries array */
 
-    int propentry;
+    proptable_full();
 
-    for (propentry = 0; propentry <= MAX_PROPENTRY; propentry ++) {
-	if (proptable[propentry].index != 0) commit_proptable_entry(propentry);
+    free(proptable);
+
+    while (proptable_list != NULL) {
+
+	proptable = proptable_list->proptable;
+
+	for (propentry = 0; propentry <= MAX_PROPENTRY; propentry ++) {
+	    if (proptable[propentry].index != 0) commit_proptable_entry(propentry);
+	}
+
+	free(proptable);
+	proptable_list = proptable_list->last;
+	/* XXX we don't free the list entry here */
     }
 
-    bzero(proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
+    proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
+    if (proptable == NULL) {
+	fprintf(stderr, "Can't calloc proptable\n");
+    }
 }
 
 void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futurevector_t futurevector)
@@ -4501,7 +4539,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
     xmlXPathFreeContext(context);
 
-    proptable_full();
+    proptable_finalize();
 
     return dtm_limit;
 
@@ -5940,7 +5978,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 	    }
 	}
 	fprintf(stderr, "Pass PTM  %d complete; %d positions processed\n", dtm, progress_made);
-	proptable_full();
+	proptable_finalize();
 
 	/* PNTM wins */
 	progress_made = 0;
@@ -5951,7 +5989,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 	    }
 	}
 	fprintf(stderr, "Pass PNTM %d complete; %d positions processed\n", dtm, progress_made);
-	proptable_full();
+	proptable_finalize();
 
 	dtm ++;
     }
