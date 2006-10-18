@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.157 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.158 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2999,6 +2999,12 @@ void commit_proptable_entry(int propentry)
     int dtm = proptable[propentry].dtm;
     int i;
 
+    /* Skip everything if the position isn't valid.  In particular, we don't track futuremove
+     * propagation for illegal positions.
+     */
+
+    if (! is_position_valid(proptable_tb, index)) return;
+
     /* This code is a little different from the merge code above before in the futurevectors array,
      * we already have a bit set for each futuremove that could happen, and we want to clear those
      * bits, rather than oring them.
@@ -3153,47 +3159,38 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 				     int futuremove, index_t current_index, int *dtm_limit)
 {
-    /* Skip everything else if the position isn't valid.  In particular,
-     * we don't track futuremove propagation for illegal positions.
+    if (futuremove == -1) {
+	static int errors = 0;
+	global_position_t global;
+
+	index_to_global_position(tb, current_index, &global);
+	fprintf(stderr, "Futuremove never assigned: %s %s\n",
+		global_position_to_FEN(&global), movestr[futuremove]);
+
+	if (errors++ == 10) exit(EXIT_FAILURE);
+	return;
+    }
+
+    /* XXX might want to look more closely at the stalemate options here */
+
+    /* We insert even if dtm is zero because we have to track futuremoves */
+
+    if (dtm > 0) {
+	insert_into_proptable(current_index, -dtm, 0, FUTUREVECTOR(futuremove));
+    } else if (dtm < 0) {
+	insert_into_proptable(current_index, -dtm+1, 0, FUTUREVECTOR(futuremove));
+    } else {
+	insert_into_proptable(current_index, 0, 0, FUTUREVECTOR(futuremove));
+    }
+
+    /* This is pretty primitive, but we need to track the deepest mates during futurebase back prop
+     * in order to know how deep we have to look during intra-table propagation.  We could improve
+     * on this by only bumping dtm_limit if we called PTM_wins(), or if we called
+     * add_one_to_PNTM_wins() and the move count went to zero.
      */
 
-    if (is_position_valid(tb, current_index)) {
-
-	if (futuremove == -1) {
-	    static int errors = 0;
-	    global_position_t global;
-
-	    index_to_global_position(tb, current_index, &global);
-	    fprintf(stderr, "Futuremove never assigned: %s %s\n",
-		    global_position_to_FEN(&global), movestr[futuremove]);
-
-	    if (errors++ == 10) exit(EXIT_FAILURE);
-	    return;
-	}
-
-	/* ...and propagate the win */
-
-	/* XXX might want to look more closely at the stalemate options here */
-
-	/* We insert even if dtm is zero because we have to track futuremoves */
-
-	if (dtm > 0) {
-	    insert_into_proptable(current_index, -dtm, 0, FUTUREVECTOR(futuremove));
-	} else if (dtm < 0) {
-	    insert_into_proptable(current_index, -dtm+1, 0, FUTUREVECTOR(futuremove));
-	} else {
-	    insert_into_proptable(current_index, 0, 0, FUTUREVECTOR(futuremove));
-	}
-
-	/* This is pretty primitive, but we need to track the deepest mates during futurebase back
-	 * prop in order to know how deep we have to look during intra-table propagation.  We could
-	 * improve on this by only bumping dtm_limit if we called PTM_wins(), or if we called
-	 * add_one_to_PNTM_wins() and the move count went to zero.
-	 */
-
-	if ((dtm > 0) && (*dtm_limit < dtm)) *dtm_limit = dtm;
-	if ((dtm < 0) && (*dtm_limit < -dtm)) *dtm_limit = -dtm;
-    }
+    if ((dtm > 0) && (*dtm_limit < dtm)) *dtm_limit = dtm;
+    if ((dtm < 0) && (*dtm_limit < -dtm)) *dtm_limit = -dtm;
 }
 
 void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm,
