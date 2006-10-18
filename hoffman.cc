@@ -1287,7 +1287,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.154 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.155 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -5972,6 +5972,55 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 
 }
 
+/* The "master routine" for tablebase generation.
+ *
+ * Many of these subroutines have already printed error messages of their own if they return
+ * an error indication, which is why we just silently return in many cases.
+ */
+
+boolean generate_tablebase_from_control_file(char *control_filename, char *output_filename) {
+
+    tablebase_t *tb;
+    int dtm_limit;
+
+    tb = parse_XML_control_file(control_filename);
+    if (tb == NULL) return 0;
+
+    proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
+    if (proptable == NULL) {
+	fprintf(stderr, "Can't calloc proptable\n");
+	return 0;
+    }
+    proptable_tb = tb;
+
+    assign_numbers_to_futuremoves(tb);
+    compute_pruned_futuremoves(tb);
+    if (! check_pruning(tb)) return 0;
+
+    fprintf(stderr, "Initializing tablebase\n");
+    initialize_tablebase(tb);
+
+    check_1000_indices(tb);
+
+    dtm_limit = back_propagate_all_futurebases(tb);
+    if (dtm_limit == -1) return 0;
+
+    fprintf(stderr, "Checking futuremoves...\n");
+    if (! have_all_futuremoves_been_handled(tb)) return 0;
+    fprintf(stderr, "All futuremoves handled under move restrictions\n");
+
+    /* We add one to dtm_limit here because, even if there are intra-table passes with no
+     * progress made, we want to process at least one pass beyond the maximum mate-in value we
+     * saw during futurebase back-prop.
+     */
+
+    fprintf(stderr, "Intra-table propagating\n");
+    propagate_all_moves_within_tablebase(tb, dtm_limit+1);
+
+    write_tablebase_to_file(tb, output_filename);
+
+    return 1;
+}
 
 /***** PROBING NALIMOV TABLEBASES *****/
 
@@ -6191,54 +6240,11 @@ int main(int argc, char *argv[])
 	exit(EXIT_FAILURE);
     }
 
+    /* Generating */
+
     if (generating) {
-	int dtm_limit;
-
-	tb = parse_XML_control_file(argv[optind]);
-
-	/* Hopefully, an error message has already been printed... */
-	if (tb == NULL) exit(EXIT_FAILURE);
-
-	proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
-	if (proptable == NULL) {
-	    fprintf(stderr, "Can't calloc proptable\n");
-	    exit(EXIT_FAILURE);
-	}
-	proptable_tb = tb;
-
-	assign_numbers_to_futuremoves(tb);
-	compute_pruned_futuremoves(tb);
-	if (! check_pruning(tb)) {
-	    exit(EXIT_FAILURE);
-	}
-
-	fprintf(stderr, "Initializing tablebase\n");
-	initialize_tablebase(tb);
-
-	check_1000_indices(tb);
-
-	dtm_limit = back_propagate_all_futurebases(tb);
-
-	/* back_propagate_all_futurebases() printed some kind of error message already */
-	if (dtm_limit == -1) exit(EXIT_FAILURE);
-
-	fprintf(stderr, "Checking futuremoves...\n");
-	if (! have_all_futuremoves_been_handled(tb)) {
-	    exit(EXIT_FAILURE);
-	}
-	fprintf(stderr, "All futuremoves handled under move restrictions\n");
-
-	/* We add one to dtm_limit here because, even if there are intra-table passes with no
-	 * progress made, we want to process at least one pass beyond the maximum mate-in value we
-	 * saw during futurebase back-prop.
-	 */
-
-	fprintf(stderr, "Intra-table propagating\n");
-	propagate_all_moves_within_tablebase(tb, dtm_limit+1);
-
-	write_tablebase_to_file(tb, output_filename);
-
-	exit(EXIT_SUCCESS);
+	exit(generate_tablebase_from_control_file(argv[optind], output_filename)
+	     ? EXIT_SUCCESS : EXIT_FAILURE);
     }
 
     /* Probing / Verifying */
