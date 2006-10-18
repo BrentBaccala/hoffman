@@ -1287,7 +1287,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.152 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.153 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2968,35 +2968,57 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevecto
 {
     if (dtm > 0) {
 	/* DTM > 0 - this move lets PTM mate from this position.  Update the proptable entry if
-	 * either we don't have any PTM mates yet (table's dtm < 0), or if this new mate is faster
+	 * either we don't have any PTM mates yet (table's dtm <= 0), or if this new mate is faster
 	 * than the old one.
 	 */
-	if ((proptable[propentry].dtm < 0) || (dtm < proptable[propentry].dtm)) {
+	if ((proptable[propentry].dtm <= 0) || (dtm < proptable[propentry].dtm)) {
 	    proptable[propentry].dtm = dtm;
 	    proptable[propentry].dtc = dtc;
 	}
-    } else {
+    } else if (dtm < 0) {
 	/* DTM < 0 - this move lets PNTM mate from this position.  Update the proptable entry only
-	 * if we don't have any PTM mates (table's dtm < 0) and this PNTM mate is slower than the
+	 * if we don't have any PTM mates (table's dtm <= 0) and this PNTM mate is slower than the
 	 * old one.
 	 */
-	if ((proptable[propentry].dtm < 0) && (dtm < proptable[propentry].dtm)) {
+	if ((proptable[propentry].dtm <= 0) && (dtm < proptable[propentry].dtm)) {
 	    proptable[propentry].dtm = dtm;
 	    proptable[propentry].dtc = dtc;
 	}
     }
     proptable[propentry].movecnt ++;
+
+    if (proptable[propentry].futurevector & futurevector) {
+	global_position_t global;
+	index_to_global_position(proptable_tb, proptable[propentry].index, &global);
+	fprintf(stderr, "Futuremove already handled: %s\n", global_position_to_FEN(&global));
+    }
+
     proptable[propentry].futurevector |= futurevector;
 }
 
 void commit_proptable_entry(int propentry)
 {
+    index_t index = proptable[propentry].index;
     int dtm = proptable[propentry].dtm;
     int i;
 
+    /* This code is a little different from the merge code above before in the futurevectors array,
+     * we already have a bit set for each futuremove that could happen, and we want to clear those
+     * bits, rather than oring them.
+     */
+
+    if ((proptable[propentry].futurevector & proptable_tb->futurevectors[index])
+	!= proptable[propentry].futurevector) {
+	global_position_t global;
+	index_to_global_position(proptable_tb, proptable[propentry].index, &global);
+	fprintf(stderr, "Futuremove already handled: %s\n", global_position_to_FEN(&global));
+    }
+
+    proptable_tb->futurevectors[index] ^= proptable[propentry].futurevector;
+
     if (dtm > 0) {
 	PTM_wins(proptable_tb, proptable[propentry].index, dtm, proptable[propentry].dtc);
-    } else {
+    } else if (dtm < 0) {
 	for (i=0; i<proptable[propentry].movecnt; i++) {
 	    add_one_to_PNTM_wins(proptable_tb, proptable[propentry].index, dtm, proptable[propentry].dtc);
 	}
@@ -3148,30 +3170,30 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm,
 
 	tb->entries[current_index].futuremove_cnt --;
 
-	if ((futuremove == -1) || ! (tb->futurevectors[current_index] & FUTUREVECTOR(futuremove))) {
+	if (futuremove == -1) {
 	    static int errors = 0;
 	    global_position_t global;
 
-	    if (futuremove == -1) fprintf(stderr, "Futuremove never assigned: ");
-	    else fprintf(stderr, "Futuremove already handled: ");
-
 	    index_to_global_position(tb, current_index, &global);
-	    fprintf(stderr, "%s %s\n", global_position_to_FEN(&global), movestr[futuremove]);
+	    fprintf(stderr, "Futuremove never assigned: %s %s\n",
+		    global_position_to_FEN(&global), movestr[futuremove]);
 
 	    if (errors++ == 10) exit(EXIT_FAILURE);
 	    return;
 	}
 
-	tb->futurevectors[current_index] ^= FUTUREVECTOR(futuremove);
-
 	/* ...and propagate the win */
 
 	/* XXX might want to look more closely at the stalemate options here */
 
+	/* We insert even if dtm is zero because we have to track futuremoves */
+
 	if (dtm > 0) {
-	    insert_into_proptable(current_index, -dtm, 0, 0);
+	    insert_into_proptable(current_index, -dtm, 0, FUTUREVECTOR(futuremove));
 	} else if (dtm < 0) {
-	    insert_into_proptable(current_index, -dtm+1, 0, 0);
+	    insert_into_proptable(current_index, -dtm+1, 0, FUTUREVECTOR(futuremove));
+	} else {
+	    insert_into_proptable(current_index, 0, 0, FUTUREVECTOR(futuremove));
 	}
 
 	/* This is pretty primitive, but we need to track the deepest mates during futurebase back
