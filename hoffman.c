@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.166 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.167 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3083,7 +3083,9 @@ void commit_proptable_entry(proptable_entry_t *propentry)
  * Start a new set of proptables and commit the old set into the entries array.
  */
 
-void proptable_finalize(void)
+void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, int dtc);
+
+int proptable_finalize(int target_dtm)
 {
     int i;
     proptable_entry_t **input_proptables;
@@ -3095,6 +3097,9 @@ void proptable_finalize(void)
     int highbit;
     int network_node;
 
+    index_t index;
+    int positions_propagated = 0;
+
     /* Flush out anything in the last proptable */
     proptable_full();
 
@@ -3105,8 +3110,6 @@ void proptable_finalize(void)
     num_proptables = 0;
     proptables_size = 0;
 
-    fprintf(stderr, "%d proptables\n", num_input_proptables);
-
     for (highbit = 1; highbit <= num_input_proptables; highbit <<= 1);
 
     proptable_index = malloc(num_input_proptables * sizeof(int));
@@ -3115,7 +3118,7 @@ void proptable_finalize(void)
 
     if ((proptable_index == NULL) || (sorting_network == NULL) || (proptable_num == NULL)) {
 	fprintf(stderr, "Can't malloc sorting network in proptable_finalize()\n");
-	return;
+	return 0;
     }
 
     /* Initialize the sorting network.
@@ -3152,44 +3155,64 @@ void proptable_finalize(void)
 
     /* Now, process the data through the sorting network. */
 
-    while (sorting_network[1].index != proptable_tb->max_index + 1) {
+    for (index = 0; index <= proptable_tb->max_index; index ++) {
 
-	commit_proptable_entry(&sorting_network[1]);
+	if (sorting_network[1].index < index) {
+	    fprintf(stderr, "Out-of-order entries in sorting network\n");   /* BREAKPOINT */
+	}
 
-	proptable_index[proptable_num[1]] ++;
-	sorting_network[highbit + proptable_num[1]].index = proptable_tb->max_index + 1;
+	while (sorting_network[1].index == index ) {
 
-	while (proptable_index[proptable_num[1]] <= MAX_PROPENTRY) {
-	    if (input_proptables[proptable_num[1]][proptable_index[proptable_num[1]]].index != 0) {
-		sorting_network[highbit + proptable_num[1]]
-		    = input_proptables[proptable_num[1]][proptable_index[proptable_num[1]]];
-		break;
-	    }
+	    commit_proptable_entry(&sorting_network[1]);
+
 	    proptable_index[proptable_num[1]] ++;
-	}
+	    sorting_network[highbit + proptable_num[1]].index = proptable_tb->max_index + 1;
 
-	network_node = highbit + proptable_num[1];
+	    while (proptable_index[proptable_num[1]] <= MAX_PROPENTRY) {
+		if (input_proptables[proptable_num[1]][proptable_index[proptable_num[1]]].index != 0) {
+		    sorting_network[highbit + proptable_num[1]]
+			= input_proptables[proptable_num[1]][proptable_index[proptable_num[1]]];
+		    break;
+		}
+		proptable_index[proptable_num[1]] ++;
+	    }
 
-	while (network_node > 1) {
-	    network_node >>= 1;
-	    if (sorting_network[2*network_node].index < sorting_network[2*network_node+1].index) {
-		sorting_network[network_node] = sorting_network[2*network_node];
-		proptable_num[network_node] = proptable_num[2*network_node];
-	    } else {
-		sorting_network[network_node] = sorting_network[2*network_node+1];
-		proptable_num[network_node] = proptable_num[2*network_node+1];
+	    network_node = highbit + proptable_num[1];
+
+	    while (network_node > 1) {
+		network_node >>= 1;
+		if (sorting_network[2*network_node].index < sorting_network[2*network_node+1].index) {
+		    sorting_network[network_node] = sorting_network[2*network_node];
+		    proptable_num[network_node] = proptable_num[2*network_node];
+		} else {
+		    sorting_network[network_node] = sorting_network[2*network_node+1];
+		    proptable_num[network_node] = proptable_num[2*network_node+1];
+		}
 	    }
 	}
+
+	if (needs_propagation(proptable_tb, index) && get_DTM(proptable_tb, index) == target_dtm) {
+	    mark_propagated(proptable_tb, index);
+	    back_propagate_index_within_table(proptable_tb, index,
+					      target_dtm, get_stalemate_count(proptable_tb, index));
+	    positions_propagated ++;
+	}
+
     }
 
     for (i = 0; i < num_input_proptables; i ++) {
 	free(input_proptables[i]);
     }
 
+    fprintf(stderr, "Pass %3d complete; %d positions processed; %d input proptables\n",
+	    target_dtm, positions_propagated, num_input_proptables);
+
     free(input_proptables);
     free(proptable_index);
     free(sorting_network);
     free(proptable_num);
+
+    return positions_propagated;
 }
 
 void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futurevector_t futurevector)
@@ -3199,7 +3222,9 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 
  retry:
 
-    propentry = index & PROPTABLE_INDEX_MASK;
+    /* We need an index into the proptable that maintains the index sort order of the entries. */
+
+    propentry = index / (proptable_tb->max_index / NUM_PROPENTRIES);
 
     if (proptable[propentry].index == 0) {
 	/* empty slot: insert at propentry */
@@ -4651,8 +4676,6 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
     xmlXPathFreeContext(context);
 
-    proptable_finalize();
-
     return dtm_limit;
 
 }
@@ -6046,45 +6069,36 @@ void initialize_tablebase(tablebase_t *tb)
     }
 }
 
+/* Intra-table propagation is almost trivial.  Keep making passes over the tablebase first until
+ * we've hit dtm_limit, which means we've processed everything from the futurebases, then until no
+ * more progress is made on a given pass.
+ */
+
 void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 {
-    int dtm;
-    int progress_made;
-    index_t index;
+    int dtm = 1;
 
-    dtm = 1;
-    progress_made = 1;
-
-    while (progress_made || dtm <= dtm_limit) {
+    while (dtm <= dtm_limit) {
 
 	/* PTM wins */
-	progress_made = 0;
-	for (index=0; index <= tb->max_index; index++) {
-	    if (needs_propagation(tb, index) && get_DTM(tb, index) == dtm) {
-		mark_propagated(tb, index);
-		back_propagate_index_within_table(tb, index, dtm, get_stalemate_count(tb, index));
-		progress_made ++;
-	    }
-	}
-	fprintf(stderr, "Pass PTM  %d complete; %d positions processed; ", dtm, progress_made);
-	proptable_finalize();
+	proptable_finalize(dtm);
 
 	/* PNTM wins */
-	progress_made = 0;
-	for (index=0; index <= tb->max_index; index++) {
-	    if (needs_propagation(tb, index) && get_DTM(tb, index) == -dtm) {
-		mark_propagated(tb, index);
-		back_propagate_index_within_table(tb, index, -dtm, get_stalemate_count(tb, index));
-		progress_made ++;
-	    }
-	}
-	fprintf(stderr, "Pass PNTM %d complete; %d positions processed; ", dtm, progress_made);
-	proptable_finalize();
+	proptable_finalize(-dtm);
 
 	dtm ++;
     }
 
-    /* Everything else allows both sides to draw with best play. */
+    while (1) {
+
+	/* PTM wins */
+	if (proptable_finalize(dtm) == 0) break;
+
+	/* PNTM wins */
+	if (proptable_finalize(-dtm) == 0) break;
+
+	dtm ++;
+    }
 
 }
 
@@ -6121,10 +6135,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     dtm_limit = back_propagate_all_futurebases(tb);
     if (dtm_limit == -1) return 0;
 
-    fprintf(stderr, "Checking futuremoves...\n");
-    if (! have_all_futuremoves_been_handled(tb)) return 0;
-    fprintf(stderr, "All futuremoves handled under move restrictions\n");
-
     /* We add one to dtm_limit here because, even if there are intra-table passes with no
      * progress made, we want to process at least one pass beyond the maximum mate-in value we
      * saw during futurebase back-prop.
@@ -6132,6 +6142,15 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     fprintf(stderr, "Intra-table propagating\n");
     propagate_all_moves_within_tablebase(tb, dtm_limit+1);
+
+    /* Ultimately, I want to wrap this in with tablebase initialization.  We'll back propagate first
+     * (building proptables), then initialize the tablebase, check futuremoves, and generate the
+     * first set of intra-table proptables, all in one pass.
+     */
+
+    fprintf(stderr, "Checking futuremoves...\n");
+    if (! have_all_futuremoves_been_handled(tb)) return 0;
+    fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
     write_tablebase_to_file(tb, output_filename);
 
