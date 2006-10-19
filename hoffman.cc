@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.160 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.161 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -5351,7 +5351,7 @@ boolean check_pruning(tablebase_t *tb) {
  * positions that could have gotten us here and update their counters in various obscure ways.
  */
 
-void propagate_one_minimove_within_table(tablebase_t *tb, index_t parent_index, local_position_t *current_position)
+void propagate_one_minimove_within_table(tablebase_t *tb, int dtm, int dtc, local_position_t *current_position)
 {
     index_t current_index;
 
@@ -5380,25 +5380,15 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t parent_index, 
      * These stalemate and mate counts increment by one every HALF MOVE.
      */
 
-    if (does_PTM_win(tb, parent_index)) {
-
-	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-	    insert_into_proptable(current_index, -tb->entries[parent_index].dtm,
-				  get_stalemate_count(tb, parent_index), 0);
-	}
-
-    } else if (does_PNTM_win(tb, parent_index)) {
-
-	if (get_stalemate_count(tb, parent_index) < STALEMATE_COUNT) {
-	    insert_into_proptable(current_index, -tb->entries[parent_index].dtm+1,
-				  get_stalemate_count(tb, parent_index)+1, 0);
-	}
-
+    if (dtm > 0) {
+	insert_into_proptable(current_index, -dtm, dtc, 0);
+    } else if ((dtm < 0) && (dtc < STALEMATE_COUNT)) {
+	insert_into_proptable(current_index, -dtm+1, dtc+1, 0);
     }
 
 }
 
-void propagate_one_move_within_table(tablebase_t *tb, index_t parent_index, local_position_t *position)
+void propagate_one_move_within_table(tablebase_t *tb, int dtm, int dtc, local_position_t *position)
 {
     int piece;
 
@@ -5412,7 +5402,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t parent_index, loca
      * en passant positions.
      */
 
-    propagate_one_minimove_within_table(tb, parent_index, position);
+    propagate_one_minimove_within_table(tb, dtm, dtc, position);
 
     if (position->en_passant_square == -1) {
 
@@ -5430,7 +5420,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t parent_index, loca
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
 		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_one_minimove_within_table(tb, parent_index, position);
+		propagate_one_minimove_within_table(tb, dtm, dtc, position);
 	    }
 
 	    if ((tb->piece_color[piece] == BLACK)
@@ -5438,7 +5428,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t parent_index, loca
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
 		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_one_minimove_within_table(tb, parent_index, position);
+		propagate_one_minimove_within_table(tb, dtm, dtc, position);
 	    }
 
 	    position->en_passant_square = -1;
@@ -5446,50 +5436,42 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t parent_index, loca
     }
 }
 
-void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int dtm)
+/* back_propagate_index_within_table()
+ *
+ * Once the final status of an index has been determined, this function back propagates all moves
+ * (within the tablebase) from the corresponding position.
+ */
+
+void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, int dtc)
 {
-    local_position_t parent_position;
-    local_position_t current_position; /* i.e, last position that moved to parent_position */
+    local_position_t position;
     int piece;
     int dir;
+    int origin_square;
     struct movement *movementptr;
 
-    /* We want to check to make sure the mate-in number of the position in the database matches a
-     * mate-in variable in this routine.  If we're propagating moves from a future table, we might
-     * get tables with a whole range of mate-in counts, so we want to make sure we go through them
-     * in order.
-     */
+    index_to_local_position(tb, index, &position);
 
-    if (tb->entries[parent_index].dtm != dtm) {
-	fprintf(stderr, "DTMs don't match: %d %d\n", dtm, tb->entries[parent_index].dtm);
-    }
-
-    if (!does_PTM_win(tb, parent_index) && !does_PNTM_win(tb, parent_index)) {
-	fprintf(stderr, "Propagating position %d where neither side wins?!\n", parent_index);
-    }
-
-    mark_propagated(tb, parent_index);
-
-    index_to_local_position(tb, parent_index, &parent_position);
+    flip_side_to_move_local(&position);
 
     /* If there are any en passant capturable pawns in the position, then the last move had to
      * have been a pawn move.  In fact, in this case, we already know exactly what the last move
      * had to have been.
      */
 
-    if (parent_position.en_passant_square != -1) {
+    if (position.en_passant_square != -1) {
 
 	int en_passant_pawn = -1;
 
 	for (piece = 0; piece < tb->num_pieces; piece++) {
 
-	    if (tb->piece_color[piece] == parent_position.side_to_move) continue;
+	    if (tb->piece_color[piece] != position.side_to_move) continue;
 	    if (tb->piece_type[piece] != PAWN) continue;
 
 	    if (((tb->piece_color[piece] == WHITE)
-		 && (parent_position.piece_position[piece] - 8 == parent_position.en_passant_square))
+		 && (position.piece_position[piece] - 8 == position.en_passant_square))
 		|| ((tb->piece_color[piece] == BLACK)
-		    && (parent_position.piece_position[piece] + 8 == parent_position.en_passant_square))) {
+		    && (position.piece_position[piece] + 8 == position.en_passant_square))) {
 		if (en_passant_pawn != -1) fprintf(stderr, "Two en passant pawns in back prop?!\n");
 		en_passant_pawn = piece;
 	    }
@@ -5497,32 +5479,32 @@ void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int dtm)
 	if (en_passant_pawn == -1) {
 	    fprintf(stderr, "No en passant pawn in back prop!?\n");
 	} else {
-	    current_position = parent_position;
-	    flip_side_to_move_local(&current_position);
-	    current_position.en_passant_square = -1;
+
+	    position.en_passant_square = -1;
 
 	    /* I go to the trouble to update board_vector here so we can check en passant
 	     * legality in propagate_one_move_within_table().
 	     */
 
-	    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[en_passant_pawn]);
-	    if (tb->piece_color[en_passant_pawn] == WHITE)
-		current_position.piece_position[en_passant_pawn] -= 16;
-	    else
-		current_position.piece_position[en_passant_pawn] += 16;
+	    position.board_vector &= ~BITVECTOR(position.piece_position[en_passant_pawn]);
 
-	    current_position.board_vector |= BITVECTOR(current_position.piece_position[en_passant_pawn]);
+	    if (tb->piece_color[en_passant_pawn] == WHITE)
+		position.piece_position[en_passant_pawn] -= 16;
+	    else
+		position.piece_position[en_passant_pawn] += 16;
+
+	    position.board_vector |= BITVECTOR(position.piece_position[en_passant_pawn]);
 
 	    /* We never back out into a restricted position.  Since we've already decided that this
 	     * is the only legal back-move from this point, well...
 	     */
 
 	    if (! (tb->piece_legal_squares[en_passant_pawn]
-		   & BITVECTOR(current_position.piece_position[en_passant_pawn]))) {
+		   & BITVECTOR(position.piece_position[en_passant_pawn]))) {
 		return;
 	    }
 
-	    propagate_one_move_within_table(tb, parent_index, &current_position);
+	    propagate_one_move_within_table(tb, dtm, dtc, &position);
 	}
 
 	return;
@@ -5536,8 +5518,12 @@ void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int dtm)
 	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	if (tb->piece_color[piece] == parent_position.side_to_move)
+	if (tb->piece_color[piece] != position.side_to_move)
 	    continue;
+
+	origin_square = position.piece_position[piece];
+
+	position.board_vector &= ~BITVECTOR(origin_square);
 
 	if (tb->piece_type[piece] != PAWN) {
 
@@ -5551,18 +5537,13 @@ void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int dtm)
 		 * vector, there's absolutely no need to consider anything further.
 		 */
 
-		for (movementptr
-			 = movements[tb->piece_type[piece]][parent_position.piece_position[piece]][dir];
-		     (movementptr->vector & parent_position.board_vector) == 0;
+		for (movementptr = movements[tb->piece_type[piece]][origin_square][dir];
+		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
 		    /* We never back out into a restricted position (obviously) */
 
 		    if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
-
-		    /* XXX can we move the next several statements out of this loop (ditto below)? */
-
-		    current_position = parent_position;
 
 		    /* Back stepping a half move here involves several things: flipping the
 		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
@@ -5576,19 +5557,17 @@ void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int dtm)
 		     * propagate_one_move_within_table()
 		     */
 
-		    flip_side_to_move_local(&current_position);
-
 		    /* I go to the trouble to update board_vector here so we can check en passant
 		     * legality in propagate_one_move_within_table().
 		     */
 
-		    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
+		    position.piece_position[piece] = movementptr->square;
 
-		    current_position.piece_position[piece] = movementptr->square;
+		    position.board_vector |= BITVECTOR(movementptr->square);
 
-		    current_position.board_vector |= BITVECTOR(movementptr->square);
+		    propagate_one_move_within_table(tb, dtm, dtc, &position);
 
-		    propagate_one_move_within_table(tb, parent_index, &current_position);
+		    position.board_vector &= ~BITVECTOR(movementptr->square);
 		}
 	    }
 
@@ -5596,8 +5575,8 @@ void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int dtm)
 
 	    /* Usual special case for pawns */
 
-	    for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][tb->piece_color[piece]];
-		 (movementptr->vector & parent_position.board_vector) == 0;
+	    for (movementptr = normal_pawn_movements_bkwd[origin_square][tb->piece_color[piece]];
+		 (movementptr->vector & position.board_vector) == 0;
 		 movementptr++) {
 
 		/* We never back out into a restricted position (obviously) */
@@ -5623,30 +5602,27 @@ void propagate_move_within_table(tablebase_t *tb, index_t parent_index, int dtm)
 		 * position we are in now (en passant got taken care of in the special case above).
 		 */
 
-		if (((movementptr->square - parent_position.piece_position[piece]) == 16)
-		    || ((movementptr->square - parent_position.piece_position[piece]) == -16)) {
+		if (((movementptr->square - position.piece_position[piece]) == 16)
+		    || ((movementptr->square - position.piece_position[piece]) == -16)) {
 		    continue;
 		}
-
-		current_position = parent_position;
-
-		flip_side_to_move_local(&current_position);
 
 		/* I go to the trouble to update board_vector here so we can check en passant
 		 * legality in propagate_one_move_within_table().
 		 */
 
-		current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
+		position.piece_position[piece] = movementptr->square;
 
-		current_position.piece_position[piece] = movementptr->square;
+		position.board_vector |= BITVECTOR(movementptr->square);
 
-		current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
+		propagate_one_move_within_table(tb, dtm, dtc, &position);
 
-		propagate_one_move_within_table(tb, parent_index, &current_position);
-
+		position.board_vector &= ~BITVECTOR(movementptr->square);
 	    }
 	}
 
+	position.piece_position[piece] = origin_square;
+	position.board_vector |= BITVECTOR(origin_square);
     }
 }
 
@@ -5973,7 +5949,8 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 	progress_made = 0;
 	for (index=0; index <= tb->max_index; index++) {
 	    if (needs_propagation(tb, index) && get_DTM(tb, index) == dtm) {
-		propagate_move_within_table(tb, index, dtm);
+		mark_propagated(tb, index);
+		back_propagate_index_within_table(tb, index, dtm, get_stalemate_count(tb, index));
 		progress_made ++;
 	    }
 	}
@@ -5984,7 +5961,8 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 	progress_made = 0;
 	for (index=0; index <= tb->max_index; index++) {
 	    if (needs_propagation(tb, index) && get_DTM(tb, index) == -dtm) {
-		propagate_move_within_table(tb, index, -dtm);
+		mark_propagated(tb, index);
+		back_propagate_index_within_table(tb, index, -dtm, get_stalemate_count(tb, index));
 		progress_made ++;
 	    }
 	}
