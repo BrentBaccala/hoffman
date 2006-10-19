@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.163 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.164 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3010,10 +3010,44 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevecto
     merge_propentrys(&proptable[propentry], &src);
 }
 
-void commit_proptable_entry(int propentry)
+proptable_entry_t ** proptables = NULL;
+int num_proptables = 0;
+int proptables_size = 0;
+
+/* proptable_full() - dump out to disk and empty table
+ *
+ * For now, we just save the old proptables in a memory array (proptables).
+ */
+
+void proptable_full(void)
 {
-    index_t index = proptable[propentry].index;
-    int dtm = proptable[propentry].dtm;
+    if (proptables_size == 0) {
+	proptables_size = 16;
+	proptables = (proptable_entry_t **) malloc(proptables_size * sizeof(proptable_entry_t *));
+	if (proptables == NULL) {
+	    fprintf(stderr, "Can't malloc proptables\n");
+	}
+    } else if (num_proptables == proptables_size) {
+	proptables_size *= 2;
+	proptables = (proptable_entry_t **)
+	    realloc(proptables, proptables_size * sizeof(proptable_entry_t *));
+	if (proptables == NULL) {
+	    fprintf(stderr, "Can't realloc proptables\n");
+	}
+    }
+
+    proptables[num_proptables ++] = proptable;
+
+    proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
+    if (proptable == NULL) {
+	fprintf(stderr, "Can't calloc proptable\n");
+    }
+}
+
+void commit_proptable_entry(proptable_entry_t *propentry)
+{
+    index_t index = propentry->index;
+    int dtm = propentry->dtm;
     int i;
 
     /* Skip everything if the position isn't valid.  In particular, we don't track futuremove
@@ -3027,74 +3061,56 @@ void commit_proptable_entry(int propentry)
      * bits, rather than oring them.
      */
 
-    if ((proptable[propentry].futurevector & proptable_tb->futurevectors[index])
-	!= proptable[propentry].futurevector) {
+    if ((propentry->futurevector & proptable_tb->futurevectors[index]) != propentry->futurevector) {
 	global_position_t global;
-	index_to_global_position(proptable_tb, proptable[propentry].index, &global);
+	index_to_global_position(proptable_tb, propentry->index, &global);
 	fprintf(stderr, "Futuremove already handled: %s\n", global_position_to_FEN(&global));
     }
 
-    proptable_tb->futurevectors[index] ^= proptable[propentry].futurevector;
+    proptable_tb->futurevectors[index] ^= propentry->futurevector;
 
     if (dtm > 0) {
-	PTM_wins(proptable_tb, proptable[propentry].index, dtm, proptable[propentry].dtc);
+	PTM_wins(proptable_tb, index, dtm, propentry->dtc);
     } else if (dtm < 0) {
-	for (i=0; i<proptable[propentry].movecnt; i++) {
-	    add_one_to_PNTM_wins(proptable_tb, proptable[propentry].index, dtm, proptable[propentry].dtc);
+	for (i=0; i<propentry->movecnt; i++) {
+	    add_one_to_PNTM_wins(proptable_tb, index, dtm, propentry->dtc);
 	}
     }
 }
 
-struct proptable_list_entry {
-    proptable_entry_t *proptable;
-    struct proptable_list_entry *last;
-};
-
-struct proptable_list_entry * proptable_list = NULL;
-
-void proptable_full(void)
-{
-    struct proptable_list_entry * new_list_entry;
-
-    new_list_entry = (struct proptable_list_entry *) malloc(sizeof(struct proptable_list_entry));
-    new_list_entry->proptable = proptable;
-    new_list_entry->last = proptable_list;
-    proptable_list = new_list_entry;
-
-    proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
-    if (proptable == NULL) {
-	fprintf(stderr, "Can't calloc proptable\n");
-    }
-}
+/* proptable_finalize()
+ *
+ * Start a new set of proptables and commit the old set into the entries array.
+ */
 
 void proptable_finalize(void)
 {
+    int i;
     int propentry;
+    proptable_entry_t **input_proptables;
+    int num_input_proptables;
 
-    /* dump out to disk and empty table */
-    /* for now, just commit into the entries array */
-
+    /* Flush out anything in the last proptable */
     proptable_full();
 
-    free(proptable);
+    input_proptables = proptables;
+    num_input_proptables = num_proptables;
 
-    while (proptable_list != NULL) {
+    proptables = NULL;
+    num_proptables = 0;
+    proptables_size = 0;
 
-	proptable = proptable_list->proptable;
+    for (i = 0; i < num_input_proptables; i ++) {
 
 	for (propentry = 0; propentry <= MAX_PROPENTRY; propentry ++) {
-	    if (proptable[propentry].index != 0) commit_proptable_entry(propentry);
+	    if (input_proptables[i][propentry].index != 0)
+		commit_proptable_entry(&input_proptables[i][propentry]);
 	}
 
-	free(proptable);
-	proptable_list = proptable_list->last;
-	/* XXX we don't free the list entry here */
+	free(input_proptables[i]);
     }
 
-    proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
-    if (proptable == NULL) {
-	fprintf(stderr, "Can't calloc proptable\n");
-    }
+    free(input_proptables);
 }
 
 void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futurevector_t futurevector)
