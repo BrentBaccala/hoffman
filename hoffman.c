@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.162 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.163 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2961,36 +2961,53 @@ void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char 
     proptable[propentry].futurevector = futurevector;
 }
 
-void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevector_t futurevector)
+void merge_propentrys(proptable_entry_t *dest, proptable_entry_t *src)
 {
-    if (dtm > 0) {
+    if (src->dtm > 0) {
 	/* DTM > 0 - this move lets PTM mate from this position.  Update the proptable entry if
 	 * either we don't have any PTM mates yet (table's dtm <= 0), or if this new mate is faster
 	 * than the old one.
 	 */
-	if ((proptable[propentry].dtm <= 0) || (dtm < proptable[propentry].dtm)) {
-	    proptable[propentry].dtm = dtm;
-	    proptable[propentry].dtc = dtc;
+	if ((dest->dtm <= 0) || (src->dtm < dest->dtm)) {
+	    dest->dtm = src->dtm;
+	    dest->dtc = src->dtc;
 	}
-    } else if (dtm < 0) {
+    } else if (src->dtm < 0) {
 	/* DTM < 0 - this move lets PNTM mate from this position.  Update the proptable entry only
 	 * if we don't have any PTM mates (table's dtm <= 0) and this PNTM mate is slower than the
 	 * old one.
 	 */
-	if ((proptable[propentry].dtm <= 0) && (dtm < proptable[propentry].dtm)) {
-	    proptable[propentry].dtm = dtm;
-	    proptable[propentry].dtc = dtc;
+	if ((dest->dtm <= 0) && (src->dtm < dest->dtm)) {
+	    dest->dtm = src->dtm;
+	    dest->dtc = src->dtc;
 	}
     }
-    proptable[propentry].movecnt ++;
 
-    if (proptable[propentry].futurevector & futurevector) {
+    dest->movecnt += src->movecnt;
+
+    if (dest->futurevector & src->futurevector) {
 	global_position_t global;
-	index_to_global_position(proptable_tb, proptable[propentry].index, &global);
-	fprintf(stderr, "Futuremove already handled: %s\n", global_position_to_FEN(&global));
+	index_to_global_position(proptable_tb, dest->index, &global);
+	fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
     }
 
-    proptable[propentry].futurevector |= futurevector;
+    dest->futurevector |= src->futurevector;
+}
+
+void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevector_t futurevector)
+{
+    proptable_entry_t src;
+
+    /* merge_propentrys() never uses the source index, because it's assumed to be identical to the
+     * destination index (it's a merge, after all)
+     */
+    /* src.index = index; */
+    src.dtm = dtm;
+    src.dtc = dtc;
+    src.movecnt = 1;
+    src.futurevector = futurevector;
+
+    merge_propentrys(&proptable[propentry], &src);
 }
 
 void commit_proptable_entry(int propentry)
