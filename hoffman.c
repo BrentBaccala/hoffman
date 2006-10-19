@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.164 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.165 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3095,6 +3095,8 @@ void proptable_finalize(void)
 
     input_proptables = proptables;
     num_input_proptables = num_proptables;
+
+    fprintf(stderr, "%d proptables\n", num_input_proptables);
 
     proptables = NULL;
     num_proptables = 0;
@@ -5987,7 +5989,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 		progress_made ++;
 	    }
 	}
-	fprintf(stderr, "Pass PTM  %d complete; %d positions processed\n", dtm, progress_made);
+	fprintf(stderr, "Pass PTM  %d complete; %d positions processed; ", dtm, progress_made);
 	proptable_finalize();
 
 	/* PNTM wins */
@@ -5999,7 +6001,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 		progress_made ++;
 	    }
 	}
-	fprintf(stderr, "Pass PNTM %d complete; %d positions processed\n", dtm, progress_made);
+	fprintf(stderr, "Pass PNTM %d complete; %d positions processed; ", dtm, progress_made);
 	proptable_finalize();
 
 	dtm ++;
