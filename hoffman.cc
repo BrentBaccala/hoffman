@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.161 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.162 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -4545,26 +4545,26 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 }
 
-/* This is where we finalize pruning decisions, if we don't want to fully analyze out the tree past
- * the table we're now building.  Of course, this will affect the accuracy of the table; the table
- * is a result of BOTH the position it was set up for AND the pruning decisions (and any pruning
+/***** PRUNING *****/
+
+/* If we don't want to fully analyze out the tree past the table we're now building, we prune some
+ * possible futuremoves.  Of course, this will affect the accuracy of the table; the table is a
+ * result of BOTH the position it was set up for AND the pruning decisions (and any pruning
  * decisions made on the futurebases used to calculate this one).
  *
  * We specify pruning in a simple way - by omitting future tables for moves we don't want to
- * consider.  This can be dangerous, so we require this feature to be specifically enabled.
- * Right now, there are two possibilities we can specify in the XML control file; one
- * to allow OUR MOVES to be pruned; the other to allow HIS MOVES to be pruned.
- *
- * And I don't like this.  I want to specify exactly what kinds of moves (pawn queening, frozen
- * piece moving, catpures) I want pruned rather than the current catch-all.
+ * consider.  This can be dangerous, so we require this feature to be specifically enabled.  Right
+ * now, there are two possibilities we can specify in the XML control file; one to allow moves to be
+ * DISCARDED; the other to allow victory to be CONCEDED to the side that makes the move.
  *
  * So, if we are white, and assuming that this is a table with a frozen white pawn on e3, we can
- * prune by simply ignoring e3e4 as a possible move.  If there is a semi-frozen black pawn on the
- * g-file, we can prune by treating g2g1=anything as a forced win for black.
+ * prune by simply ignoring Pe4 as a possible move.  If there is a black pawn on the g-file, and we
+ * don't want to compute out what happens after it queens, we can prune by treating Pg1=X as a forced
+ * win for black.
  *
- * We might want to "partially" prune a move like g2g1=X by looking a half-move into the future to
+ * We might want to "partially" prune a move like Pg1=X by looking a half-move into the future to
  * see if we can immediately take the new piece and simplify that way.  To do so, we would construct
- * a futurebase for the piece combination resulting after g2g1=X, probably leaving X frozen on g1,
+ * a futurebase for the piece combination resulting after Pg1=X, probably leaving X frozen on g1,
  * make one pass through that futurebase (this is currently unimplemented) and flag everything else
  * a win for black.  This approach avoids having to step a half-move into the future during back
  * propagation.  The advantages of this are three-fold.  First, it simplifies the program, and
@@ -4584,8 +4584,8 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
  *
  * And finally, we want to label in the file header that this pruning was done.  In particular, if
  * we use a pruned tablebase to compute another (earlier) pruned tablebase, we want to make sure the
- * pruning is consistent, i.e. "our" side has to stay the same.  This can only be guaranteed if we
- * explicitly flag which side is which in the file header.
+ * pruning is consistent, i.e. "our" side has to stay the same.  This is guaranteed by explicitly
+ * flagging in the XML header which sides can be pruned in which way (concede or discard).
  */
 
 boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
