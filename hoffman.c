@@ -1289,7 +1289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.165 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.166 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3086,9 +3086,14 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 void proptable_finalize(void)
 {
     int i;
-    int propentry;
     proptable_entry_t **input_proptables;
     int num_input_proptables;
+
+    int *proptable_index;
+    proptable_entry_t *sorting_network;
+    int *proptable_num;
+    int highbit;
+    int network_node;
 
     /* Flush out anything in the last proptable */
     proptable_full();
@@ -3096,23 +3101,95 @@ void proptable_finalize(void)
     input_proptables = proptables;
     num_input_proptables = num_proptables;
 
-    fprintf(stderr, "%d proptables\n", num_input_proptables);
-
     proptables = NULL;
     num_proptables = 0;
     proptables_size = 0;
 
-    for (i = 0; i < num_input_proptables; i ++) {
+    fprintf(stderr, "%d proptables\n", num_input_proptables);
 
-	for (propentry = 0; propentry <= MAX_PROPENTRY; propentry ++) {
-	    if (input_proptables[i][propentry].index != 0)
-		commit_proptable_entry(&input_proptables[i][propentry]);
+    for (highbit = 1; highbit <= num_input_proptables; highbit <<= 1);
+
+    proptable_index = malloc(num_input_proptables * sizeof(int));
+    sorting_network = malloc(2*highbit * sizeof(proptable_entry_t));
+    proptable_num = malloc(2*highbit * sizeof(int));
+
+    if ((proptable_index == NULL) || (sorting_network == NULL) || (proptable_num == NULL)) {
+	fprintf(stderr, "Can't malloc sorting network in proptable_finalize()\n");
+	return;
+    }
+
+    /* Initialize the sorting network.
+     *
+     * First, fill in the upper half of the network with either the first entry from a proptable,
+     * or an "infinite" entry for slots with no proptables.  Then, sort into the lower half
+     * of the network.
+     */
+
+    for (i = 0; i < highbit; i ++) {
+	sorting_network[highbit + i].index = proptable_tb->max_index + 1;
+	if (i < num_input_proptables) {
+	    proptable_num[highbit + i] = i;
+	    for (proptable_index[i] = 0; proptable_index[i] <= MAX_PROPENTRY; proptable_index[i] ++) {
+		if (input_proptables[i][proptable_index[i]].index != 0) {
+		    sorting_network[highbit + i] = input_proptables[i][proptable_index[i]];
+		    break;
+		}
+	    }
+	} else {
+	    proptable_num[highbit + i] = -1;
+	}
+    }
+
+    for (network_node = highbit-1; network_node > 0; network_node --) {
+	if (sorting_network[2*network_node].index < sorting_network[2*network_node+1].index) {
+	    sorting_network[network_node] = sorting_network[2*network_node];
+	    proptable_num[network_node] = proptable_num[2*network_node];
+	} else {
+	    sorting_network[network_node] = sorting_network[2*network_node+1];
+	    proptable_num[network_node] = proptable_num[2*network_node+1];
+	}
+    }
+
+    /* Now, process the data through the sorting network. */
+
+    while (sorting_network[1].index != proptable_tb->max_index + 1) {
+
+	commit_proptable_entry(&sorting_network[1]);
+
+	proptable_index[proptable_num[1]] ++;
+	sorting_network[highbit + proptable_num[1]].index = proptable_tb->max_index + 1;
+
+	while (proptable_index[proptable_num[1]] <= MAX_PROPENTRY) {
+	    if (input_proptables[proptable_num[1]][proptable_index[proptable_num[1]]].index != 0) {
+		sorting_network[highbit + proptable_num[1]]
+		    = input_proptables[proptable_num[1]][proptable_index[proptable_num[1]]];
+		break;
+	    }
+	    proptable_index[proptable_num[1]] ++;
 	}
 
+	network_node = highbit + proptable_num[1];
+
+	while (network_node > 1) {
+	    network_node >>= 1;
+	    if (sorting_network[2*network_node].index < sorting_network[2*network_node+1].index) {
+		sorting_network[network_node] = sorting_network[2*network_node];
+		proptable_num[network_node] = proptable_num[2*network_node];
+	    } else {
+		sorting_network[network_node] = sorting_network[2*network_node+1];
+		proptable_num[network_node] = proptable_num[2*network_node+1];
+	    }
+	}
+    }
+
+    for (i = 0; i < num_input_proptables; i ++) {
 	free(input_proptables[i]);
     }
 
     free(input_proptables);
+    free(proptable_index);
+    free(sorting_network);
+    free(proptable_num);
 }
 
 void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futurevector_t futurevector)
