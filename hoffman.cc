@@ -305,18 +305,19 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
  * To make this work for either white or black positions, let's adopt the notation PTM (Player to
  * move) and PNTM (Player not to move)
  *
- * 'movecnt' is is the number of moves FORWARD from this position that haven't been analyzed yet.
+ * 'movecnt' is is the number of moves FORWARD from this position that haven't been analyzed yet,
+ * with the high bit (128) set if PTM is in check.
  *
  * 'dtm' (Distance to Mate) is the number of moves required to force a mate.  It is positive
  * for a PTM mate and negative for a PNTM mate.
  *
  * Now PTM can mate with even a single move out of a position, so a postive dtm means PTM mates.
  * PNTM can only mate if PTM has no possible move that leads to mate, so a negative dtm coupled with
- * a zero movecnt means PNTM mates.
+ * a 0 or 128 movecnt means PNTM mates.
  *
  * So, if we backtrace from a single PTM WINS, then this position becomes PTM WINS.  If we backtrace
  * from PNTM WINS, we decrement movecnt and adjust dtm to the lowest value (the slowest mate).  If
- * movecnt reaches zero, then the position becomes PNTM WINS.  When we're all done backtracing
+ * movecnt reaches 0 or 128, then the position becomes PNTM WINS.  When we're all done backtracing
  * possible wins, anything left with a non-zero movecnt, or a zero dtm, is a DRAW.
  *
  * We also need a mate-in count and a stalemate (conversion) count.
@@ -1275,7 +1276,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.169 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.170 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2099,7 +2100,7 @@ inline short does_PTM_win(tablebase_t *tb, index_t index)
 
 inline short does_PNTM_win(tablebase_t *tb, index_t index)
 {
-    return (tb->entries[index].movecnt == 0) && (tb->entries[index].dtm < 0);
+    return ((tb->entries[index].movecnt & 127) == 0) && (tb->entries[index].dtm < 0);
 }
 
 inline boolean is_position_valid(tablebase_t *tb, index_t index)
@@ -2192,7 +2193,7 @@ void initialize_index_with_stalemate(tablebase_t *tb, index_t index)
     if (index == DEBUG_MOVE) printf("initialize_index_with_stalemate; index=%d\n", index);
 #endif
 
-    tb->entries[index].movecnt = 251; /* use this as stalemate for now */
+    tb->entries[index].movecnt = 127; /* use this as stalemate for now */
     tb->entries[index].dtm = 0;
     tb->entries[index].stalemate_cnt = 0;
 }
@@ -2249,18 +2250,16 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int st
 	}
 
 	if ((tb->entries[index].movecnt == 0) && (tb->entries[index].dtm == -1)) {
-	    /* In this case, the only moves at PTM's disposal move him into check (DTM is
-	     * now one, so it would drop to zero on next move).  So we need to distinguish here
-	     * between being in check (it's checkmate) and not being in check (stalemate).  The
-	     * simplest way to do this is to flip the side-to-move flag and look at the position
-	     * with the other side to move.  If the king can be taken, then that other position
-	     * will be PTM_WINS (of either flavor) with a DTM of 1.
+
+	    /* In this case, the only moves at PTM's disposal move him into check (DTM is now one,
+	     * so it would drop to zero on next move).  So we need to distinguish here between being
+	     * in check (it's checkmate) and not being in check (stalemate).  I went to the trouble
+	     * in initialize_tablebase() to check for this (no pun intended) and set the high order
+	     * bit of movecnt on in-check positions.  So the only way movecnt has actually made it
+	     * to zero here is if we're not in check...
 	     */
-	    /* XXX assumes that flipping lowest bit in index flips side-to-move flag */
-	    if (does_PTM_win(tb, index^1) && (tb->entries[index^1].dtm == 1)) {
-	    } else {
-		initialize_index_with_stalemate(tb, index);
-	    }
+
+	    initialize_index_with_stalemate(tb, index);
 	}
 
 	/* XXX not sure about this stalemate code */
@@ -5830,6 +5829,56 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
  *
  */
 
+int in_check(tablebase_t *tb, local_position_t *position)
+{
+    int piece;
+    int dir;
+    struct movement *movementptr;
+
+    for (piece = 0; piece < tb->num_pieces; piece++) {
+
+	/* We only want to consider pieces of the side which is NOT to move... */
+
+	if (tb->piece_color[piece] == position->side_to_move) continue;
+
+	if (tb->piece_type[piece] != PAWN) {
+
+	    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+
+		for (movementptr = movements[tb->piece_type[piece]][position->piece_position[piece]][dir];
+		     (movementptr->vector & position->board_vector) == 0;
+		     movementptr++) {
+		}
+
+		/* Now check to see if the movement ended because we hit against the king
+		 * of the opposite color.  If so, we're in check.
+		 */
+
+		if ((position->side_to_move == WHITE)
+		    && (movementptr->square == position->piece_position[WHITE_KING])) return 1;
+
+		if ((position->side_to_move == BLACK)
+		    && (movementptr->square == position->piece_position[BLACK_KING])) return 1;
+
+	    }
+	} else {
+	    for (movementptr = capture_pawn_movements[position->piece_position[piece]][tb->piece_color[piece]];
+		 movementptr->square != -1;
+		 movementptr++) {
+
+		if ((position->side_to_move == WHITE)
+		    && (movementptr->square == position->piece_position[WHITE_KING])) return 1;
+
+		if ((position->side_to_move == BLACK)
+		    && (movementptr->square == position->piece_position[BLACK_KING])) return 1;
+
+	    }
+	}
+    }
+
+    return 0;
+}
+
 void initialize_tablebase(tablebase_t *tb)
 {
     local_position_t position;
@@ -6086,8 +6135,19 @@ void initialize_tablebase(tablebase_t *tb)
 
 	    }
 
-	    if (movecnt == 0) initialize_index_with_stalemate(tb, index);
-	    else initialize_index_with_movecnt(tb, index, movecnt, futurevector);
+	    /* Finally, we want to determine is if we're in check.  This is significant because if
+	     * and when we decide there are no valid moves out of this position, being in check is
+	     * the difference between this being checkmate or stalemate.  We note being in check by
+	     * setting the high order bit in the unsigned char movecnt.
+	     */
+
+	    if (movecnt == 0) {
+		initialize_index_with_stalemate(tb, index);
+	    } else {
+		initialize_index_with_movecnt(tb, index,
+					      in_check(tb, &position) ? 128 + movecnt : movecnt,
+					      futurevector);
+	    }
 
 	mated: ;
 				
