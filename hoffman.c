@@ -300,49 +300,26 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
  * The 'xml' in the tablebase is authoritative; much of the other info is extracted from it
  * for efficiency.
  *
- * movecnt - 0 if this entry is ready to propagate; 255 if it has been propagated
- *
- * While movecnt is > 0, it is the number of moves FORWARD from this position that haven't been
- * analyzed yet.  The other three numbers are the number of moves out of this position for which
- * white wins, for which black wins, for which there is some kind of draw.
- *
- * If this position is WHITE TO MOVE, then we don't have to count outcomes which are WHITE WINS,
- * since that makes this position WHITE WINS.  We only have to count outcomes which are BLACK WINS,
- * in order to conclude that, if all possible white moves result in BLACK WINS, then this position
- * is BLACK WINS.  If at least one move leads to a draw (other moves lead to BLACK WINS), then the
- * position is WHITE DRAWS.  If all moves lead to draws, then the position is also BLACK DRAWS.
- * Since we assume that white will make the best move, then we can just say that this position DRAWS
- * unless either there is at least one move which leads to WHITE WINS, or if all moves lead to BLACK
- * WINS.
- *
- * So, all we really need is movecnt.  If we backtrace from a single WHITE WINS, then this position
- * becomes WHITE WINS.  If we backtrace from BLACK WINS, we decrement movecnt.  If movecnt reaches
- * zero, then the position becomes BLACK WINS.  When we're all done backtracing possible wins,
- * anything left with a non-zero movecnt is a DRAW.
- *
- * We also need a mate-in count and a stalemate (conversion) count.
- *
  * To make this work for either white or black positions, let's adopt the notation PTM (Player to
  * move) and PNTM (Player not to move)
  *
- * movecnt
- * 255 - ILLEGAL POSITION
- * 254 - PTM WINS; propagation done
- * 253 - PNTM WINS; propagation done
- * 252 - PTM WINS; propagation needed
- * 0   - PNTM WINS; propagation needed
+ * 'movecnt' is is the number of moves FORWARD from this position that haven't been analyzed yet.
  *
- * 1 through 251 - movecnt (during run), or DRAW (after run is finished)
+ * 'dtm' (Distance to Mate) is the number of moves required to force a mate.  It is positive
+ * for a PTM mate and negative for a PNTM mate.
+ *
+ * Now PTM can mate with even a single move out of a position, so a postive dtm means PTM mates.
+ * PNTM can only mate if PTM has no possible move that leads to mate, so a negative dtm coupled with
+ * a zero movecnt means PNTM mates.
+ *
+ * So, if we backtrace from a single PTM WINS, then this position becomes PTM WINS.  If we backtrace
+ * from PNTM WINS, we decrement movecnt and adjust dtm to the lowest value (the slowest mate).  If
+ * movecnt reaches zero, then the position becomes PNTM WINS.  When we're all done backtracing
+ * possible wins, anything left with a non-zero movecnt, or a zero dtm, is a DRAW.
+ *
+ * We also need a mate-in count and a stalemate (conversion) count.
  *
  */
-
-#define ILLEGAL_POSITION 255
-#define PTM_WINS_PROPAGATION_DONE 254
-#define PNTM_WINS_PROPAGATION_DONE 253
-#define PTM_WINS_PROPAGATION_NEEDED 252
-#define PNTM_WINS_PROPAGATION_NEEDED 0
-
-#define MAX_MOVECNT 251
 
 struct fourbyte_entry {
     unsigned char movecnt;
@@ -1289,7 +1266,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.167 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.168 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2108,37 +2085,18 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 
 inline short does_PTM_win(tablebase_t *tb, index_t index)
 {
-    return (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
-	|| (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE);
+    return (tb->entries[index].dtm > 0);
 }
 
 inline short does_PNTM_win(tablebase_t *tb, index_t index)
 {
-    return (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-	|| (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE);
-}
-
-inline boolean needs_propagation(tablebase_t *tb, index_t index)
-{
-    return (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED)
-	|| (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED);
+    return (tb->entries[index].movecnt == 0) && (tb->entries[index].dtm < 0);
 }
 
 inline boolean is_position_valid(tablebase_t *tb, index_t index)
 {
     if (tb->entries != NULL) return (get_DTM(tb,index) != 1);
     else return (fetch_DTM_from_disk(tb,index) != 1);
-}
-
-inline void mark_propagated(tablebase_t *tb, index_t index)
-{
-    if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) {
-	tb->entries[index].movecnt = PTM_WINS_PROPAGATION_DONE;
-    } else if (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED) {
-	tb->entries[index].movecnt = PNTM_WINS_PROPAGATION_DONE;
-    } else {
-	fprintf(stderr, "Propagation attempt on a completed or unresolved position\n");   /* BREAKPOINT */
-    }
 }
 
 inline int get_stalemate_count(tablebase_t *tb, index_t index)
@@ -2179,7 +2137,7 @@ void initialize_index_as_illegal(tablebase_t *tb, index_t index)
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE) printf("initialize_index_as_illegal; index=%d\n", index);
 #endif
-    tb->entries[index].movecnt = ILLEGAL_POSITION;
+    tb->entries[index].movecnt = 0;
     tb->entries[index].dtm = 0;
     tb->entries[index].stalemate_cnt = 255;
 }
@@ -2196,7 +2154,7 @@ void initialize_index_with_white_mated(tablebase_t *tb, index_t index)
 	fprintf(stderr, "initialize_index_with_white_mated in a white to move position!\n");
     }
 #endif
-    tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
+    tb->entries[index].movecnt = 0;
     tb->entries[index].dtm = 1;
     tb->entries[index].stalemate_cnt = 0;
 }
@@ -2213,7 +2171,7 @@ void initialize_index_with_black_mated(tablebase_t *tb, index_t index)
 	fprintf(stderr, "initialize_index_with_black_mated in a black to move position!\n");
     }
 #endif
-    tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
+    tb->entries[index].movecnt = 0;
     tb->entries[index].dtm = 1;
     tb->entries[index].stalemate_cnt = 0;
 }
@@ -2255,24 +2213,7 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int stalemate_coun
 
     if (dtm < 0) {
 	fprintf(stderr, "Negative distance to mate in PTM_wins!?\n"); /* BREAKPOINT */
-    } else if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE) {
-	if (dtm < tb->entries[index].dtm) {
-	    fprintf(stderr, "Distance to mate dropped in PTM_wins after propagation done!?\n"); /* BREAKPOINT */
-	}
-    } else if (tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) {
-	if (dtm < tb->entries[index].dtm) {
-	    /* This can happen if we're propagating in from a futurebase, since the propagation runs
-	     * through the futurebase in index order, not mate-in order.
-	     */
-	    /* fprintf(stderr, "Mate in count dropped in PTM_wins!?\n"); */
-	    tb->entries[index].dtm = dtm;
-	    tb->entries[index].stalemate_cnt = stalemate_count;
-	}
-    } else if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-	       || (tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_DONE)) {
-	fprintf(stderr, "PTM_wins in a position where PNTM already won?!\n");   /* BREAKPOINT */
-    } else {
-	tb->entries[index].movecnt = PTM_WINS_PROPAGATION_NEEDED;
+    } else if ((dtm < tb->entries[index].dtm) || (tb->entries[index].dtm <= 0)) {
 	tb->entries[index].dtm = dtm;
 	tb->entries[index].stalemate_cnt = stalemate_count;
     }
@@ -2289,25 +2230,16 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int st
 
     if (dtm > 0) {
 	fprintf(stderr, "Positive distance to mate in PNTM_wins!?\n"); /* BREAKPOINT */
-    } else if ((tb->entries[index].movecnt == PTM_WINS_PROPAGATION_NEEDED) ||
-	(tb->entries[index].movecnt == PTM_WINS_PROPAGATION_DONE)) {
-	/* This is OK.  PTM already found a way to win.  Do nothing. */
-    } else if ((tb->entries[index].movecnt == 0) || (tb->entries[index].movecnt > MAX_MOVECNT)) {
-	fprintf(stderr, "add_one_to_PNTM_wins in an already won position!?\n");  /* BREAKPOINT */
     } else {
-	/* since PNTM_WIN_PROPAGATION_NEEDED is 0, this decrements right into the special flag,
-	 * no extra check needed here
-	 */
 	tb->entries[index].movecnt --;
-	if (dtm < tb->entries[index].dtm) {
+	if ((dtm < tb->entries[index].dtm) && (tb->entries[index].dtm <= 0)) {
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
 	    /* XXX need to think more about the stalemates */
 	    tb->entries[index].dtm = dtm;
 	    tb->entries[index].stalemate_cnt = stalemate_count;
 	}
 
-	if ((tb->entries[index].movecnt == PNTM_WINS_PROPAGATION_NEEDED)
-	    && (tb->entries[index].dtm == -1)) {
+	if ((tb->entries[index].movecnt == 0) && (tb->entries[index].dtm == -1)) {
 	    /* In this case, the only moves at PTM's disposal move him into check (DTM is
 	     * now one, so it would drop to zero on next move).  So we need to distinguish here
 	     * between being in check (it's checkmate) and not being in check (stalemate).  The
@@ -3191,8 +3123,7 @@ int proptable_finalize(int target_dtm)
 	    }
 	}
 
-	if (needs_propagation(proptable_tb, index) && get_DTM(proptable_tb, index) == target_dtm) {
-	    mark_propagated(proptable_tb, index);
+	if (get_DTM(proptable_tb, index) == target_dtm) {
 	    back_propagate_index_within_table(proptable_tb, index,
 					      target_dtm, get_stalemate_count(proptable_tb, index));
 	    positions_propagated ++;
