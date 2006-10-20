@@ -78,6 +78,8 @@
  *        hoffman -p <tablebase> ...                              (probe mode)
  */
 
+#define _LARGEFILE64_SOURCE
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -393,8 +395,15 @@ proptable_entry_t *proptable = NULL;
 
 tablebase_t *proptable_tb = NULL;
 
+/* PROPTABLE_BITS for 16 byte entries:
+ *
+ * 8 = 256 entries = 4KB (testing)
+ * 20 = 1M entries = 16MB
+ * 24 = 16M entries = 256MB
+ */
+
 #define MAX_ZEROOFFSET 100
-#define PROPTABLE_BITS 8
+#define PROPTABLE_BITS 20
 #define NUM_PROPENTRIES (1 << PROPTABLE_BITS)
 #define MAX_PROPENTRY (NUM_PROPENTRIES - 1)
 #define PROPTABLE_INDEX_MASK MAX_PROPENTRY
@@ -1266,7 +1275,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.168 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.169 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2942,38 +2951,32 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevecto
     merge_propentrys(&proptable[propentry], &src);
 }
 
-proptable_entry_t ** proptables = NULL;
 int num_proptables = 0;
-int proptables_size = 0;
+int proptable_output_fd = -1;
 
 /* proptable_full() - dump out to disk and empty table
- *
- * For now, we just save the old proptables in a memory array (proptables).
  */
+
+int proptable_entries = 0;
 
 void proptable_full(void)
 {
-    if (proptables_size == 0) {
-	proptables_size = 16;
-	proptables = (proptable_entry_t **) malloc(proptables_size * sizeof(proptable_entry_t *));
-	if (proptables == NULL) {
-	    fprintf(stderr, "Can't malloc proptables\n");
-	}
-    } else if (num_proptables == proptables_size) {
-	proptables_size *= 2;
-	proptables = (proptable_entry_t **)
-	    realloc(proptables, proptables_size * sizeof(proptable_entry_t *));
-	if (proptables == NULL) {
-	    fprintf(stderr, "Can't realloc proptables\n");
-	}
+    if (proptable_output_fd == -1) {
+	proptable_output_fd = open("propfile_out", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    }
+    if (proptable_output_fd == -1) {
+	fprintf(stderr, "Can't open 'propfile_out' for writing propfile\n");
+	return;
     }
 
-    proptables[num_proptables ++] = proptable;
+    fprintf(stderr, "Writing proptable block %d with %d entries\n", num_proptables, proptable_entries);
 
-    proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
-    if (proptable == NULL) {
-	fprintf(stderr, "Can't calloc proptable\n");
-    }
+    /* XXX hitting a disk full condition is by no means out of the question here! */
+    do_write(proptable_output_fd, proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
+    bzero(proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
+
+    num_proptables ++;
+    proptable_entries = 0;
 }
 
 void commit_proptable_entry(proptable_entry_t *propentry)
@@ -3017,13 +3020,84 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 
 void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, int dtc);
 
+/* fetch_next_propentry()
+ *
+ * proptable_buffer[tablenum] - a malloc'ed buffer of PROPTABLE_BUFFER_SIZE bytes
+ * proptable_buffer_size[tablenum] - the number of valid ENTRIES (not bytes) in proptable_buffer[tablenum]
+ * proptable_disk_index[tablenum] - the global entry number of the FIRST entry in the buffer
+ * proptable_buffer_index[tablenum] - the local (relative to buffer) entry number of the NEXT entry
+ *                                    in the buffer to be read
+ */
+
+int proptable_input_fd;
+proptable_entry_t **proptable_buffer;
+int *proptable_buffer_size;
+int *proptable_disk_index;
+int *proptable_buffer_index;
+
+#define PROPTABLE_BUFFER_SIZE 4096
+
+void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
+{
+    int bytes_read;
+
+    do {
+
+	/* First, look for additional entries in the in-memory buffer */
+
+	while (proptable_buffer_index[tablenum] < proptable_buffer_size[tablenum]) {
+
+	    if (proptable_buffer[tablenum][proptable_buffer_index[tablenum]].index != 0) {
+		*dest = proptable_buffer[tablenum][proptable_buffer_index[tablenum]];
+		proptable_buffer_index[tablenum] ++;
+		return;
+	    }
+
+	    proptable_buffer_index[tablenum] ++;
+	}
+
+	proptable_disk_index[tablenum] += proptable_buffer_size[tablenum];
+
+	if (proptable_disk_index[tablenum] <= MAX_PROPENTRY) {
+
+	    /* read next disk buffer */
+
+	    if (lseek64(proptable_input_fd,
+			((off64_t) tablenum * NUM_PROPENTRIES + proptable_disk_index[tablenum])
+			* sizeof(proptable_entry_t),
+			SEEK_SET) == -1) {
+		perror("input proptable lseek64");
+	    }
+
+	    bytes_read = read(proptable_input_fd, proptable_buffer[tablenum], PROPTABLE_BUFFER_SIZE);
+
+	    if (bytes_read < sizeof(proptable_entry_t)) {
+		fprintf(stderr, "Error reading input proptable!\n");
+	    }
+
+	    proptable_buffer_size[tablenum] = bytes_read / sizeof(proptable_entry_t);
+
+	    /* We might have read past the end of this proptable!  Shorten up if we did. */
+
+	    if (proptable_disk_index[tablenum] + proptable_buffer_size[tablenum] > NUM_PROPENTRIES) {
+		proptable_buffer_size[tablenum] = NUM_PROPENTRIES - proptable_disk_index[tablenum];
+	    }
+
+	    proptable_buffer_index[tablenum] = 0;
+	}
+
+    } while (proptable_disk_index[tablenum] <= MAX_PROPENTRY);
+
+    /* No, we're really at the end! */
+
+    dest->index = proptable_tb->max_index + 1;
+}
+
 int proptable_finalize(int target_dtm)
 {
     int i;
-    proptable_entry_t **input_proptables;
     int num_input_proptables;
 
-    int *proptable_index;
     proptable_entry_t *sorting_network;
     int *proptable_num;
     int highbit;
@@ -3035,20 +3109,44 @@ int proptable_finalize(int target_dtm)
     /* Flush out anything in the last proptable */
     proptable_full();
 
-    input_proptables = proptables;
     num_input_proptables = num_proptables;
 
-    proptables = NULL;
+    close(proptable_output_fd);
+    proptable_output_fd = -1;
     num_proptables = 0;
-    proptables_size = 0;
+
+    rename("propfile_out", "propfile_in");
+    proptable_input_fd = open("propfile_in", O_RDONLY);
+    if (proptable_input_fd == -1) {
+	fprintf(stderr, "Can't open 'propfile_in' for reading propfile\n");
+	return 0;
+    }
 
     for (highbit = 1; highbit <= num_input_proptables; highbit <<= 1);
 
-    proptable_index = malloc(num_input_proptables * sizeof(int));
+    proptable_buffer = (proptable_entry_t **) malloc(num_input_proptables * sizeof(proptable_entry_t *));
+    proptable_buffer_size = (int *) calloc(num_input_proptables, sizeof(int));
+    proptable_disk_index = (int *) calloc(num_input_proptables, sizeof(int));
+    proptable_buffer_index = (int *) calloc(num_input_proptables, sizeof(int));
+
+    if ((proptable_buffer == NULL) || (proptable_buffer_size == NULL)
+	|| (proptable_disk_index == NULL) || (proptable_buffer_index == NULL)) {
+	fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
+	return 0;
+    }
+
+    for (i = 0; i < num_input_proptables; i ++) {
+	proptable_buffer[i] = (proptable_entry_t *) malloc(PROPTABLE_BUFFER_SIZE);
+	if (proptable_buffer[i] == NULL) {
+	    fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
+	    return 0;
+	}
+    }
+
     sorting_network = malloc(2*highbit * sizeof(proptable_entry_t));
     proptable_num = malloc(2*highbit * sizeof(int));
 
-    if ((proptable_index == NULL) || (sorting_network == NULL) || (proptable_num == NULL)) {
+    if ((sorting_network == NULL) || (proptable_num == NULL)) {
 	fprintf(stderr, "Can't malloc sorting network in proptable_finalize()\n");
 	return 0;
     }
@@ -3061,16 +3159,11 @@ int proptable_finalize(int target_dtm)
      */
 
     for (i = 0; i < highbit; i ++) {
-	sorting_network[highbit + i].index = proptable_tb->max_index + 1;
 	if (i < num_input_proptables) {
+	    fetch_next_propentry(i, &sorting_network[highbit + i]);
 	    proptable_num[highbit + i] = i;
-	    for (proptable_index[i] = 0; proptable_index[i] <= MAX_PROPENTRY; proptable_index[i] ++) {
-		if (input_proptables[i][proptable_index[i]].index != 0) {
-		    sorting_network[highbit + i] = input_proptables[i][proptable_index[i]];
-		    break;
-		}
-	    }
 	} else {
+	    sorting_network[highbit + i].index = proptable_tb->max_index + 1;
 	    proptable_num[highbit + i] = -1;
 	}
     }
@@ -3097,17 +3190,7 @@ int proptable_finalize(int target_dtm)
 
 	    commit_proptable_entry(&sorting_network[1]);
 
-	    proptable_index[proptable_num[1]] ++;
-	    sorting_network[highbit + proptable_num[1]].index = proptable_tb->max_index + 1;
-
-	    while (proptable_index[proptable_num[1]] <= MAX_PROPENTRY) {
-		if (input_proptables[proptable_num[1]][proptable_index[proptable_num[1]]].index != 0) {
-		    sorting_network[highbit + proptable_num[1]]
-			= input_proptables[proptable_num[1]][proptable_index[proptable_num[1]]];
-		    break;
-		}
-		proptable_index[proptable_num[1]] ++;
-	    }
+	    fetch_next_propentry(proptable_num[1], &sorting_network[highbit + proptable_num[1]]);
 
 	    network_node = highbit + proptable_num[1];
 
@@ -3132,16 +3215,22 @@ int proptable_finalize(int target_dtm)
     }
 
     for (i = 0; i < num_input_proptables; i ++) {
-	free(input_proptables[i]);
+	free(proptable_buffer[i]);
     }
+
+    free(proptable_buffer_index);
+    free(proptable_disk_index);
+    free(proptable_buffer_size);
+    free(proptable_buffer);
+
+    free(sorting_network);
+    free(proptable_num);
+
+    close(proptable_input_fd);
+    unlink("propfile_in");
 
     fprintf(stderr, "Pass %3d complete; %d positions processed; %d input proptables\n",
 	    target_dtm, positions_propagated, num_input_proptables);
-
-    free(input_proptables);
-    free(proptable_index);
-    free(sorting_network);
-    free(proptable_num);
 
     return positions_propagated;
 }
@@ -3150,12 +3239,18 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 {
     int propentry;
     int zerooffset;
+    int scaling_factor;
+
+    proptable_entries ++;
+
+    scaling_factor = proptable_tb->max_index / NUM_PROPENTRIES;
+    if (scaling_factor == 0) scaling_factor = 1;
 
  retry:
 
     /* We need an index into the proptable that maintains the index sort order of the entries. */
 
-    propentry = index / (proptable_tb->max_index / NUM_PROPENTRIES);
+    propentry = index / scaling_factor;
 
     if (proptable[propentry].index == 0) {
 	/* empty slot: insert at propentry */
