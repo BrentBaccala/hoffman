@@ -481,12 +481,20 @@ int find_name_in_array(char * name, char * array[])
  * structure's vector at the right places.  Might implement this some day.
  */
 
-/* Inversion in a finite field.  Originally, I used the HalfExtendedEuclidian algorithm from Manuel
- * Bronstein's book "Symbolic Integration I":
+/* Later in the program, I'll use these indices as the keys in an address calculation insertion
+ * sort.  This kind of sort performs well if the keys are evenly distributed, and performs horribly
+ * if the keys are clumped together.  Since checkmates occur in groups of similar positions,
+ * something has to be done.  "Something" is inversion of the indices in a finite field, specificly
+ * a modulo ring with a prime modulus.  The modulus is specified in the XML configuration, and I
+ * don't check to make sure it's prime - there are other programs available that do that.
+ *
+ * Originally, I used the HalfExtendedEuclidian algorithm from Manuel Bronstein's book "Symbolic
+ * Integration I":
  *
  * Given a Euclidean domain D and a,b in D, return s,g in D such that g = gcd(a,b) and sa=g (mod b)
  *
- * But I had so much trouble implementing it that I wrote out the following explanation.
+ * But I had so much trouble implementing it that I wrote out the following explanation and then
+ * coded it myself.
  *
  * Consider an array of number x[n].  To compute gcd(a,b), we set up x[0]=a and x[1]=b, then
  * repeatedly compute x[n+1] = x[n-1] % x[n].  So
@@ -525,12 +533,16 @@ int find_name_in_array(char * name, char * array[])
  *
  * Profiling showed a fair chunk of time being spent in this routine, and an inspection of the
  * assembly code revealed rather poor code generation (probably because we need to juggle seven
- * variables around), so I hand coded the algorithm in i386 assembly.  This is a GNU compiler, so we
- * use AT&T assembler syntax - the destination comes second.  A key design feature of the assembler
- * version of the algorithm is that it is actually two copies of the algorithm one right after the
- * other.  The first uses the EBX/ECX registers for x[n-1]/x[n]; the second uses ECX/EBX.  Ditto for
- * b[n-1]/b[n] being in either ESI/EDI or EDI/ESI.  We "swap" variables just by alternating between
- * the two versions.  This avoids all the variable swapping in the C version of the code.
+ * variables around), so I hand coded the algorithm in i386 assembly.  A key design feature of the
+ * assembler version of the algorithm is that it is actually two copies of the algorithm one right
+ * after the other.  The first uses the EBX/ECX registers for x[n-1]/x[n]; the second uses ECX/EBX.
+ * Ditto for b[n-1]/b[n] being in either ESI/EDI or EDI/ESI.  We "swap" variables just by
+ * alternating between the two versions.  This avoids all the variable swapping in the C version of
+ * the code.  I also use unsigned math throughout and interleave modulo reductions into the main
+ * algorithm, so it should work on any 32-bit numbers; I suspect that the C version may have
+ * overflow problems on large numbers.
+ *
+ * This is a GNU compiler, so we use AT&T assembler syntax - the destination comes second.
  */
 
 #define ASM_invert_in_finite_field(INDEX, MODULUS)						\
@@ -1488,7 +1500,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.172 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.173 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
