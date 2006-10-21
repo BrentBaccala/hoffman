@@ -1501,7 +1501,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.175 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.176 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2357,7 +2357,7 @@ int get_DTM(tablebase_t *tb, index_t index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 262273 */
+/* #define DEBUG_MOVE 524301 */
 
 /* Five possible ways we can initialize an index for a position:
  *  - it's illegal
@@ -3120,6 +3120,11 @@ void verify_movements()
 void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char dtc,
 			 futurevector_t futurevector)
 {
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	printf("insert_at_propentry; index=%d; propentry=%d; dtm=%d\n", index, propentry, dtm);
+#endif
+
     proptable[propentry].index = index;
     proptable[propentry].dtm = dtm;
     proptable[propentry].dtc = dtc;
@@ -3468,8 +3473,10 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 
     proptable_entries ++;
 
-    scaling_factor = proptable_tb->max_index / NUM_PROPENTRIES;
-    if (scaling_factor == 0) scaling_factor = 1;
+    /* I had a bug here with the scaling_factor rounding down - that's why we increment by one */
+
+    scaling_factor = (proptable_tb->max_index + 1) / NUM_PROPENTRIES;
+    scaling_factor ++;
 
  retry:
 
@@ -5751,8 +5758,7 @@ void propagate_one_minimove_within_table(tablebase_t *tb, int dtm, int dtc, loca
 
 #ifdef DEBUG_MOVE
     if (current_index == DEBUG_MOVE)
-	printf("propagate_one_minimove_within_table:  current_index=%d; parent_index=%d\n",
-	       current_index, parent_index);
+	printf("propagate_one_minimove_within_table:  current_index=%d; dtm=%d\n", current_index, dtm);
 #endif
 
     /* Parent position is the FUTURE position.  We now back-propagate to
