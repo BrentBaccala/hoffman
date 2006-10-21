@@ -484,9 +484,10 @@ int find_name_in_array(char * name, char * array[])
 /* Later in the program, I'll use these indices as the keys in an address calculation insertion
  * sort.  This kind of sort performs well if the keys are evenly distributed, and performs horribly
  * if the keys are clumped together.  Since checkmates occur in groups of similar positions,
- * something has to be done.  "Something" is inversion of the indices in a finite field, specificly
- * a modulo ring with a prime modulus.  The modulus is specified in the XML configuration, and I
- * don't check to make sure it's prime - there are other programs available that do that.
+ * something has to be done.  "Something" is inversion of the indices in a finite field,
+ * specifically a modulo ring with a prime modulus.  The modulus is specified in the XML
+ * configuration, and I don't check to make sure it's prime - there are other programs available
+ * that do that.
  *
  * Originally, I used the HalfExtendedEuclidian algorithm from Manuel Bronstein's book "Symbolic
  * Integration I":
@@ -1500,7 +1501,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.173 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.174 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
