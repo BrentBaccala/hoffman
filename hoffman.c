@@ -523,10 +523,98 @@ int find_name_in_array(char * name, char * array[])
  *
  * i.e, b[n] is the multiplicative inverse of b (mod a).
  *
+ * Profiling showed a fair chunk of time being spent in this routine, and an inspection of the
+ * assembly code revealed rather poor code generation (probably because we need to juggle seven
+ * variables around), so I hand coded the algorithm in i386 assembly.  This is a GNU compiler, so we
+ * use AT&T assembler syntax - the destination comes second.  A key design feature of the assembler
+ * version of the algorithm is that it is actually two copies of the algorithm one right after the
+ * other.  The first uses the EBX/ECX registers for x[n-1]/x[n]; the second uses ECX/EBX.  Ditto for
+ * b[n-1]/b[n] being in either ESI/EDI or EDI/ESI.  We "swap" variables just by alternating between
+ * the two versions.  This avoids all the variable swapping in the C version of the code.
  */
+
+#define ASM_invert_in_finite_field(INDEX, MODULUS)						\
+   asm("        push %%ebp;                                                                     \
+                                                                                                \
+                /* Input                                                                    */  \
+                /*                                                                          */  \
+                /* EBX - modulus                                                            */  \
+                /* ECX - index                                                              */  \
+                                                                                                \
+                mov %%ebx, %%ebp;                                                               \
+                mov $0, %%esi;                                                                  \
+                mov $1, %%edi;                                                                  \
+                                                                                                \
+                /* EBP - modulus                                                            */  \
+                /* EBX - x[n-1]                                                             */  \
+                /* ECX - x[n]                                                               */  \
+                /* ESI - b[n-1]                                                             */  \
+                /* EDI - b[n]                                                               */  \
+                                                                                                \
+                /* Divide x[n-1]/x[n]                                                       */  \
+           1:   mov %%ebx, %%eax;                                                               \
+                mov $0, %%edx;                                                                  \
+                div %%ecx;                                                                      \
+                                                                                                \
+                /* jz 6f if remainder is zero                                               */  \
+                or  %%edx, %%edx;                                                               \
+                jz  6f;                                                                         \
+                                                                                                \
+                /* remainder -> old x[n-1] reg (new x[n] reg)                               */  \
+                mov %%edx, %%ebx;                                                               \
+                                                                                                \
+                /* (b[n]*q) mod m                                                           */  \
+                mul %%edi;                                                                      \
+                div %%ebp;                                                                      \
+                                                                                                \
+                /* if remainder < b[n-1] add m to b[n-1]                                    */  \
+                cmp %%edx, %%esi;                                                               \
+                jns 2f;                                                                         \
+                add %%ebp, %%esi;                                                               \
+                                                                                                \
+                /* b[n-1] - (b[n]*q) mod m  ->  old b[n-1] reg (new b[n] reg)               */  \
+           2:   sub %%edx, %%esi;                                                               \
+                                                                                                \
+                /* EBP - modulus                                                            */  \
+                /* ECX - x[n-1]                                                             */  \
+                /* EBX - x[n]                                                               */  \
+                /* EDI - b[n-1]                                                             */  \
+                /* ESI - b[n]                                                               */  \
+                                                                                                \
+                /* Divide x[n-1]/x[n]                                                       */  \
+                mov %%ecx, %%eax;                                                               \
+                mov $0, %%edx;                                                                  \
+                div %%ebx;                                                                      \
+                                                                                                \
+                /* jz 7f if remainder is zero                                               */  \
+                or  %%edx, %%edx;                                                               \
+                jz  7f;                                                                         \
+                                                                                                \
+                /* remainder -> old x[n-1] reg (new x[n] reg)                               */  \
+                mov %%edx, %%ecx;                                                               \
+                                                                                                \
+                /* (b[n]*q) mod m                                                           */  \
+                mul %%esi;                                                                      \
+                div %%ebp;                                                                      \
+                                                                                                \
+                /* if remainder < b[n-1] add m to b[n-1]                                    */  \
+                cmp %%edx, %%edi;                                                               \
+                jns 3f;                                                                         \
+                add %%ebp, %%edi;                                                               \
+                                                                                                \
+                /* b[n-1] - (b[n]*q) mod m  ->  old b[n-1] reg (new b[n] reg)               */  \
+           3:   sub %%edx, %%edi;                                                               \
+                jmp 1b;                                                                         \
+                                                                                                \
+                /* 6: exit from first half: move b[n] from EDI to ESI                       */  \
+           6:   mov %%edi, %%esi;                                                               \
+                /* 7: exit from second half: move b[n] from ESI to ECX (output)             */  \
+           7:   mov %%esi, %%ecx;                                                               \
+                pop %%ebp;" : "+c" (INDEX) : "b" (MODULUS) : "ax", "dx", "di", "si", "cc")
 
 int invert_in_finite_field(int b, int modulus)
 {
+#if 0
     /* We start with n=1 */
 
     int xn_1 = modulus;  /* x_n-1 = x[0] = a */
@@ -534,6 +622,9 @@ int invert_in_finite_field(int b, int modulus)
     int bn_1 = 0;        /* b_n-1 = b[0] = 0 */
     int bn = 1;          /* b_n = b[1] = 1 */
     int bnn;
+
+    int test = b;
+    ASM_invert_in_finite_field(test, modulus);
 
     while (xn != 0) {
 
@@ -557,6 +648,10 @@ int invert_in_finite_field(int b, int modulus)
     bn_1 = bn_1 % modulus;
     if (bn_1 < 0) bn_1 += modulus;
 
+    if (bn_1 != test) {
+	fprintf(stderr, "assembly inversion didn't match C code\n");
+    }
+
     if (xn_1 != 1) {
 	fprintf(stderr, "GCD not 1 in invert_in_finite_field; was modulus prime?!\n"); /* BREAKPOINT */
     }
@@ -564,6 +659,10 @@ int invert_in_finite_field(int b, int modulus)
 	fprintf(stderr, "inverse 0 in invert_in_finite_field; was modulus prime?!\n"); /* BREAKPOINT */
     }
     return bn_1;
+#else
+    ASM_invert_in_finite_field(b, modulus);
+    return b;
+#endif
 }
 
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and
@@ -1389,7 +1488,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.171 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.172 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
