@@ -1501,7 +1501,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.174 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.175 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2481,10 +2481,11 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int st
 	     * in check (it's checkmate) and not being in check (stalemate).  I went to the trouble
 	     * in initialize_tablebase() to check for this (no pun intended) and set the high order
 	     * bit of movecnt on in-check positions.  So the only way movecnt has actually made it
-	     * to zero here is if we're not in check...
+	     * to zero here is if we're not in check, so this is stalemate...
 	     */
 
-	    initialize_index_with_stalemate(tb, index);
+	    tb->entries[index].dtm = 0;
+	    tb->entries[index].stalemate_cnt = 0;
 	}
 
 	/* XXX not sure about this stalemate code */
