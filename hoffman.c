@@ -344,6 +344,7 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 
 typedef struct tablebase {
     index_t max_index;
+    index_t modulus;
     enum {NAIVE_INDEX=1, SIMPLE_INDEX} index_type;
     int total_legal_piece_positions[MAX_PIECES];
     int simple_piece_positions[MAX_PIECES][64];
@@ -403,8 +404,8 @@ tablebase_t *proptable_tb = NULL;
  * 24 = 16M entries = 256MB
  */
 
-#define MAX_ZEROOFFSET 100
-#define PROPTABLE_BITS 20
+#define MAX_ZEROOFFSET 25
+#define PROPTABLE_BITS 16
 #define NUM_PROPENTRIES (1 << PROPTABLE_BITS)
 #define MAX_PROPENTRY (NUM_PROPENTRIES - 1)
 #define PROPTABLE_INDEX_MASK MAX_PROPENTRY
@@ -479,6 +480,91 @@ int find_name_in_array(char * name, char * array[])
  * structure.  Then we compute the positions of the mobile pieces and plug their bits into the
  * structure's vector at the right places.  Might implement this some day.
  */
+
+/* Inversion in a finite field.  Originally, I used the HalfExtendedEuclidian algorithm from Manuel
+ * Bronstein's book "Symbolic Integration I":
+ *
+ * Given a Euclidean domain D and a,b in D, return s,g in D such that g = gcd(a,b) and sa=g (mod b)
+ *
+ * But I had so much trouble implementing it that I wrote out the following explanation.
+ *
+ * Consider an array of number x[n].  To compute gcd(a,b), we set up x[0]=a and x[1]=b, then
+ * repeatedly compute x[n+1] = x[n-1] % x[n].  So
+ *
+ *      x[n-1] = q[n] * x[n] + x[n+1],
+ *
+ * because x[n+1] is the remainder, and q[n] is the quotient of the n'th division.
+ *
+ *      x[n+1] = x[n-1] - q[n] * x[n],
+ *
+ * so all common factors of x[n] and x[n-1] are preserved in x[n+1] (if it is non-zero).
+ * Eventually, x[n+1] will be zero, and x[n] will then be gcd(a,b).
+ *
+ * Now, each x[n] can be written in terms of a and b: x[n] = a[n] * a + b[n] * b.  Since
+ *
+ *      x[n+1]                  = x[n-1]                    - q[n] * x[n]
+ *
+ *      a[n+1] * a + b[n+1] * b = (a[n-1] * a + b[n-1] * b) - q[n] * (a[n] * a + b[n] * b)
+ *
+ *                              = (a[n-1] * a + b[n-1] * b) - q[n] * a[n] * a - q[n] * b[n] * b
+ *
+ *                              = (a[n-1] - q[n] * a[n]) * a + (b[n-1] - q[n] * b[n]) * b
+ *
+ *      a[n+1] = a[n-1] - q[n] * a[n]      and      b[n+1] = b[n-1] - q[n] * b[n]
+ *
+ * We started with x[0]=a and x[1]=b, so a[0]=1, b[0]=0, a[1]=0, and b[1]=1
+ *
+ * When we finally compute x[n] = gcd(a,b), we can decompose this into a[n] * a + b[n] * b,
+ * and if a was the prime modulus of our finite field, then x[n] = gcd(a,b) = 1, so:
+ *
+ *        1 = a[n] * a + b[n] * b
+ *
+ *        1 = b[n] * b  (mod a)
+ *
+ * i.e, b[n] is the multiplicative inverse of b (mod a).
+ *
+ */
+
+int invert_in_finite_field(int b, int modulus)
+{
+    /* We start with n=1 */
+
+    int xn_1 = modulus;  /* x_n-1 = x[0] = a */
+    int xn = b;          /* x_n = x[1] = b */
+    int bn_1 = 0;        /* b_n-1 = b[0] = 0 */
+    int bn = 1;          /* b_n = b[1] = 1 */
+    int bnn;
+
+    while (xn != 0) {
+
+	int q = xn_1/xn;
+	int r = xn_1%xn;
+
+	bnn=bn_1-q*bn;   /* b[n+1] = b[n-1] - q_n * b[n] */
+
+	bn_1=bn;         /* b[n-1] = b[n] */
+	bn=bnn;          /* b[n] = b[n+1] */
+
+	xn_1=xn;         /* x[n-1] = x[n] */
+	xn=r;            /* x[n] = x[n+1] */
+    }
+
+    /* Since xn = x[n] is zero, that means x[n-1] is the gcd (1), and b[n-1] is our inverse.
+     *
+     * We may, however, have to adjust it to be within the range of our modulo field
+     */
+
+    bn_1 = bn_1 % modulus;
+    if (bn_1 < 0) bn_1 += modulus;
+
+    if (xn_1 != 1) {
+	fprintf(stderr, "GCD not 1 in invert_in_finite_field; was modulus prime?!\n"); /* BREAKPOINT */
+    }
+    if (bn_1 == 0) {
+	fprintf(stderr, "inverse 0 in invert_in_finite_field; was modulus prime?!\n"); /* BREAKPOINT */
+    }
+    return bn_1;
+}
 
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and
  * multiplies them together for the various pieces.  Simple and fast.
@@ -772,6 +858,7 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
 {
     int piece;
     int piece2;
+    index_t index;
 
     /* Sort any identical pieces so that the lowest square number always comes first.  We don't want
      * to change around the original position, so we use a copy of it.
@@ -793,17 +880,29 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
 
     switch (tb->index_type) {
     case NAIVE_INDEX:
-	return local_position_to_naive_index(tb, pos);
+	index = local_position_to_naive_index(tb, pos);
+	break;
     case SIMPLE_INDEX:
-	return local_position_to_simple_index(tb, pos);
+	index = local_position_to_simple_index(tb, pos);
+	break;
     default:
 	fprintf(stderr, "Unknown index type in local_position_to_index()\n");  /* BREAKPOINT */
 	return -1;
     }
+
+    if ((index != -1) && (index != 0) && (tb->modulus != 0)) {
+	index = invert_in_finite_field(index, tb->modulus);
+    }
+
+    return index;
 }
 
 boolean index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
+    if ((index != 0) && (tb->modulus != 0)) {
+	index = invert_in_finite_field(index, tb->modulus);
+    }
+
     switch (tb->index_type) {
     case NAIVE_INDEX:
 	return naive_index_to_local_position(tb, index, p);
@@ -893,6 +992,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlNodePtr tablebase;
     xmlChar * format;
     xmlChar * index;
+    xmlChar * modulus;
 
     tb = malloc(sizeof(tablebase_t));
     if (tb == NULL) {
@@ -1018,7 +1118,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
     }
 
-    /* Fetch the index type and compute tb->max_index */
+    /* Fetch the index type and compute tb->max_index (but see next section of code) */
 
     index = xmlGetProp(tablebase, (const xmlChar *) "index");
     if ((index == NULL) || !strcasecmp((char *) index, "naive")) {
@@ -1060,6 +1160,18 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     } else {
 	fprintf(stderr, "Unknown index type (%s) in XML\n", index);
 	return NULL;
+    }
+
+    /* See if a modulus was specified for inversion in a finite field */
+
+    modulus = xmlGetProp(tablebase, (const xmlChar *) "modulus");
+    if (modulus != NULL) {
+	tb->modulus = strtol((const char *) modulus, NULL, 0);
+	if (tb->modulus <= tb->max_index) {
+	    fprintf(stderr, "modulus %d less than max_index %d\n", tb->modulus, tb->max_index);
+	    return NULL;
+	}
+	tb->max_index = tb->modulus - 1;
     }
 
     /* Fetch the move restrictions */
@@ -1138,6 +1250,7 @@ tablebase_t * parse_XML_control_file(char *filename)
 #endif
 
     tb = parse_XML_into_tablebase(doc);
+    if (tb == NULL) return NULL;
 
     /* XXX We use fourbyte during calculation even if it's a one-byte-DTM tablebase */
     tb->format = FORMAT_FOURBYTE;
@@ -1276,7 +1389,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.170 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.171 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
