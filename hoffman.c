@@ -600,7 +600,7 @@ int find_name_in_array(char * name, char * array[])
                 /* remainder -> old x[n-1] reg (new x[n] reg)                               */  \
                 mov %%edx, %%ecx;                                                               \
                                                                                                 \
-                /* (b[n]*q) mod m -> EDX                                                          */  \
+                /* (b[n]*q) mod m -> EDX                                                    */  \
                 mul %%esi;                                                                      \
                 div %%ebp;                                                                      \
                                                                                                 \
@@ -1488,7 +1488,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.178 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.179 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
