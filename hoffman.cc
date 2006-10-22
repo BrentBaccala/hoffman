@@ -1488,7 +1488,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.179 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.180 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2343,20 +2343,30 @@ int get_DTM(tablebase_t *tb, index_t index)
 
 /* Five possible ways we can initialize an index for a position:
  *  - it's illegal
- *  - white's mated (black is to move)
- *  - black's mated (white is to move)
+ *  - PNTM's mated
  *  - stalemate
  *  - any other position, with 'movecnt' possible moves out the position
  */
+
+void initialize_index(tablebase_t *tb, index_t index, int movecnt, int dtm, futurevector_t futurevector)
+{
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) printf("initialize_index; index=%d movecnt=%d dtm=%d\n", index, movecnt, dtm);
+#endif
+
+    tb->entries[index].movecnt = movecnt;
+    tb->entries[index].dtm = dtm;
+    tb->entries[index].stalemate_cnt = 0;
+    tb->futurevectors[index] = futurevector;
+}
 
 void initialize_index_as_illegal(tablebase_t *tb, index_t index)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE) printf("initialize_index_as_illegal; index=%d\n", index);
 #endif
-    tb->entries[index].movecnt = 0;
-    tb->entries[index].dtm = 0;
-    tb->entries[index].stalemate_cnt = 255;
+    initialize_index(tb, index, 0, 0, 0);
 }
 
 void initialize_index_with_PNTM_mated(tablebase_t *tb, index_t index)
@@ -2366,9 +2376,7 @@ void initialize_index_with_PNTM_mated(tablebase_t *tb, index_t index)
     if (index == DEBUG_MOVE) printf("initialize_index_with_PNTM_mated; index=%d\n", index);
 #endif
 
-    tb->entries[index].movecnt = 0;
-    tb->entries[index].dtm = 1;
-    tb->entries[index].stalemate_cnt = 0;
+    initialize_index(tb, index, 0, 1, 0);
 }
 
 void initialize_index_with_stalemate(tablebase_t *tb, index_t index)
@@ -2378,9 +2386,8 @@ void initialize_index_with_stalemate(tablebase_t *tb, index_t index)
     if (index == DEBUG_MOVE) printf("initialize_index_with_stalemate; index=%d\n", index);
 #endif
 
-    tb->entries[index].movecnt = 127; /* use this as stalemate for now */
-    tb->entries[index].dtm = 0;
-    tb->entries[index].stalemate_cnt = 0;
+    /* use movecnt 127 as stalemate for now */
+    initialize_index(tb, index, 127, 0, 0);
 }
 
 void initialize_index_with_movecnt(tablebase_t *tb, index_t index, int movecnt,
@@ -2391,10 +2398,7 @@ void initialize_index_with_movecnt(tablebase_t *tb, index_t index, int movecnt,
     if (index == DEBUG_MOVE) printf("initialize_index_with_movecnt; index=%d movecnt=%d\n", index, movecnt);
 #endif
 
-    tb->entries[index].movecnt = movecnt;
-    tb->entries[index].dtm = 0;
-    tb->entries[index].stalemate_cnt = 255;
-    tb->futurevectors[index] = futurevector;
+    initialize_index(tb, index, movecnt, 0, futurevector);
 }
 
 inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int stalemate_count)
