@@ -324,7 +324,7 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 struct fourbyte_entry {
     unsigned char movecnt;
     char dtm;
-    unsigned char stalemate_cnt;
+    unsigned char dtc;
     unsigned char resv;
 };
 
@@ -1488,7 +1488,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.180 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.181 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2316,9 +2316,9 @@ inline boolean is_position_valid(tablebase_t *tb, index_t index)
     else return (fetch_DTM_from_disk(tb,index) != 1);
 }
 
-inline int get_stalemate_count(tablebase_t *tb, index_t index)
+inline int get_DTC(tablebase_t *tb, index_t index)
 {
-    return tb->entries[index].stalemate_cnt;
+    return tb->entries[index].dtc;
 }
 
 /* Get the result in a format suitable for a one-byte DTM tablebase
@@ -2357,7 +2357,7 @@ void initialize_index(tablebase_t *tb, index_t index, int movecnt, int dtm, futu
 
     tb->entries[index].movecnt = movecnt;
     tb->entries[index].dtm = dtm;
-    tb->entries[index].stalemate_cnt = 0;
+    tb->entries[index].dtc = 0;
     tb->futurevectors[index] = futurevector;
 }
 
@@ -2401,7 +2401,7 @@ void initialize_index_with_movecnt(tablebase_t *tb, index_t index, int movecnt,
     initialize_index(tb, index, movecnt, 0, futurevector);
 }
 
-inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int stalemate_count)
+inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
 {
 
 #ifdef DEBUG_MOVE
@@ -2414,11 +2414,11 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int stalemate_coun
 	fprintf(stderr, "Negative distance to mate in PTM_wins!?\n"); /* BREAKPOINT */
     } else if ((dtm < tb->entries[index].dtm) || (tb->entries[index].dtm <= 0)) {
 	tb->entries[index].dtm = dtm;
-	tb->entries[index].stalemate_cnt = stalemate_count;
+	tb->entries[index].dtc = dtc;
     }
 }
 
-inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int stalemate_count)
+inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
 {
 
 #ifdef DEBUG_MOVE
@@ -2435,7 +2435,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int st
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
 	    /* XXX need to think more about the stalemates */
 	    tb->entries[index].dtm = dtm;
-	    tb->entries[index].stalemate_cnt = stalemate_count;
+	    tb->entries[index].dtc = dtc;
 	}
 
 	if ((tb->entries[index].movecnt == 0) && (tb->entries[index].dtm == -1)) {
@@ -2449,12 +2449,12 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int st
 	     */
 
 	    tb->entries[index].dtm = 0;
-	    tb->entries[index].stalemate_cnt = 0;
+	    tb->entries[index].dtc = 0;
 	}
 
 	/* XXX not sure about this stalemate code */
-	if (stalemate_count < tb->entries[index].stalemate_cnt) {
-	    tb->entries[index].stalemate_cnt = stalemate_count;
+	if (dtc < tb->entries[index].dtc) {
+	    tb->entries[index].dtc = dtc;
 	}
     }
 }
@@ -3402,7 +3402,7 @@ int proptable_finalize(int target_dtm)
 
 	if (get_DTM(proptable_tb, index) == target_dtm) {
 	    back_propagate_index_within_table(proptable_tb, index,
-					      target_dtm, get_stalemate_count(proptable_tb, index));
+					      target_dtm, get_DTC(proptable_tb, index));
 	    positions_propagated ++;
 	}
 
