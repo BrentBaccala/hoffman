@@ -555,15 +555,15 @@ int find_name_in_array(char * name, char * array[])
                 mov $0, %%esi;                                                                  \
                 mov $1, %%edi;                                                                  \
                                                                                                 \
-                /* EBP - modulus                                                            */  \
+           1:   /* EBP - modulus                                                            */  \
                 /* EBX - x[n-1]                                                             */  \
                 /* ECX - x[n]                                                               */  \
                 /* ESI - b[n-1]                                                             */  \
                 /* EDI - b[n]                                                               */  \
                                                                                                 \
                 /* Divide x[n-1]/x[n]                                                       */  \
-           1:   mov %%ebx, %%eax;                                                               \
-                mov $0, %%edx;                                                                  \
+                mov %%ebx, %%eax;                                                               \
+                xor %%edx, %%edx;                                                               \
                 div %%ecx;                                                                      \
                                                                                                 \
                 /* jz 6f if remainder is zero                                               */  \
@@ -573,19 +573,16 @@ int find_name_in_array(char * name, char * array[])
                 /* remainder -> old x[n-1] reg (new x[n] reg)                               */  \
                 mov %%edx, %%ebx;                                                               \
                                                                                                 \
-                /* (b[n]*q) mod m                                                           */  \
+                /* (b[n]*q) mod m -> EDX                                                    */  \
                 mul %%edi;                                                                      \
                 div %%ebp;                                                                      \
                                                                                                 \
-                /* if remainder < b[n-1] add m to b[n-1]                                    */  \
-                cmp %%edx, %%esi;                                                               \
-                jns 2f;                                                                         \
+                /* (b[n-1] - b[n]*q) mod m  ->  old b[n-1] reg (new b[n] reg)               */  \
+                sub %%edx, %%esi;                                                               \
+                jnc 2f;                                                                         \
                 add %%ebp, %%esi;                                                               \
                                                                                                 \
-                /* b[n-1] - (b[n]*q) mod m  ->  old b[n-1] reg (new b[n] reg)               */  \
-           2:   sub %%edx, %%esi;                                                               \
-                                                                                                \
-                /* EBP - modulus                                                            */  \
+           2:   /* EBP - modulus                                                            */  \
                 /* ECX - x[n-1]                                                             */  \
                 /* EBX - x[n]                                                               */  \
                 /* EDI - b[n-1]                                                             */  \
@@ -593,7 +590,7 @@ int find_name_in_array(char * name, char * array[])
                                                                                                 \
                 /* Divide x[n-1]/x[n]                                                       */  \
                 mov %%ecx, %%eax;                                                               \
-                mov $0, %%edx;                                                                  \
+                xor %%edx, %%edx;                                                               \
                 div %%ebx;                                                                      \
                                                                                                 \
                 /* jz 7f if remainder is zero                                               */  \
@@ -603,17 +600,14 @@ int find_name_in_array(char * name, char * array[])
                 /* remainder -> old x[n-1] reg (new x[n] reg)                               */  \
                 mov %%edx, %%ecx;                                                               \
                                                                                                 \
-                /* (b[n]*q) mod m                                                           */  \
+                /* (b[n]*q) mod m -> EDX                                                          */  \
                 mul %%esi;                                                                      \
                 div %%ebp;                                                                      \
                                                                                                 \
-                /* if remainder < b[n-1] add m to b[n-1]                                    */  \
-                cmp %%edx, %%edi;                                                               \
-                jns 3f;                                                                         \
+                /* (b[n-1] - b[n]*q) mod m  ->  old b[n-1] reg (new b[n] reg)               */  \
+                sub %%edx, %%edi;                                                               \
+                jnc 1b;                                                                         \
                 add %%ebp, %%edi;                                                               \
-                                                                                                \
-                /* b[n-1] - (b[n]*q) mod m  ->  old b[n-1] reg (new b[n] reg)               */  \
-           3:   sub %%edx, %%edi;                                                               \
                 jmp 1b;                                                                         \
                                                                                                 \
                 /* 6: exit from first half: move b[n] from EDI to ESI                       */  \
@@ -1494,7 +1488,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.177 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.178 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
