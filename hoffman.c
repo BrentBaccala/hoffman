@@ -204,11 +204,9 @@ futurevector_t discarded_futuremoves = 0;
  * now because the board_vector isn't correct at the point where we need to make that check.
  *
  * Local positions use numbers (0-63) indicating the positions of the pieces, and also have a quick
- * way to check captures using a black_vector and a white_vector.  You have to look into the
- * tablebase structure to figure out what piece corresponds to each number.  "black_vector" and
- * "white_vector" are only used during tablebase initialization and in the probe code.  It's
- * starting to look like these vectors would be better arranged as PTM_vector and PNTM_vector
- * (player to move and player not to move).
+ * way to check captures using a PTM_vector (pieces of the Player to Move).  You have to look into
+ * the tablebase structure to figure out what piece corresponds to each number.  PTM_vector is only
+ * used during tablebase initialization and in the probe code.
  *
  * It makes sense to include these vectors in the position structures because it's easiest to
  * compute them in the routines that convert indices to positions, but if you alter the position,
@@ -218,8 +216,8 @@ futurevector_t discarded_futuremoves = 0;
  * Global positions contain an 8x8 unsigned char array with ASCII characters representing each
  * piece.
  *
- * Sometimes I allow the board vectors, black_vector and white_vector to get out of sync with the
- * position (for speed).  This can be a problem, so it has to be done really carefully.
+ * Sometimes I allow the board and PTM vectors to get out of sync with the position (for speed).
+ * This can be a problem, so it has to be done really carefully.
  *
  * We don't worry about moving a piece that's pinned on our king, for example.  The resulting
  * position will already have been flagged illegal in the table.
@@ -234,8 +232,7 @@ futurevector_t discarded_futuremoves = 0;
 typedef struct {
     struct tablebase *tb;
     int64 board_vector;
-    int64 white_vector;
-    int64 black_vector;
+    int64 PTM_vector;
     short side_to_move;
     short en_passant_square;
     short piece_position[MAX_PIECES];
@@ -439,8 +436,8 @@ int find_name_in_array(char * name, char * array[])
  * extensively during all types of back propagation.
  *
  * local_position_to_index() also updates the position's board_vector (which doesn't have to be
- * valid going in), but not the white_vector or black_vector.  It does this to check for illegal en
- * passant positions.  It returns either an index into the table, or -1 if the position is illegal.
+ * valid going in), but not the PTM_vector.  It does this to check for illegal en passant positions.
+ * It returns either an index into the table, or -1 if the position is illegal.
  *
  * Actually, it doesn't update the board vector anymore because we work on a copy of the position.
  *
@@ -791,10 +788,8 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 	}
 
 	p->board_vector |= BITVECTOR(square);
-	if (tb->piece_color[piece] == WHITE) {
-	    p->white_vector |= BITVECTOR(square);
-	} else {
-	    p->black_vector |= BITVECTOR(square);
+	if (tb->piece_color[piece] == p->side_to_move) {
+	    p->PTM_vector |= BITVECTOR(square);
 	}
 	index >>= 6;
     }
@@ -928,10 +923,8 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 	}
 
 	p->board_vector |= BITVECTOR(square);
-	if (tb->piece_color[piece] == WHITE) {
-	    p->white_vector |= BITVECTOR(square);
-	} else {
-	    p->black_vector |= BITVECTOR(square);
+	if (tb->piece_color[piece] == p->side_to_move) {
+	    p->PTM_vector |= BITVECTOR(square);
 	}
     }
 
@@ -1057,10 +1050,10 @@ void check_1000_positions(tablebase_t *tb)
 
 	if (index != -1) {
 
-	    /* white_vector/black_vector were never set in position1, so don't check them now */
+	    /* PTM_vector wasn't set in position1, so don't check them now */
 
 	    if (!index_to_local_position(tb, index, &position2)
-		|| (position2.white_vector = 0, position2.black_vector = 0,
+		|| (position2.PTM_vector = 0,
 		    memcmp(&position1, &position2, sizeof(position1)))) {
 		fprintf(stderr, "Mismatch in check_1000_positions()\n");  /* BREAKPOINT */
 	    }
@@ -1501,7 +1494,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.176 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.177 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -1747,10 +1740,8 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
 		local->piece_position[piece] = sq;
 		local->board_vector |= BITVECTOR(sq);
-		if (tb2->piece_color[piece] == WHITE)
-		    local->white_vector |= BITVECTOR(sq);
-		else
-		    local->black_vector |= BITVECTOR(sq);
+		if (tb2->piece_color[piece] == local->side_to_move)
+		    local->PTM_vector |= BITVECTOR(sq);
 
 		pieces_processed_bitvector |= (1 << piece);
 
@@ -1844,10 +1835,8 @@ index_t global_position_to_local_position(tablebase_t *tb, global_position_t *gl
 
 		    local->piece_position[piece] = square;
 		    local->board_vector |= BITVECTOR(square);
-		    if (tb->piece_color[piece] == WHITE)
-			local->white_vector |= BITVECTOR(square);
-		    else
-			local->black_vector |= BITVECTOR(square);
+		    if (tb->piece_color[piece] == local->side_to_move)
+			local->PTM_vector |= BITVECTOR(square);
 
 		    pieces_processed_bitvector |= (1 << piece);
 
@@ -1958,8 +1947,7 @@ boolean place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, in
 	if ((tb->piece_type[piece] == type) && (tb->piece_color[piece] == color)) {
 	    pos->piece_position[piece] = square;
 	    pos->board_vector |= BITVECTOR(square);
-	    if (color == WHITE) pos->white_vector |= BITVECTOR(square);
-	    else pos->black_vector |= BITVECTOR(square);
+	    if (color == pos->side_to_move) pos->PTM_vector |= BITVECTOR(square);
 	    return 1;
 	}
     }
@@ -2377,35 +2365,13 @@ void initialize_index_as_illegal(tablebase_t *tb, index_t index)
     tb->entries[index].stalemate_cnt = 255;
 }
 
-void initialize_index_with_white_mated(tablebase_t *tb, index_t index)
+void initialize_index_with_PNTM_mated(tablebase_t *tb, index_t index)
 {
 
 #ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_with_white_mated; index=%d\n", index);
+    if (index == DEBUG_MOVE) printf("initialize_index_with_PNTM_mated; index=%d\n", index);
 #endif
 
-#if 0
-    if (WHITE_TO_MOVE(index)) {
-	fprintf(stderr, "initialize_index_with_white_mated in a white to move position!\n");
-    }
-#endif
-    tb->entries[index].movecnt = 0;
-    tb->entries[index].dtm = 1;
-    tb->entries[index].stalemate_cnt = 0;
-}
-
-void initialize_index_with_black_mated(tablebase_t *tb, index_t index)
-{
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_with_black_mated; index=%d\n", index);
-#endif
-
-#if 0
-    if (BLACK_TO_MOVE(index)) {
-	fprintf(stderr, "initialize_index_with_black_mated in a black to move position!\n");
-    }
-#endif
     tb->entries[index].movecnt = 0;
     tb->entries[index].dtm = 1;
     tb->entries[index].stalemate_cnt = 0;
@@ -6183,45 +6149,23 @@ void initialize_tablebase(tablebase_t *tb)
 			 * this position is a "mate in 0" (i.e, illegal)
 			 */
 
-			if (position.side_to_move == WHITE) {
-			    if ((movementptr->vector & position.white_vector) == 0) {
-				movecnt ++;
-				if (movementptr->square == position.piece_position[BLACK_KING]) {
-				    initialize_index_with_black_mated(tb, index);
-				    goto mated;
-				}
-				for (i = 2; i < tb->num_pieces; i ++) {
-				    if (movementptr->square == position.piece_position[i]) {
-					if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-					    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
-					}
-					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-					break;
+			if ((movementptr->vector & position.PTM_vector) == 0) {
+			    movecnt ++;
+			    for (i = 0; i < tb->num_pieces; i ++) {
+				if (movementptr->square == position.piece_position[i]) {
+				    if ((i == BLACK_KING) || (i == WHITE_KING)) {
+					initialize_index_with_PNTM_mated(tb, index);
+					goto mated;
 				    }
-				}
-				if (i == tb->num_pieces) {
-				    fprintf(stderr, "Couldn't match capture!\n"); /* BREAKPOINT */
+				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+					fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				    }
+				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				    break;
 				}
 			    }
-			} else {
-			    if ((movementptr->vector & position.black_vector) == 0) {
-				movecnt ++;
-				if (movementptr->square == position.piece_position[WHITE_KING]) {
-				    initialize_index_with_white_mated(tb, index);
-				    goto mated;
-				}
-				for (i = 2; i < tb->num_pieces; i ++) {
-				    if (movementptr->square == position.piece_position[i]) {
-					if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-					    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
-					}
-					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-					break;
-				    }
-				}
-				if (i == tb->num_pieces) {
-				    fprintf(stderr, "Couldn't match capture!\n"); /* BREAKPOINT */
-				}
+			    if (i == tb->num_pieces) {
+				fprintf(stderr, "Couldn't match capture!\n"); /* BREAKPOINT */
 			    }
 			}
 		    }
@@ -6277,8 +6221,6 @@ void initialize_tablebase(tablebase_t *tb)
 		     * promotion move or not is how many futuremoves get recorded.
 		     */
 
-#define ENEMY_BOARD_VECTOR(pos) ((tb->piece_color[piece] == WHITE) ? pos.black_vector : pos.white_vector)
-
 		    for (movementptr = capture_pawn_movements[position.piece_position[piece]][tb->piece_color[piece]];
 			 movementptr->square != -1;
 			 movementptr++) {
@@ -6300,18 +6242,19 @@ void initialize_tablebase(tablebase_t *tb)
 			    continue;
 			}
 
-			if ((movementptr->vector & ENEMY_BOARD_VECTOR(position)) == 0) continue;
+			if (((movementptr->vector & position.board_vector) == 0)
+			    || ((movementptr->vector & position.PTM_vector) != 0)) continue;
 
 			/* Same check as above for a mated situation */
 
 			if (position.side_to_move == WHITE) {
 			    if (movementptr->square == position.piece_position[BLACK_KING]) {
-				initialize_index_with_black_mated(tb, index);
+				initialize_index_with_PNTM_mated(tb, index);
 				goto mated;
 			    }
 			} else {
 			    if (movementptr->square == position.piece_position[WHITE_KING]) {
-				initialize_index_with_white_mated(tb, index);
+				initialize_index_with_PNTM_mated(tb, index);
 				goto mated;
 			    }
 			}
@@ -6830,10 +6773,7 @@ int main(int argc, char *argv[])
 
 			index_to_global_position(tb, index, &global_capture_position);
 
-			if (((pos.side_to_move == WHITE) &&
-			     ((movementptr->vector & pos.white_vector) == 0))
-			    || ((pos.side_to_move == BLACK) &&
-				((movementptr->vector & pos.black_vector) == 0))) {
+			if ((movementptr->vector & pos.PTM_vector) == 0) {
 
 			    if ((movementptr->square == pos.piece_position[BLACK_KING])
 				|| (movementptr->square == pos.piece_position[WHITE_KING])) {
@@ -7001,7 +6941,7 @@ int main(int argc, char *argv[])
 			    continue;
 			}
 
-			if ((movementptr->vector & ENEMY_BOARD_VECTOR(pos)) == 0) continue;
+			if ((movementptr->vector & pos.PTM_vector) != 0) continue;
 
 			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
