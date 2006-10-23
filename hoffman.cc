@@ -88,6 +88,8 @@
 #include <fcntl.h>	/* for O_RDONLY */
 #include <netdb.h>	/* for gethostbyname() */
 
+#include <sys/mman.h>	/* for mmap() */
+
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
  * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
  * compiler's command line, rather than a system-wide /usr/include/readline.  I use it this way
@@ -366,6 +368,7 @@ typedef struct tablebase {
 
     int format;
 
+    FILE *entries_FILE;
     struct fourbyte_entry *entries;
     futurevector_t *futurevectors;
 } tablebase_t;
@@ -1309,7 +1312,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     return tb;
 }
 
-/* Parses an XML control file.  This function allocates an entries array, as well.
+/* Parses an XML control file.
  */
 
 tablebase_t * parse_XML_control_file(char *filename)
@@ -1353,20 +1356,6 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     /* XXX We use fourbyte during calculation even if it's a one-byte-DTM tablebase */
     tb->format = FORMAT_FOURBYTE;
-
-    if (tb != NULL) {
-
-	tb->entries = (struct fourbyte_entry *) calloc(tb->max_index + 1, sizeof(struct fourbyte_entry));
-	if (tb->entries == NULL) {
-	    fprintf(stderr, "Can't malloc tablebase entries\n");
-	}
-
-	tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
-	if (tb->futurevectors == NULL) {
-	    fprintf(stderr, "Can't malloc tablebase futurevectors\n");
-	}
-
-    }
 
     /* We don't free the XML doc because the tablebase struct contains a pointer to it */
 
@@ -1488,7 +1477,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.181 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.182 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2341,7 +2330,7 @@ int get_DTM(tablebase_t *tb, index_t index)
 
 /* #define DEBUG_MOVE 524301 */
 
-/* Five possible ways we can initialize an index for a position:
+/* Four possible ways we can initialize an index for a position:
  *  - it's illegal
  *  - PNTM's mated
  *  - stalemate
@@ -2350,14 +2339,31 @@ int get_DTM(tablebase_t *tb, index_t index)
 
 void initialize_index(tablebase_t *tb, index_t index, int movecnt, int dtm, futurevector_t futurevector)
 {
+    static index_t next_index = 0;
+    struct fourbyte_entry entry;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE) printf("initialize_index; index=%d movecnt=%d dtm=%d\n", index, movecnt, dtm);
 #endif
 
-    tb->entries[index].movecnt = movecnt;
-    tb->entries[index].dtm = dtm;
-    tb->entries[index].dtc = 0;
+    if (next_index != index) {
+	fprintf(stderr, "Out of order initialization\n");
+	next_index = index + 1;
+    } else {
+	next_index ++;
+    }
+
+    if (tb->entries != NULL) {
+	tb->entries[index].movecnt = movecnt;
+	tb->entries[index].dtm = dtm;
+	tb->entries[index].dtc = 0;
+    } else {
+	entry.movecnt = movecnt;
+	entry.dtm = dtm;
+	entry.dtc = 0;
+	fwrite(&entry, sizeof(entry), 1, tb->entries_FILE);
+    }
+
     tb->futurevectors[index] = futurevector;
 }
 
@@ -6375,6 +6381,25 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
 
+#if 0
+    tb->entries = (struct fourbyte_entry *) calloc(tb->max_index + 1, sizeof(struct fourbyte_entry));
+    if (tb->entries == NULL) {
+	fprintf(stderr, "Can't malloc tablebase entries\n");
+    }
+#else
+    tb->entries_FILE = fopen("entries", "w+");
+    if (tb->entries_FILE == NULL) {
+	fprintf(stderr, "Can't fopen 'entries' for writing\n");
+	return 0;
+    }
+#endif
+
+    tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
+    if (tb->futurevectors == NULL) {
+	fprintf(stderr, "Can't malloc tablebase futurevectors\n");
+	return 0;
+    }
+
     proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
     if (proptable == NULL) {
 	fprintf(stderr, "Can't calloc proptable\n");
@@ -6390,6 +6415,16 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     initialize_tablebase(tb);
 
     check_1000_indices(tb);
+
+    if (tb->entries_FILE != NULL) {
+	fflush(tb->entries_FILE);
+	tb->entries = mmap(NULL, (tb->max_index + 1) * sizeof(struct fourbyte_entry),
+			   PROT_READ | PROT_WRITE, MAP_PRIVATE, fileno(tb->entries_FILE), 0);
+	if (tb->entries == NULL) {
+	    fprintf(stderr, "Can't mmap 'entries' file\n");
+	    return 0;
+	}
+    }
 
     dtm_limit = back_propagate_all_futurebases(tb);
     if (dtm_limit == -1) return 0;
