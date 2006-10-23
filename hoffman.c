@@ -373,6 +373,7 @@ typedef struct tablebase {
     futurevector_t *futurevectors;
 } tablebase_t;
 
+struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index);
 
 /* Propagation table
  *
@@ -660,10 +661,10 @@ int invert_in_finite_field(int b, int modulus)
     }
 
     if (xn_1 != 1) {
-	fprintf(stderr, "GCD not 1 in invert_in_finite_field; was modulus prime?!\n"); /* BREAKPOINT */
+	fprintf(stderr, "GCD not 1 in invert_in_finite_field; was modulus prime?!\n");
     }
     if (bn_1 == 0) {
-	fprintf(stderr, "inverse 0 in invert_in_finite_field; was modulus prime?!\n"); /* BREAKPOINT */
+	fprintf(stderr, "inverse 0 in invert_in_finite_field; was modulus prime?!\n");
     }
     return bn_1;
 #else
@@ -1477,7 +1478,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.184 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.185 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2321,14 +2322,24 @@ inline int get_DTC(tablebase_t *tb, index_t index)
 
 int get_DTM(tablebase_t *tb, index_t index)
 {
-    return (does_PTM_win(tb,index) || does_PNTM_win(tb,index)) ? tb->entries[index].dtm : 0;
+    struct fourbyte_entry *fourbyte_entry;
+    /* return (does_PTM_win(tb,index) || does_PNTM_win(tb,index)) ? tb->entries[index].dtm : 0; */
+
+    fourbyte_entry = fetch_fourbyte_entry(tb, index);
+
+    if ((fourbyte_entry->dtm > 0)
+	|| ((fourbyte_entry->dtm < 0) && ((fourbyte_entry->movecnt & 127) == 0)))
+	return fourbyte_entry->dtm;
+    else
+	return 0;
+
 }
 
 /* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 524301 */
+/* #define DEBUG_MOVE 4186 */
 
 /* Four possible ways we can initialize an index for a position:
  *  - it's illegal
@@ -2343,7 +2354,9 @@ void initialize_index(tablebase_t *tb, index_t index, int movecnt, int dtm, futu
     struct fourbyte_entry entry;
 
 #ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index; index=%d movecnt=%d dtm=%d\n", index, movecnt, dtm);
+    if (index == DEBUG_MOVE)
+	fprintf(stderr, "initialize_index; index=%d movecnt=%d dtm=%d futurevector=%d\n",
+		index, movecnt, dtm, futurevector);
 #endif
 
     if (next_index != index) {
@@ -3190,7 +3203,7 @@ void commit_proptable_entry(proptable_entry_t *propentry, struct fourbyte_entry 
     if ((propentry->futurevector & proptable_tb->futurevectors[index]) != propentry->futurevector) {
 	global_position_t global;
 	index_to_global_position(proptable_tb, propentry->index, &global);
-	fprintf(stderr, "Futuremove already handled: %s\n", global_position_to_FEN(&global));
+	fprintf(stderr, "Futuremove already handled: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
     }
 
     proptable_tb->futurevectors[index] ^= propentry->futurevector;
@@ -3286,7 +3299,39 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
 {
-    return &tb->entries[index];
+    static struct fourbyte_entry *buffer = NULL;
+    static index_t bufstart = 0;
+    static int buflen = 0;
+    static int bufmax = 4096;
+    int bytes_read;
+
+    if (buffer == NULL) {
+	buffer = malloc(bufmax * sizeof(struct fourbyte_entry));
+	if (buffer == NULL) {
+	    fprintf(stderr, "Can't malloc entry buffer\n");
+	    exit(EXIT_FAILURE);
+	}
+    }
+
+    if ((index < bufstart) || (index >= (bufstart + buflen))) {
+
+	/* write buffer out */
+	if (buflen != 0) {
+	    lseek(fileno(tb->entries_FILE), bufstart * sizeof(struct fourbyte_entry), SEEK_SET);
+	    do_write(fileno(tb->entries_FILE), buffer, buflen * sizeof(struct fourbyte_entry));
+	}
+
+	/* read next buffer in */
+	lseek(fileno(tb->entries_FILE), index * sizeof(struct fourbyte_entry), SEEK_SET);
+	bytes_read = read(fileno(tb->entries_FILE), buffer, bufmax * sizeof(struct fourbyte_entry));
+	if (bytes_read < sizeof(struct fourbyte_entry)) {
+	    fprintf(stderr, "Error reading entries file\n");
+	}
+	bufstart = index;
+	buflen = bytes_read / sizeof(struct fourbyte_entry);
+    }
+
+    return &buffer[index - bufstart];
 }
 
 int proptable_finalize(int target_dtm)
@@ -6424,12 +6469,14 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     if (tb->entries_FILE != NULL) {
 	fflush(tb->entries_FILE);
+#if 0
 	tb->entries = mmap(NULL, (tb->max_index + 1) * sizeof(struct fourbyte_entry),
 			   PROT_READ | PROT_WRITE, MAP_PRIVATE, fileno(tb->entries_FILE), 0);
 	if (tb->entries == NULL) {
 	    fprintf(stderr, "Can't mmap 'entries' file\n");
 	    return 0;
 	}
+#endif
     }
 
     dtm_limit = back_propagate_all_futurebases(tb);
