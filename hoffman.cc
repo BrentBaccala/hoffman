@@ -368,12 +368,10 @@ typedef struct tablebase {
 
     int format;
 
-    FILE *entries_FILE;
+    int entries_fd;
     struct fourbyte_entry *entries;
     futurevector_t *futurevectors;
 } tablebase_t;
-
-struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index);
 
 /* Propagation table
  *
@@ -1478,7 +1476,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.186 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.187 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2290,6 +2288,51 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  *
  */
 
+struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
+{
+    static struct fourbyte_entry *buffer = NULL;
+    static index_t bufstart = 0;
+    static int buflen = 0;
+    static int bufmax = 4096;
+    int bytes_read;
+
+    if (buffer == NULL) {
+	buffer = malloc(bufmax * sizeof(struct fourbyte_entry));
+	if (buffer == NULL) {
+	    fprintf(stderr, "Can't malloc entry buffer\n");
+	    exit(EXIT_FAILURE);
+	}
+    }
+
+    if ((index < bufstart) || (index >= (bufstart + buflen))) {
+
+	/* write buffer out */
+	if (buflen != 0) {
+	    lseek(tb->entries_fd, bufstart * sizeof(struct fourbyte_entry), SEEK_SET);
+	    do_write(tb->entries_fd, buffer, buflen * sizeof(struct fourbyte_entry));
+	}
+
+	/* read next buffer in */
+	lseek(tb->entries_fd, index * sizeof(struct fourbyte_entry), SEEK_SET);
+	bytes_read = read(tb->entries_fd, buffer, bufmax * sizeof(struct fourbyte_entry));
+	if (bytes_read == 0) {
+	    /* This is OK.  It just means we hit EOF - nothing is there yet! */
+	    bzero(buffer, bufmax * sizeof(struct fourbyte_entry));
+	    bufstart = index;
+	    buflen = bufmax;
+	} else if (bytes_read == -1) {
+	    perror("Error reading entries file");  /* BREAKPOINT */
+	} else if ((bytes_read == -1) || (bytes_read < sizeof(struct fourbyte_entry))) {
+	    fprintf(stderr, "Error reading entries file\n");
+	} else {
+	    bufstart = index;
+	    buflen = bytes_read / sizeof(struct fourbyte_entry);
+	}
+    }
+
+    return &buffer[index - bufstart];
+}
+
 inline short does_PTM_win(struct fourbyte_entry *entry)
 {
     return (entry->dtm > 0);
@@ -2352,7 +2395,7 @@ int get_DTM(tablebase_t *tb, index_t index)
 void initialize_index(tablebase_t *tb, index_t index, int movecnt, int dtm, futurevector_t futurevector)
 {
     static index_t next_index = 0;
-    struct fourbyte_entry entry;
+    struct fourbyte_entry *entry;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -2367,16 +2410,11 @@ void initialize_index(tablebase_t *tb, index_t index, int movecnt, int dtm, futu
 	next_index ++;
     }
 
-    if (tb->entries != NULL) {
-	tb->entries[index].movecnt = movecnt;
-	tb->entries[index].dtm = dtm;
-	tb->entries[index].dtc = 0;
-    } else {
-	entry.movecnt = movecnt;
-	entry.dtm = dtm;
-	entry.dtc = 0;
-	fwrite(&entry, sizeof(entry), 1, tb->entries_FILE);
-    }
+    entry = fetch_fourbyte_entry(tb, index);
+
+    entry->movecnt = movecnt;
+    entry->dtm = dtm;
+    entry->dtc = 0;
 
     tb->futurevectors[index] = futurevector;
 }
@@ -3276,8 +3314,10 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	    bytes_read = read(proptable_input_fd, proptable_buffer[tablenum], PROPTABLE_BUFFER_SIZE);
 
-	    if (bytes_read < sizeof(proptable_entry_t)) {
-		fprintf(stderr, "Error reading input proptable!\n");
+	    if (bytes_read == -1) {
+		perror("Error reading input proptable");  /* BREAKPOINT */
+	    } else if (bytes_read < sizeof(proptable_entry_t)) {
+		fprintf(stderr, "Error reading input proptable!\n");  /* BREAKPOINT */
 	    }
 
 	    proptable_buffer_size[tablenum] = bytes_read / sizeof(proptable_entry_t);
@@ -3296,43 +3336,6 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
     /* No, we're really at the end! */
 
     dest->index = proptable_tb->max_index + 1;
-}
-
-struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
-{
-    static struct fourbyte_entry *buffer = NULL;
-    static index_t bufstart = 0;
-    static int buflen = 0;
-    static int bufmax = 4096;
-    int bytes_read;
-
-    if (buffer == NULL) {
-	buffer = malloc(bufmax * sizeof(struct fourbyte_entry));
-	if (buffer == NULL) {
-	    fprintf(stderr, "Can't malloc entry buffer\n");
-	    exit(EXIT_FAILURE);
-	}
-    }
-
-    if ((index < bufstart) || (index >= (bufstart + buflen))) {
-
-	/* write buffer out */
-	if (buflen != 0) {
-	    lseek(fileno(tb->entries_FILE), bufstart * sizeof(struct fourbyte_entry), SEEK_SET);
-	    do_write(fileno(tb->entries_FILE), buffer, buflen * sizeof(struct fourbyte_entry));
-	}
-
-	/* read next buffer in */
-	lseek(fileno(tb->entries_FILE), index * sizeof(struct fourbyte_entry), SEEK_SET);
-	bytes_read = read(fileno(tb->entries_FILE), buffer, bufmax * sizeof(struct fourbyte_entry));
-	if (bytes_read < sizeof(struct fourbyte_entry)) {
-	    fprintf(stderr, "Error reading entries file\n");
-	}
-	bufstart = index;
-	buflen = bytes_read / sizeof(struct fourbyte_entry);
-    }
-
-    return &buffer[index - bufstart];
 }
 
 int proptable_finalize(int target_dtm)
@@ -6436,9 +6439,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	fprintf(stderr, "Can't malloc tablebase entries\n");
     }
 #else
-    tb->entries_FILE = fopen("entries", "w+");
-    if (tb->entries_FILE == NULL) {
-	fprintf(stderr, "Can't fopen 'entries' for writing\n");
+    tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC, 0666);
+    if (tb->entries_fd == -1) {
+	fprintf(stderr, "Can't open 'entries' for read-write\n");
 	return 0;
     }
 #endif
@@ -6464,18 +6467,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     initialize_tablebase(tb);
 
     check_1000_indices(tb);
-
-    if (tb->entries_FILE != NULL) {
-	fflush(tb->entries_FILE);
-#if 0
-	tb->entries = mmap(NULL, (tb->max_index + 1) * sizeof(struct fourbyte_entry),
-			   PROT_READ | PROT_WRITE, MAP_PRIVATE, fileno(tb->entries_FILE), 0);
-	if (tb->entries == NULL) {
-	    fprintf(stderr, "Can't mmap 'entries' file\n");
-	    return 0;
-	}
-#endif
-    }
 
     dtm_limit = back_propagate_all_futurebases(tb);
     if (dtm_limit == -1) return 0;
