@@ -90,6 +90,8 @@
 
 #include <sys/mman.h>	/* for mmap() */
 
+#include <pthread.h>
+
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
  * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
  * compiler's command line, rather than a system-wide /usr/include/readline.  I use it this way
@@ -1476,7 +1478,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.187 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.188 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2288,49 +2290,138 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  *
  */
 
-struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
+#define NUM_ENTRY_BUFFERS 8
+#define ENTRY_BUFFER_SIZE 4096
+
+struct entry_buffer {
+    struct fourbyte_entry *buffer;
+    index_t start;
+    int length;
+    pthread_mutex_t mutex;
+};
+
+struct entry_buffer entry_buffers[NUM_ENTRY_BUFFERS];
+int current_entry_buffer;
+
+void read_entry_buffer_from_disk(tablebase_t *tb, struct entry_buffer *entrybuf, index_t index)
 {
-    static struct fourbyte_entry *buffer = NULL;
-    static index_t bufstart = 0;
-    static int buflen = 0;
-    static int bufmax = 4096;
     int bytes_read;
 
-    if (buffer == NULL) {
-	buffer = malloc(bufmax * sizeof(struct fourbyte_entry));
-	if (buffer == NULL) {
-	    fprintf(stderr, "Can't malloc entry buffer\n");
-	    exit(EXIT_FAILURE);
-	}
+    /* write old contents of buffer out (if there are any) */
+    if (entrybuf->length != 0) {
+	lseek(tb->entries_fd, entrybuf->start * sizeof(struct fourbyte_entry), SEEK_SET);
+	do_write(tb->entries_fd, entrybuf->buffer, entrybuf->length * sizeof(struct fourbyte_entry));
     }
 
-    if ((index < bufstart) || (index >= (bufstart + buflen))) {
+    /* read new buffer in */
+    lseek(tb->entries_fd, index * sizeof(struct fourbyte_entry), SEEK_SET);
+    bytes_read = read(tb->entries_fd, entrybuf->buffer, ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry));
+    if (bytes_read == 0) {
+	/* This is OK.  It just means we hit EOF - nothing is there yet! */
+	bzero(entrybuf->buffer, ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry));
+	entrybuf->start = index;
+	entrybuf->length = ENTRY_BUFFER_SIZE;
+    } else if (bytes_read == -1) {
+	perror("Error reading entries file");  /* BREAKPOINT */
+    } else if ((bytes_read == -1) || (bytes_read < sizeof(struct fourbyte_entry))) {
+	fprintf(stderr, "Error reading entries file\n");
+    } else {
+	entrybuf->start = index;
+	entrybuf->length = bytes_read / sizeof(struct fourbyte_entry);
+    }
+}
 
-	/* write buffer out */
-	if (buflen != 0) {
-	    lseek(tb->entries_fd, bufstart * sizeof(struct fourbyte_entry), SEEK_SET);
-	    do_write(tb->entries_fd, buffer, buflen * sizeof(struct fourbyte_entry));
-	}
+index_t entry_buffer_thread_next_index;
+index_t entry_buffer_thread_max_index;
+tablebase_t *entry_buffer_thread_tb;
 
-	/* read next buffer in */
-	lseek(tb->entries_fd, index * sizeof(struct fourbyte_entry), SEEK_SET);
-	bytes_read = read(tb->entries_fd, buffer, bufmax * sizeof(struct fourbyte_entry));
-	if (bytes_read == 0) {
-	    /* This is OK.  It just means we hit EOF - nothing is there yet! */
-	    bzero(buffer, bufmax * sizeof(struct fourbyte_entry));
-	    bufstart = index;
-	    buflen = bufmax;
-	} else if (bytes_read == -1) {
-	    perror("Error reading entries file");  /* BREAKPOINT */
-	} else if ((bytes_read == -1) || (bytes_read < sizeof(struct fourbyte_entry))) {
-	    fprintf(stderr, "Error reading entries file\n");
-	} else {
-	    bufstart = index;
-	    buflen = bytes_read / sizeof(struct fourbyte_entry);
-	}
+pthread_t entry_buffer_thread;
+
+void *entry_buffer_thread_proc(void *arg)
+{
+    int current_buffer = 0;
+
+    while (1) {
+	pthread_mutex_lock(&entry_buffers[current_buffer].mutex);
+
+	read_entry_buffer_from_disk(entry_buffer_thread_tb,
+				    &entry_buffers[current_buffer], entry_buffer_thread_next_index);
+
+	entry_buffer_thread_next_index += entry_buffers[current_buffer].length;
+	if (entry_buffer_thread_next_index > entry_buffer_thread_max_index)
+	    entry_buffer_thread_next_index = 0;
+
+	pthread_mutex_unlock(&entry_buffers[current_buffer].mutex);
+
+	current_buffer ++;
+	if (current_buffer >= NUM_ENTRY_BUFFERS) current_buffer = 0;
+    }
+}
+
+void init_entry_buffers(tablebase_t *tb)
+{
+    int i;
+    index_t next_index = 0;   /* start at the beginning (a very good place to start) */
+    /* pthread_mutexattr_t attr; */
+
+    /* pthread_mutexattr_init(&attr); */
+    /* pthread_mutexattr_settype(&attr, PTHREAD_MUTEX_ERRORCHECK_NP); */
+
+    for (i = 0; i < NUM_ENTRY_BUFFERS; i ++) {
+
+	entry_buffers[i].buffer = malloc(ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry));
+	entry_buffers[i].start = 0;
+	entry_buffers[i].length = 0;
+	/* pthread_mutex_init(&entry_buffers[i].mutex, &attr); */
+	pthread_mutex_init(&entry_buffers[i].mutex, NULL);
+	
+	/* read buffer from disk */
+	read_entry_buffer_from_disk(tb, &entry_buffers[i], next_index);
+	next_index += entry_buffers[i].length;
     }
 
-    return &buffer[index - bufstart];
+    current_entry_buffer = 0;
+    pthread_mutex_lock(&entry_buffers[0].mutex);
+
+    entry_buffer_thread_next_index = next_index;
+    entry_buffer_thread_max_index = tb->max_index;
+    entry_buffer_thread_tb = tb;
+
+    pthread_create(&entry_buffer_thread, NULL, entry_buffer_thread_proc, NULL);
+
+    /* pthread_mutexattr_destroy(&attr); */
+}
+
+struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
+{
+    if ((index < entry_buffers[current_entry_buffer].start)
+	|| (index >= (entry_buffers[current_entry_buffer].start
+		      + entry_buffers[current_entry_buffer].length))) {
+
+	int next_entry_buffer = current_entry_buffer + 1;
+	if (next_entry_buffer >= NUM_ENTRY_BUFFERS) next_entry_buffer = 0;
+
+	pthread_mutex_lock(&entry_buffers[next_entry_buffer].mutex);
+	pthread_mutex_unlock(&entry_buffers[current_entry_buffer].mutex);
+	sched_yield();
+	current_entry_buffer = next_entry_buffer;
+    }
+
+    if ((index < entry_buffers[current_entry_buffer].start)
+	|| (index >= (entry_buffers[current_entry_buffer].start
+		      + entry_buffers[current_entry_buffer].length))) {
+	fprintf(stderr, "fetch_fourbyte_entry(): reading buffer in main thread; needed %d had %d\n",
+		index, entry_buffers[current_entry_buffer].start);  /* BREAKPOINT */
+	read_entry_buffer_from_disk(tb, &entry_buffers[current_entry_buffer], index);
+    }
+
+    if ((index < entry_buffers[current_entry_buffer].start)
+	|| (index >= (entry_buffers[current_entry_buffer].start
+		      + entry_buffers[current_entry_buffer].length))) {
+	fprintf(stderr, "Can't fetch in fetch_fourbyte_entry\n");
+    }
+
+    return &entry_buffers[current_entry_buffer].buffer[index - entry_buffers[current_entry_buffer].start];
 }
 
 inline short does_PTM_win(struct fourbyte_entry *entry)
@@ -6444,6 +6535,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	fprintf(stderr, "Can't open 'entries' for read-write\n");
 	return 0;
     }
+    init_entry_buffers(tb);
 #endif
 
     tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
