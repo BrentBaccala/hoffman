@@ -3,20 +3,24 @@
 CFLAGS=-g -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Debugging w/optimization
-# CFLAGS=-g -O3 -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Debugging w/optimization and profiling
-# CFLAGS=-g -pg -O3 -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -pg -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+
+# Debugging w/profiling
+#CFLAGS=-g -pg -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
 
 CPPFLAGS=$(CFLAGS)
 
 hoffman: hoffman.o probe.o egtb.o
 	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++
-	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' > .gdbinit
+	echo set pagination 0 > .gdbinit
+	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
 %.htb: %.xml
 	./hoffman -g -o $@ $<
-	./hoffman -v -n Nalimov $@
+#	./hoffman -v -n Nalimov $@
 
 # %.htb.gz: %.xml
 #	./hoffman -g -o $*.htb $<
