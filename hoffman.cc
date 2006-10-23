@@ -1478,7 +1478,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.185 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.186 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2290,14 +2290,14 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  *
  */
 
-inline short does_PTM_win(tablebase_t *tb, index_t index)
+inline short does_PTM_win(struct fourbyte_entry *entry)
 {
-    return (tb->entries[index].dtm > 0);
+    return (entry->dtm > 0);
 }
 
-inline short does_PNTM_win(tablebase_t *tb, index_t index)
+inline short does_PNTM_win(struct fourbyte_entry *entry)
 {
-    return ((tb->entries[index].movecnt & 127) == 0) && (tb->entries[index].dtm < 0);
+    return ((entry->movecnt & 127) == 0) && (entry->dtm < 0);
 }
 
 inline boolean is_position_valid(tablebase_t *tb, index_t index)
@@ -2308,7 +2308,10 @@ inline boolean is_position_valid(tablebase_t *tb, index_t index)
 
 inline int get_DTC(tablebase_t *tb, index_t index)
 {
-    return tb->entries[index].dtc;
+    struct fourbyte_entry *entry;
+
+    entry = fetch_fourbyte_entry(tb, index);
+    return entry->dtc;
 }
 
 /* Get the result in a format suitable for a one-byte DTM tablebase
@@ -2320,19 +2323,17 @@ inline int get_DTC(tablebase_t *tb, index_t index)
  * -N = PNTM will have a mate in N-1 after this move
  */
 
+int get_entry_DTM(struct fourbyte_entry *entry)
+{
+    return (does_PTM_win(entry) || does_PNTM_win(entry)) ? entry->dtm : 0;
+}
+
 int get_DTM(tablebase_t *tb, index_t index)
 {
-    struct fourbyte_entry *fourbyte_entry;
-    /* return (does_PTM_win(tb,index) || does_PNTM_win(tb,index)) ? tb->entries[index].dtm : 0; */
+    struct fourbyte_entry *entry;
 
-    fourbyte_entry = fetch_fourbyte_entry(tb, index);
-
-    if ((fourbyte_entry->dtm > 0)
-	|| ((fourbyte_entry->dtm < 0) && ((fourbyte_entry->movecnt & 127) == 0)))
-	return fourbyte_entry->dtm;
-    else
-	return 0;
-
+    entry = fetch_fourbyte_entry(tb, index);
+    return get_entry_DTM(entry);
 }
 
 /* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
@@ -3449,10 +3450,7 @@ int proptable_finalize(int target_dtm)
 	    }
 	}
 
-	if ((target_dtm != 0)
-	    && (fourbyte_entry->dtm == target_dtm)
-	    && ((fourbyte_entry->dtm > 0)
-		|| ((fourbyte_entry->dtm < 0) && ((fourbyte_entry->movecnt & 127) == 0)))) {
+	if ((target_dtm != 0) && (get_entry_DTM(fourbyte_entry) == target_dtm)) {
 	    back_propagate_index_within_table(proptable_tb, index, target_dtm, fourbyte_entry->dtc);
 	    positions_finalized ++;
 	}
