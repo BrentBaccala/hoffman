@@ -1477,7 +1477,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.182 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.183 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3169,14 +3169,17 @@ void proptable_full(void)
 	return;
     }
 
-    fprintf(stderr, "Writing proptable block %d with %d entries\n", num_proptables, proptable_entries);
+    if (proptable_entries != 0) {
 
-    /* XXX hitting a disk full condition is by no means out of the question here! */
-    do_write(proptable_output_fd, proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
-    bzero(proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
+	fprintf(stderr, "Writing proptable block %d with %d moves\n", num_proptables, proptable_entries);
 
-    num_proptables ++;
-    proptable_entries = 0;
+	/* XXX hitting a disk full condition is by no means out of the question here! */
+	do_write(proptable_output_fd, proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
+	bzero(proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
+
+	num_proptables ++;
+	proptable_entries = 0;
+    }
 }
 
 void commit_proptable_entry(proptable_entry_t *propentry)
@@ -3406,7 +3409,7 @@ int proptable_finalize(int target_dtm)
 	    }
 	}
 
-	if (get_DTM(proptable_tb, index) == target_dtm) {
+	if ((target_dtm != 0) && (get_DTM(proptable_tb, index) == target_dtm)) {
 	    back_propagate_index_within_table(proptable_tb, index,
 					      target_dtm, get_DTC(proptable_tb, index));
 	    positions_propagated ++;
@@ -3429,8 +3432,10 @@ int proptable_finalize(int target_dtm)
     close(proptable_input_fd);
     unlink("propfile_in");
 
-    fprintf(stderr, "Pass %3d complete; %d positions processed; %d input proptables\n",
-	    target_dtm, positions_propagated, num_input_proptables);
+    /* Flush out anything in the last proptable */
+    proptable_full();
+
+    fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_propagated);
 
     return positions_propagated;
 }
@@ -4980,7 +4985,9 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 	/* concede - we treat these unhandled futuremoves as forced wins for PTM */
 
 	if (tb->futurevectors[index] & conceded_futuremoves) {
-	    PTM_wins(tb, index, 1, 1);
+	    /* PTM_wins(tb, index, 1, 1); */
+	    /* We insert here with DTM=2 (mate in one) and DTC=1 (XXX) */
+	    insert_into_proptable(index, 2, 1, 0);
 	}
 
 	/* discard - we ignore these unhandled futuremoves by decrementing movecnt */
@@ -4988,7 +4995,9 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 	if (tb->futurevectors[index] & discarded_futuremoves) {
 	    for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
 		if (tb->futurevectors[index] & discarded_futuremoves & FUTUREVECTOR(futuremove)) {
-		    tb->entries[index].movecnt --;
+		    /* tb->entries[index].movecnt --; */
+		    /* XXX this isn't handled right - a draw is different from a discard */
+		    insert_into_proptable(index, 0, 0, 0);
 		}
 	    }
 	}
@@ -6429,6 +6438,17 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     dtm_limit = back_propagate_all_futurebases(tb);
     if (dtm_limit == -1) return 0;
 
+    /* Ultimately, I want to wrap this in with tablebase initialization.  We'll back propagate first
+     * (building proptables), then initialize the tablebase, check futuremoves, and generate the
+     * first set of intra-table proptables, all in one pass.
+     */
+
+    fprintf(stderr, "Checking futuremoves...\n");
+    proptable_finalize(0);
+    if (! have_all_futuremoves_been_handled(tb)) return 0;
+    proptable_full();  /* flush moves out to disk */
+    fprintf(stderr, "All futuremoves handled under move restrictions\n");
+
     /* We add one to dtm_limit here because, even if there are intra-table passes with no
      * progress made, we want to process at least one pass beyond the maximum mate-in value we
      * saw during futurebase back-prop.
@@ -6436,15 +6456,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     fprintf(stderr, "Intra-table propagating\n");
     propagate_all_moves_within_tablebase(tb, dtm_limit+1);
-
-    /* Ultimately, I want to wrap this in with tablebase initialization.  We'll back propagate first
-     * (building proptables), then initialize the tablebase, check futuremoves, and generate the
-     * first set of intra-table proptables, all in one pass.
-     */
-
-    fprintf(stderr, "Checking futuremoves...\n");
-    if (! have_all_futuremoves_been_handled(tb)) return 0;
-    fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
     write_tablebase_to_file(tb, output_filename);
 
