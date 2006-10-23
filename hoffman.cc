@@ -1477,7 +1477,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.183 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.184 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2407,44 +2407,32 @@ void initialize_index_with_movecnt(tablebase_t *tb, index_t index, int movecnt,
     initialize_index(tb, index, movecnt, 0, futurevector);
 }
 
-inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
+inline void PTM_wins(struct fourbyte_entry *entry, int dtm, int dtc)
 {
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	printf("PTM_wins; index=%d; movecnt=%d; old dtm=%d, dtm=%d\n",
-	       index, tb->entries[index].movecnt, tb->entries[index].dtm, dtm);
-#endif
 
     if (dtm < 0) {
 	fprintf(stderr, "Negative distance to mate in PTM_wins!?\n"); /* BREAKPOINT */
-    } else if ((dtm < tb->entries[index].dtm) || (tb->entries[index].dtm <= 0)) {
-	tb->entries[index].dtm = dtm;
-	tb->entries[index].dtc = dtc;
+    } else if ((dtm < entry->dtm) || (entry->dtm <= 0)) {
+	entry->dtm = dtm;
+	entry->dtc = dtc;
     }
 }
 
-inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
+inline void add_one_to_PNTM_wins(struct fourbyte_entry *entry, int dtm, int dtc)
 {
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	printf("add_one_to_PNTM_wins; index=%d; movecnt=%d; old dtm=%d, dtm=%d\n",
-	       index, tb->entries[index].movecnt, tb->entries[index].dtm, dtm);
-#endif
 
     if (dtm > 0) {
 	fprintf(stderr, "Positive distance to mate in PNTM_wins!?\n"); /* BREAKPOINT */
     } else {
-	tb->entries[index].movecnt --;
-	if ((dtm < tb->entries[index].dtm) && (tb->entries[index].dtm <= 0)) {
+	entry->movecnt --;
+	if ((dtm < entry->dtm) && (entry->dtm <= 0)) {
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
 	    /* XXX need to think more about the stalemates */
-	    tb->entries[index].dtm = dtm;
-	    tb->entries[index].dtc = dtc;
+	    entry->dtm = dtm;
+	    entry->dtc = dtc;
 	}
 
-	if ((tb->entries[index].movecnt == 0) && (tb->entries[index].dtm == -1)) {
+	if ((entry->movecnt == 0) && (entry->dtm == -1)) {
 
 	    /* In this case, the only moves at PTM's disposal move him into check (DTM is now one,
 	     * so it would drop to zero on next move).  So we need to distinguish here between being
@@ -2454,13 +2442,13 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dt
 	     * to zero here is if we're not in check, so this is stalemate...
 	     */
 
-	    tb->entries[index].dtm = 0;
-	    tb->entries[index].dtc = 0;
+	    entry->dtm = 0;
+	    entry->dtc = 0;
 	}
 
 	/* XXX not sure about this stalemate code */
-	if (dtc < tb->entries[index].dtc) {
-	    tb->entries[index].dtc = dtc;
+	if (dtc < entry->dtc) {
+	    entry->dtc = dtc;
 	}
     }
 }
@@ -3182,7 +3170,7 @@ void proptable_full(void)
     }
 }
 
-void commit_proptable_entry(proptable_entry_t *propentry)
+void commit_proptable_entry(proptable_entry_t *propentry, struct fourbyte_entry *entry)
 {
     index_t index = propentry->index;
     int dtm = propentry->dtm;
@@ -3192,7 +3180,7 @@ void commit_proptable_entry(proptable_entry_t *propentry)
      * propagation for illegal positions.
      */
 
-    if (! is_position_valid(proptable_tb, index)) return;
+    if (entry->dtm == 1) return;
 
     /* This code is a little different from the merge code above before in the futurevectors array,
      * we already have a bit set for each futuremove that could happen, and we want to clear those
@@ -3208,10 +3196,10 @@ void commit_proptable_entry(proptable_entry_t *propentry)
     proptable_tb->futurevectors[index] ^= propentry->futurevector;
 
     if (dtm > 0) {
-	PTM_wins(proptable_tb, index, dtm, propentry->dtc);
+	PTM_wins(entry, dtm, propentry->dtc);
     } else if (dtm < 0) {
 	for (i=0; i<propentry->movecnt; i++) {
-	    add_one_to_PNTM_wins(proptable_tb, index, dtm, propentry->dtc);
+	    add_one_to_PNTM_wins(entry, dtm, propentry->dtc);
 	}
     }
 }
@@ -3296,6 +3284,11 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
     dest->index = proptable_tb->max_index + 1;
 }
 
+struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
+{
+    return &tb->entries[index];
+}
+
 int proptable_finalize(int target_dtm)
 {
     int i;
@@ -3307,7 +3300,7 @@ int proptable_finalize(int target_dtm)
     int network_node;
 
     index_t index;
-    int positions_propagated = 0;
+    int positions_finalized = 0;
 
     /* Flush out anything in the last proptable */
     proptable_full();
@@ -3385,13 +3378,15 @@ int proptable_finalize(int target_dtm)
 
     for (index = 0; index <= proptable_tb->max_index; index ++) {
 
+	struct fourbyte_entry *fourbyte_entry = fetch_fourbyte_entry(proptable_tb, index);
+
 	if (sorting_network[1].index < index) {
 	    fprintf(stderr, "Out-of-order entries in sorting network\n");   /* BREAKPOINT */
 	}
 
 	while (sorting_network[1].index == index ) {
 
-	    commit_proptable_entry(&sorting_network[1]);
+	    commit_proptable_entry(&sorting_network[1], fourbyte_entry);
 
 	    fetch_next_propentry(proptable_num[1], &sorting_network[highbit + proptable_num[1]]);
 
@@ -3409,10 +3404,12 @@ int proptable_finalize(int target_dtm)
 	    }
 	}
 
-	if ((target_dtm != 0) && (get_DTM(proptable_tb, index) == target_dtm)) {
-	    back_propagate_index_within_table(proptable_tb, index,
-					      target_dtm, get_DTC(proptable_tb, index));
-	    positions_propagated ++;
+	if ((target_dtm != 0)
+	    && (fourbyte_entry->dtm == target_dtm)
+	    && ((fourbyte_entry->dtm > 0)
+		|| ((fourbyte_entry->dtm < 0) && ((fourbyte_entry->movecnt & 127) == 0)))) {
+	    back_propagate_index_within_table(proptable_tb, index, target_dtm, fourbyte_entry->dtc);
+	    positions_finalized ++;
 	}
 
     }
@@ -3435,9 +3432,9 @@ int proptable_finalize(int target_dtm)
     /* Flush out anything in the last proptable */
     proptable_full();
 
-    fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_propagated);
+    fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized);
 
-    return positions_propagated;
+    return positions_finalized;
 }
 
 void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futurevector_t futurevector)
