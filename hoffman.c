@@ -167,6 +167,8 @@ inline int square(int row, int col)
 #define NUM_DIR 8
 #define NUM_MOVEMENTS 7
 
+const int use_proptables = 1;
+
 
 /***** DATA STRUCTURES *****/
 
@@ -1478,7 +1480,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.188 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.189 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -2394,7 +2396,9 @@ void init_entry_buffers(tablebase_t *tb)
 
 struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
 {
-    if ((index < entry_buffers[current_entry_buffer].start)
+    if (tb->entries != NULL) {
+	return &tb->entries[index];
+    } else if ((index < entry_buffers[current_entry_buffer].start)
 	|| (index >= (entry_buffers[current_entry_buffer].start
 		      + entry_buffers[current_entry_buffer].length))) {
 
@@ -2474,7 +2478,7 @@ int get_DTM(tablebase_t *tb, index_t index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 4186 */
+/* #define DEBUG_MOVE 1029 */
 
 /* Four possible ways we can initialize an index for a position:
  *  - it's illegal
@@ -3569,6 +3573,30 @@ int proptable_finalize(int target_dtm)
     /* Flush out anything in the last proptable */
     proptable_full();
 
+    return positions_finalized;
+}
+
+int propagation_pass(int target_dtm)
+{
+    int positions_finalized = 0;
+    index_t index;
+
+    if (use_proptables) {
+	positions_finalized = proptable_finalize(target_dtm);
+    } else {
+
+	for (index = 0; index <= proptable_tb->max_index; index ++) {
+
+	    struct fourbyte_entry *fourbyte_entry = fetch_fourbyte_entry(proptable_tb, index);
+
+	    if ((target_dtm != 0) && (get_entry_DTM(fourbyte_entry) == target_dtm)) {
+		back_propagate_index_within_table(proptable_tb, index, target_dtm, fourbyte_entry->dtc);
+		positions_finalized ++;
+	    }
+	}
+
+    }
+
     fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized);
 
     return positions_finalized;
@@ -3579,6 +3607,20 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
     int propentry;
     int zerooffset;
     int scaling_factor;
+
+    if (! use_proptables) {
+	proptable_entry_t entry;
+
+	entry.index = index;
+	entry.dtm = dtm;
+	entry.dtc = dtc;
+	entry.movecnt = 1;
+	entry.futurevector = futurevector;
+
+	commit_proptable_entry(&entry, fetch_fourbyte_entry(proptable_tb, index));
+
+	return;
+    }
 
     proptable_entries ++;
 
@@ -6489,10 +6531,10 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
     while (dtm <= dtm_limit) {
 
 	/* PTM wins */
-	proptable_finalize(dtm);
+	propagation_pass(dtm);
 
 	/* PNTM wins */
-	proptable_finalize(-dtm);
+	propagation_pass(-dtm);
 
 	dtm ++;
     }
@@ -6500,10 +6542,10 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
     while (1) {
 
 	/* PTM wins */
-	if (proptable_finalize(dtm) == 0) break;
+	if (propagation_pass(dtm) == 0) break;
 
 	/* PNTM wins */
-	if (proptable_finalize(-dtm) == 0) break;
+	if (propagation_pass(-dtm) == 0) break;
 
 	dtm ++;
     }
@@ -6524,19 +6566,19 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
 
-#if 0
-    tb->entries = (struct fourbyte_entry *) calloc(tb->max_index + 1, sizeof(struct fourbyte_entry));
-    if (tb->entries == NULL) {
-	fprintf(stderr, "Can't malloc tablebase entries\n");
+    if (use_proptables) {
+	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC, 0666);
+	if (tb->entries_fd == -1) {
+	    fprintf(stderr, "Can't open 'entries' for read-write\n");
+	    return 0;
+	}
+	init_entry_buffers(tb);
+    } else {
+	tb->entries = (struct fourbyte_entry *) calloc(tb->max_index + 1, sizeof(struct fourbyte_entry));
+	if (tb->entries == NULL) {
+	    fprintf(stderr, "Can't malloc tablebase entries\n");
+	}
     }
-#else
-    tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC, 0666);
-    if (tb->entries_fd == -1) {
-	fprintf(stderr, "Can't open 'entries' for read-write\n");
-	return 0;
-    }
-    init_entry_buffers(tb);
-#endif
 
     tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
     if (tb->futurevectors == NULL) {
@@ -6544,11 +6586,14 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	return 0;
     }
 
-    proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
-    if (proptable == NULL) {
-	fprintf(stderr, "Can't calloc proptable\n");
-	return 0;
+    if (use_proptables) {
+	proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
+	if (proptable == NULL) {
+	    fprintf(stderr, "Can't calloc proptable\n");
+	    return 0;
+	}
     }
+    /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
     proptable_tb = tb;
 
     assign_numbers_to_futuremoves(tb);
@@ -6569,9 +6614,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
      */
 
     fprintf(stderr, "Checking futuremoves...\n");
-    proptable_finalize(0);
+    propagation_pass(0);
     if (! have_all_futuremoves_been_handled(tb)) return 0;
-    proptable_full();  /* flush moves out to disk */
+    if (use_proptables) proptable_full();  /* flush moves out to disk */
     fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
     /* We add one to dtm_limit here because, even if there are intra-table passes with no
