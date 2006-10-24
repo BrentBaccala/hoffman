@@ -88,6 +88,9 @@
 #include <fcntl.h>	/* for O_RDONLY */
 #include <netdb.h>	/* for gethostbyname() */
 
+#include <sys/time.h>     /* for reporting resource utilization */
+#include <sys/resource.h>
+
 #include <sys/mman.h>	/* for mmap() */
 
 #include <pthread.h>
@@ -168,6 +171,8 @@ inline int square(int row, int col)
 #define NUM_MOVEMENTS 7
 
 const int use_proptables = 0;
+
+struct timeval program_start_time;
 
 
 /***** DATA STRUCTURES *****/
@@ -1463,25 +1468,86 @@ void unload_futurebase(tablebase_t *tb)
  * indicating the program, time, and host that generated the data.
  */
 
-xmlDocPtr finalize_XML_header(tablebase_t *tb)
+xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 {
     xmlNodePtr tablebase, node;
     time_t creation_time;
+    char ctimestr[256];
     char hostname[256];
     struct hostent *he;
+    struct rusage rusage;
+    char utimestr[256];
+    char stimestr[256];
+    struct timeval program_end_time;
+    char rtimestr[256];
+    char minfltstr[256];
+    char majfltstr[256];
 
     tablebase = xmlDocGetRootElement(tb->xml);
 
     xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
 
+    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generation-info", NULL);
+
     time(&creation_time);
+    strftime(ctimestr, sizeof(ctimestr), "%c %Z", localtime(&creation_time));
+
     gethostname(hostname, sizeof(hostname));
     he = gethostbyname(hostname);
 
-    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
+    getrusage(RUSAGE_SELF, &rusage);
+    if (rusage.ru_utime.tv_sec < 60) {
+	sprintf(utimestr, "%ld.%03lds", rusage.ru_utime.tv_sec, rusage.ru_utime.tv_usec/1000);
+    } else if (rusage.ru_utime.tv_sec < 3600) {
+	sprintf(utimestr, "%ldm%02ld.%03lds", rusage.ru_utime.tv_sec/60, rusage.ru_utime.tv_sec%60,
+		rusage.ru_utime.tv_usec/1000);
+    } else {
+	sprintf(utimestr, "%ldh%02ldm%02ld.%03lds", rusage.ru_utime.tv_sec/3600,
+		(rusage.ru_utime.tv_sec/60)%60, rusage.ru_utime.tv_sec%60,
+		rusage.ru_utime.tv_usec/1000);
+    }
+    if (rusage.ru_stime.tv_sec < 60) {
+	sprintf(stimestr, "%ld.%03lds", rusage.ru_stime.tv_sec, rusage.ru_stime.tv_usec/1000);
+    } else if (rusage.ru_stime.tv_sec < 3600) {
+	sprintf(stimestr, "%ldm%02ld.%03lds", rusage.ru_stime.tv_sec/60, rusage.ru_stime.tv_sec%60,
+		rusage.ru_stime.tv_usec/1000);
+    } else {
+	sprintf(stimestr, "%ldh%02ldm%02ld.%03lds", rusage.ru_stime.tv_sec/3600,
+		(rusage.ru_stime.tv_sec/60)%60, rusage.ru_stime.tv_sec%60,
+		rusage.ru_stime.tv_usec/1000);
+    }
+
+    gettimeofday(&program_end_time, NULL);
+    program_end_time.tv_sec -= program_start_time.tv_sec;
+    if (program_end_time.tv_usec > program_start_time.tv_usec) {
+	program_end_time.tv_usec -= program_start_time.tv_usec;
+    } else {
+	program_end_time.tv_usec = 1000000 + program_end_time.tv_usec - program_start_time.tv_usec;
+	program_end_time.tv_sec --;
+    }
+    if (program_end_time.tv_sec < 60) {
+	sprintf(rtimestr, "%ld.%03lds", program_end_time.tv_sec, program_end_time.tv_usec/1000);
+    } else if (program_end_time.tv_sec < 3600) {
+	sprintf(rtimestr, "%ldm%02ld.%03lds", program_end_time.tv_sec/60, program_end_time.tv_sec%60,
+		program_end_time.tv_usec/1000);
+    } else {
+	sprintf(rtimestr, "%ldh%02ldm%02ld.%03lds", program_end_time.tv_sec/3600,
+		(program_end_time.tv_sec/60)%60, program_end_time.tv_sec%60,
+		program_end_time.tv_usec/1000);
+    }
+
+    sprintf(minfltstr, "%ld", rusage.ru_minflt);
+    sprintf(majfltstr, "%ld", rusage.ru_majflt);
+
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.190 $ $Locker: baccala $");
-    xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
+		(const xmlChar *) "Hoffman $Revision: 1.191 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
+    xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
+    xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
+    xmlNewChild(node, NULL, (const xmlChar *) "system-time", (const xmlChar *) stimestr);
+    xmlNewChild(node, NULL, (const xmlChar *) "real-time", (const xmlChar *) rtimestr);
+    xmlNewChild(node, NULL, (const xmlChar *) "page-faults", (const xmlChar *) majfltstr);
+    xmlNewChild(node, NULL, (const xmlChar *) "page-reclaims", (const xmlChar *) minfltstr);
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
     return tb->xml;
@@ -1500,7 +1566,7 @@ int do_write(int fd, void *ptr, int length)
     return 0;
 }
 
-void write_tablebase_to_file(tablebase_t *tb, char *filename)
+void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 {
     xmlDocPtr doc;
     int fd;
@@ -1519,7 +1585,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	return;
     }
 
-    doc = finalize_XML_header(tb);
+    doc = finalize_XML_header(tb, options);
 
     /* We want at least one zero byte after the XML header, because that's how we figure out where
      * it ends when we read it back it, and I also want to align the tablebase on a four-byte
@@ -6629,7 +6695,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
  * an error indication, which is why we just silently return in many cases.
  */
 
-boolean generate_tablebase_from_control_file(char *control_filename, char *output_filename) {
+boolean generate_tablebase_from_control_file(char *control_filename, char *output_filename, char *options) {
 
     tablebase_t *tb;
     int dtm_limit;
@@ -6700,7 +6766,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     fprintf(stderr, "Intra-table propagating\n");
     propagate_all_moves_within_tablebase(tb, dtm_limit+1);
 
-    write_tablebase_to_file(tb, output_filename);
+    write_tablebase_to_file(tb, output_filename, options);
 
     return 1;
 }
@@ -6874,6 +6940,22 @@ int main(int argc, char *argv[])
     char *output_filename = NULL;
     extern char *optarg;
     extern int optind;
+    char options_string[256];
+    char *options_string_ptr = options_string;
+
+    /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
+
+    for (i=0; i<argc; i++) {
+	strncpy(options_string_ptr, argv[i], options_string + sizeof(options_string) - options_string_ptr);
+	options_string_ptr += strlen(argv[i]);
+	if (options_string_ptr >= options_string + sizeof(options_string)) break;
+	*options_string_ptr = ' ';
+	options_string_ptr ++;
+	if (options_string_ptr >= options_string + sizeof(options_string)) break;
+    }
+    options_string[sizeof(options_string) - 1] = '\0';
+
+    gettimeofday(&program_start_time, NULL);
 
     init_movements();
     verify_movements();
@@ -6926,7 +7008,7 @@ int main(int argc, char *argv[])
     /* Generating */
 
     if (generating) {
-	exit(generate_tablebase_from_control_file(argv[optind], output_filename)
+	exit(generate_tablebase_from_control_file(argv[optind], output_filename, options_string)
 	     ? EXIT_SUCCESS : EXIT_FAILURE);
     }
 
