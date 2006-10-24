@@ -167,7 +167,7 @@ inline int square(int row, int col)
 #define NUM_DIR 8
 #define NUM_MOVEMENTS 7
 
-const int use_proptables = 1;
+const int use_proptables = 0;
 
 
 /***** DATA STRUCTURES *****/
@@ -1480,7 +1480,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generated-by", NULL);
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.189 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.190 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "time", (const xmlChar *) ctime(&creation_time));
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
 
@@ -3334,13 +3334,22 @@ void commit_proptable_entry(proptable_entry_t *propentry, struct fourbyte_entry 
      * bits, rather than oring them.
      */
 
-    if ((propentry->futurevector & proptable_tb->futurevectors[index]) != propentry->futurevector) {
-	global_position_t global;
-	index_to_global_position(proptable_tb, propentry->index, &global);
-	fprintf(stderr, "Futuremove already handled: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
-    }
+    if (proptable_tb->futurevectors != NULL) {
 
-    proptable_tb->futurevectors[index] ^= propentry->futurevector;
+	if ((propentry->futurevector & proptable_tb->futurevectors[index]) != propentry->futurevector) {
+	    global_position_t global;
+	    index_to_global_position(proptable_tb, propentry->index, &global);
+	    fprintf(stderr, "Futuremove already handled: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
+	}
+
+	proptable_tb->futurevectors[index] ^= propentry->futurevector;
+
+    } else {
+
+	if (propentry->futurevector != 0)
+	    fprintf(stderr, "Futuremove with futurevectors NULL!?\n");
+
+    }
 
     if (dtm > 0) {
 	PTM_wins(entry, dtm, propentry->dtc);
@@ -3861,6 +3870,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
     local_position_t position;
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
+    int true_pawn;
 
     int promotion_color = tb->piece_color[pawn];
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
@@ -3969,13 +3979,30 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 		    /* Back propagate the resulting position */
 
+		    /* When we convert the position to an index (in local_position_to_index()),
+		     * we'll make a copy of the position and normalize it by sorting the identical
+		     * pieces so that they are in ascending order.  But we have to at least be aware
+		     * of this here, in order to figure out which pawn "actually" promoted (we're
+		     * always called with pawn set to the last piece number of any identical
+		     * pieces), so we can figure out which futuremove number to use.
+		     */
+
+		    true_pawn = pawn;
+		    while ((tb->last_identical_piece[true_pawn] != -1)
+			   && (position.piece_position[true_pawn]
+			       < position.piece_position[tb->last_identical_piece[true_pawn]])) {
+			true_pawn = tb->last_identical_piece[true_pawn];
+		    }
+
 		    /* This function also back props any similar positions with one of the pawns from
 		     * the side that didn't promote in an en passant state.  DTC is zero because
 		     * this is a pawn move.
 		     */
 
 		    propagate_local_position_from_futurebase(tb, dtm, 0,
-							     promotions[pawn] + futurebase->piece_type[extra_piece] - 1, &position, dtm_limit);
+							     promotions[true_pawn]
+							     + futurebase->piece_type[extra_piece] - 1,
+							     &position, dtm_limit);
 
 		    /* We may be about to use this position again, so put the board_vector back... */
 
@@ -4029,6 +4056,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
     int32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
     int true_captured_piece;
+    int true_pawn;
 
     int promotion_color = tb->piece_color[pawn];
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
@@ -4160,13 +4188,28 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    /* Back propagate the resulting position */
 
+		    /* When we convert the position to an index (in local_position_to_index()),
+		     * we'll make a copy of the position and normalize it by sorting the identical
+		     * pieces so that they are in ascending order.  But we have to at least be aware
+		     * of this here, in order to figure out which pawn "actually" promoted (we're
+		     * always called with pawn set to the last piece number of any identical
+		     * pieces), so we can figure out which futuremove number to use.
+		     */
+
+		    true_pawn = pawn;
+		    while ((tb->last_identical_piece[true_pawn] != -1)
+			   && (position.piece_position[true_pawn]
+			       < position.piece_position[tb->last_identical_piece[true_pawn]])) {
+			true_pawn = tb->last_identical_piece[true_pawn];
+		    }
+
 		    /* This function also back props any similar positions with one of the pawns
 		     * from the side that didn't promote in an en passant state.  DTC is zero
 		     * because this is a pawn move.
 		     */
 
 		    propagate_local_position_from_futurebase(tb, dtm, 0,
-							     futurecaptures[pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+							     futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 							     &position, dtm_limit);
 
 		    /* We're about to use this position again, so put the board_vector back... */
@@ -4193,13 +4236,28 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    /* Back propagate the resulting position */
 
+		    /* When we convert the position to an index (in local_position_to_index()),
+		     * we'll make a copy of the position and normalize it by sorting the identical
+		     * pieces so that they are in ascending order.  But we have to at least be aware
+		     * of this here, in order to figure out which pawn "actually" promoted (we're
+		     * always called with pawn set to the last piece number of any identical
+		     * pieces), so we can figure out which futuremove number to use.
+		     */
+
+		    true_pawn = pawn;
+		    while ((tb->last_identical_piece[true_pawn] != -1)
+			   && (position.piece_position[true_pawn]
+			       < position.piece_position[tb->last_identical_piece[true_pawn]])) {
+			true_pawn = tb->last_identical_piece[true_pawn];
+		    }
+
 		    /* This function also back props any similar positions with one of the pawns
 		     * from the side that didn't promote in an en passant state.  DTC is zero
 		     * because this is a pawn move.
 		     */
 
 		    propagate_local_position_from_futurebase(tb, dtm, 0,
-							     futurecaptures[pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+							     futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 							     &position, dtm_limit);
 
 		    /* We're about to use this position again, so put the board_vector back... */
@@ -5749,9 +5807,22 @@ boolean check_pruning(tablebase_t *tb) {
 
 	if (tb->piece_type[pawn] != PAWN) continue;
 
+	/* Again, compute_extra_and_missing_pieces() uses the LAST identical piece, so we want to
+	 * skip everything before it.
+	 */
+
+	if (tb->next_identical_piece[pawn] != -1) continue;
+
 	/* First, we're looking for promotion capture futurebases. */
 
 	for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
+
+	    /* If we've going to consider a captured piece identical to this one, skip it.  Again,
+	     * compute_extra_and_missing_pieces() uses the LAST identical piece, so we want to skip
+	     * everything before it.
+	     */
+
+	    if (tb->next_identical_piece[captured_piece] != -1) continue;
 
 	    /* Check to see if the pawn can even be on a square where a promotion capture is
 	     * possible.
@@ -5844,10 +5915,10 @@ boolean check_pruning(tablebase_t *tb) {
 
 	    if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
 
-	    if (! (pruned_futuremoves & (1 << (promotions[piece] + i)))) {
+	    if (! (pruned_futuremoves & (1 << (promotions[pawn] + i)))) {
 
 		fprintf(stderr, "No futurebase or pruning for %s move %s\n",
-			colors[tb->piece_color[pawn]], movestr[promotions[piece] + i]);
+			colors[tb->piece_color[pawn]], movestr[promotions[pawn] + i]);
 		return 0;
 	    }
 	}
@@ -6618,6 +6689,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (! have_all_futuremoves_been_handled(tb)) return 0;
     if (use_proptables) proptable_full();  /* flush moves out to disk */
     fprintf(stderr, "All futuremoves handled under move restrictions\n");
+    free(tb->futurevectors);
+    tb->futurevectors=NULL;
 
     /* We add one to dtm_limit here because, even if there are intra-table passes with no
      * progress made, we want to process at least one pass beyond the maximum mate-in value we
