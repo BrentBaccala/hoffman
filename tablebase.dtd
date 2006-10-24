@@ -1,17 +1,24 @@
-<!ELEMENT tablebase (move-restriction*, piece+, futurebase*, prune*, generated-by?)>
+<!ELEMENT tablebase (move-restriction*, piece+, futurebase*, prune*, generated-by?, generation-info?)>
 <!ELEMENT move-restriction EMPTY>
 <!ELEMENT piece EMPTY>
 <!ELEMENT futurebase EMPTY>
 <!ELEMENT prune EMPTY>
 
-<!ELEMENT generated-by (program, time, host)>
+<!ELEMENT generated-by (program, args, time, user-time, system-time, real-time, host)>
+<!ELEMENT generation-info (program, args, completion-time, user-time, system-time, real-time, host)>
 <!ELEMENT program EMPTY>
+<!ELEMENT args EMPTY>
 <!ELEMENT time EMPTY>
+<!ELEMENT completion-time EMPTY>
+<!ELEMENT user-time EMPTY>
+<!ELEMENT system-time EMPTY>
+<!ELEMENT real-time EMPTY>
 <!ELEMENT host EMPTY>
 
 <!ATTLIST tablebase
 	offset	CDATA		#IMPLIED
-	format	(fourbyte)	#IMPLIED
+	format	(fourbyte|one-byte-dtm)	#IMPLIED
+	modulus CDATA		#IMPLIED
 	index	(naive|simple)	#IMPLIED>
 
 <!ATTLIST piece
