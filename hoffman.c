@@ -170,8 +170,6 @@ inline int square(int row, int col)
 #define NUM_DIR 8
 #define NUM_MOVEMENTS 7
 
-const int use_proptables = 0;
-
 struct timeval program_start_time;
 
 
@@ -405,18 +403,18 @@ proptable_entry_t *proptable = NULL;
 
 tablebase_t *proptable_tb = NULL;
 
+/* 0 indicates that we're not use proptables */
+int num_propentries = 0;
+
 /* PROPTABLE_BITS for 16 byte entries:
  *
  * 8 = 256 entries = 4KB (testing)
+ * 16 = 64K entries (what I've been using)
  * 20 = 1M entries = 16MB
  * 24 = 16M entries = 256MB
  */
 
 #define MAX_ZEROOFFSET 25
-#define PROPTABLE_BITS 16
-#define NUM_PROPENTRIES (1 << PROPTABLE_BITS)
-#define MAX_PROPENTRY (NUM_PROPENTRIES - 1)
-#define PROPTABLE_INDEX_MASK MAX_PROPENTRY
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -1540,7 +1538,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.191 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.192 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -3375,8 +3373,8 @@ void proptable_full(void)
 	fprintf(stderr, "Writing proptable block %d with %d moves\n", num_proptables, proptable_entries);
 
 	/* XXX hitting a disk full condition is by no means out of the question here! */
-	do_write(proptable_output_fd, proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
-	bzero(proptable, NUM_PROPENTRIES * sizeof(proptable_entry_t));
+	do_write(proptable_output_fd, proptable, num_propentries * sizeof(proptable_entry_t));
+	bzero(proptable, num_propentries * sizeof(proptable_entry_t));
 
 	num_proptables ++;
 	proptable_entries = 0;
@@ -3471,12 +3469,12 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	proptable_disk_index[tablenum] += proptable_buffer_size[tablenum];
 
-	if (proptable_disk_index[tablenum] <= MAX_PROPENTRY) {
+	if (proptable_disk_index[tablenum] < num_propentries) {
 
 	    /* read next disk buffer */
 
 	    if (lseek64(proptable_input_fd,
-			((off64_t) tablenum * NUM_PROPENTRIES + proptable_disk_index[tablenum])
+			((off64_t) tablenum * num_propentries + proptable_disk_index[tablenum])
 			* sizeof(proptable_entry_t),
 			SEEK_SET) == -1) {
 		perror("input proptable lseek64");
@@ -3494,14 +3492,14 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	    /* We might have read past the end of this proptable!  Shorten up if we did. */
 
-	    if (proptable_disk_index[tablenum] + proptable_buffer_size[tablenum] > NUM_PROPENTRIES) {
-		proptable_buffer_size[tablenum] = NUM_PROPENTRIES - proptable_disk_index[tablenum];
+	    if (proptable_disk_index[tablenum] + proptable_buffer_size[tablenum] > num_propentries) {
+		proptable_buffer_size[tablenum] = num_propentries - proptable_disk_index[tablenum];
 	    }
 
 	    proptable_buffer_index[tablenum] = 0;
 	}
 
-    } while (proptable_disk_index[tablenum] <= MAX_PROPENTRY);
+    } while (proptable_disk_index[tablenum] < num_propentries);
 
     /* No, we're really at the end! */
 
@@ -3656,7 +3654,7 @@ int propagation_pass(int target_dtm)
     int positions_finalized = 0;
     index_t index;
 
-    if (use_proptables) {
+    if (num_propentries != 0) {
 	positions_finalized = proptable_finalize(target_dtm);
     } else {
 
@@ -3683,7 +3681,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
     int zerooffset;
     int scaling_factor;
 
-    if (! use_proptables) {
+    if (num_propentries == 0) {
 	proptable_entry_t entry;
 
 	entry.index = index;
@@ -3701,7 +3699,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 
     /* I had a bug here with the scaling_factor rounding down - that's why we increment by one */
 
-    scaling_factor = (proptable_tb->max_index + 1) / NUM_PROPENTRIES;
+    scaling_factor = (proptable_tb->max_index + 1) / num_propentries;
     scaling_factor ++;
 
  retry:
@@ -3748,7 +3746,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
     } else {
 	/* entry at slot less than index to be inserted */
 	while ((proptable[propentry].index != 0) && (proptable[propentry].index < index)
-	       && (propentry < MAX_PROPENTRY)) propentry ++;
+	       && (propentry < num_propentries - 1)) propentry ++;
 	if (proptable[propentry].index == 0) {
 	    /* empty slot at upper end of a block all lt than index: insert there */
 	    insert_at_propentry(propentry, index, dtm, dtc, futurevector);
@@ -3760,11 +3758,11 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 	} else if (proptable[propentry].index < index) {
 	    /* we're at the end of the table and the last entry is lt index */
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
-		if (proptable[MAX_PROPENTRY - zerooffset].index == 0) {
-		    memmove(proptable + MAX_PROPENTRY - zerooffset,
-			    proptable + MAX_PROPENTRY - zerooffset + 1,
+		if (proptable[num_propentries - 1 - zerooffset].index == 0) {
+		    memmove(proptable + num_propentries - 1 - zerooffset,
+			    proptable + num_propentries - zerooffset,
 			    (zerooffset) * sizeof(proptable_entry_t));
-		    insert_at_propentry(MAX_PROPENTRY, index, dtm, dtc, futurevector);
+		    insert_at_propentry(num_propentries - 1, index, dtm, dtc, futurevector);
 		    return;
 		}
 	    }
@@ -3780,7 +3778,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
     /* We found a boundary within a block: propentry is lt index and propentry+1 is gt index */
 
     for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
-	if ((propentry + zerooffset < MAX_PROPENTRY)
+	if ((propentry + zerooffset < num_propentries - 1)
 	    && (proptable[propentry+zerooffset].index == 0)) {
 	    memmove(proptable + propentry + 2, proptable + propentry + 1,
 		    (zerooffset-1) * sizeof(proptable_entry_t));
@@ -6703,7 +6701,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
 
-    if (use_proptables) {
+    if (num_propentries != 0) {
 	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC, 0666);
 	if (tb->entries_fd == -1) {
 	    fprintf(stderr, "Can't open 'entries' for read-write\n");
@@ -6723,8 +6721,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	return 0;
     }
 
-    if (use_proptables) {
-	proptable = calloc(NUM_PROPENTRIES, sizeof(proptable_entry_t));
+    if (num_propentries != 0) {
+	proptable = calloc(num_propentries, sizeof(proptable_entry_t));
 	if (proptable == NULL) {
 	    fprintf(stderr, "Can't calloc proptable\n");
 	    return 0;
@@ -6753,7 +6751,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     fprintf(stderr, "Checking futuremoves...\n");
     propagation_pass(0);
     if (! have_all_futuremoves_been_handled(tb)) return 0;
-    if (use_proptables) proptable_full();  /* flush moves out to disk */
+    if (num_propentries != 0) proptable_full();  /* flush moves out to disk */
     fprintf(stderr, "All futuremoves handled under move restrictions\n");
     free(tb->futurevectors);
     tb->futurevectors=NULL;
@@ -6961,7 +6959,7 @@ int main(int argc, char *argv[])
     verify_movements();
 
     while (1) {
-	c = getopt(argc, argv, "gpvo:n:");
+	c = getopt(argc, argv, "gpvo:n:P:");
 
 	if (c == -1) break;
 
@@ -6981,6 +6979,10 @@ int main(int argc, char *argv[])
 	    break;
 	case 'o':
 	    output_filename = optarg;
+	    break;
+	case 'P':
+	    /* set size of proptable in megabytes */
+	    num_propentries = strtol(optarg, NULL, 0) * 1024 * 1024 / sizeof(proptable_entry_t);
 	    break;
 	}
     }
