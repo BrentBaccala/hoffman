@@ -1538,7 +1538,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.195 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.196 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -2375,12 +2375,12 @@ void read_entry_buffer_from_disk(tablebase_t *tb, struct entry_buffer *entrybuf,
 
     /* write old contents of buffer out (if there are any) */
     if (entrybuf->length != 0) {
-	lseek(tb->entries_fd, entrybuf->start * sizeof(struct fourbyte_entry), SEEK_SET);
+	lseek64(tb->entries_fd, (off64_t) entrybuf->start * sizeof(struct fourbyte_entry), SEEK_SET);
 	do_write(tb->entries_fd, entrybuf->buffer, entrybuf->length * sizeof(struct fourbyte_entry));
     }
 
     /* read new buffer in */
-    lseek(tb->entries_fd, index * sizeof(struct fourbyte_entry), SEEK_SET);
+    lseek64(tb->entries_fd, (off64_t) index * sizeof(struct fourbyte_entry), SEEK_SET);
     bytes_read = read(tb->entries_fd, entrybuf->buffer, ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry));
     if (bytes_read == 0) {
 	/* This is OK.  It just means we hit EOF - nothing is there yet! */
@@ -3289,7 +3289,7 @@ void merge_propentrys(proptable_entry_t *dest, proptable_entry_t *src)
     if (dest->futurevector & src->futurevector) {
 	global_position_t global;
 	index_to_global_position(proptable_tb, dest->index, &global);
-	fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
+	fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
     }
 
     dest->futurevector |= src->futurevector;
@@ -3322,7 +3322,7 @@ int proptable_entries = 0;
 void proptable_full(void)
 {
     if (proptable_output_fd == -1) {
-	proptable_output_fd = open("propfile_out", O_WRONLY | O_CREAT | O_TRUNC, 0666);
+	proptable_output_fd = open("propfile_out", O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
     }
     if (proptable_output_fd == -1) {
 	fprintf(stderr, "Can't open 'propfile_out' for writing propfile\n");
@@ -3470,7 +3470,7 @@ int proptable_finalize(int target_dtm)
     num_proptables = 0;
 
     rename("propfile_out", "propfile_in");
-    proptable_input_fd = open("propfile_in", O_RDONLY);
+    proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE);
     if (proptable_input_fd == -1) {
 	fprintf(stderr, "Can't open 'propfile_in' for reading propfile\n");
 	return 0;
@@ -4033,7 +4033,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 		    true_pawn = pawn;
 		    while ((tb->last_identical_piece[true_pawn] != -1)
-			   && (position.piece_position[true_pawn]
+			   && (position.piece_position[pawn]
 			       < position.piece_position[tb->last_identical_piece[true_pawn]])) {
 			true_pawn = tb->last_identical_piece[true_pawn];
 		    }
@@ -4208,7 +4208,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		true_captured_piece = missing_piece2;
 		while ((tb->last_identical_piece[true_captured_piece] != -1)
-		       && (position.piece_position[true_captured_piece]
+		       && (position.piece_position[missing_piece2]
 			   < position.piece_position[tb->last_identical_piece[true_captured_piece]])) {
 		    true_captured_piece = tb->last_identical_piece[true_captured_piece];
 		}
@@ -4242,7 +4242,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    true_pawn = pawn;
 		    while ((tb->last_identical_piece[true_pawn] != -1)
-			   && (position.piece_position[true_pawn]
+			   && (position.piece_position[pawn]
 			       < position.piece_position[tb->last_identical_piece[true_pawn]])) {
 			true_pawn = tb->last_identical_piece[true_pawn];
 		    }
@@ -4290,7 +4290,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    true_pawn = pawn;
 		    while ((tb->last_identical_piece[true_pawn] != -1)
-			   && (position.piece_position[true_pawn]
+			   && (position.piece_position[pawn]
 			       < position.piece_position[tb->last_identical_piece[true_pawn]])) {
 			true_pawn = tb->last_identical_piece[true_pawn];
 		    }
@@ -4367,6 +4367,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
     int dir;
     struct movement *movementptr;
     int true_captured_piece;
+    int true_capturing_piece;
 
     /* We only want to consider pieces of the side which captured... */
 
@@ -4385,7 +4386,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
     true_captured_piece = captured_piece;
     while ((tb->last_identical_piece[true_captured_piece] != -1)
-	   && (position->piece_position[true_captured_piece]
+	   && (position->piece_position[captured_piece]
 	       < position->piece_position[tb->last_identical_piece[true_captured_piece]])) {
 	true_captured_piece = tb->last_identical_piece[true_captured_piece];
     }
@@ -4436,13 +4437,31 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		position->piece_position[capturing_piece] = movementptr->square;
 		position->board_vector |= BITVECTOR(movementptr->square);
 
+		/* Again, when we convert the position to an index (in local_position_to_index()),
+		 * we'll make a copy of the position and normalize it by sorting the identical
+		 * pieces so that they are in ascending order.  Now we have to figure out the "true"
+		 * capturing piece, which could either be forwards or backwards in the piece list.
+		 */
+
+		true_capturing_piece = capturing_piece;
+		while ((tb->last_identical_piece[true_capturing_piece] != -1)
+		       && (movementptr->square
+			   < position->piece_position[tb->last_identical_piece[true_capturing_piece]])) {
+		    true_capturing_piece = tb->last_identical_piece[true_capturing_piece];
+		}
+		while ((tb->next_identical_piece[true_capturing_piece] != -1)
+		       && (movementptr->square
+			   > position->piece_position[tb->next_identical_piece[true_capturing_piece]])) {
+		    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
+		}
+
 		/* This function also back props any similar positions with one of the pawns from
 		 * the side that didn't capture in an en passant state.  DTC is zero because this is
 		 * a capture.
 		 */
 
 		propagate_local_position_from_futurebase(tb, dtm, 0,
-							 futurecaptures[capturing_piece][true_captured_piece],
+							 futurecaptures[true_capturing_piece][true_captured_piece],
 							 position, dtm_limit);
 
 
@@ -4484,13 +4503,31 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 		position->board_vector |= BITVECTOR(movementptr->square);
 
+		/* Again, when we convert the position to an index (in local_position_to_index()),
+		 * we'll make a copy of the position and normalize it by sorting the identical
+		 * pieces so that they are in ascending order.  Now we have to figure out the "true"
+		 * capturing piece, which could either be forwards or backwards in the piece list.
+		 */
+
+		true_capturing_piece = capturing_piece;
+		while ((tb->last_identical_piece[true_capturing_piece] != -1)
+		       && (movementptr->square
+			   < position->piece_position[tb->last_identical_piece[true_capturing_piece]])) {
+		    true_capturing_piece = tb->last_identical_piece[true_capturing_piece];
+		}
+		while ((tb->next_identical_piece[true_capturing_piece] != -1)
+		       && (movementptr->square
+			   > position->piece_position[tb->next_identical_piece[true_capturing_piece]])) {
+		    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
+		}
+
 		/* This function also back props any similar positions with one of the pawns from
 		 * the side that didn't capture in an en passant state.  DTC is zero because
 		 * this is a capture (and a pawn move).
 		 */
 
 		propagate_local_position_from_futurebase(tb, dtm, 0,
-							 futurecaptures[capturing_piece][true_captured_piece],
+							 futurecaptures[true_capturing_piece][true_captured_piece],
 							 position, dtm_limit);
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
@@ -4531,13 +4568,32 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 			true_captured_piece = captured_piece;
 			while ((tb->last_identical_piece[true_captured_piece] != -1)
-			       && (position->piece_position[true_captured_piece]
+			       && (position->piece_position[captured_piece]
 				   < position->piece_position[tb->last_identical_piece[true_captured_piece]])) {
 			    true_captured_piece = tb->last_identical_piece[true_captured_piece];
 			}
 
+			/* Again, when we convert the position to an index (in
+			 * local_position_to_index()), we'll make a copy of the position and
+			 * normalize it by sorting the identical pieces so that they are in
+			 * ascending order.  Now we have to figure out the "true" capturing piece,
+			 * which could either be forwards or backwards in the piece list.
+			 */
+
+			true_capturing_piece = capturing_piece;
+			while ((tb->last_identical_piece[true_capturing_piece] != -1)
+			       && (movementptr->square
+				   < position->piece_position[tb->last_identical_piece[true_capturing_piece]])) {
+			    true_capturing_piece = tb->last_identical_piece[true_capturing_piece];
+			}
+			while ((tb->next_identical_piece[true_capturing_piece] != -1)
+			       && (movementptr->square
+				   > position->piece_position[tb->next_identical_piece[true_capturing_piece]])) {
+			    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
+			}
+
 			propagate_local_position_from_futurebase(tb, dtm, 0,
-								 futurecaptures[capturing_piece][true_captured_piece],
+								 futurecaptures[true_capturing_piece][true_captured_piece],
 								 position, dtm_limit);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
@@ -4574,13 +4630,32 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 			true_captured_piece = captured_piece;
 			while ((tb->last_identical_piece[true_captured_piece] != -1)
-			       && (position->piece_position[true_captured_piece]
+			       && (position->piece_position[captured_piece]
 				   < position->piece_position[tb->last_identical_piece[true_captured_piece]])) {
 			    true_captured_piece = tb->last_identical_piece[true_captured_piece];
 			}
 
+			/* Again, when we convert the position to an index (in
+			 * local_position_to_index()), we'll make a copy of the position and
+			 * normalize it by sorting the identical pieces so that they are in
+			 * ascending order.  Now we have to figure out the "true" capturing piece,
+			 * which could either be forwards or backwards in the piece list.
+			 */
+
+			true_capturing_piece = capturing_piece;
+			while ((tb->last_identical_piece[true_capturing_piece] != -1)
+			       && (movementptr->square
+				   < position->piece_position[tb->last_identical_piece[true_capturing_piece]])) {
+			    true_capturing_piece = tb->last_identical_piece[true_capturing_piece];
+			}
+			while ((tb->next_identical_piece[true_capturing_piece] != -1)
+			       && (movementptr->square
+				   > position->piece_position[tb->next_identical_piece[true_capturing_piece]])) {
+			    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
+			}
+
 			propagate_local_position_from_futurebase(tb, dtm, 0,
-								 futurecaptures[capturing_piece][true_captured_piece],
+								 futurecaptures[true_capturing_piece][true_captured_piece],
 								 position, dtm_limit);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
@@ -4679,6 +4754,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		/* No pieces were on restricted squares.  Check them all. */
 
 		for (piece = 0; piece < tb->num_pieces; piece++) {
+
 		    consider_possible_captures(tb, dtm, &current_position,
 					       piece, captured_piece, dtm_limit);
 		}
@@ -6693,7 +6769,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (tb == NULL) return 0;
 
     if (num_propentries != 0) {
-	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC, 0666);
+	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
 	if (tb->entries_fd == -1) {
 	    fprintf(stderr, "Can't open 'entries' for read-write\n");
 	    return 0;
