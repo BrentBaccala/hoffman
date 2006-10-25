@@ -1538,7 +1538,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.192 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.193 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -2544,78 +2544,39 @@ int get_DTM(tablebase_t *tb, index_t index)
 
 /* #define DEBUG_MOVE 1029 */
 
-/* Four possible ways we can initialize an index for a position:
+/* Four possible ways we can initialize a tablebase entry for a position:
  *  - it's illegal
  *  - PNTM's mated
  *  - stalemate
  *  - any other position, with 'movecnt' possible moves out the position
  */
 
-void initialize_index(tablebase_t *tb, index_t index, int movecnt, int dtm, futurevector_t futurevector)
+void initialize_entry(tablebase_t *tb, struct fourbyte_entry *entry, int movecnt, int dtm)
 {
-    static index_t next_index = 0;
-    struct fourbyte_entry *entry;
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	fprintf(stderr, "initialize_index; index=%d movecnt=%d dtm=%d futurevector=%d\n",
-		index, movecnt, dtm, futurevector);
-#endif
-
-    if (next_index != index) {
-	fprintf(stderr, "Out of order initialization\n");
-	next_index = index + 1;
-    } else {
-	next_index ++;
-    }
-
-    entry = fetch_fourbyte_entry(tb, index);
-
     entry->movecnt = movecnt;
     entry->dtm = dtm;
     entry->dtc = 0;
-
-    tb->futurevectors[index] = futurevector;
 }
 
-void initialize_index_as_illegal(tablebase_t *tb, index_t index)
+void initialize_entry_as_illegal(tablebase_t *tb, struct fourbyte_entry *entry)
 {
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_as_illegal; index=%d\n", index);
-#endif
-    initialize_index(tb, index, 0, 0, 0);
+    initialize_entry(tb, entry, 0, 0);
 }
 
-void initialize_index_with_PNTM_mated(tablebase_t *tb, index_t index)
+void initialize_entry_with_PNTM_mated(tablebase_t *tb, struct fourbyte_entry *entry)
 {
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_with_PNTM_mated; index=%d\n", index);
-#endif
-
-    initialize_index(tb, index, 0, 1, 0);
+    initialize_entry(tb, entry, 0, 1);
 }
 
-void initialize_index_with_stalemate(tablebase_t *tb, index_t index)
+void initialize_entry_with_stalemate(tablebase_t *tb, struct fourbyte_entry *entry)
 {
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_with_stalemate; index=%d\n", index);
-#endif
-
     /* use movecnt 127 as stalemate for now */
-    initialize_index(tb, index, 127, 0, 0);
+    initialize_entry(tb, entry, 127, 0);
 }
 
-void initialize_index_with_movecnt(tablebase_t *tb, index_t index, int movecnt,
-				   futurevector_t futurevector)
+void initialize_entry_with_movecnt(tablebase_t *tb, struct fourbyte_entry *entry, int movecnt)
 {
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) printf("initialize_index_with_movecnt; index=%d movecnt=%d\n", index, movecnt);
-#endif
-
-    initialize_index(tb, index, movecnt, 0, futurevector);
+    initialize_entry(tb, entry, movecnt, 0);
 }
 
 inline void PTM_wins(struct fourbyte_entry *entry, int dtm, int dtc)
@@ -6401,231 +6362,227 @@ int in_check(tablebase_t *tb, local_position_t *position)
     return 0;
 }
 
-void initialize_tablebase(tablebase_t *tb)
+futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct fourbyte_entry *entry)
 {
     local_position_t position;
-    index_t index;
     int piece;
     int dir;
     struct movement *movementptr;
     int i;
 
-    for (index=0; index <= tb->max_index; index++) {
+    if (! index_to_local_position(tb, index, &position)) {
 
-	if (! index_to_local_position(tb, index, &position)) {
+	initialize_entry_as_illegal(tb, entry);
+	return 0;
 
-	    initialize_index_as_illegal(tb, index);
+    } else {
 
-	} else {
+	/* Now we need to count moves.  FORWARD moves. */
+	int movecnt = 0;
+	futurevector_t futurevector = 0;
 
-	    /* Now we need to count moves.  FORWARD moves. */
-	    int movecnt = 0;
-	    futurevector_t futurevector = 0;
-
-	    /* En passant:
-	     *
-	     * We're just counting moves here.  In particular, we don't compute the indices of the
-	     * resulting positions.  If we did, we'd have to worry about clearing en passant status
-	     * from any of fourth or fifth rank pawns, but we don't have to worry about it.
-	     *
-	     * We do have to count one or two possible extra en passant pawn captures, though...
-	     */
+	/* En passant:
+	 *
+	 * We're just counting moves here.  In particular, we don't compute the indices of the
+	 * resulting positions.  If we did, we'd have to worry about clearing en passant status
+	 * from any of fourth or fifth rank pawns, but we don't have to worry about it.
+	 *
+	 * We do have to count one or two possible extra en passant pawn captures, though...
+	 */
 
 
-	    for (piece = 0; piece < tb->num_pieces; piece++) {
+	for (piece = 0; piece < tb->num_pieces; piece++) {
 
-		/* We only want to consider pieces of the side which is to move... */
+	    /* We only want to consider pieces of the side which is to move... */
 
-		if (tb->piece_color[piece] != position.side_to_move)
-		    continue;
+	    if (tb->piece_color[piece] != position.side_to_move)
+		continue;
 
-		if (tb->piece_type[piece] != PAWN) {
+	    if (tb->piece_type[piece] != PAWN) {
 
-		    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+		for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
 
-			for (movementptr = movements[tb->piece_type[piece]][position.piece_position[piece]][dir];
-			     (movementptr->vector & position.board_vector) == 0;
-			     movementptr++) {
-
-			    /* If a piece is moving outside its restricted squares, we regard this
-			     * as a futurebase (since it will require back prop from futurebases)
-			     */
-
-			    if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
-				if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
-				}
-				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-			    }
-
-			    movecnt ++;
-
-			}
-
-			/* Now check to see if the movement ended because we hit against another piece
-			 * of the opposite color.  If so, add another move for the capture.
-			 *
-			 * Actually, we check to see that we DIDN'T hit a piece of our OWN color.  The
-			 * difference is that this way we don't register a capture if we hit the end of
-			 * the list of movements in a given direction.
-			 *
-			 * We also check to see if the capture was against the enemy king! in which case
-			 * this position is a "mate in 0" (i.e, illegal)
-			 */
-
-			if ((movementptr->vector & position.PTM_vector) == 0) {
-			    movecnt ++;
-			    for (i = 0; i < tb->num_pieces; i ++) {
-				if (movementptr->square == position.piece_position[i]) {
-				    if ((i == BLACK_KING) || (i == WHITE_KING)) {
-					initialize_index_with_PNTM_mated(tb, index);
-					goto mated;
-				    }
-				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-					fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
-				    }
-				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-				    break;
-				}
-			    }
-			    if (i == tb->num_pieces) {
-				fprintf(stderr, "Couldn't match capture!\n"); /* BREAKPOINT */
-			    }
-			}
-		    }
-
-		} else {
-
-		    /* Pawns, as always, are special */
-
-		    for (movementptr = normal_pawn_movements[position.piece_position[piece]][tb->piece_color[piece]];
+		    for (movementptr = movements[tb->piece_type[piece]][position.piece_position[piece]][dir];
 			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
 
-			/* If the piece is a pawn and we're moving to the last rank, then this has
-			 * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
-			 * knight, maybe rook and bishop).  As such, they will require back
-			 * propagation from futurebases and must therefore be flagged as
-			 * futuremoves.
+			/* If a piece is moving outside its restricted squares, we regard this
+			 * as a futurebase (since it will require back prop from futurebases)
 			 */
 
-			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
-
-			    if (futurevector & FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES)) {
+			if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
-			    futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
-
-			    movecnt += PROMOTION_POSSIBILITIES;
-
-			} else {
-
-			    /* If a piece is moving outside its restricted squares, we regard this
-			     * as a futurebase (since it will require back prop from futurebases)
-			     */
-
-			    if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
-				if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
-				}
-				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-			    }
-
-			    movecnt ++;
-
+			    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
 			}
+
+			movecnt ++;
 
 		    }
 
-
-		    /* Pawn captures.
+		    /* Now check to see if the movement ended because we hit against another piece
+		     * of the opposite color.  If so, add another move for the capture.
 		     *
-		     * In this part of the code, we're just counting forward moves, and all captures
-		     * are futurebase moves, so the only difference to us whether this is a
-		     * promotion move or not is how many futuremoves get recorded.
+		     * Actually, we check to see that we DIDN'T hit a piece of our OWN color.  The
+		     * difference is that this way we don't register a capture if we hit the end of
+		     * the list of movements in a given direction.
+		     *
+		     * We also check to see if the capture was against the enemy king! in which case
+		     * this position is a "mate in 0" (i.e, illegal)
 		     */
 
-		    for (movementptr = capture_pawn_movements[position.piece_position[piece]][tb->piece_color[piece]];
-			 movementptr->square != -1;
-			 movementptr++) {
-
-			/* A special check for en passant captures.  */
-
-			if (movementptr->square == position.en_passant_square) {
-			    movecnt ++;
-			    for (i = 2; i < tb->num_pieces; i ++) {
-				if (movementptr->square + (tb->piece_color[piece] == WHITE ? -8 : 8)
-				    == position.piece_position[i]) {
-				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-					fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
-				    }
-				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-				    break;
+		    if ((movementptr->vector & position.PTM_vector) == 0) {
+			movecnt ++;
+			for (i = 0; i < tb->num_pieces; i ++) {
+			    if (movementptr->square == position.piece_position[i]) {
+				if ((i == BLACK_KING) || (i == WHITE_KING)) {
+				    initialize_entry_with_PNTM_mated(tb, entry);
+				    return 0;
 				}
-			    }
-			    continue;
-			}
-
-			if (((movementptr->vector & position.board_vector) == 0)
-			    || ((movementptr->vector & position.PTM_vector) != 0)) continue;
-
-			/* Same check as above for a mated situation */
-
-			if (position.side_to_move == WHITE) {
-			    if (movementptr->square == position.piece_position[BLACK_KING]) {
-				initialize_index_with_PNTM_mated(tb, index);
-				goto mated;
-			    }
-			} else {
-			    if (movementptr->square == position.piece_position[WHITE_KING]) {
-				initialize_index_with_PNTM_mated(tb, index);
-				goto mated;
+				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				}
+				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				break;
 			    }
 			}
+			if (i == tb->num_pieces) {
+			    fprintf(stderr, "Couldn't match capture!\n"); /* BREAKPOINT */
+			}
+		    }
+		}
 
-			/* If the piece is a pawn and we're moving to the last rank, then this has
-			 * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
-			 * knight, maybe rook and bishop).  As such, they will require back
-			 * propagation from futurebases and must therefore be flagged as
-			 * futuremoves.
+	    } else {
+
+		/* Pawns, as always, are special */
+
+		for (movementptr = normal_pawn_movements[position.piece_position[piece]][tb->piece_color[piece]];
+		     (movementptr->vector & position.board_vector) == 0;
+		     movementptr++) {
+
+		    /* If the piece is a pawn and we're moving to the last rank, then this has
+		     * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
+		     * knight, maybe rook and bishop).  As such, they will require back
+		     * propagation from futurebases and must therefore be flagged as
+		     * futuremoves.
+		     */
+
+		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+
+			if (futurevector & FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES)) {
+			    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+			}
+			futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
+
+			movecnt += PROMOTION_POSSIBILITIES;
+
+		    } else {
+
+			/* If a piece is moving outside its restricted squares, we regard this
+			 * as a futurebase (since it will require back prop from futurebases)
 			 */
 
-			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+			if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
+				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+			    }
+			    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
+			}
 
-			    movecnt += PROMOTION_POSSIBILITIES;
+			movecnt ++;
 
-			    for (i = 2; i < tb->num_pieces; i ++) {
-				if (movementptr->square == position.piece_position[i]) {
-				    if (futurevector & FUTUREVECTORS(futurecaptures[piece][i],
-								     PROMOTION_POSSIBILITIES)) {
-					fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
-				    }
-				    futurevector |= FUTUREVECTORS(futurecaptures[piece][i],
-								  PROMOTION_POSSIBILITIES);
-				    break;
+		    }
+
+		}
+
+
+		/* Pawn captures.
+		 *
+		 * In this part of the code, we're just counting forward moves, and all captures
+		 * are futurebase moves, so the only difference to us whether this is a
+		 * promotion move or not is how many futuremoves get recorded.
+		 */
+
+		for (movementptr = capture_pawn_movements[position.piece_position[piece]][tb->piece_color[piece]];
+		     movementptr->square != -1;
+		     movementptr++) {
+
+		    /* A special check for en passant captures.  */
+
+		    if (movementptr->square == position.en_passant_square) {
+			movecnt ++;
+			for (i = 2; i < tb->num_pieces; i ++) {
+			    if (movementptr->square + (tb->piece_color[piece] == WHITE ? -8 : 8)
+				== position.piece_position[i]) {
+				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 				}
+				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				break;
 			    }
-			    if (i == tb->num_pieces) {
-				fprintf(stderr, "Couldn't match promotion capture!\n"); /* BREAKPOINT */
-			    }
+			}
+			continue;
+		    }
 
-			} else {
+		    if (((movementptr->vector & position.board_vector) == 0)
+			|| ((movementptr->vector & position.PTM_vector) != 0)) continue;
 
-			    movecnt ++;
+		    /* Same check as above for a mated situation */
 
-			    for (i = 2; i < tb->num_pieces; i ++) {
-				if (movementptr->square == position.piece_position[i]) {
-				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-					fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
-				    }
-				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-				    break;
+		    if (position.side_to_move == WHITE) {
+			if (movementptr->square == position.piece_position[BLACK_KING]) {
+			    initialize_entry_with_PNTM_mated(tb, entry);
+			    return 0;
+			}
+		    } else {
+			if (movementptr->square == position.piece_position[WHITE_KING]) {
+			    initialize_entry_with_PNTM_mated(tb, entry);
+			    return 0;
+			}
+		    }
+
+		    /* If the piece is a pawn and we're moving to the last rank, then this has
+		     * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
+		     * knight, maybe rook and bishop).  As such, they will require back
+		     * propagation from futurebases and must therefore be flagged as
+		     * futuremoves.
+		     */
+
+		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+
+			movecnt += PROMOTION_POSSIBILITIES;
+
+			for (i = 2; i < tb->num_pieces; i ++) {
+			    if (movementptr->square == position.piece_position[i]) {
+				if (futurevector & FUTUREVECTORS(futurecaptures[piece][i],
+								 PROMOTION_POSSIBILITIES)) {
+				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 				}
+				futurevector |= FUTUREVECTORS(futurecaptures[piece][i],
+							      PROMOTION_POSSIBILITIES);
+				break;
 			    }
-			    if (i == tb->num_pieces) {
-				fprintf(stderr, "Couldn't match pawn capture!\n"); /* BREAKPOINT */
-			    }
+			}
+			if (i == tb->num_pieces) {
+			    fprintf(stderr, "Couldn't match promotion capture!\n"); /* BREAKPOINT */
+			}
 
+		    } else {
+
+			movecnt ++;
+
+			for (i = 2; i < tb->num_pieces; i ++) {
+			    if (movementptr->square == position.piece_position[i]) {
+				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				}
+				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				break;
+			    }
+			}
+			if (i == tb->num_pieces) {
+			    fprintf(stderr, "Couldn't match pawn capture!\n"); /* BREAKPOINT */
 			}
 
 		    }
@@ -6634,23 +6591,31 @@ void initialize_tablebase(tablebase_t *tb)
 
 	    }
 
-	    /* Finally, we want to determine is if we're in check.  This is significant because if
-	     * and when we decide there are no valid moves out of this position, being in check is
-	     * the difference between this being checkmate or stalemate.  We note being in check by
-	     * setting the high order bit in the unsigned char movecnt.
-	     */
-
-	    if (movecnt == 0) {
-		initialize_index_with_stalemate(tb, index);
-	    } else {
-		initialize_index_with_movecnt(tb, index,
-					      in_check(tb, &position) ? 128 + movecnt : movecnt,
-					      futurevector);
-	    }
-
-	mated: ;
-				
 	}
+
+	/* Finally, we want to determine is if we're in check.  This is significant because if
+	 * and when we decide there are no valid moves out of this position, being in check is
+	 * the difference between this being checkmate or stalemate.  We note being in check by
+	 * setting the high order bit in the unsigned char movecnt.
+	 */
+
+	if (movecnt == 0) {
+	    initialize_entry_with_stalemate(tb, entry);
+	    return 0;
+	} else {
+	    initialize_entry_with_movecnt(tb, entry,
+					  in_check(tb, &position) ? 128 + movecnt : movecnt);
+	    return futurevector;
+	}
+    }
+}
+
+void initialize_tablebase(tablebase_t *tb)
+{
+    index_t index;
+
+    for (index=0; index <= tb->max_index; index++) {
+	tb->futurevectors[index] = initialize_tablebase_entry(tb, index, fetch_fourbyte_entry(tb, index));
     }
 }
 
