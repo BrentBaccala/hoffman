@@ -1274,7 +1274,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     modulus = xmlGetProp(tablebase, (const xmlChar *) "modulus");
     if (modulus != NULL) {
-	tb->modulus = strtol((const char *) modulus, NULL, 0);
+	tb->modulus = strtoll((const char *) modulus, NULL, 0);
 	if (tb->modulus <= tb->max_index) {
 	    fprintf(stderr, "modulus %d less than max_index %d\n", tb->modulus, tb->max_index);
 	    return NULL;
@@ -1538,7 +1538,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.194 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.195 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
