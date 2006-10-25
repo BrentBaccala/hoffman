@@ -1538,7 +1538,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.193 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.194 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -3344,7 +3344,6 @@ void proptable_full(void)
 
 void commit_proptable_entry(proptable_entry_t *propentry, struct fourbyte_entry *entry)
 {
-    index_t index = propentry->index;
     int dtm = propentry->dtm;
     int i;
 
@@ -3353,28 +3352,6 @@ void commit_proptable_entry(proptable_entry_t *propentry, struct fourbyte_entry 
      */
 
     if (entry->dtm == 1) return;
-
-    /* This code is a little different from the merge code above before in the futurevectors array,
-     * we already have a bit set for each futuremove that could happen, and we want to clear those
-     * bits, rather than oring them.
-     */
-
-    if (proptable_tb->futurevectors != NULL) {
-
-	if ((propentry->futurevector & proptable_tb->futurevectors[index]) != propentry->futurevector) {
-	    global_position_t global;
-	    index_to_global_position(proptable_tb, propentry->index, &global);
-	    fprintf(stderr, "Futuremove already handled: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
-	}
-
-	proptable_tb->futurevectors[index] ^= propentry->futurevector;
-
-    } else {
-
-	if (propentry->futurevector != 0)
-	    fprintf(stderr, "Futuremove with futurevectors NULL!?\n");
-
-    }
 
     if (dtm > 0) {
 	PTM_wins(entry, dtm, propentry->dtc);
@@ -3467,6 +3444,9 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
     dest->index = proptable_tb->max_index + 1;
 }
 
+futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct fourbyte_entry *entry);
+void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
+
 int proptable_finalize(int target_dtm)
 {
     int i;
@@ -3557,14 +3537,28 @@ int proptable_finalize(int target_dtm)
     for (index = 0; index <= proptable_tb->max_index; index ++) {
 
 	struct fourbyte_entry *fourbyte_entry = fetch_fourbyte_entry(proptable_tb, index);
+	futurevector_t futurevector = 0;
+	futurevector_t possible_futuremoves;
 
 	if (sorting_network[1].index < index) {
 	    fprintf(stderr, "Out-of-order entries in sorting network\n");   /* BREAKPOINT */
 	}
 
+	if (target_dtm == 0) {
+	    possible_futuremoves = initialize_tablebase_entry(proptable_tb, index, fourbyte_entry);
+	}
+
 	while (sorting_network[1].index == index ) {
 
 	    commit_proptable_entry(&sorting_network[1], fourbyte_entry);
+
+	    if (sorting_network[1].futurevector & futurevector) {
+		global_position_t global;
+		index_to_global_position(proptable_tb, sorting_network[1].index, &global);
+		fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
+	    }
+
+	    futurevector |= sorting_network[1].futurevector;
 
 	    fetch_next_propentry(proptable_num[1], &sorting_network[highbit + proptable_num[1]]);
 
@@ -3580,6 +3574,19 @@ int proptable_finalize(int target_dtm)
 		    proptable_num[network_node] = proptable_num[2*network_node+1];
 		}
 	    }
+	}
+
+	/* Don't track futuremoves for illegal (DTM 1) positions */
+
+	if ((target_dtm == 0) && (get_entry_DTM(fourbyte_entry) != 1)) {
+
+	    if ((futurevector & possible_futuremoves) != futurevector) {
+		global_position_t global;
+		index_to_global_position(proptable_tb, index, &global);
+		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
+	    }
+
+	    finalize_futuremove(proptable_tb, index, possible_futuremoves ^ futurevector);
 	}
 
 	if ((target_dtm != 0) && (get_entry_DTM(fourbyte_entry) == target_dtm)) {
@@ -3649,9 +3656,21 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 	entry.dtm = dtm;
 	entry.dtc = dtc;
 	entry.movecnt = 1;
-	entry.futurevector = futurevector;
 
 	commit_proptable_entry(&entry, fetch_fourbyte_entry(proptable_tb, index));
+
+	/* Don't track futuremoves for illegal (DTM 1) positions */
+
+	if ((proptable_tb->futurevectors != NULL) && (get_DTM(proptable_tb, index) != 1)) {
+
+	    if ((futurevector & proptable_tb->futurevectors[index]) != futurevector) {
+		global_position_t global;
+		index_to_global_position(proptable_tb, index, &global);
+		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
+	    }
+
+	    proptable_tb->futurevectors[index] ^= futurevector;
+	}
 
 	return;
     }
@@ -5215,52 +5234,57 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
  * flagging in the XML header which sides can be pruned in which way (concede or discard).
  */
 
+int all_futuremoves_handled = 1;
+int max_complaints = 10;
+futurevector_t unpruned_futuremoves;
+
+void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
+
+    int futuremove;
+
+    if (futurevector & unpruned_futuremoves) {
+	global_position_t global;
+	index_to_global_position(tb, index, &global);
+	if (all_futuremoves_handled)
+	    fprintf(stderr, "ERROR: Some futuremoves not handled under move restrictions!\n");
+	fprintf(stderr, "%s", global_position_to_FEN(&global));
+	for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
+	    if (futurevector & unpruned_futuremoves & FUTUREVECTOR(futuremove)) {
+		fprintf(stderr, " %s", movestr[futuremove]);
+	    }
+	}
+	fprintf(stderr, "\n");
+	if ((-- max_complaints) == 0) exit(EXIT_FAILURE);
+	all_futuremoves_handled = 0;		/* BREAKPOINT */
+    }
+
+    /* concede - we treat these unhandled futuremoves as forced wins for PTM */
+
+    if (futurevector & conceded_futuremoves) {
+	/* PTM_wins(tb, index, 1, 1); */
+	/* We insert here with DTM=2 (mate in one) and DTC=1 (XXX) */
+	insert_into_proptable(index, 2, 1, 0);
+    }
+
+    /* discard - we ignore these unhandled futuremoves by decrementing movecnt */
+
+    if (futurevector & discarded_futuremoves) {
+	for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
+	    if (futurevector & discarded_futuremoves & FUTUREVECTOR(futuremove)) {
+		/* tb->entries[index].movecnt --; */
+		/* XXX this isn't handled right - a draw is different from a discard */
+		insert_into_proptable(index, 0, 0, 0);
+	    }
+	}
+    }
+}
+
 boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 
     index_t index;
-    int all_futuremoves_handled = 1;
-    int max_complaints = 10;
-    futurevector_t unpruned_futuremoves = ~pruned_futuremoves;
-    int futuremove;
 
     for (index = 0; index <= tb->max_index; index ++) {
-
-	if (tb->futurevectors[index] & unpruned_futuremoves) {
-	    global_position_t global;
-	    index_to_global_position(tb, index, &global);
-	    if (all_futuremoves_handled)
-		fprintf(stderr, "ERROR: Some futuremoves not handled under move restrictions!\n");
-	    fprintf(stderr, "%s", global_position_to_FEN(&global));
-	    for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
-		if (tb->futurevectors[index] & unpruned_futuremoves & FUTUREVECTOR(futuremove)) {
-		    fprintf(stderr, " %s", movestr[futuremove]);
-		}
-	    }
-	    fprintf(stderr, "\n");
-	    if ((-- max_complaints) == 0) return 0;
-	    all_futuremoves_handled = 0;		/* BREAKPOINT */
-	}
-
-	/* concede - we treat these unhandled futuremoves as forced wins for PTM */
-
-	if (tb->futurevectors[index] & conceded_futuremoves) {
-	    /* PTM_wins(tb, index, 1, 1); */
-	    /* We insert here with DTM=2 (mate in one) and DTC=1 (XXX) */
-	    insert_into_proptable(index, 2, 1, 0);
-	}
-
-	/* discard - we ignore these unhandled futuremoves by decrementing movecnt */
-
-	if (tb->futurevectors[index] & discarded_futuremoves) {
-	    for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
-		if (tb->futurevectors[index] & discarded_futuremoves & FUTUREVECTOR(futuremove)) {
-		    /* tb->entries[index].movecnt --; */
-		    /* XXX this isn't handled right - a draw is different from a discard */
-		    insert_into_proptable(index, 0, 0, 0);
-		}
-	    }
-	}
-
+	finalize_futuremove(tb, index, tb->futurevectors[index]);
     }
 
     return all_futuremoves_handled;
@@ -5681,6 +5705,8 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 	    }
 	}
     }
+
+    unpruned_futuremoves = ~pruned_futuremoves;
 }
 
 
@@ -6680,12 +6706,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	}
     }
 
-    tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
-    if (tb->futurevectors == NULL) {
-	fprintf(stderr, "Can't malloc tablebase futurevectors\n");
-	return 0;
-    }
-
     if (num_propentries != 0) {
 	proptable = calloc(num_propentries, sizeof(proptable_entry_t));
 	if (proptable == NULL) {
@@ -6700,26 +6720,53 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     compute_pruned_futuremoves(tb);
     if (! check_pruning(tb)) return 0;
 
-    fprintf(stderr, "Initializing tablebase\n");
-    initialize_tablebase(tb);
+    if (num_propentries == 0) {
 
-    check_1000_indices(tb);
+	/* No proptables.  Allocate a futurevectors array, initialize the tablebase, back propagate
+	 * the futurebases (noting which futuremoves have been handled in the futurevectors array),
+	 * and run through the futurevectors array checking for unhandled futuremoves.
+	 */
 
-    dtm_limit = back_propagate_all_futurebases(tb);
-    if (dtm_limit == -1) return 0;
+	tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
+	if (tb->futurevectors == NULL) {
+	    fprintf(stderr, "Can't malloc tablebase futurevectors\n");
+	    return 0;
+	}
 
-    /* Ultimately, I want to wrap this in with tablebase initialization.  We'll back propagate first
-     * (building proptables), then initialize the tablebase, check futuremoves, and generate the
-     * first set of intra-table proptables, all in one pass.
-     */
+	fprintf(stderr, "Initializing tablebase\n");
+	initialize_tablebase(tb);
 
-    fprintf(stderr, "Checking futuremoves...\n");
-    propagation_pass(0);
-    if (! have_all_futuremoves_been_handled(tb)) return 0;
-    if (num_propentries != 0) proptable_full();  /* flush moves out to disk */
-    fprintf(stderr, "All futuremoves handled under move restrictions\n");
-    free(tb->futurevectors);
-    tb->futurevectors=NULL;
+	check_1000_indices(tb);
+
+	dtm_limit = back_propagate_all_futurebases(tb);
+	if (dtm_limit == -1) return 0;
+
+	fprintf(stderr, "Checking futuremoves...\n");
+	propagation_pass(0);
+	if (! have_all_futuremoves_been_handled(tb)) return 0;
+	fprintf(stderr, "All futuremoves handled under move restrictions\n");
+
+	free(tb->futurevectors);
+	tb->futurevectors=NULL;
+
+    } else {
+
+	/* Using proptables.  No futurevectors array.  We back propagate the futurebases into the
+	 * proptable, then in a single pass initialize the entries array and commit the proptable
+	 * into it, checking each position move as we go to make sure its futuremoves are handled.
+	 */
+
+	dtm_limit = back_propagate_all_futurebases(tb);
+	if (dtm_limit == -1) return 0;
+	proptable_full();  /* flush moves out to disk */
+
+	fprintf(stderr, "Initializing tablebase...\n");
+	propagation_pass(0);
+	proptable_full();  /* flush moves out to disk */
+
+	fprintf(stderr, "All futuremoves handled under move restrictions\n");
+
+    }
 
     /* We add one to dtm_limit here because, even if there are intra-table passes with no
      * progress made, we want to process at least one pass beyond the maximum mate-in value we
