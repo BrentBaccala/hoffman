@@ -538,96 +538,219 @@ int find_name_in_array(char * name, char * array[])
  *
  * i.e, b[n] is the multiplicative inverse of b (mod a).
  *
- * Profiling showed a fair chunk of time being spent in this routine, and an inspection of the
- * assembly code revealed rather poor code generation (probably because we need to juggle seven
- * variables around), so I hand coded the algorithm in i386 assembly.  A key design feature of the
- * assembler version of the algorithm is that it is actually two copies of the algorithm one right
- * after the other.  The first uses the EBX/ECX registers for x[n-1]/x[n]; the second uses ECX/EBX.
- * Ditto for b[n-1]/b[n] being in either ESI/EDI or EDI/ESI.  We "swap" variables just by
- * alternating between the two versions.  This avoids all the variable swapping in the C version of
- * the code.  I also use unsigned math throughout and interleave modulo reductions into the main
- * algorithm, so it should work on any 32-bit numbers; I suspect that the C version may have
- * overflow problems on large numbers.
+ * Even a hand-coded assembly version of this algorithm was too slow, so on the advice of
+ * Prof. Christof Paar I switched to using a binary extended GCD algorithm.  This is based on
+ * computing a GCD by repeatedly subtracting the smaller number from the larger one.  A
+ * consideration of the equation c = a - b shows that a common multiple of any two of the numbers
+ * must be a common multiple of the third.  Therefore, subtracting preserves common multiples in the
+ * result and does not introduce any new common multiples.  Because we are working with a binary
+ * architecture, detecting multiples of two is easy, so we can eliminate them by right shifting.
+ * Since subtracting two odd numbers gives an even number, we can right shift by at least one bit
+ * per iteration.  Combining the two operations of subtraction and right shifting, we get a GCD
+ * algorithm (14.61 in Menezes' Handbook of Applied Cryptography) that requires more iterations, but
+ * still completes in a reasonable time and avoids the expensive multiplications and divisions.
+ *
+ * As above, we need to track the b[n] part of x[n] = a[n] * a + b[n] * b until we reach a GCD of 1.
+ * Subtracting (x[n+1] = x[n] - x[n-1]) is easy:
+ *
+ *                a[n+1] = a[n] - a[n-1]    and    b[n+1] = b[n] - b[n-1]
+ *
+ * Right shifting (division by 2) is only a little more difficult.  Let's first note that if x[n] is
+ * even (the only case in which we'd be right shifting) and a is odd (it's a prime modulus, after
+ * all), then either a[n] is even or a[n] and b[n] must both be odd.  So if b[n] is even, then a[n]
+ * is also even and we can right shift everything: x[n]/2 = a[n]/2 * a + b[n]/2 * b, while if
+ * b[n] is odd, we can add and subtract a * b to obtain:
+ *
+ *             x[n] = (a[n] + b) * a + (b[n] - a) * b
+ *
+ *             x[n]/2 = (a[n] + b)/2 * a + (b[n] - a)/2 * b
+ *
+ * Remember that a[n] gets discarded; b[n] is all we care about computing.
+ *
+ * So our operations are:
+ *
+ *    subtract (x > y)    x = x - y             b[x] = (b[x] - b[y]) mod m
+ *
+ *    subtract (y > x)    y = y - x             b[y] = (b[y] - b[x]) mod m
+ *
+ *    right shift x (b[x] even)     x = x / 2                  b[x] = b[x] / 2
+ *
+ *    right shift x (b[x] odd)      x = x / 2                  b[x] = ((b[x] - m) / 2) mod m
+ *
+ *                                                         or  b[x] = ((b[x] + m) / 2) mod m
+ *
+ * m    -> EAX
+ * x    -> EBX
+ * y    -> ECX
+ * (m+1)/2 -> EDX
+ * b[x] -> ESI
+ * b[y] -> EDI
  *
  * This is a GNU compiler, so we use AT&T assembler syntax - the destination comes second.
  */
 
 #define ASM_invert_in_finite_field(INDEX, MODULUS)						\
-   asm("        push %%ebp;                                                                     \
-                                                                                                \
+   asm("                                                                                        \
                 /* Input                                                                    */  \
                 /*                                                                          */  \
-                /* EBX - modulus                                                            */  \
+                /* EAX - modulus                                                            */  \
                 /* ECX - index                                                              */  \
                                                                                                 \
-                mov %%ebx, %%ebp;                                                               \
+                mov %%eax, %%ebx;                                                               \
                 mov $0, %%esi;                                                                  \
                 mov $1, %%edi;                                                                  \
                                                                                                 \
-           1:   /* EBP - modulus                                                            */  \
-                /* EBX - x[n-1]                                                             */  \
-                /* ECX - x[n]                                                               */  \
-                /* ESI - b[n-1]                                                             */  \
-                /* EDI - b[n]                                                               */  \
+                mov %%eax, %%edx;                                                               \
+                add $1, %%edx;                                                                  \
+                shr %%edx;                                                                      \
                                                                                                 \
-                /* Divide x[n-1]/x[n]                                                       */  \
-                mov %%ebx, %%eax;                                                               \
-                xor %%edx, %%edx;                                                               \
-                div %%ecx;                                                                      \
+                /* while ((y&1) == 0)                                                       */  \
                                                                                                 \
-                /* jz 6f if remainder is zero                                               */  \
-                or  %%edx, %%edx;                                                               \
-                jz  6f;                                                                         \
+           1:   test $1, %%cl;                                                                  \
+                jne 2f;                                                                         \
                                                                                                 \
-                /* remainder -> old x[n-1] reg (new x[n] reg)                               */  \
-                mov %%edx, %%ebx;                                                               \
+                /*     y >>= 1;                                                             */  \
+                shr %%ecx;                                                                      \
                                                                                                 \
-                /* (b[n]*q) mod m -> EDX                                                    */  \
-                mul %%edi;                                                                      \
-                div %%ebp;                                                                      \
+                /*     if ((by&1) == 0) {                                                   */  \
+                /*        by >>= 1;                                                         */  \
+                /*    } else {                                                              */  \
+                /*        by = ((by + m)/2) mod m;                                          */  \
+                /*        by = (((by-1 + m+1)/2) mod m;                                     */  \
+                /*        by = ((by-1)/2 + (m+1)/2) mod m;                                  */  \
+                /*    }                                                                     */  \
+                /* }                                                                        */  \
                                                                                                 \
-                /* (b[n-1] - b[n]*q) mod m  ->  old b[n-1] reg (new b[n] reg)               */  \
-                sub %%edx, %%esi;                                                               \
-                jnc 2f;                                                                         \
-                add %%ebp, %%esi;                                                               \
-                                                                                                \
-           2:   /* EBP - modulus                                                            */  \
-                /* ECX - x[n-1]                                                             */  \
-                /* EBX - x[n]                                                               */  \
-                /* EDI - b[n-1]                                                             */  \
-                /* ESI - b[n]                                                               */  \
-                                                                                                \
-                /* Divide x[n-1]/x[n]                                                       */  \
-                mov %%ecx, %%eax;                                                               \
-                xor %%edx, %%edx;                                                               \
-                div %%ebx;                                                                      \
-                                                                                                \
-                /* jz 7f if remainder is zero                                               */  \
-                or  %%edx, %%edx;                                                               \
-                jz  7f;                                                                         \
-                                                                                                \
-                /* remainder -> old x[n-1] reg (new x[n] reg)                               */  \
-                mov %%edx, %%ecx;                                                               \
-                                                                                                \
-                /* (b[n]*q) mod m -> EDX                                                    */  \
-                mul %%esi;                                                                      \
-                div %%ebp;                                                                      \
-                                                                                                \
-                /* (b[n-1] - b[n]*q) mod m  ->  old b[n-1] reg (new b[n] reg)               */  \
-                sub %%edx, %%edi;                                                               \
+                shr %%edi;                                                                      \
                 jnc 1b;                                                                         \
-                add %%ebp, %%edi;                                                               \
+                add %%edx, %%edi;                                                               \
+                cmp %%eax, %%edi;                                                               \
+                jc  1b;                                                                         \
+                sub %%eax, %%edi;                                                               \
                 jmp 1b;                                                                         \
                                                                                                 \
-                /* 6: exit from first half: move b[n] from EDI to ESI                       */  \
-           6:   mov %%edi, %%esi;                                                               \
-                /* 7: exit from second half: move b[n] from ESI to ECX (output)             */  \
-           7:   mov %%esi, %%ecx;                                                               \
-                pop %%ebp;" : "+c" (INDEX) : "b" (MODULUS) : "ax", "dx", "di", "si", "cc")
+           2:   /* Is x = y ?  Is x > y ?                                                   */  \
+                cmp %%ecx, %%ebx;                                                               \
+                jz  6f;                                                                         \
+                jc  4f;                                                                         \
+                                                                                                \
+                /* Yes, x > y                                                               */  \
+                /* Set x = x - y                                                            */  \
+                sub %%ecx, %%ebx;                                                               \
+                                                                                                \
+                /* Set b[x] = (b[x] - b[y]) mod m                                           */  \
+                sub %%edi, %%esi;                                                               \
+                jnc 3f;                                                                         \
+                add %%eax, %%esi;                                                               \
+                                                                                                \
+                /* while ((x&1) == 0)                                                       */  \
+                                                                                                \
+           3:   test $1, %%bl;                                                                  \
+                jne 2b;                                                                         \
+                                                                                                \
+                /*     x >>= 1;                                                             */  \
+                shr %%ebx;                                                                      \
+                                                                                                \
+                /*     if ((bx&1) == 0) {                                                   */  \
+                /*        bx >>= 1;                                                         */  \
+                /*    } else {                                                              */  \
+                /*        bx = ((bx + m)/2) mod m;                                          */  \
+                /*        bx = (((bx-1 + m+1)/2) mod m;                                     */  \
+                /*        bx = ((bx-1)/2 + (m+1)/2) mod m;                                  */  \
+                /*    }                                                                     */  \
+                /* }                                                                        */  \
+                                                                                                \
+                shr %%esi;                                                                      \
+                jnc 3b;                                                                         \
+                add %%edx, %%esi;                                                               \
+                cmp %%eax, %%esi;                                                               \
+                jc  3b;                                                                         \
+                sub %%eax, %%esi;                                                               \
+                jmp 3b;                                                                         \
+                                                                                                \
+                /* y > x                                                                    */  \
+                /* Set y = y - x                                                            */  \
+           4:   sub %%ebx, %%ecx;                                                               \
+                                                                                                \
+                /* Set b[y] = (b[y] - b[x]) mod m                                           */  \
+                sub %%esi, %%edi;                                                               \
+                jnc 1b;                                                                         \
+                add %%eax, %%edi;                                                               \
+                                                                                                \
+                jmp 1b;                                                                         \
+                                                                                                \
+           6:   mov %%edi, %%ecx;                                                               \
+                                                                                                \
+                          " : "+c" (INDEX) : "a" (MODULUS) : "bx", "dx", "di", "si", "cc")
 
-int invert_in_finite_field(int b, int modulus)
+int32 invert_in_finite_field(int32 b, int32 m)
 {
 #if 0
+    int32 x = m;
+    int32 y = b;
+    int32 bx = 0;
+    int32 by = 1;
+
+    int test = b;
+    ASM_invert_in_finite_field(test, m);
+
+    while ((y&1) == 0) {
+	y >>= 1;
+	if ((by&1) == 0) {
+	    by >>= 1;
+	} else {
+	    by = ((by + m)/2)%m;
+	}
+    }
+
+    while (x != y) {
+	if (x > y) {
+	    x = x - y;
+
+	    if (bx > by) bx = (bx - by)%m;
+	    else bx = (m + bx - by)%m;
+
+	    while ((x&1) == 0) {
+		x >>= 1;
+		if ((bx&1) == 0) {
+		    bx >>= 1;
+		} else {
+		    bx = ((bx + m)/2)%m;
+		}
+	    }
+	} else {
+	    y = y - x;
+
+	    if (by > bx) by = (by - bx)%m;
+	    else by = (m + by - bx)%m;
+
+	    while ((y&1) == 0) {
+		y >>= 1;
+		if ((by&1) == 0) {
+		    by >>= 1;
+		} else {
+		    by = ((by + m)/2)%m;
+		}
+	    }
+	}
+    }
+    if (x != 1) fprintf(stderr, "x != 1 in invert_finite_field v2\n");
+
+    if (by != test) {
+	fprintf(stderr, "%d: assembly inversion (%d) didn't match C code (%d)\n", b, test, by);
+    }
+
+    return by;
+#else
+    ASM_invert_in_finite_field(b, m);
+    return b;
+#endif
+}
+
+#if 0
+int invert_in_finite_field(int b, int modulus)
+{
+#if 1
     /* We start with n=1 */
 
     int xn_1 = modulus;  /* x_n-1 = x[0] = a */
@@ -636,8 +759,12 @@ int invert_in_finite_field(int b, int modulus)
     int bn = 1;          /* b_n = b[1] = 1 */
     int bnn;
 
+#if 0
     int test = b;
     ASM_invert_in_finite_field(test, modulus);
+#else
+    int test = invert_in_finite_field_v2(b, modulus);
+#endif
 
     while (xn != 0) {
 
@@ -662,7 +789,7 @@ int invert_in_finite_field(int b, int modulus)
     if (bn_1 < 0) bn_1 += modulus;
 
     if (bn_1 != test) {
-	fprintf(stderr, "assembly inversion didn't match C code\n");
+	fprintf(stderr, "%d: assembly inversion (%d) didn't match C code (%d)\n", b, test, bn_1);
     }
 
     if (xn_1 != 1) {
@@ -677,6 +804,7 @@ int invert_in_finite_field(int b, int modulus)
     return b;
 #endif
 }
+#endif
 
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and
  * multiplies them together for the various pieces.  Simple and fast.
@@ -1538,7 +1666,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.196 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.197 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
