@@ -416,6 +416,8 @@ int num_propentries = 0;
 
 #define MAX_ZEROOFFSET 25
 
+#define SEPERATE_PROPTABLE_FILES yes
+
 
 /***** UTILITY FUNCTIONS *****/
 
@@ -1666,7 +1668,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.198 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.199 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -3449,25 +3451,37 @@ int proptable_entries = 0;
 
 void proptable_full(void)
 {
+    char outfilename[256];
+
+    if (proptable_entries == 0) return;
+
+#ifdef SEPERATE_PROPTABLE_FILES
+    sprintf(outfilename, "propfile%04d_out", num_proptables);
+#else
+    sprintf(outfilename, "propfile_out");
+#endif
+
     if (proptable_output_fd == -1) {
-	proptable_output_fd = open("propfile_out", O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
+	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
     }
     if (proptable_output_fd == -1) {
-	fprintf(stderr, "Can't open 'propfile_out' for writing propfile\n");
+	fprintf(stderr, "Can't open '%s' for writing propfile\n", outfilename);
 	return;
     }
 
-    if (proptable_entries != 0) {
+    fprintf(stderr, "Writing proptable block %d with %d moves\n", num_proptables, proptable_entries);
 
-	fprintf(stderr, "Writing proptable block %d with %d moves\n", num_proptables, proptable_entries);
+    /* XXX hitting a disk full condition is by no means out of the question here! */
+    do_write(proptable_output_fd, proptable, num_propentries * sizeof(proptable_entry_t));
+    bzero(proptable, num_propentries * sizeof(proptable_entry_t));
 
-	/* XXX hitting a disk full condition is by no means out of the question here! */
-	do_write(proptable_output_fd, proptable, num_propentries * sizeof(proptable_entry_t));
-	bzero(proptable, num_propentries * sizeof(proptable_entry_t));
+    num_proptables ++;
+    proptable_entries = 0;
 
-	num_proptables ++;
-	proptable_entries = 0;
-    }
+#ifdef SEPERATE_PROPTABLE_FILES
+    close(proptable_output_fd);
+    proptable_output_fd = -1;
+#endif
 }
 
 void commit_proptable_entry(proptable_entry_t *propentry, struct fourbyte_entry *entry)
@@ -3506,7 +3520,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
  *                                    in the buffer to be read
  */
 
-int proptable_input_fd;
+int *proptable_input_fds;
 proptable_entry_t **proptable_buffer;
 int *proptable_buffer_size;
 int *proptable_disk_index;
@@ -3539,14 +3553,17 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	    /* read next disk buffer */
 
-	    if (lseek64(proptable_input_fd,
+#ifndef SEPERATE_PROPTABLE_FILES
+	    if (lseek64(proptable_input_fds[tablenum],
 			((off64_t) tablenum * num_propentries + proptable_disk_index[tablenum])
 			* sizeof(proptable_entry_t),
 			SEEK_SET) == -1) {
 		perror("input proptable lseek64");
 	    }
+#endif
 
-	    bytes_read = read(proptable_input_fd, proptable_buffer[tablenum], PROPTABLE_BUFFER_SIZE);
+	    bytes_read = read(proptable_input_fds[tablenum],
+			      proptable_buffer[tablenum], PROPTABLE_BUFFER_SIZE);
 
 	    if (bytes_read == -1) {
 		perror("Error reading input proptable");  /* BREAKPOINT */
@@ -3585,6 +3602,13 @@ int proptable_finalize(int target_dtm)
     int highbit;
     int network_node;
 
+#ifdef SEPERATE_PROPTABLE_FILES
+    char infilename[256];
+    char outfilename[256];
+#else
+    int proptable_input_fd;
+#endif
+
     index_t index;
     int positions_finalized = 0;
 
@@ -3593,16 +3617,12 @@ int proptable_finalize(int target_dtm)
 
     num_input_proptables = num_proptables;
 
-    close(proptable_output_fd);
-    proptable_output_fd = -1;
-    num_proptables = 0;
-
-    rename("propfile_out", "propfile_in");
-    proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE);
-    if (proptable_input_fd == -1) {
-	fprintf(stderr, "Can't open 'propfile_in' for reading propfile\n");
-	return 0;
+    if (proptable_output_fd != -1) {
+	close(proptable_output_fd);
+	proptable_output_fd = -1;
     }
+
+    num_proptables = 0;
 
     for (highbit = 1; highbit <= num_input_proptables; highbit <<= 1);
 
@@ -3610,12 +3630,22 @@ int proptable_finalize(int target_dtm)
     proptable_buffer_size = (int *) calloc(num_input_proptables, sizeof(int));
     proptable_disk_index = (int *) calloc(num_input_proptables, sizeof(int));
     proptable_buffer_index = (int *) calloc(num_input_proptables, sizeof(int));
+    proptable_input_fds = (int *) calloc(num_input_proptables, sizeof(int));
 
-    if ((proptable_buffer == NULL) || (proptable_buffer_size == NULL)
+    if ((proptable_buffer == NULL) || (proptable_buffer_size == NULL) || (proptable_input_fds == NULL)
 	|| (proptable_disk_index == NULL) || (proptable_buffer_index == NULL)) {
 	fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
 	return 0;
     }
+
+#ifndef SEPERATE_PROPTABLE_FILES
+    rename("propfile_out", "propfile_in");
+    proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE);
+    if (proptable_input_fd == -1) {
+	fprintf(stderr, "Can't open 'propfile_in' for reading propfile\n");
+	return 0;
+    }
+#endif
 
     for (i = 0; i < num_input_proptables; i ++) {
 	proptable_buffer[i] = (proptable_entry_t *) malloc(PROPTABLE_BUFFER_SIZE);
@@ -3623,6 +3653,18 @@ int proptable_finalize(int target_dtm)
 	    fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
 	    return 0;
 	}
+#ifdef SEPERATE_PROPTABLE_FILES
+	sprintf(infilename, "propfile%04d_in", i);
+	sprintf(outfilename, "propfile%04d_out", i);
+	rename(outfilename, infilename);
+	proptable_input_fds[i] = open(infilename, O_RDONLY | O_LARGEFILE);
+	if (proptable_input_fds[i] == -1) {
+	    fprintf(stderr, "Can't open '%s' for reading propfile\n", infilename);
+	    return 0;
+	}
+#else
+	proptable_input_fds[i] = proptable_input_fd;
+#endif
     }
 
     sorting_network = malloc(2*highbit * sizeof(proptable_entry_t));
@@ -3726,18 +3768,26 @@ int proptable_finalize(int target_dtm)
 
     for (i = 0; i < num_input_proptables; i ++) {
 	free(proptable_buffer[i]);
+#ifdef SEPERATE_PROPTABLE_FILES
+	close(proptable_input_fds[i]);
+	sprintf(infilename, "propfile%04d_in", i);
+	unlink(infilename);
+#endif
     }
 
     free(proptable_buffer_index);
     free(proptable_disk_index);
     free(proptable_buffer_size);
     free(proptable_buffer);
+    free(proptable_input_fds);
 
     free(sorting_network);
     free(proptable_num);
 
+#ifndef SEPERATE_PROPTABLE_FILES
     close(proptable_input_fd);
     unlink("propfile_in");
+#endif
 
     /* Flush out anything in the last proptable */
     proptable_full();
