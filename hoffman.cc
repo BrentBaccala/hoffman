@@ -606,7 +606,7 @@ int find_name_in_array(char * name, char * array[])
                                                                                                 \
                 /* while ((y&1) == 0)                                                       */  \
                                                                                                 \
-           1:   test $1, %%cl;                                                                  \
+           1:   test $1, %%ecx;                                                                 \
                 jne 2f;                                                                         \
                                                                                                 \
                 /*     y >>= 1;                                                             */  \
@@ -645,7 +645,7 @@ int find_name_in_array(char * name, char * array[])
                                                                                                 \
                 /* while ((x&1) == 0)                                                       */  \
                                                                                                 \
-           3:   test $1, %%bl;                                                                  \
+           3:   test $1, %%ebx;                                                                 \
                 jne 2b;                                                                         \
                                                                                                 \
                 /*     x >>= 1;                                                             */  \
@@ -1666,7 +1666,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.197 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.198 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
