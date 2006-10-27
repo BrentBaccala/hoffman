@@ -418,6 +418,8 @@ int num_propentries = 0;
 
 #define SEPERATE_PROPTABLE_FILES yes
 
+#define FINITE_FIELD_INVERSION 1
+
 
 /***** UTILITY FUNCTIONS *****/
 
@@ -488,6 +490,125 @@ int find_name_in_array(char * name, char * array[])
  * structure.  Then we compute the positions of the mobile pieces and plug their bits into the
  * structure's vector at the right places.  Might implement this some day.
  */
+
+unsigned char byte_transform[256];
+
+unsigned char multiply_in_GF2_8(unsigned char a, unsigned char b)
+{
+    unsigned char result = 0;
+
+    while (a != 0) {
+	if ((a&1) == 1) result ^= b;
+	a >>= 1;
+	if ((b&0x80) == 0x80) {
+	    b ^= 0x80;
+	    b <<= 1;
+	    b ^= 0x1b;
+	} else {
+	    b <<= 1;
+	}
+    }
+    return result;
+}
+
+void initialize_byte_transform(void)
+{
+    unsigned char a;
+    unsigned char b;
+
+    byte_transform[0] = 0;
+
+    for (a=1; a!=0; a++) {
+	for (b=1; b!=0; b++) {
+	    if (multiply_in_GF2_8(a,b) == 1) {
+		byte_transform[a] = b;
+		break;
+	    }
+	}
+	if (b == 0) {
+	    fprintf(stderr, "Couldn't invert in initialize_byte_transform\n");
+	}
+	/* fprintf(stderr, "0x%02x -> 0x%02x\n", a, b); */
+    }
+}
+
+#define encode_index(INDEX)                                                                     \
+   asm("                                                                                        \
+                                                                                                \
+                xlatb;                                                                          \
+                xchg %%ah, %%al;                                                                \
+                xlatb;                                                                          \
+                                                                                                \
+                mov %%eax, %%ecx;                                                               \
+                shr $3, %%eax;                                                                  \
+                and $7, %%ecx;                                                                  \
+                shl $16, %%ecx;                                                                 \
+                xor %%ecx, %%eax;                                                               \
+                                                                                                \
+                xlatb;                                                                          \
+                xchg %%ah, %%al;                                                                \
+                xlatb;                                                                          \
+                                                                                                \
+                mov %%eax, %%ecx;                                                               \
+                shr $3, %%eax;                                                                  \
+                and $7, %%ecx;                                                                  \
+                shl $16, %%ecx;                                                                 \
+                xor %%ecx, %%eax;                                                               \
+                                                                                                \
+                xlatb;                                                                          \
+                xchg %%ah, %%al;                                                                \
+                xlatb;                                                                          \
+                                                                                                \
+                mov %%eax, %%ecx;                                                               \
+                shr $3, %%eax;                                                                  \
+                and $7, %%ecx;                                                                  \
+                shl $16, %%ecx;                                                                 \
+                xor %%ecx, %%eax;                                                               \
+                                                                                                \
+                xlatb;                                                                          \
+                xchg %%ah, %%al;                                                                \
+                xlatb;                                                                          \
+                                                                                                \
+                          " : "+a" (INDEX) : "b" (byte_transform) : "cx", "cc")
+
+#define decode_index(INDEX)                                                                     \
+   asm("                                                                                        \
+                                                                                                \
+                xlatb;                                                                          \
+                xchg %%ah, %%al;                                                                \
+                xlatb;                                                                          \
+                                                                                                \
+                mov %%eax, %%ecx;                                                               \
+                and $0x0000ffff, %%eax;                                                         \
+                shl $3, %%eax;                                                                  \
+                shr $16, %%ecx;                                                                 \
+                xor %%ecx, %%eax;                                                               \
+                                                                                                \
+                xlatb;                                                                          \
+                xchg %%ah, %%al;                                                                \
+                xlatb;                                                                          \
+                                                                                                \
+                mov %%eax, %%ecx;                                                               \
+                and $0x0000ffff, %%eax;                                                         \
+                shl $3, %%eax;                                                                  \
+                shr $16, %%ecx;                                                                 \
+                xor %%ecx, %%eax;                                                               \
+                                                                                                \
+                xlatb;                                                                          \
+                xchg %%ah, %%al;                                                                \
+                xlatb;                                                                          \
+                                                                                                \
+                mov %%eax, %%ecx;                                                               \
+                and $0x0000ffff, %%eax;                                                         \
+                shl $3, %%eax;                                                                  \
+                shr $16, %%ecx;                                                                 \
+                xor %%ecx, %%eax;                                                               \
+                                                                                                \
+                xlatb;                                                                          \
+                xchg %%ah, %%al;                                                                \
+                xlatb;                                                                          \
+                                                                                                \
+                          " : "+a" (INDEX) : "b" (byte_transform) : "cx", "cc")
 
 /* Later in the program, I'll use these indices as the keys in an address calculation insertion
  * sort.  This kind of sort performs well if the keys are evenly distributed, and performs horribly
@@ -1129,7 +1250,11 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
     }
 
     if ((index != -1) && (index != 0) && (tb->modulus != 0)) {
+#if FINITE_FIELD_INVERSION
 	index = invert_in_finite_field(index, tb->modulus);
+#else
+	encode_index(index);
+#endif
     }
 
     return index;
@@ -1138,7 +1263,11 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
 boolean index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     if ((index != 0) && (tb->modulus != 0)) {
+#if FINITE_FIELD_INVERSION
 	index = invert_in_finite_field(index, tb->modulus);
+#else
+	decode_index(index);
+#endif
     }
 
     switch (tb->index_type) {
@@ -1409,7 +1538,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    fprintf(stderr, "modulus %d less than max_index %d\n", tb->modulus, tb->max_index);
 	    return NULL;
 	}
+#if FINITE_FIELD_INVERSION
+	/* XXX took this out for encode/decode index */
 	tb->max_index = tb->modulus - 1;
+#endif
     }
 
     /* Fetch the move restrictions */
@@ -1668,7 +1800,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.199 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.200 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -7223,6 +7355,8 @@ int main(int argc, char *argv[])
 
     init_movements();
     verify_movements();
+
+    initialize_byte_transform();
 
     while (1) {
 	c = getopt(argc, argv, "gpvo:n:P:");
