@@ -1,20 +1,20 @@
 
 # Debugging
-CFLAGS=-g -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+CFLAGS=-g -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV -pthread
 
 # Debugging w/optimization
-#CFLAGS=-g -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV -pthread
 
 # Debugging w/optimization and profiling
-#CFLAGS=-g -pg -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -pg -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV -pthread
 
 # Debugging w/profiling
-#CFLAGS=-g -pg -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -pg -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV -pthread
 
 CPPFLAGS=$(CFLAGS)
 
 hoffman: hoffman.o probe.o egtb.o
-	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++
+	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++ -lposix-aio
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
@@ -57,4 +57,12 @@ knkp.htb.gz: kqkn.htb.gz krkn.htb.gz kbkn.htb.gz knkn.htb.gz
 
 kpkp.htb.gz: kqkp.htb.gz krkp.htb.gz kbkp.htb.gz knkp.htb.gz
 
+kqpk.htb.gz: kqk.htb.gz kpk.htb.gz kqqk.htb.gz kqrk.htb.gz kqbk.htb.gz kqnk.htb.gz
+
 krpk.htb.gz: krk.htb.gz kpk.htb.gz kqrk.htb.gz krrk.htb.gz krnk.htb.gz krbk.htb.gz
+
+kbpk.htb.gz: kbk.htb.gz kpk.htb.gz kqbk.htb.gz krbk.htb.gz kbbk.htb.gz kbnk.htb.gz
+
+knpk.htb.gz: knk.htb.gz kpk.htb.gz kqnk.htb.gz krnk.htb.gz kbnk.htb.gz knnk.htb.gz
+
+kppk.htb.gz: kpk.htb.gz kqpk.htb.gz krpk.htb.gz kbpk.htb.gz knpk.htb.gz
