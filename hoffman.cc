@@ -100,6 +100,8 @@
 
 #include <pthread.h>
 
+#include </usr/local/include/aio.h>
+
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
  * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
  * compiler's command line, rather than a system-wide /usr/include/readline.  I use it this way
@@ -2021,7 +2023,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.203 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.204 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -3875,34 +3877,50 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
 
 /* fetch_next_propentry()
  *
- * proptable_buffer[tablenum] - a malloc'ed buffer of PROPTABLE_BUFFER_SIZE bytes
- * proptable_buffer_size[tablenum] - the number of valid ENTRIES (not bytes) in proptable_buffer[tablenum]
- * proptable_disk_index[tablenum] - the global entry number of the FIRST entry in the buffer
- * proptable_buffer_index[tablenum] - the local (relative to buffer) entry number of the NEXT entry
- *                                    in the buffer to be read
- * proptable_input_fd[tablenum] - file descriptor of this proptable
+ * proptable_buffer[propbuf(tablenum, buffernum)]
+ *         a malloc'ed buffer of PROPTABLE_BUFFER_SIZE bytes
+ * proptable_disk_index[propbuf(tablenum, buffernum)]
+ *         the global entry number of the FIRST entry in the buffer
+ * proptable_buffer_index[tablenum]
+ *         the local (relative to buffer) entry number of the NEXT entry in the buffer to be read
+ * proptable_input_fd[tablenum]
+ *         file descriptor of this proptable
+ * proptable_current_buffernum[tablenum]
+ *         current buffernum (from 0 to BUFFERS_PER_PROPTABLE) for this table
  */
 
 int *proptable_input_fds;
 proptable_entry_t **proptable_buffer;
-int *proptable_buffer_size;
+struct aiocb *proptable_aiocb;
 int *proptable_disk_index;
 int *proptable_buffer_index;
+int *proptable_current_buffernum;
 
-#define PROPTABLE_BUFFER_SIZE 4096
+/* Have to define these numbers carefully so we can read full disk blocks */
+
+#define PROPTABLE_BUFFER_ENTRIES 4096
+#define PROPTABLE_BUFFER_BYTES (PROPTABLE_BUFFER_ENTRIES * sizeof(proptable_entry_t))
+#define BUFFERS_PER_PROPTABLE 2
+
+#define propbuf(tablenum, buffernum) (((tablenum) * BUFFERS_PER_PROPTABLE) + buffernum)
+
+#define current_propbuf(tablenum) propbuf(tablenum, proptable_current_buffernum[tablenum])
 
 void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 {
-    int bytes_read;
+    const struct aiocb * aiocbs[1];
+    int32 offset;
 
     do {
 
-	/* First, look for additional entries in the in-memory buffer */
+	/* First, look for additional entries in the in-memory buffer.  Entries with zero
+	 * index are empty slots and are skipped.
+	 */
 
-	while (proptable_buffer_index[tablenum] < proptable_buffer_size[tablenum]) {
+	while (proptable_buffer_index[tablenum] < PROPTABLE_BUFFER_ENTRIES) {
 
-	    if (proptable_buffer[tablenum][proptable_buffer_index[tablenum]].index != 0) {
-		*dest = proptable_buffer[tablenum][proptable_buffer_index[tablenum]];
+	    if (proptable_buffer[current_propbuf(tablenum)][proptable_buffer_index[tablenum]].index != 0) {
+		*dest = proptable_buffer[current_propbuf(tablenum)][proptable_buffer_index[tablenum]];
 		proptable_buffer_index[tablenum] ++;
 		return;
 	    }
@@ -3910,51 +3928,54 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 	    proptable_buffer_index[tablenum] ++;
 	}
 
-	proptable_disk_index[tablenum] += proptable_buffer_size[tablenum];
+	/* Finished with this buffer.  Issue a read request for what its next contents should be
+	 * (unless we've reached EOF).
+	 */
 
-	if (proptable_disk_index[tablenum] < num_propentries) {
+	offset = proptable_aiocb[current_propbuf(tablenum)].aio_offset
+	    + PROPTABLE_BUFFER_BYTES * BUFFERS_PER_PROPTABLE;
 
-	    /* read next disk buffer
-	     *
-	     * When I initialized all this stuff in the next function, I took care to use
-	     * posix_memalign() to put the buffer on a page boundary, and I used posix_fadvise() to
-	     * notify the kernel that we're accessing this file sequentially (assuming
-	     * SEPERATE_PROPTABLE_FILES).  So the kernel, because of the file advice, should be
-	     * reading ahead on disk, and the buffer is page aligned, so this read call should be
-	     * nothing more than dropping into the kernel, fiddling some page table entries, and
-	     * coming back.  I hope.
-	     */
+	memset(&proptable_aiocb[current_propbuf(tablenum)], 0, sizeof(struct aiocb));
+	proptable_aiocb[current_propbuf(tablenum)].aio_fildes = proptable_input_fds[tablenum];
+	proptable_aiocb[current_propbuf(tablenum)].aio_buf = proptable_buffer[current_propbuf(tablenum)];
+	proptable_aiocb[current_propbuf(tablenum)].aio_nbytes = PROPTABLE_BUFFER_BYTES;
+	proptable_aiocb[current_propbuf(tablenum)].aio_sigevent.sigev_notify = SIGEV_NONE;
+	proptable_aiocb[current_propbuf(tablenum)].aio_offset = offset;
 
-#ifndef SEPERATE_PROPTABLE_FILES
-	    if (lseek64(proptable_input_fds[tablenum],
-			((off64_t) tablenum * num_propentries + proptable_disk_index[tablenum])
-			* sizeof(proptable_entry_t),
-			SEEK_SET) == -1) {
-		perror("input proptable lseek64");
-	    }
-#endif
+	if (proptable_aiocb[current_propbuf(tablenum)].aio_offset
+	    < (num_propentries * sizeof(proptable_entry_t))) {
 
-	    bytes_read = read(proptable_input_fds[tablenum],
-			      proptable_buffer[tablenum], PROPTABLE_BUFFER_SIZE);
-
-	    if (bytes_read == -1) {
-		perror("Error reading input proptable");  /* BREAKPOINT */
-	    } else if (bytes_read < sizeof(proptable_entry_t)) {
-		fprintf(stderr, "Error reading input proptable!\n");  /* BREAKPOINT */
+	    if (aio_read(& proptable_aiocb[current_propbuf(tablenum)]) != 0) {
+		fprintf(stderr, "Can't enqueue aio_read for proptable\n");
+		kill(getpid(), SIGSTOP);
 	    }
 
-	    proptable_buffer_size[tablenum] = bytes_read / sizeof(proptable_entry_t);
-
-	    /* We might have read past the end of this proptable!  Shorten up if we did. */
-
-	    if (proptable_disk_index[tablenum] + proptable_buffer_size[tablenum] > num_propentries) {
-		proptable_buffer_size[tablenum] = num_propentries - proptable_disk_index[tablenum];
-	    }
-
-	    proptable_buffer_index[tablenum] = 0;
 	}
 
-    } while (proptable_disk_index[tablenum] < num_propentries);
+	/* On to the next buffer. */
+
+	proptable_current_buffernum[tablenum] ++;
+	proptable_current_buffernum[tablenum] %= BUFFERS_PER_PROPTABLE;
+
+	/* Wait for it to finish its disk read, if necessary */
+
+	if (proptable_aiocb[current_propbuf(tablenum)].aio_offset
+	    < (num_propentries * sizeof(proptable_entry_t))) {
+
+	    aiocbs[0] = &proptable_aiocb[current_propbuf(tablenum)];
+	    aio_suspend(aiocbs, 1, NULL);
+	    if (aio_return(&proptable_aiocb[current_propbuf(tablenum)]) != PROPTABLE_BUFFER_BYTES) {
+		fprintf(stderr, "proptable aio_read didn't return PROPTABLE_BUFFER_BYTES\n");
+		kill(getpid(), SIGSTOP);
+	    }
+	}
+
+	/* Start at the beginning of the buffer, and keep looking */
+
+	proptable_buffer_index[tablenum] = 0;
+
+    } while (proptable_aiocb[current_propbuf(tablenum)].aio_offset
+	     < (num_propentries * sizeof(proptable_entry_t)));
 
     /* No, we're really at the end! */
 
@@ -3967,6 +3988,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 int proptable_finalize(int target_dtm)
 {
     int i;
+    int tablenum, bufnum;
     int num_input_proptables;
 
     proptable_entry_t *sorting_network;
@@ -3998,13 +4020,16 @@ int proptable_finalize(int target_dtm)
 
     for (highbit = 1; highbit <= num_input_proptables; highbit <<= 1);
 
-    proptable_buffer = (proptable_entry_t **) malloc(num_input_proptables * sizeof(proptable_entry_t *));
-    proptable_buffer_size = (int *) calloc(num_input_proptables, sizeof(int));
-    proptable_disk_index = (int *) calloc(num_input_proptables, sizeof(int));
+    proptable_buffer = (proptable_entry_t **)
+	malloc(BUFFERS_PER_PROPTABLE * num_input_proptables * sizeof(proptable_entry_t *));
+    proptable_aiocb = (struct aiocb *)
+	calloc(BUFFERS_PER_PROPTABLE * num_input_proptables, sizeof(struct aiocb));
+    proptable_disk_index = (int *) calloc(BUFFERS_PER_PROPTABLE * num_input_proptables, sizeof(int));
     proptable_buffer_index = (int *) calloc(num_input_proptables, sizeof(int));
+    proptable_current_buffernum = (int *) calloc(num_input_proptables, sizeof(int));
     proptable_input_fds = (int *) calloc(num_input_proptables, sizeof(int));
 
-    if ((proptable_buffer == NULL) || (proptable_buffer_size == NULL) || (proptable_input_fds == NULL)
+    if ((proptable_buffer == NULL) || (proptable_input_fds == NULL)
 	|| (proptable_disk_index == NULL) || (proptable_buffer_index == NULL)) {
 	fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
 	return 0;
@@ -4019,29 +4044,49 @@ int proptable_finalize(int target_dtm)
     }
 #endif
 
-    for (i = 0; i < num_input_proptables; i ++) {
+    for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
 	int alignment;
 #ifdef SEPERATE_PROPTABLE_FILES
-	sprintf(infilename, "propfile%04d_in", i);
-	sprintf(outfilename, "propfile%04d_out", i);
+	sprintf(infilename, "propfile%04d_in", tablenum);
+	sprintf(outfilename, "propfile%04d_out", tablenum);
 	rename(outfilename, infilename);
-	proptable_input_fds[i] = open(infilename, O_RDONLY | O_LARGEFILE | O_DIRECT);
-	if (proptable_input_fds[i] == -1) {
+	proptable_input_fds[tablenum] = open(infilename, O_RDONLY | O_LARGEFILE | O_DIRECT);
+	if (proptable_input_fds[tablenum] == -1) {
 	    fprintf(stderr, "Can't open '%s' for reading propfile\n", infilename);
 	    return 0;
 	}
 #else
-	proptable_input_fds[i] = proptable_input_fd;
+	proptable_input_fds[tablenum] = proptable_input_fd;
 #endif
-	/* proptable_buffer[i] = (proptable_entry_t *) malloc(PROPTABLE_BUFFER_SIZE); */
-	alignment = fpathconf(proptable_input_fds[i], _PC_REC_XFER_ALIGN);
-	if (posix_memalign((void **) &proptable_buffer[i], alignment, PROPTABLE_BUFFER_SIZE) != 0) {
-	    fprintf(stderr, "Can't posix_memalign proptable buffer\n");
-	    return 0;
+	/* proptable_buffer[tablenum] = (proptable_entry_t *) malloc(PROPTABLE_BUFFER_BYTES); */
+	alignment = fpathconf(proptable_input_fds[tablenum], _PC_REC_XFER_ALIGN);
+
+	for (bufnum = 0; bufnum < BUFFERS_PER_PROPTABLE; bufnum ++) {
+	    if (posix_memalign((void **) &proptable_buffer[propbuf(tablenum, bufnum)],
+			       alignment, PROPTABLE_BUFFER_BYTES) != 0) {
+		fprintf(stderr, "Can't posix_memalign proptable buffer\n");
+		return 0;
+	    }
+
+	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_fildes = proptable_input_fds[tablenum];
+	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_buf = proptable_buffer[propbuf(tablenum, bufnum)];
+	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_nbytes = PROPTABLE_BUFFER_BYTES;
+	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_sigevent.sigev_notify = SIGEV_NONE;
+	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_offset = PROPTABLE_BUFFER_BYTES * bufnum;
+
+	    if (aio_read(& proptable_aiocb[propbuf(tablenum, bufnum)]) != 0) {
+		fprintf(stderr, "Can't enqueue aio_read for proptable\n");
+		kill(getpid(), SIGSTOP);
+	    }
 	}
-#ifndef SEPERATE_PROPTABLE_FILES
-	posix_fadvise(proptable_input_fds[i], 0, 0, POSIX_FADV_SEQUENTIAL);
-#endif
+    }
+
+    /* Wait for initial read to finish on each input proptable */
+
+    for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
+	const struct aiocb * aiocbs[1];
+	aiocbs[0] = &proptable_aiocb[current_propbuf(tablenum)];
+	aio_suspend(aiocbs, 1, NULL);
     }
 
     sorting_network = malloc(2*highbit * sizeof(proptable_entry_t));
@@ -4154,7 +4199,6 @@ int proptable_finalize(int target_dtm)
 
     free(proptable_buffer_index);
     free(proptable_disk_index);
-    free(proptable_buffer_size);
     free(proptable_buffer);
     free(proptable_input_fds);
 
