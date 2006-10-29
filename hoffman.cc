@@ -78,11 +78,16 @@
  *        hoffman -p <tablebase> ...                              (probe mode)
  */
 
-#define _LARGEFILE64_SOURCE
+#define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
+
+#define _XOPEN_SOURCE 600	/* for posix_memalign() and posix_fadvise() */
+
+#define _GNU_SOURCE		/* to get O_DIRECT */
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>	/* for write(), lseek(), gethostname() */
 #include <time.h>	/* for putting timestamps on the output tablebases */
 #include <fcntl.h>	/* for O_RDONLY */
@@ -1030,7 +1035,7 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 {
     int piece;
 
-    bzero(p, sizeof(local_position_t));
+    memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
 
     p->side_to_move = index & 1;
@@ -1189,7 +1194,7 @@ boolean xor_index_to_local_position(tablebase_t *tb, index_t index, local_positi
     int val2 = 0;
     int square;
 
-    bzero(p, sizeof(local_position_t));
+    memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
 
     p->side_to_move = index & 1;
@@ -1346,7 +1351,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 {
     int piece;
 
-    bzero(p, sizeof(local_position_t));
+    memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
 
     p->side_to_move = index % 2;
@@ -1509,7 +1514,7 @@ void check_1000_positions(tablebase_t *tb)
 
     for (positions=0; positions < 1000; positions ++) {
 
-	bzero(&position1, sizeof(position1));
+	memset(&position1, 0, sizeof(position1));
 
 	position1.side_to_move = rand() % 2;
 	position1.en_passant_square = -1;
@@ -1578,7 +1583,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	fprintf(stderr, "Can't malloc tablebase\n");
 	return NULL;
     }
-    bzero(tb, sizeof(tablebase_t));
+    memset(tb, 0, sizeof(tablebase_t));
 
     tb->xml = doc;
 
@@ -2016,7 +2021,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.202 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.203 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -2242,7 +2247,7 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
     int extra_piece = NONE;
     short pieces_processed_bitvector = 0;
 
-    bzero(local, sizeof(local_position_t));
+    memset(local, 0, sizeof(local_position_t));
 
     for (piece = 0; piece < tb2->num_pieces; piece ++)
 	local->piece_position[piece] = -1;
@@ -2347,7 +2352,7 @@ index_t global_position_to_local_position(tablebase_t *tb, global_position_t *gl
     int square;
     short pieces_processed_bitvector = 0;
 
-    bzero(local, sizeof(local_position_t));
+    memset(local, 0, sizeof(local_position_t));
 
     for (piece = 0; piece < tb->num_pieces; piece ++)
 	local->piece_position[piece] = -1;
@@ -2447,7 +2452,7 @@ boolean index_to_global_position(tablebase_t *tb, index_t index, global_position
     local_position_t local;
     int piece;
 
-    bzero(global, sizeof(global_position_t));
+    memset(global, 0, sizeof(global_position_t));
 
     if (! index_to_local_position(tb, index, &local)) return 0;
 
@@ -2493,7 +2498,7 @@ boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_pos
 {
     int row, col;
 
-    bzero(pos, sizeof(local_position_t));
+    memset(pos, 0, sizeof(local_position_t));
     pos->en_passant_square = -1;
 
     for (row=7; row>=0; row--) {
@@ -2596,7 +2601,7 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 {
     int row, col;
 
-    bzero(pos, sizeof(global_position_t));
+    memset(pos, 0, sizeof(global_position_t));
     pos->en_passant_square = -1;
 
     for (row=7; row>=0; row--) {
@@ -2862,7 +2867,7 @@ void read_entry_buffer_from_disk(tablebase_t *tb, struct entry_buffer *entrybuf,
     bytes_read = read(tb->entries_fd, entrybuf->buffer, ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry));
     if (bytes_read == 0) {
 	/* This is OK.  It just means we hit EOF - nothing is there yet! */
-	bzero(entrybuf->buffer, ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry));
+	memset(entrybuf->buffer, 0, ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry));
 	entrybuf->start = index;
 	entrybuf->length = ENTRY_BUFFER_SIZE;
     } else if (bytes_read == -1) {
@@ -2906,6 +2911,7 @@ void init_entry_buffers(tablebase_t *tb)
 {
     int i;
     index_t next_index = 0;   /* start at the beginning (a very good place to start) */
+    int alignment = fpathconf(tb->entries_fd, _PC_REC_XFER_ALIGN);
     /* pthread_mutexattr_t attr; */
 
     /* pthread_mutexattr_init(&attr); */
@@ -2913,7 +2919,12 @@ void init_entry_buffers(tablebase_t *tb)
 
     for (i = 0; i < NUM_ENTRY_BUFFERS; i ++) {
 
-	entry_buffers[i].buffer = malloc(ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry));
+	/* entry_buffers[i].buffer = malloc(ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry)); */
+	if (posix_memalign((void **) &entry_buffers[i].buffer, alignment,
+			   ENTRY_BUFFER_SIZE * sizeof(struct fourbyte_entry)) != 0) {
+	    fprintf(stderr, "Can't posix_memalign entry buffer\n");
+	}
+
 	entry_buffers[i].start = 0;
 	entry_buffers[i].length = 0;
 	/* pthread_mutex_init(&entry_buffers[i].mutex, &attr); */
@@ -3824,7 +3835,7 @@ void proptable_full(void)
 
     /* XXX hitting a disk full condition is by no means out of the question here! */
     do_write(proptable_output_fd, proptable, num_propentries * sizeof(proptable_entry_t));
-    bzero(proptable, num_propentries * sizeof(proptable_entry_t));
+    memset(proptable, 0, num_propentries * sizeof(proptable_entry_t));
 
     num_proptables ++;
     proptable_entries = 0;
@@ -3869,6 +3880,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
  * proptable_disk_index[tablenum] - the global entry number of the FIRST entry in the buffer
  * proptable_buffer_index[tablenum] - the local (relative to buffer) entry number of the NEXT entry
  *                                    in the buffer to be read
+ * proptable_input_fd[tablenum] - file descriptor of this proptable
  */
 
 int *proptable_input_fds;
@@ -3902,7 +3914,16 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	if (proptable_disk_index[tablenum] < num_propentries) {
 
-	    /* read next disk buffer */
+	    /* read next disk buffer
+	     *
+	     * When I initialized all this stuff in the next function, I took care to use
+	     * posix_memalign() to put the buffer on a page boundary, and I used posix_fadvise() to
+	     * notify the kernel that we're accessing this file sequentially (assuming
+	     * SEPERATE_PROPTABLE_FILES).  So the kernel, because of the file advice, should be
+	     * reading ahead on disk, and the buffer is page aligned, so this read call should be
+	     * nothing more than dropping into the kernel, fiddling some page table entries, and
+	     * coming back.  I hope.
+	     */
 
 #ifndef SEPERATE_PROPTABLE_FILES
 	    if (lseek64(proptable_input_fds[tablenum],
@@ -3991,7 +4012,7 @@ int proptable_finalize(int target_dtm)
 
 #ifndef SEPERATE_PROPTABLE_FILES
     rename("propfile_out", "propfile_in");
-    proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE);
+    proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE | O_DIRECT);
     if (proptable_input_fd == -1) {
 	fprintf(stderr, "Can't open 'propfile_in' for reading propfile\n");
 	return 0;
@@ -3999,22 +4020,27 @@ int proptable_finalize(int target_dtm)
 #endif
 
     for (i = 0; i < num_input_proptables; i ++) {
-	proptable_buffer[i] = (proptable_entry_t *) malloc(PROPTABLE_BUFFER_SIZE);
-	if (proptable_buffer[i] == NULL) {
-	    fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
-	    return 0;
-	}
+	int alignment;
 #ifdef SEPERATE_PROPTABLE_FILES
 	sprintf(infilename, "propfile%04d_in", i);
 	sprintf(outfilename, "propfile%04d_out", i);
 	rename(outfilename, infilename);
-	proptable_input_fds[i] = open(infilename, O_RDONLY | O_LARGEFILE);
+	proptable_input_fds[i] = open(infilename, O_RDONLY | O_LARGEFILE | O_DIRECT);
 	if (proptable_input_fds[i] == -1) {
 	    fprintf(stderr, "Can't open '%s' for reading propfile\n", infilename);
 	    return 0;
 	}
 #else
 	proptable_input_fds[i] = proptable_input_fd;
+#endif
+	/* proptable_buffer[i] = (proptable_entry_t *) malloc(PROPTABLE_BUFFER_SIZE); */
+	alignment = fpathconf(proptable_input_fds[i], _PC_REC_XFER_ALIGN);
+	if (posix_memalign((void **) &proptable_buffer[i], alignment, PROPTABLE_BUFFER_SIZE) != 0) {
+	    fprintf(stderr, "Can't posix_memalign proptable buffer\n");
+	    return 0;
+	}
+#ifndef SEPERATE_PROPTABLE_FILES
+	posix_fadvise(proptable_input_fds[i], 0, 0, POSIX_FADV_SEQUENTIAL);
 #endif
     }
 
@@ -7305,7 +7331,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (tb == NULL) return 0;
 
     if (num_propentries != 0) {
-	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
+	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
 	if (tb->entries_fd == -1) {
 	    fprintf(stderr, "Can't open 'entries' for read-write\n");
 	    return 0;
