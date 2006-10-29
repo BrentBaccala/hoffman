@@ -2016,7 +2016,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.201 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.202 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -3722,6 +3722,8 @@ void verify_movements()
 
 /***** PROPAGATION TABLE *****/
 
+int proptable_entries = 0;
+
 /* We insert into the propagation table using an "address calculation insertion sort".
  */
 
@@ -3732,6 +3734,8 @@ void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char 
     if (index == DEBUG_MOVE)
 	printf("insert_at_propentry; index=%d; propentry=%d; dtm=%d\n", index, propentry, dtm);
 #endif
+
+    proptable_entries ++;
 
     proptable[propentry].index = index;
     proptable[propentry].dtm = dtm;
@@ -3795,8 +3799,6 @@ int proptable_output_fd = -1;
 /* proptable_full() - dump out to disk and empty table
  */
 
-int proptable_entries = 0;
-
 void proptable_full(void)
 {
     char outfilename[256];
@@ -3817,7 +3819,8 @@ void proptable_full(void)
 	return;
     }
 
-    fprintf(stderr, "Writing proptable block %d with %d moves\n", num_proptables, proptable_entries);
+    fprintf(stderr, "Writing proptable block %d with %d entries (%d%% occupancy)\n",
+	    num_proptables, proptable_entries, (100*proptable_entries)/num_propentries);
 
     /* XXX hitting a disk full condition is by no means out of the question here! */
     do_write(proptable_output_fd, proptable, num_propentries * sizeof(proptable_entry_t));
@@ -4200,8 +4203,6 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 
 	return;
     }
-
-    proptable_entries ++;
 
     /* I had a bug here with the scaling_factor rounding down - that's why we increment by one */
 
@@ -6993,6 +6994,9 @@ int in_check(tablebase_t *tb, local_position_t *position)
     return 0;
 }
 
+int64 total_legal_positions = 0;
+int64 total_moves = 0;
+
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct fourbyte_entry *entry)
 {
     local_position_t position;
@@ -7232,10 +7236,13 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 
 	if (movecnt == 0) {
 	    initialize_entry_with_stalemate(tb, entry);
+	    total_legal_positions ++;
 	    return 0;
 	} else {
 	    initialize_entry_with_movecnt(tb, entry,
 					  in_check(tb, &position) ? 128 + movecnt : movecnt);
+	    total_legal_positions ++;
+	    total_moves += movecnt;
 	    return futurevector;
 	}
     }
@@ -7341,6 +7348,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	fprintf(stderr, "Initializing tablebase\n");
 	initialize_tablebase(tb);
 
+	fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions);
+	fprintf(stderr, "Total moves: %lld\n", total_moves);
+
 	check_1000_indices(tb);
 
 	dtm_limit = back_propagate_all_futurebases(tb);
@@ -7368,6 +7378,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	fprintf(stderr, "Initializing tablebase...\n");
 	propagation_pass(0);
 	proptable_full();  /* flush moves out to disk */
+
+	fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions);
+	fprintf(stderr, "Total moves: %lld\n", total_moves);
 
 	fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
