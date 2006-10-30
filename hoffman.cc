@@ -2022,7 +2022,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.205 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.206 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -2834,14 +2834,14 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  * which we update in memory and so must write back to disk, I use a ring buffering scheme.
  *
  * Donald Knuth's description of ring buffers in section 1.4.4 of AOCP (3ed) uses four colors to
- * illustrate the concept.  I'll use five - red (output started but not yet complete), purple
- * (output done; input not yet started), blue (input started but not yet complete), green (input
- * complete), and yellow (currently processing).  In our case, the buffers turn from red to purple
- * and from blue to green themselves and we can detect the color difference between red and purple
- * and between blue and green by looking to see if their asynchronous read or write operation
- * completed.  So we need two pointers, one to the single yellow buffer, and one to the first red or
- * purple buffer.  If the red/purple pointer catches up to the yellow pointer, then it means that
- * there are no read or purple buffers at the moment.
+ * illustrate the concept.  I'll use five - blue (input started but not yet complete), green (input
+ * complete), yellow (currently processing), red (output started but not yet complete), and purple
+ * (output done; input not yet started).  In our case, the buffers turn from blue to green and from
+ * red to purple by themselves and we can detect the color difference between blue and green and
+ * between red and purple by looking to see if their asynchronous read or write operation completed.
+ * So we need two pointers, one to the single yellow buffer, and one to the first red or purple
+ * buffer.  If the red/purple pointer catches up to the yellow pointer, then it means that there are
+ * no read or purple buffers at the moment.
  *
  * The only functions "exported" from this section are the singly called init_entry_buffers() and
  * fetch_fourbyte_entry(), which is passed a tablebase pointer and an index and is expected to
@@ -2864,10 +2864,13 @@ struct entry_buffer entry_buffers[NUM_ENTRY_BUFFERS];
 int yellow_entry_buffer = 0;
 int first_purple_red_entry_buffer = 0;
 
+/* Arrange to read buffernum (i.e, turn it blue).  'buffer' must be allocated (and page aligned),
+ * and 'start' must indicate the index number (not the byte number) at which we want to start our
+ * read, always of ENTRY_BUFFER_BYTES bytes.
+ */
+
 void turn_entry_buffer_blue(int fd, int buffernum)
 {
-    /* arrange to read buffernum (i.e, turn it blue) */
-
     memset(&entry_buffers[buffernum].aiocb, 0, sizeof(struct aiocb));
     entry_buffers[buffernum].aiocb.aio_fildes = fd;
     entry_buffers[buffernum].aiocb.aio_buf = entry_buffers[buffernum].buffer;
@@ -2887,8 +2890,11 @@ void wait_for_entry_buffer_green(int buffernum)
     const struct aiocb * aiocbs[1];
     int retval;
 
-    aiocbs[0] = &entry_buffers[buffernum].aiocb;
-    aio_suspend(aiocbs, 1, NULL);
+    if (aio_error(&entry_buffers[buffernum].aiocb) == EINPROGRESS) {
+	fprintf(stderr, "Waiting for entry buffer read to complete\n");
+	aiocbs[0] = &entry_buffers[buffernum].aiocb;
+	aio_suspend(aiocbs, 1, NULL);
+    }
 
     retval = aio_return(&entry_buffers[buffernum].aiocb);
 
@@ -2901,10 +2907,12 @@ void wait_for_entry_buffer_green(int buffernum)
     }
 }
 
+/* Arrange to write buffernum (i.e, turn it red).  Again, 'buffer' must be allocated and 'start'
+ * must indicate the index number at which we want to start our write.
+ */
+
 void turn_entry_buffer_red(int fd, int buffernum)
 {
-    /* arrange to write buffernum (i.e, turn it red) */
-
     memset(&entry_buffers[buffernum].aiocb, 0, sizeof(struct aiocb));
     entry_buffers[buffernum].aiocb.aio_fildes = fd;
     entry_buffers[buffernum].aiocb.aio_buf = entry_buffers[buffernum].buffer;
@@ -2915,6 +2923,22 @@ void turn_entry_buffer_red(int fd, int buffernum)
 
     if (aio_write(& entry_buffers[buffernum].aiocb) != 0) {
 	fprintf(stderr, "Can't enqueue aio_write for entry buffer\n");
+	kill(getpid(), SIGSTOP);
+    }
+}
+
+void wait_for_entry_buffer_purple(int buffernum)
+{
+    const struct aiocb * aiocbs[1];
+
+    if (aio_error(&entry_buffers[buffernum].aiocb) == EINPROGRESS) {
+	fprintf(stderr, "Waiting for entry buffer write to complete\n");
+	aiocbs[0] = &entry_buffers[buffernum].aiocb;
+	aio_suspend(aiocbs, 1, NULL);
+    }
+
+    if (aio_return(&entry_buffers[buffernum].aiocb) != ENTRY_BUFFER_BYTES) {
+	fprintf(stderr, "entry buffer aio_write didn't return ENTRY_BUFFER_BYTES\n");
 	kill(getpid(), SIGSTOP);
     }
 }
@@ -2933,15 +2957,11 @@ void init_entry_buffers(tablebase_t *tb)
 	turn_entry_buffer_blue(tb->entries_fd, buffernum);
     }
 
-    /* wait for first entry buffer to turn green */
-
     wait_for_entry_buffer_green(0);
 }
 
 struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
 {
-    const struct aiocb * aiocbs[1];
-
     if (tb->entries != NULL) {
 
 	/* entries array exists in memory - so just return a pointer into it */
@@ -2955,21 +2975,13 @@ struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
 	int next_entry_buffer = yellow_entry_buffer + 1;
 	if (next_entry_buffer >= NUM_ENTRY_BUFFERS) next_entry_buffer = 0;
 
-	/* Have we caught up with our first purple/red buffer?  Complain, wait until the write has
-	 * finished, and start the read.
+	/* Have we caught up with our first purple/red buffer?  Wait until the write has finished
+	 * and start the read.
 	 */
 
 	if (next_entry_buffer == first_purple_red_entry_buffer) {
 
-	    fprintf(stderr, "Waiting for entry buffer write to complete\n");
-
-	    aiocbs[0] = &entry_buffers[next_entry_buffer].aiocb;
-	    aio_suspend(aiocbs, 1, NULL);
-
-	    if (aio_return(&entry_buffers[next_entry_buffer].aiocb) != ENTRY_BUFFER_BYTES) {
-		fprintf(stderr, "entry buffer aio_write didn't return ENTRY_BUFFER_BYTES\n");
-		kill(getpid(), SIGSTOP);
-	    }
+	    wait_for_entry_buffer_purple(first_purple_red_entry_buffer);
 
 	    /* arrange to read first_purple_red_entry_buffer (i.e, turn it blue) */
 
@@ -2985,7 +2997,7 @@ struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
 	    if (first_purple_red_entry_buffer >= NUM_ENTRY_BUFFERS) first_purple_red_entry_buffer = 0;
 	}
 
-	/* Now, next_entry_buffer is at least blue.  Wait for it to turn green.  Should complain, too. */
+	/* Now, next_entry_buffer is at least blue.  Wait for it to turn green. */
 
 	wait_for_entry_buffer_green(next_entry_buffer);
 
@@ -3015,6 +3027,8 @@ struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
 
 	turn_entry_buffer_red(tb->entries_fd, yellow_entry_buffer);
 
+	/* Move on to the next buffer to be processed.  We waited for it to be green, remember? */
+
 	yellow_entry_buffer = next_entry_buffer;
     }
 
@@ -3027,7 +3041,7 @@ struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
     if ((index < entry_buffers[yellow_entry_buffer].start)
 	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
 
-	fprintf(stderr, "fetch_fourbyte_entry(): reading buffer in main thread; needed %d had %d\n",
+	fprintf(stderr, "fetch_fourbyte_entry(): special read; needed %d had %d\n",
 		index, entry_buffers[yellow_entry_buffer].start);  /* BREAKPOINT */
 
 	entry_buffers[yellow_entry_buffer].start = (index / ENTRY_BUFFER_ENTRIES) * ENTRY_BUFFER_ENTRIES;
@@ -3960,11 +3974,9 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
  *
  * proptable_buffer[propbuf(tablenum, buffernum)]
  *         a malloc'ed buffer of PROPTABLE_BUFFER_SIZE bytes
- * proptable_disk_index[propbuf(tablenum, buffernum)]
- *         the global entry number of the FIRST entry in the buffer
  * proptable_buffer_index[tablenum]
  *         the local (relative to buffer) entry number of the NEXT entry in the buffer to be read
- * proptable_input_fd[tablenum]
+ * proptable_input_fds[tablenum]
  *         file descriptor of this proptable
  * proptable_current_buffernum[tablenum]
  *         current buffernum (from 0 to BUFFERS_PER_PROPTABLE) for this table
@@ -3973,7 +3985,6 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
 int *proptable_input_fds;
 proptable_entry_t **proptable_buffer;
 struct aiocb *proptable_aiocb;
-int *proptable_disk_index;
 int *proptable_buffer_index;
 int *proptable_current_buffernum;
 
@@ -4051,8 +4062,12 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 	if (proptable_aiocb[current_propbuf(tablenum)].aio_offset
 	    < (num_propentries * sizeof(proptable_entry_t))) {
 
-	    aiocbs[0] = &proptable_aiocb[current_propbuf(tablenum)];
-	    aio_suspend(aiocbs, 1, NULL);
+	    if (aio_error(&proptable_aiocb[current_propbuf(tablenum)]) == EINPROGRESS) {
+		fprintf(stderr, "Waiting for proptable buffer read to complete\n");
+		aiocbs[0] = &proptable_aiocb[current_propbuf(tablenum)];
+		aio_suspend(aiocbs, 1, NULL);
+	    }
+
 	    if (aio_return(&proptable_aiocb[current_propbuf(tablenum)]) != PROPTABLE_BUFFER_BYTES) {
 		fprintf(stderr, "proptable aio_read didn't return PROPTABLE_BUFFER_BYTES\n");
 		kill(getpid(), SIGSTOP);
@@ -4113,13 +4128,12 @@ int proptable_finalize(int target_dtm)
 	malloc(BUFFERS_PER_PROPTABLE * num_input_proptables * sizeof(proptable_entry_t *));
     proptable_aiocb = (struct aiocb *)
 	calloc(BUFFERS_PER_PROPTABLE * num_input_proptables, sizeof(struct aiocb));
-    proptable_disk_index = (int *) calloc(BUFFERS_PER_PROPTABLE * num_input_proptables, sizeof(int));
     proptable_buffer_index = (int *) calloc(num_input_proptables, sizeof(int));
     proptable_current_buffernum = (int *) calloc(num_input_proptables, sizeof(int));
     proptable_input_fds = (int *) calloc(num_input_proptables, sizeof(int));
 
     if ((proptable_buffer == NULL) || (proptable_input_fds == NULL)
-	|| (proptable_disk_index == NULL) || (proptable_buffer_index == NULL)) {
+	|| (proptable_buffer_index == NULL)) {
 	fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
 	return 0;
     }
@@ -4287,7 +4301,6 @@ int proptable_finalize(int target_dtm)
     }
 
     free(proptable_buffer_index);
-    free(proptable_disk_index);
     free(proptable_buffer);
     free(proptable_input_fds);
 
