@@ -2022,7 +2022,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.206 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.207 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -2849,8 +2849,8 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  * without any further ado.
  */
 
-#define NUM_ENTRY_BUFFERS 8
-#define ENTRY_BUFFER_ENTRIES 4096
+#define NUM_ENTRY_BUFFERS 4
+#define ENTRY_BUFFER_ENTRIES (1<<16)
 #define ENTRY_BUFFER_BYTES (ENTRY_BUFFER_ENTRIES * sizeof(struct fourbyte_entry))
 
 struct entry_buffer {
@@ -2901,7 +2901,9 @@ void wait_for_entry_buffer_green(int buffernum)
     if (retval == 0) {
 	/* zero byte read - this is OK the first time through */
 	memset(entry_buffers[buffernum].buffer, 0, ENTRY_BUFFER_BYTES);
-    } else if (retval != ENTRY_BUFFER_BYTES) {
+    } else if ((retval != ENTRY_BUFFER_BYTES)
+	       && (retval != sizeof(struct fourbyte_entry)
+		   * ((proptable_tb->max_index - 1) % ENTRY_BUFFER_ENTRIES)))  {
 	fprintf(stderr, "entry buffer aio_read didn't return ENTRY_BUFFER_BYTES\n");
 	kill(getpid(), SIGSTOP);
     }
@@ -2986,8 +2988,11 @@ struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
 	    /* arrange to read first_purple_red_entry_buffer (i.e, turn it blue) */
 
 	    entry_buffers[first_purple_red_entry_buffer].start += ENTRY_BUFFER_ENTRIES * NUM_ENTRY_BUFFERS;
-	    if (entry_buffers[first_purple_red_entry_buffer].start > tb->max_index)
+	    if (entry_buffers[first_purple_red_entry_buffer].start > tb->max_index) {
 		entry_buffers[first_purple_red_entry_buffer].start -= tb->max_index + 1;
+		entry_buffers[first_purple_red_entry_buffer].start /= ENTRY_BUFFER_ENTRIES;
+		entry_buffers[first_purple_red_entry_buffer].start *= ENTRY_BUFFER_ENTRIES;
+	    }
 
 	    turn_entry_buffer_blue(tb->entries_fd, first_purple_red_entry_buffer);
 
@@ -3012,8 +3017,11 @@ struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
 	    /* arrange to read first_purple_red_entry_buffer (i.e, turn it blue) */
 
 	    entry_buffers[first_purple_red_entry_buffer].start += ENTRY_BUFFER_ENTRIES * NUM_ENTRY_BUFFERS;
-	    if (entry_buffers[first_purple_red_entry_buffer].start > tb->max_index)
+	    if (entry_buffers[first_purple_red_entry_buffer].start > tb->max_index) {
 		entry_buffers[first_purple_red_entry_buffer].start -= tb->max_index + 1;
+		entry_buffers[first_purple_red_entry_buffer].start /= ENTRY_BUFFER_ENTRIES;
+		entry_buffers[first_purple_red_entry_buffer].start *= ENTRY_BUFFER_ENTRIES;
+	    }
 
 	    turn_entry_buffer_blue(tb->entries_fd, first_purple_red_entry_buffer);
 
@@ -3990,9 +3998,9 @@ int *proptable_current_buffernum;
 
 /* Have to define these numbers carefully so we can read full disk blocks */
 
-#define PROPTABLE_BUFFER_ENTRIES 4096
+#define PROPTABLE_BUFFER_ENTRIES (1<<16)
 #define PROPTABLE_BUFFER_BYTES (PROPTABLE_BUFFER_ENTRIES * sizeof(proptable_entry_t))
-#define BUFFERS_PER_PROPTABLE 2
+#define BUFFERS_PER_PROPTABLE 4
 
 #define propbuf(tablenum, buffernum) (((tablenum) * BUFFERS_PER_PROPTABLE) + buffernum)
 
