@@ -189,6 +189,13 @@ inline int square(int row, int col)
 #define NUM_DIR 8
 #define NUM_MOVEMENTS 7
 
+/* Variables for gathering statistics */
+
+int64 total_legal_positions = 0;
+int64 total_moves = 0;
+int64 total_futuremoves = 0;
+int64 total_backproped_moves = 0;
+
 struct timeval program_start_time;
 
 
@@ -1977,6 +1984,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     char rtimestr[256];
     char minfltstr[256];
     char majfltstr[256];
+    char strbuf[256];
 
     tablebase = xmlDocGetRootElement(tb->xml);
 
@@ -2034,16 +2042,48 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(minfltstr, "%ld", rusage.ru_minflt);
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.208 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.209 $ $Locker: baccala $");
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "system-time", (const xmlChar *) stimestr);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "real-time", (const xmlChar *) rtimestr);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "page-faults", (const xmlChar *) majfltstr);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "page-reclaims", (const xmlChar *) minfltstr);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
+    xmlNodeAddContent(node, BAD_CAST "\n");
+
+    xmlNodeAddContent(tablebase, BAD_CAST "\n");
+
+    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "statistics", NULL);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%d", tb->max_index + 1);
+    xmlNewChild(node, NULL, (const xmlChar *) "indices", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_legal_positions);
+    xmlNewChild(node, NULL, (const xmlChar *) "legal-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_moves);
+    xmlNewChild(node, NULL, (const xmlChar *) "forward-moves", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_futuremoves);
+    xmlNewChild(node, NULL, (const xmlChar *) "futuremoves", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_backproped_moves);
+    xmlNewChild(node, NULL, (const xmlChar *) "backproped-moves", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n");
+
+    xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
     return tb->xml;
 }
@@ -4388,6 +4428,8 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
     int propentry;
     int zerooffset;
     static int scaling_factor = 0;
+
+    total_backproped_moves ++;
 
     if (num_propentries == 0) {
 	proptable_entry_t entry;
@@ -7205,9 +7247,6 @@ int in_check(tablebase_t *tb, local_position_t *position)
     return 0;
 }
 
-int64 total_legal_positions = 0;
-int64 total_moves = 0;
-
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct fourbyte_entry *entry)
 {
     local_position_t position;
@@ -7225,6 +7264,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 
 	/* Now we need to count moves.  FORWARD moves. */
 	int movecnt = 0;
+	int futuremovecnt = 0;
 	futurevector_t futurevector = 0;
 
 	/* En passant:
@@ -7261,6 +7301,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
 			    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
+			    futuremovecnt ++;
 			}
 
 			movecnt ++;
@@ -7290,6 +7331,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 				}
 				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				futuremovecnt ++;
 				break;
 			    }
 			}
@@ -7320,6 +7362,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 			    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			}
 			futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
+			futuremovecnt += PROMOTION_POSSIBILITIES;
 
 			movecnt += PROMOTION_POSSIBILITIES;
 
@@ -7334,6 +7377,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
 			    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
+			    futuremovecnt ++;
 			}
 
 			movecnt ++;
@@ -7365,6 +7409,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 				}
 				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				futuremovecnt ++;
 				break;
 			    }
 			}
@@ -7407,6 +7452,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 				}
 				futurevector |= FUTUREVECTORS(futurecaptures[piece][i],
 							      PROMOTION_POSSIBILITIES);
+				futuremovecnt ++;
 				break;
 			    }
 			}
@@ -7424,6 +7470,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 				}
 				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				futuremovecnt ++;
 				break;
 			    }
 			}
@@ -7454,6 +7501,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 					  in_check(tb, &position) ? 128 + movecnt : movecnt);
 	    total_legal_positions ++;
 	    total_moves += movecnt;
+	    total_futuremoves += futuremovecnt;
 	    return futurevector;
 	}
     }
