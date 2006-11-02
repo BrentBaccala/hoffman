@@ -99,7 +99,20 @@
 #include <sys/mman.h>	/* for mmap() */
 
 #include <errno.h>	/* for EINPROGRESS */
-#include </usr/local/include/aio.h>
+
+/* The program uses POSIX asynchronous I/O extensively.  Right now (November 2006), there are
+ * basically two different Linux implementations available for this.  The native interface in the
+ * 2.6 kernel series looks great on paper, but still seems to block at critical places.  GLIBC does
+ * asynchronous I/O using threads, which works better right now but incurs the overhead of context
+ * switches between the threads.  I've got both versions installed on my system and pick which one I
+ * want to use by selecting the appropriate header file here and the appropriate library
+ * (-lposix-aio for the native interface; -lrt for the GLIBC threads version) in the Makefile.  The
+ * two selections have to match up; if they don't things will compile without warnings but fail with
+ * various mysterious errors at runtime.
+ */
+
+/* #include </usr/local/include/aio.h> */
+#include </usr/include/aio.h>
 
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
  * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
@@ -422,7 +435,7 @@ int num_propentries = 0;
 
 #define MAX_ZEROOFFSET 25
 
-#define SEPERATE_PROPTABLE_FILES yes
+#define SEPERATE_PROPTABLE_FILES 0
 
 #define FINITE_FIELD_INVERSION 1
 
@@ -2022,7 +2035,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.207 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.208 $ $Locker: baccala $");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
@@ -3921,7 +3934,7 @@ void proptable_full(void)
 
     if (proptable_entries == 0) return;
 
-#ifdef SEPERATE_PROPTABLE_FILES
+#if SEPERATE_PROPTABLE_FILES
     sprintf(outfilename, "propfile%04d_out", num_proptables);
 #else
     sprintf(outfilename, "propfile_out");
@@ -3945,7 +3958,7 @@ void proptable_full(void)
     num_proptables ++;
     proptable_entries = 0;
 
-#ifdef SEPERATE_PROPTABLE_FILES
+#if SEPERATE_PROPTABLE_FILES
     close(proptable_output_fd);
     proptable_output_fd = -1;
 #endif
@@ -4010,6 +4023,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 {
     const struct aiocb * aiocbs[1];
     int32 offset;
+    int ret;
 
     do {
 
@@ -4042,6 +4056,8 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	offset = proptable_aiocb[current_propbuf(tablenum)].aio_offset
 	    + PROPTABLE_BUFFER_BYTES * BUFFERS_PER_PROPTABLE;
+	if (offset % (num_propentries * sizeof(proptable_entry_t))
+	    < PROPTABLE_BUFFER_BYTES * BUFFERS_PER_PROPTABLE) offset = 0;
 
 	memset(&proptable_aiocb[current_propbuf(tablenum)], 0, sizeof(struct aiocb));
 	proptable_aiocb[current_propbuf(tablenum)].aio_fildes = proptable_input_fds[tablenum];
@@ -4050,8 +4066,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 	proptable_aiocb[current_propbuf(tablenum)].aio_sigevent.sigev_notify = SIGEV_NONE;
 	proptable_aiocb[current_propbuf(tablenum)].aio_offset = offset;
 
-	if (proptable_aiocb[current_propbuf(tablenum)].aio_offset
-	    < (num_propentries * sizeof(proptable_entry_t))) {
+	if (proptable_aiocb[current_propbuf(tablenum)].aio_offset != 0) {
 
 	    if (aio_read(& proptable_aiocb[current_propbuf(tablenum)]) != 0) {
 		fprintf(stderr, "Can't enqueue aio_read for proptable\n");
@@ -4067,17 +4082,22 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	/* Wait for it to finish its disk read, if necessary */
 
-	if (proptable_aiocb[current_propbuf(tablenum)].aio_offset
-	    < (num_propentries * sizeof(proptable_entry_t))) {
+	if (proptable_aiocb[current_propbuf(tablenum)].aio_offset != 0) {
 
-	    if (aio_error(&proptable_aiocb[current_propbuf(tablenum)]) == EINPROGRESS) {
+	    ret = aio_error(&proptable_aiocb[current_propbuf(tablenum)]);
+
+	    if (ret == EINPROGRESS) {
 		fprintf(stderr, "Waiting for proptable buffer read to complete\n");
 		aiocbs[0] = &proptable_aiocb[current_propbuf(tablenum)];
 		aio_suspend(aiocbs, 1, NULL);
+	    } else if (ret != 0) {
+		fprintf(stderr, "Error return %d from proptable aio_read\n", ret);
 	    }
 
-	    if (aio_return(&proptable_aiocb[current_propbuf(tablenum)]) != PROPTABLE_BUFFER_BYTES) {
-		fprintf(stderr, "proptable aio_read didn't return PROPTABLE_BUFFER_BYTES\n");
+	    ret = aio_return(&proptable_aiocb[current_propbuf(tablenum)]);
+
+	    if (ret != PROPTABLE_BUFFER_BYTES) {
+		fprintf(stderr, "proptable aio_read returned %d, not PROPTABLE_BUFFER_BYTES\n", ret);
 		kill(getpid(), SIGSTOP);
 	    }
 	}
@@ -4086,8 +4106,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	proptable_buffer_index[tablenum] = 0;
 
-    } while (proptable_aiocb[current_propbuf(tablenum)].aio_offset
-	     < (num_propentries * sizeof(proptable_entry_t)));
+    } while (proptable_aiocb[current_propbuf(tablenum)].aio_offset != 0);
 
     /* No, we're really at the end! */
 
@@ -4108,7 +4127,7 @@ int proptable_finalize(int target_dtm)
     int highbit;
     int network_node;
 
-#ifdef SEPERATE_PROPTABLE_FILES
+#if SEPERATE_PROPTABLE_FILES
     char infilename[256];
     char outfilename[256];
 #else
@@ -4146,18 +4165,19 @@ int proptable_finalize(int target_dtm)
 	return 0;
     }
 
-#ifndef SEPERATE_PROPTABLE_FILES
-    rename("propfile_out", "propfile_in");
-    proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE | O_DIRECT);
-    if (proptable_input_fd == -1) {
-	fprintf(stderr, "Can't open 'propfile_in' for reading propfile\n");
-	return 0;
+#if !SEPERATE_PROPTABLE_FILES
+    if (num_input_proptables > 0) {
+	rename("propfile_out", "propfile_in");
+	proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE | O_DIRECT);
+	if (proptable_input_fd == -1) {
+	    fprintf(stderr, "Can't open 'propfile_in' for reading propfile\n"); /* BREAKPOINT */
+	    return 0;
+	}
     }
 #endif
 
     for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
-	int alignment;
-#ifdef SEPERATE_PROPTABLE_FILES
+#if SEPERATE_PROPTABLE_FILES
 	sprintf(infilename, "propfile%04d_in", tablenum);
 	sprintf(outfilename, "propfile%04d_out", tablenum);
 	rename(outfilename, infilename);
@@ -4169,6 +4189,10 @@ int proptable_finalize(int target_dtm)
 #else
 	proptable_input_fds[tablenum] = proptable_input_fd;
 #endif
+    }
+
+    for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
+	int alignment;
 	/* proptable_buffer[tablenum] = (proptable_entry_t *) malloc(PROPTABLE_BUFFER_BYTES); */
 	alignment = fpathconf(proptable_input_fds[tablenum], _PC_REC_XFER_ALIGN);
 
@@ -4183,7 +4207,12 @@ int proptable_finalize(int target_dtm)
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_buf = proptable_buffer[propbuf(tablenum, bufnum)];
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_nbytes = PROPTABLE_BUFFER_BYTES;
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_sigevent.sigev_notify = SIGEV_NONE;
+#if SEPERATE_PROPTABLE_FILES
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_offset = PROPTABLE_BUFFER_BYTES * bufnum;
+#else
+	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_offset
+		= tablenum * num_propentries * sizeof(proptable_entry_t) + PROPTABLE_BUFFER_BYTES * bufnum;
+#endif
 
 	    if (aio_read(& proptable_aiocb[propbuf(tablenum, bufnum)]) != 0) {
 		fprintf(stderr, "Can't enqueue aio_read for proptable\n");
@@ -4301,7 +4330,7 @@ int proptable_finalize(int target_dtm)
 
     for (i = 0; i < num_input_proptables; i ++) {
 	free(proptable_buffer[i]);
-#ifdef SEPERATE_PROPTABLE_FILES
+#if SEPERATE_PROPTABLE_FILES
 	close(proptable_input_fds[i]);
 	sprintf(infilename, "propfile%04d_in", i);
 	unlink(infilename);
@@ -4315,9 +4344,11 @@ int proptable_finalize(int target_dtm)
     free(sorting_network);
     free(proptable_num);
 
-#ifndef SEPERATE_PROPTABLE_FILES
-    close(proptable_input_fd);
-    unlink("propfile_in");
+#if !SEPERATE_PROPTABLE_FILES
+    if (num_input_proptables > 0) {
+	close(proptable_input_fd);
+	unlink("propfile_in");
+    }
 #endif
 
     /* Flush out anything in the last proptable */
