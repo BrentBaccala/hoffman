@@ -21,7 +21,7 @@
 	offset	CDATA		#IMPLIED
 	format	(fourbyte|one-byte-dtm)	#IMPLIED
 	modulus CDATA		#IMPLIED
-	index	(naive|simple)	#IMPLIED>
+	index	(naive|simple|xor)	#IMPLIED>
 
 <!ATTLIST piece
 	color	(white|black)	#REQUIRED
