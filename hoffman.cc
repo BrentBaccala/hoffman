@@ -192,6 +192,8 @@ inline int square(int row, int col)
 /* Variables for gathering statistics */
 
 int64 total_legal_positions = 0;
+int64 total_PNTM_mated_positions = 0;
+int64 total_stalemate_positions = 0;
 int64 total_moves = 0;
 int64 total_futuremoves = 0;
 int64 total_backproped_moves = 0;
@@ -2044,7 +2046,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.209 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.210 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -2072,6 +2074,12 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     sprintf(strbuf, "%lld", total_legal_positions);
     xmlNewChild(node, NULL, (const xmlChar *) "legal-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_PNTM_mated_positions);
+    xmlNewChild(node, NULL, (const xmlChar *) "PNTM-mated-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_stalemate_positions);
+    xmlNewChild(node, NULL, (const xmlChar *) "stalemate-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     sprintf(strbuf, "%lld", total_moves);
     xmlNewChild(node, NULL, (const xmlChar *) "forward-moves", BAD_CAST strbuf);
@@ -3213,17 +3221,22 @@ void initialize_entry_as_illegal(tablebase_t *tb, struct fourbyte_entry *entry)
 void initialize_entry_with_PNTM_mated(tablebase_t *tb, struct fourbyte_entry *entry)
 {
     initialize_entry(tb, entry, 0, 1);
+    total_legal_positions ++;
+    total_PNTM_mated_positions ++;
 }
 
 void initialize_entry_with_stalemate(tablebase_t *tb, struct fourbyte_entry *entry)
 {
     /* use movecnt 127 as stalemate for now */
     initialize_entry(tb, entry, 127, 0);
+    total_legal_positions ++;
+    total_stalemate_positions ++;
 }
 
 void initialize_entry_with_movecnt(tablebase_t *tb, struct fourbyte_entry *entry, int movecnt)
 {
     initialize_entry(tb, entry, movecnt, 0);
+    total_legal_positions ++;
 }
 
 inline void PTM_wins(struct fourbyte_entry *entry, int dtm, int dtc)
@@ -4368,13 +4381,8 @@ int proptable_finalize(int target_dtm)
 
     }
 
-    for (i = 0; i < num_input_proptables; i ++) {
+    for (i = 0; i < num_input_proptables * BUFFERS_PER_PROPTABLE; i ++) {
 	free(proptable_buffer[i]);
-#if SEPERATE_PROPTABLE_FILES
-	close(proptable_input_fds[i]);
-	sprintf(infilename, "propfile%04d_in", i);
-	unlink(infilename);
-#endif
     }
 
     free(proptable_buffer_index);
@@ -4388,6 +4396,12 @@ int proptable_finalize(int target_dtm)
     if (num_input_proptables > 0) {
 	close(proptable_input_fd);
 	unlink("propfile_in");
+    }
+#else
+    for (i = 0; i < num_input_proptables; i ++) {
+	close(proptable_input_fds[i]);
+	sprintf(infilename, "propfile%04d_in", i);
+	unlink(infilename);
     }
 #endif
 
@@ -7494,12 +7508,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 
 	if (movecnt == 0) {
 	    initialize_entry_with_stalemate(tb, entry);
-	    total_legal_positions ++;
 	    return 0;
 	} else {
 	    initialize_entry_with_movecnt(tb, entry,
 					  in_check(tb, &position) ? 128 + movecnt : movecnt);
-	    total_legal_positions ++;
 	    total_moves += movecnt;
 	    total_futuremoves += futuremovecnt;
 	    return futurevector;
