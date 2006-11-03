@@ -197,8 +197,20 @@ int64 total_stalemate_positions = 0;
 int64 total_moves = 0;
 int64 total_futuremoves = 0;
 int64 total_backproped_moves = 0;
+int64 total_passes = 0;
 
 struct timeval program_start_time;
+
+int entries_write_stalls = 0;
+int entries_read_stalls = 0;
+int proptable_read_stalls = 0;
+int proptable_writes = 0;
+
+struct timeval entries_write_stall_time = {0, 0};
+struct timeval entries_read_stall_time = {0, 0};
+struct timeval proptable_read_stall_time = {0, 0};
+struct timeval proptable_write_time = {0, 0};
+struct timeval proptable_preload_time = {0, 0};
 
 
 /***** DATA STRUCTURES *****/
@@ -1972,6 +1984,50 @@ void unload_futurebase(tablebase_t *tb)
  * indicating the program, time, and host that generated the data.
  */
 
+void subtract_timeval(struct timeval *dest, struct timeval *src)
+{
+    dest->tv_sec -= src->tv_sec;
+    if (dest->tv_usec > src->tv_usec) {
+	dest->tv_usec -= src->tv_usec;
+    } else {
+	dest->tv_usec = 1000000 + dest->tv_usec - src->tv_usec;
+	dest->tv_sec --;
+    }
+}
+
+void add_timeval(struct timeval *dest, struct timeval *src)
+{
+    dest->tv_sec += src->tv_sec;
+    dest->tv_usec += src->tv_usec;
+    if (dest->tv_usec >= 1000000) {
+	dest->tv_usec -= 1000000;
+	dest->tv_sec ++;
+    }
+}
+
+void sprint_timeval(char *strbuf, struct timeval *timevalp)
+{
+    if (timevalp->tv_sec < 60) {
+	sprintf(strbuf, "%ld.%03lds", timevalp->tv_sec, timevalp->tv_usec/1000);
+    } else if (timevalp->tv_sec < 3600) {
+	sprintf(strbuf, "%ldm%02ld.%03lds", timevalp->tv_sec/60, timevalp->tv_sec%60,
+		timevalp->tv_usec/1000);
+    } else {
+	sprintf(strbuf, "%ldh%02ldm%02ld.%03lds", timevalp->tv_sec/3600,
+		(timevalp->tv_sec/60)%60, timevalp->tv_sec%60, timevalp->tv_usec/1000);
+    }
+}
+
+void fprint_system_time(void)
+{
+    struct rusage rusage;
+    char strbuf[256];
+
+    getrusage(RUSAGE_SELF, &rusage);
+    sprint_timeval(strbuf, &rusage.ru_stime);
+    fprintf(stderr, "System time: %s\n", strbuf);
+}
+
 xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 {
     xmlNodePtr tablebase, node;
@@ -2001,52 +2057,21 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     he = gethostbyname(hostname);
 
     getrusage(RUSAGE_SELF, &rusage);
-    if (rusage.ru_utime.tv_sec < 60) {
-	sprintf(utimestr, "%ld.%03lds", rusage.ru_utime.tv_sec, rusage.ru_utime.tv_usec/1000);
-    } else if (rusage.ru_utime.tv_sec < 3600) {
-	sprintf(utimestr, "%ldm%02ld.%03lds", rusage.ru_utime.tv_sec/60, rusage.ru_utime.tv_sec%60,
-		rusage.ru_utime.tv_usec/1000);
-    } else {
-	sprintf(utimestr, "%ldh%02ldm%02ld.%03lds", rusage.ru_utime.tv_sec/3600,
-		(rusage.ru_utime.tv_sec/60)%60, rusage.ru_utime.tv_sec%60,
-		rusage.ru_utime.tv_usec/1000);
-    }
-    if (rusage.ru_stime.tv_sec < 60) {
-	sprintf(stimestr, "%ld.%03lds", rusage.ru_stime.tv_sec, rusage.ru_stime.tv_usec/1000);
-    } else if (rusage.ru_stime.tv_sec < 3600) {
-	sprintf(stimestr, "%ldm%02ld.%03lds", rusage.ru_stime.tv_sec/60, rusage.ru_stime.tv_sec%60,
-		rusage.ru_stime.tv_usec/1000);
-    } else {
-	sprintf(stimestr, "%ldh%02ldm%02ld.%03lds", rusage.ru_stime.tv_sec/3600,
-		(rusage.ru_stime.tv_sec/60)%60, rusage.ru_stime.tv_sec%60,
-		rusage.ru_stime.tv_usec/1000);
-    }
+    sprint_timeval(utimestr, &rusage.ru_utime);
+    sprint_timeval(stimestr, &rusage.ru_stime);
 
     gettimeofday(&program_end_time, NULL);
-    program_end_time.tv_sec -= program_start_time.tv_sec;
-    if (program_end_time.tv_usec > program_start_time.tv_usec) {
-	program_end_time.tv_usec -= program_start_time.tv_usec;
-    } else {
-	program_end_time.tv_usec = 1000000 + program_end_time.tv_usec - program_start_time.tv_usec;
-	program_end_time.tv_sec --;
-    }
-    if (program_end_time.tv_sec < 60) {
-	sprintf(rtimestr, "%ld.%03lds", program_end_time.tv_sec, program_end_time.tv_usec/1000);
-    } else if (program_end_time.tv_sec < 3600) {
-	sprintf(rtimestr, "%ldm%02ld.%03lds", program_end_time.tv_sec/60, program_end_time.tv_sec%60,
-		program_end_time.tv_usec/1000);
-    } else {
-	sprintf(rtimestr, "%ldh%02ldm%02ld.%03lds", program_end_time.tv_sec/3600,
-		(program_end_time.tv_sec/60)%60, program_end_time.tv_sec%60,
-		program_end_time.tv_usec/1000);
-    }
+    subtract_timeval(&program_end_time, &program_start_time);
+    sprint_timeval(rtimestr, &program_end_time);
 
     sprintf(minfltstr, "%ld", rusage.ru_minflt);
     sprintf(majfltstr, "%ld", rusage.ru_majflt);
 
     xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.210 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.211 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -2061,9 +2086,37 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "page-faults", (const xmlChar *) majfltstr);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "page-reclaims", (const xmlChar *) minfltstr);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
-    xmlNodeAddContent(node, BAD_CAST "\n");
+
+    if (num_propentries > 0) {
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	sprintf(strbuf, "%d", entries_write_stalls);
+	xmlNewChild(node, NULL, (const xmlChar *) "entries-write-stalls", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	sprintf(strbuf, "%d", entries_read_stalls);
+	xmlNewChild(node, NULL, (const xmlChar *) "entries-read-stalls", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	sprintf(strbuf, "%d", proptable_read_stalls);
+	xmlNewChild(node, NULL, (const xmlChar *) "proptable-read-stalls", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	sprintf(strbuf, "%d", proptable_writes);
+	xmlNewChild(node, NULL, (const xmlChar *) "proptable-writes", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	sprint_timeval(strbuf, &entries_write_stall_time);
+	xmlNewChild(node, NULL, (const xmlChar *) "entries-write-stall-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	sprint_timeval(strbuf, &entries_read_stall_time);
+	xmlNewChild(node, NULL, (const xmlChar *) "entries-read-stall-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	sprint_timeval(strbuf, &proptable_read_stall_time);
+	xmlNewChild(node, NULL, (const xmlChar *) "proptable-read-stall-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	sprint_timeval(strbuf, &proptable_write_time);
+	xmlNewChild(node, NULL, (const xmlChar *) "proptable-write-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	sprint_timeval(strbuf, &proptable_preload_time);
+	xmlNewChild(node, NULL, (const xmlChar *) "proptable-preload-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n");
+    }
 
     xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
@@ -2089,6 +2142,9 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     sprintf(strbuf, "%lld", total_backproped_moves);
     xmlNewChild(node, NULL, (const xmlChar *) "backproped-moves", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_passes);
+    xmlNewChild(node, NULL, (const xmlChar *) "passes", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n");
 
     xmlNodeAddContent(tablebase, BAD_CAST "\n");
@@ -2102,7 +2158,10 @@ int do_write(int fd, void *ptr, int length)
 {
     while (length > 0) {
 	int writ = write(fd, ptr, length);
-	if (writ == -1) return -1;
+	if (writ == -1) {
+	    perror("do_write");
+	    return -1;
+	}
 	ptr += writ;
 	length -= writ;
     }
@@ -2952,9 +3011,17 @@ void wait_for_entry_buffer_green(int buffernum)
     int retval;
 
     if (aio_error(&entry_buffers[buffernum].aiocb) == EINPROGRESS) {
-	fprintf(stderr, "Waiting for entry buffer read to complete\n");
+	struct timeval tv1, tv2;
+	gettimeofday(&tv1, NULL);
+
+	/* fprintf(stderr, "Waiting for entry buffer read to complete\n"); */
 	aiocbs[0] = &entry_buffers[buffernum].aiocb;
 	aio_suspend(aiocbs, 1, NULL);
+
+	gettimeofday(&tv2, NULL);
+	subtract_timeval(&tv2, &tv1);
+	add_timeval(&entries_read_stall_time, &tv2);
+	entries_read_stalls ++;
     }
 
     retval = aio_return(&entry_buffers[buffernum].aiocb);
@@ -2995,9 +3062,17 @@ void wait_for_entry_buffer_purple(int buffernum)
     const struct aiocb * aiocbs[1];
 
     if (aio_error(&entry_buffers[buffernum].aiocb) == EINPROGRESS) {
-	fprintf(stderr, "Waiting for entry buffer write to complete\n");
+	struct timeval tv1, tv2;
+	gettimeofday(&tv1, NULL);
+
+	/* fprintf(stderr, "Waiting for entry buffer write to complete\n"); */
 	aiocbs[0] = &entry_buffers[buffernum].aiocb;
 	aio_suspend(aiocbs, 1, NULL);
+
+	gettimeofday(&tv2, NULL);
+	subtract_timeval(&tv2, &tv1);
+	add_timeval(&entries_write_stall_time, &tv2);
+	entries_write_stalls ++;
     }
 
     if (aio_return(&entry_buffers[buffernum].aiocb) != ENTRY_BUFFER_BYTES) {
@@ -3273,6 +3348,8 @@ inline void add_one_to_PNTM_wins(struct fourbyte_entry *entry, int dtm, int dtc)
 	     * bit of movecnt on in-check positions.  So the only way movecnt has actually made it
 	     * to zero here is if we're not in check, so this is stalemate...
 	     */
+
+	    total_stalemate_positions ++;
 
 	    entry->dtm = 0;
 	    entry->dtc = 0;
@@ -3984,6 +4061,7 @@ int proptable_output_fd = -1;
 void proptable_full(void)
 {
     char outfilename[256];
+    struct timeval tv1, tv2;
 
     if (proptable_entries == 0) return;
 
@@ -3994,12 +4072,14 @@ void proptable_full(void)
 #endif
 
     if (proptable_output_fd == -1) {
-	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
+	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
     }
     if (proptable_output_fd == -1) {
 	fprintf(stderr, "Can't open '%s' for writing propfile\n", outfilename);
 	return;
     }
+
+    gettimeofday(&tv1, NULL);
 
     fprintf(stderr, "Writing proptable block %d with %d entries (%d%% occupancy)\n",
 	    num_proptables, proptable_entries, (100*proptable_entries)/num_propentries);
@@ -4007,6 +4087,11 @@ void proptable_full(void)
     /* XXX hitting a disk full condition is by no means out of the question here! */
     do_write(proptable_output_fd, proptable, num_propentries * sizeof(proptable_entry_t));
     memset(proptable, 0, num_propentries * sizeof(proptable_entry_t));
+
+    gettimeofday(&tv2, NULL);
+    subtract_timeval(&tv2, &tv1);
+    add_timeval(&proptable_write_time, &tv2);
+    proptable_writes ++;
 
     num_proptables ++;
     proptable_entries = 0;
@@ -4140,9 +4225,17 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 	    ret = aio_error(&proptable_aiocb[current_propbuf(tablenum)]);
 
 	    if (ret == EINPROGRESS) {
-		fprintf(stderr, "Waiting for proptable buffer read to complete\n");
+		struct timeval tv1, tv2;
+		gettimeofday(&tv1, NULL);
+
+		/* fprintf(stderr, "Waiting for proptable buffer read to complete\n"); */
 		aiocbs[0] = &proptable_aiocb[current_propbuf(tablenum)];
 		aio_suspend(aiocbs, 1, NULL);
+
+		gettimeofday(&tv2, NULL);
+		subtract_timeval(&tv2, &tv1);
+		add_timeval(&proptable_read_stall_time, &tv2);
+		proptable_read_stalls ++;
 	    } else if (ret != 0) {
 		fprintf(stderr, "Error return %d from proptable aio_read\n", ret);
 	    }
@@ -4174,6 +4267,7 @@ int proptable_finalize(int target_dtm)
     int i;
     int tablenum, bufnum;
     int num_input_proptables;
+    struct timeval tv1, tv2;
 
     proptable_entry_t *sorting_network;
     int *proptable_num;
@@ -4245,9 +4339,7 @@ int proptable_finalize(int target_dtm)
     }
 
     for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
-	int alignment;
-	/* proptable_buffer[tablenum] = (proptable_entry_t *) malloc(PROPTABLE_BUFFER_BYTES); */
-	alignment = fpathconf(proptable_input_fds[tablenum], _PC_REC_XFER_ALIGN);
+	int alignment = fpathconf(proptable_input_fds[tablenum], _PC_REC_XFER_ALIGN);
 
 	for (bufnum = 0; bufnum < BUFFERS_PER_PROPTABLE; bufnum ++) {
 	    if (posix_memalign((void **) &proptable_buffer[propbuf(tablenum, bufnum)],
@@ -4255,7 +4347,15 @@ int proptable_finalize(int target_dtm)
 		fprintf(stderr, "Can't posix_memalign proptable buffer\n");
 		return 0;
 	    }
+	}
+    }
 
+    /* I run this loop in the opposite direction from the last one because I want the reads
+     * for the initial buffers for all the tables to be first in the queue.
+     */
+
+    for (bufnum = 0; bufnum < BUFFERS_PER_PROPTABLE; bufnum ++) {
+	for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_fildes = proptable_input_fds[tablenum];
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_buf = proptable_buffer[propbuf(tablenum, bufnum)];
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_nbytes = PROPTABLE_BUFFER_BYTES;
@@ -4276,11 +4376,17 @@ int proptable_finalize(int target_dtm)
 
     /* Wait for initial read to finish on each input proptable */
 
+    gettimeofday(&tv1, NULL);
+
     for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
 	const struct aiocb * aiocbs[1];
 	aiocbs[0] = &proptable_aiocb[current_propbuf(tablenum)];
 	aio_suspend(aiocbs, 1, NULL);
     }
+
+    gettimeofday(&tv2, NULL);
+    subtract_timeval(&tv2, &tv1);
+    add_timeval(&proptable_preload_time, &tv2);
 
     sorting_network = malloc(2*highbit * sizeof(proptable_entry_t));
     proptable_num = malloc(2*highbit * sizeof(int));
@@ -4416,6 +4522,8 @@ int propagation_pass(int target_dtm)
     int positions_finalized = 0;
     index_t index;
 
+    total_passes ++;
+
     if (num_propentries != 0) {
 	positions_finalized = proptable_finalize(target_dtm);
     } else {
@@ -4433,6 +4541,7 @@ int propagation_pass(int target_dtm)
     }
 
     fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized);
+    fprint_system_time();
 
     return positions_finalized;
 }
@@ -7590,11 +7699,21 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 
     if (num_propentries != 0) {
+#if 0
 	proptable = calloc(num_propentries, sizeof(proptable_entry_t));
 	if (proptable == NULL) {
 	    fprintf(stderr, "Can't calloc proptable\n");
 	    return 0;
 	}
+#else
+	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
+	if (posix_memalign((void **) &proptable, 1024, num_propentries * sizeof(proptable_entry_t)) != 0) {
+	    fprintf(stderr, "Can't posix_memalign proptable\n");
+	    return 0;
+	}
+	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
+	memset(proptable, 0, num_propentries * sizeof(proptable_entry_t));
+#endif
     }
     /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
     proptable_tb = tb;
@@ -7652,6 +7771,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions);
 	fprintf(stderr, "Total moves: %lld\n", total_moves);
+	fprint_system_time();
 
 	fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
