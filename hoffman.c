@@ -2071,7 +2071,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.211 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.212 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -2967,10 +2967,13 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  * fetch_fourbyte_entry(), which is passed a tablebase pointer and an index and is expected to
  * return a pointer to the correct struct fourbyte_entry, which can be either read or written
  * without any further ado.
+ *
+ * I'm aiming right now for a target buffer size of 128 KB, since that's my kernel's maximum
+ * internal request size.  So, 128 KB / 4 byte entries = 32 K entries = 1<<15
  */
 
 #define NUM_ENTRY_BUFFERS 4
-#define ENTRY_BUFFER_ENTRIES (1<<16)
+#define ENTRY_BUFFER_ENTRIES (1<<15)
 #define ENTRY_BUFFER_BYTES (ENTRY_BUFFER_ENTRIES * sizeof(struct fourbyte_entry))
 
 struct entry_buffer {
@@ -4147,9 +4150,30 @@ struct aiocb *proptable_aiocb;
 int *proptable_buffer_index;
 int *proptable_current_buffernum;
 
-/* Have to define these numbers carefully so we can read full disk blocks */
+/* Proptable buffering settings.
+ *
+ * Based on a paper I read about disk throughput using Linux asynchronous I/O, 256 KB seems to be a
+ * good target buffer size to shoot for.  Also, there's currently nothing in the code to deal with
+ * the case where the buffers are so large relative to the proptable that the first set of AIO reads
+ * more than completely consumes the proptable.  Since the smallest proptable we can specify (the -P
+ * option) is 1 MB, and I'm currently using 4 BUFFERS_PER_PROPTABLE, 256 KB is also the largest
+ * buffer size we can use with our smallest proptable size and not break the code.  Since
+ * proptable_entry_t is currently hardwired at 16 bytes, 1<<14 (16 K) entries per buffer gives 256
+ * KB buffers.
+ *
+ * Adjusting these numbers is actually quite tricky.  Make the buffers too small or too few, and
+ * you'll be stalling because you've emptied your pipeline.  Make the buffers too big or too many,
+ * and you'll stall because your pipeline is full of big, slow reads that you don't need yet.
+ * Probably want to look at adjusting these things dynamically at some point; perhaps keep the
+ * buffer size constant and adjust on the fly the number of buffers in the rings.
+ *
+ * I _assume_ that these numbers read full disk blocks on disk block multiples (otherwise the direct
+ * I/O stuff will scream and fail).  I've also found out from the linux-kernel mailing list that
+ * /sys/block/DEV/queue/max_sectors_kb gives the maximum size (in KB) of the kernel internal
+ * requests.  My disk shows 128 KB there, so I've bumped 256 KB down to 128 KB.  (1<<13 entries)
+ */
 
-#define PROPTABLE_BUFFER_ENTRIES (1<<16)
+#define PROPTABLE_BUFFER_ENTRIES (1<<13)
 #define PROPTABLE_BUFFER_BYTES (PROPTABLE_BUFFER_ENTRIES * sizeof(proptable_entry_t))
 #define BUFFERS_PER_PROPTABLE 4
 
