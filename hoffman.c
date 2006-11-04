@@ -558,19 +558,19 @@ unsigned char multiply_in_GF2_8(unsigned char a, unsigned char b)
 }
 
 unsigned char byte_transform_64[64];
+unsigned char byte_transform_64b[64];
+unsigned char byte_transform_64c[64];
 
-unsigned char multiply_in_GF2_6(unsigned char a, unsigned char b)
+unsigned char multiply_in_GF2_6(unsigned char a, unsigned char b, unsigned char irreducible_polynomial)
 {
     unsigned char result = 0;
-
-    /* use 0x43 (0x13) as our irreducible polynomial */
 
     while (a != 0) {
 	if ((a&1) == 1) result ^= b;
 	a >>= 1;
 	b <<= 1;
 	if ((b&0x40) == 0x40) {
-	    b ^= 0x43;
+	    b ^= irreducible_polynomial;
 	}
     }
     return result;
@@ -597,18 +597,23 @@ void initialize_byte_transform(void)
     }
 
     byte_transform_64[0] = 0;
+    byte_transform_64b[0] = 0;
+    byte_transform_64c[0] = 0;
+
+    /* use first three irreducible polynomials from Marsh's table for GF(2^6) */
 
     for (a=1; a<=63; a++) {
 	for (b=1; b<=63; b++) {
-	    if (multiply_in_GF2_6(a,b) == 1) {
+	    if (multiply_in_GF2_6(a,b, 0103) == 1) {
 		byte_transform_64[a] = b;
-		break;
+	    }
+	    if (multiply_in_GF2_6(a,b, 0111) == 1) {
+		byte_transform_64b[a] = b;
+	    }
+	    if (multiply_in_GF2_6(a,b, 0127) == 1) {
+		byte_transform_64c[a] = b;
 	    }
 	}
-	if (b == 64) {
-	    fprintf(stderr, "Couldn't invert in initialize_byte_transform\n");
-	}
-	/* fprintf(stderr, "0x%02x -> 0x%02x\n", a, b); */
     }
 }
 
@@ -1158,10 +1163,12 @@ index_t local_position_to_xor_index(tablebase_t *tb, local_position_t *pos)
     int val = 0;
     int val1 = 0;
     int val2 = 0;
+    int val3 = 0;
 
     pos->board_vector = 0;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
+    /* for (piece = tb->num_pieces - 1; piece >= 0; piece--) { */
 
 	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
 	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
@@ -1189,19 +1196,34 @@ index_t local_position_to_xor_index(tablebase_t *tb, local_position_t *pos)
 	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
 
 #if 0
-	index |= (val^val1^val2^byte_transform_64[val2]) << shift_count;
-	val2 = val1;
-	val1 = val;
-#else
-#if 0
-	index |= (val^byte_transform_64[val1]^byte_transform_64[val2]) << shift_count;
-	val2 = val1;
-	val1 = val;
-#else
 	index |= (val^val1^val2) << shift_count;
 	val2 = val1;
 	val1 = byte_transform_64[val];
+#else
+#if 1
+	if (piece == tb->num_pieces - 1) {
+	    index |= (val^val3) << shift_count;
+	} else if (piece == tb->num_pieces - 2) {
+	    index |= (val^val2) << shift_count;
+	} else if (piece == tb->num_pieces - 3) {
+	    index |= (val^val1) << shift_count;
+	} else {
+	    index |= val << shift_count;
+	}
+#else
+	if (piece == 0) {
+	    index |= (val^val3) << shift_count;
+	} else if (piece == 1) {
+	    index |= (val^val2) << shift_count;
+	} else if (piece == 2) {
+	    index |= (val^val1) << shift_count;
+	} else {
+	    index |= val << shift_count;
+	}
 #endif
+	val1 ^= byte_transform_64[val];
+	val2 ^= byte_transform_64b[val];
+	val3 ^= byte_transform_64c[val];
 #endif
 
 	shift_count += 6;  /* because 2^6=64 */
@@ -1233,6 +1255,7 @@ boolean xor_index_to_local_position(tablebase_t *tb, index_t index, local_positi
     int piece;
     int val1 = 0;
     int val2 = 0;
+    int val3 = 0;
     int square;
 
     memset(p, 0, sizeof(local_position_t));
@@ -1242,21 +1265,37 @@ boolean xor_index_to_local_position(tablebase_t *tb, index_t index, local_positi
     index >>= 1;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
+    /* for (piece = tb->num_pieces - 1; piece >= 0; piece--) { */
 
 #if 0
-	square = (index & 63) ^ val1 ^ byte_transform_64[val2];
-	val2 = val1;
-	val1 = (index & 63);
-#else
-#if 0
-	square = (index & 63) ^ byte_transform_64[val1] ^ byte_transform_64[val2];
-	val2 = val1;
-	val1 = square;
-#else
 	square = (index & 63) ^ val1 ^ val2;
 	val2 = val1;
 	val1 = byte_transform_64[square];
+#else
+#if 1
+	if (piece == tb->num_pieces - 1) {
+	    square = (index & 63) ^ val3;
+	} else if (piece == tb->num_pieces - 2) {
+	    square = (index & 63) ^ val2;
+	} else if (piece == tb->num_pieces - 3) {
+	    square = (index & 63) ^ val1;
+	} else {
+	    square = (index & 63);
+	}
+#else
+	if (piece == 0) {
+	    square = (index & 63) ^ val3;
+	} else if (piece == 1) {
+	    square = (index & 63) ^ val2;
+	} else if (piece == 2) {
+	    square = (index & 63) ^ val1;
+	} else {
+	    square = (index & 63);
+	}
 #endif
+	val1 ^= byte_transform_64[square];
+	val2 ^= byte_transform_64b[square];
+	val3 ^= byte_transform_64c[square];
 #endif
 
 	/* En passant */
@@ -2106,7 +2145,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.215 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.216 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4628,8 +4667,9 @@ int propagation_pass(int target_dtm)
 	xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "backprop-moves-generated", BAD_CAST strbuf);
     }
 
-    if ((backproped_moves != 0) || (target_dtm == 0))
+    if (((backproped_moves != 0) || (target_dtm == 0)) && (num_propentries != 0)) {
 	xmlNodeAddContent(proptable_tb->current_pass_stats, BAD_CAST "\n   ");
+    }
 
     total_backproped_moves += backproped_moves;
 
@@ -4676,7 +4716,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
     /* I had a bug here with the scaling_factor rounding down - that's why we increment by one */
 
     if (scaling_factor == 0) {
-	scaling_factor = (proptable_tb->max_index + 1) / num_propentries;
+	scaling_factor = proptable_tb->max_index / num_propentries;
 	scaling_factor ++;
 	fprintf(stderr, "Scaling factor %d\n", scaling_factor);
     }
