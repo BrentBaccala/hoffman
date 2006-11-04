@@ -191,6 +191,8 @@ inline int square(int row, int col)
 
 /* Variables for gathering statistics */
 
+int64 backproped_moves = 0;
+
 int64 total_legal_positions = 0;
 int64 total_PNTM_mated_positions = 0;
 int64 total_stalemate_positions = 0;
@@ -407,6 +409,9 @@ typedef struct tablebase {
     int missing_non_pawn;
 
     xmlDocPtr xml;
+    xmlNodePtr per_pass_stats;
+    xmlNodePtr current_pass_stats;
+
     int num_pieces;
     int move_restrictions[2];		/* one for each color */
     short piece_type[MAX_PIECES];
@@ -2048,7 +2053,36 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 
     xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
 
-    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generation-info", NULL);
+    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "tablebase-statistics", NULL);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%d", tb->max_index + 1);
+    xmlNewChild(node, NULL, (const xmlChar *) "indices", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_legal_positions);
+    xmlNewChild(node, NULL, (const xmlChar *) "legal-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_PNTM_mated_positions);
+    xmlNewChild(node, NULL, (const xmlChar *) "PNTM-mated-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_stalemate_positions);
+    xmlNewChild(node, NULL, (const xmlChar *) "stalemate-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_moves);
+    xmlNewChild(node, NULL, (const xmlChar *) "forward-moves", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_futuremoves);
+    xmlNewChild(node, NULL, (const xmlChar *) "futuremoves", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_backproped_moves);
+    xmlNewChild(node, NULL, (const xmlChar *) "backproped-moves", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%lld", total_passes);
+    xmlNewChild(node, NULL, (const xmlChar *) "passes", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n");
+
+    xmlNodeAddContent(tablebase, BAD_CAST "\n");
+
+    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generation-statistics", NULL);
 
     time(&creation_time);
     strftime(ctimestr, sizeof(ctimestr), "%c %Z", localtime(&creation_time));
@@ -2071,7 +2105,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.212 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.213 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -2120,34 +2154,9 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 
     xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
-    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "statistics", NULL);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    sprintf(strbuf, "%d", tb->max_index + 1);
-    xmlNewChild(node, NULL, (const xmlChar *) "indices", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    sprintf(strbuf, "%lld", total_legal_positions);
-    xmlNewChild(node, NULL, (const xmlChar *) "legal-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    sprintf(strbuf, "%lld", total_PNTM_mated_positions);
-    xmlNewChild(node, NULL, (const xmlChar *) "PNTM-mated-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    sprintf(strbuf, "%lld", total_stalemate_positions);
-    xmlNewChild(node, NULL, (const xmlChar *) "stalemate-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    sprintf(strbuf, "%lld", total_moves);
-    xmlNewChild(node, NULL, (const xmlChar *) "forward-moves", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    sprintf(strbuf, "%lld", total_futuremoves);
-    xmlNewChild(node, NULL, (const xmlChar *) "futuremoves", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    sprintf(strbuf, "%lld", total_backproped_moves);
-    xmlNewChild(node, NULL, (const xmlChar *) "backproped-moves", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    sprintf(strbuf, "%lld", total_passes);
-    xmlNewChild(node, NULL, (const xmlChar *) "passes", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n");
+    xmlNodeAddContent(tb->per_pass_stats, BAD_CAST "\n");
 
-    xmlNodeAddContent(tablebase, BAD_CAST "\n");
+    xmlAddNextSibling(node, tb->per_pass_stats);
 
     return tb->xml;
 }
@@ -3985,6 +3994,7 @@ void verify_movements()
 /***** PROPAGATION TABLE *****/
 
 int proptable_entries = 0;
+int proptable_merges = 0;
 
 /* We insert into the propagation table using an "address calculation insertion sort".
  */
@@ -4043,6 +4053,8 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevecto
 {
     proptable_entry_t src;
 
+    proptable_merges ++;
+
     /* merge_propentrys() never uses the source index, because it's assumed to be identical to the
      * destination index (it's a merge, after all)
      */
@@ -4065,6 +4077,8 @@ void proptable_full(void)
 {
     char outfilename[256];
     struct timeval tv1, tv2;
+    xmlNodePtr node;
+    char strbuf[256];
 
     if (proptable_entries == 0) return;
 
@@ -4084,6 +4098,18 @@ void proptable_full(void)
 
     gettimeofday(&tv1, NULL);
 
+    xmlNodeAddContent(proptable_tb->current_pass_stats, BAD_CAST "\n      ");
+    node = xmlNewChild(proptable_tb->current_pass_stats, NULL, BAD_CAST "proptable", NULL);
+    sprintf(strbuf, "%d", proptable_entries);
+    xmlNewProp(node, BAD_CAST "entries", BAD_CAST strbuf);
+    sprintf(strbuf, "%d", proptable_merges);
+    xmlNewProp(node, BAD_CAST "merges", BAD_CAST strbuf);
+    sprintf(strbuf, "%d%%", (100*proptable_entries)/num_propentries);
+    xmlNewProp(node, BAD_CAST "occupancy", BAD_CAST strbuf);
+
+    /* xmlElemDump(stderr, proptable_tb->xml, node); */
+    /* fputc('\n', stderr); */
+
     fprintf(stderr, "Writing proptable block %d with %d entries (%d%% occupancy)\n",
 	    num_proptables, proptable_entries, (100*proptable_entries)/num_propentries);
 
@@ -4098,6 +4124,7 @@ void proptable_full(void)
 
     num_proptables ++;
     proptable_entries = 0;
+    proptable_merges = 0;
 
 #if SEPERATE_PROPTABLE_FILES
     close(proptable_output_fd);
@@ -4544,9 +4571,24 @@ int proptable_finalize(int target_dtm)
 int propagation_pass(int target_dtm)
 {
     int positions_finalized = 0;
+    struct timeval tv1, tv2;
+    char strbuf[256];
     index_t index;
 
+    gettimeofday(&tv1, NULL);
+
     total_passes ++;
+
+    xmlNodeAddContent(proptable_tb->per_pass_stats, BAD_CAST "\n   ");
+    sprintf(strbuf, "%d", target_dtm);
+    proptable_tb->current_pass_stats
+	= xmlNewChild(proptable_tb->per_pass_stats, NULL, BAD_CAST "pass", NULL);
+    xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "dtm", BAD_CAST strbuf);
+
+    /* xmlElemDump(stderr, proptable_tb->xml, proptable_tb->current_pass_stats); */
+    /* fputc('\n', stderr); */
+
+    backproped_moves = 0;
 
     if (num_propentries != 0) {
 	positions_finalized = proptable_finalize(target_dtm);
@@ -4564,8 +4606,22 @@ int propagation_pass(int target_dtm)
 
     }
 
+    gettimeofday(&tv2, NULL);
+    subtract_timeval(&tv2, &tv1);
+
+    sprint_timeval(strbuf, &tv2);
+    xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "time", BAD_CAST strbuf);
+    sprintf(strbuf, "%d", positions_finalized);
+    xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "positions-finalized", BAD_CAST strbuf);
+    sprintf(strbuf, "%lld", backproped_moves);
+    xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "backprop-moves-generated", BAD_CAST strbuf);
+
+    if (backproped_moves != 0) xmlNodeAddContent(proptable_tb->current_pass_stats, BAD_CAST "\n   ");
+
+    total_backproped_moves += backproped_moves;
+
     fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized);
-    fprint_system_time();
+    /* fprint_system_time(); */
 
     return positions_finalized;
 }
@@ -4576,7 +4632,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
     int zerooffset;
     static int scaling_factor = 0;
 
-    total_backproped_moves ++;
+    backproped_moves ++;
 
     if (num_propentries == 0) {
 	proptable_entry_t entry;
@@ -7708,6 +7764,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
 
+    tb->per_pass_stats = xmlNewChild(xmlDocGetRootElement(tb->xml), NULL,
+				     BAD_CAST "per-pass-statistics", NULL);
+
     if (num_propentries != 0) {
 	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
 	if (tb->entries_fd == -1) {
@@ -7793,9 +7852,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	propagation_pass(0);
 	proptable_full();  /* flush moves out to disk */
 
-	fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions);
-	fprintf(stderr, "Total moves: %lld\n", total_moves);
-	fprint_system_time();
+	/* fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions); */
+	/* fprintf(stderr, "Total moves: %lld\n", total_moves); */
+	/* fprint_system_time(); */
 
 	fprintf(stderr, "All futuremoves handled under move restrictions\n");
 
