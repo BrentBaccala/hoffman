@@ -202,6 +202,7 @@ int64 total_backproped_moves = 0;
 int64 total_passes = 0;
 
 struct timeval program_start_time;
+struct timeval pass_start_time;
 
 int entries_write_stalls = 0;
 int entries_read_stalls = 0;
@@ -2105,7 +2106,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.213 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.214 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4568,21 +4569,29 @@ int proptable_finalize(int target_dtm)
     return positions_finalized;
 }
 
+/* target_dtm == 0 is special because the initialization / futurebase back prop pass
+ *
+ * Among other things, for pass 0 we've already set the start time when we began the futurebase back
+ * prop.
+ */
+
 int propagation_pass(int target_dtm)
 {
     int positions_finalized = 0;
-    struct timeval tv1, tv2;
+    struct timeval pass_end_time;
     char strbuf[256];
     index_t index;
 
-    gettimeofday(&tv1, NULL);
-
     total_passes ++;
 
-    xmlNodeAddContent(proptable_tb->per_pass_stats, BAD_CAST "\n   ");
+    if (target_dtm != 0) {
+	gettimeofday(&pass_start_time, NULL);
+	xmlNodeAddContent(proptable_tb->per_pass_stats, BAD_CAST "\n   ");
+	proptable_tb->current_pass_stats
+	    = xmlNewChild(proptable_tb->per_pass_stats, NULL, BAD_CAST "pass", NULL);
+    }
+
     sprintf(strbuf, "%d", target_dtm);
-    proptable_tb->current_pass_stats
-	= xmlNewChild(proptable_tb->per_pass_stats, NULL, BAD_CAST "pass", NULL);
     xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "dtm", BAD_CAST strbuf);
 
     /* xmlElemDump(stderr, proptable_tb->xml, proptable_tb->current_pass_stats); */
@@ -4606,17 +4615,21 @@ int propagation_pass(int target_dtm)
 
     }
 
-    gettimeofday(&tv2, NULL);
-    subtract_timeval(&tv2, &tv1);
+    gettimeofday(&pass_end_time, NULL);
+    subtract_timeval(&pass_end_time, &pass_start_time);
 
-    sprint_timeval(strbuf, &tv2);
+    sprint_timeval(strbuf, &pass_end_time);
     xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "time", BAD_CAST strbuf);
-    sprintf(strbuf, "%d", positions_finalized);
-    xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "positions-finalized", BAD_CAST strbuf);
-    sprintf(strbuf, "%lld", backproped_moves);
-    xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "backprop-moves-generated", BAD_CAST strbuf);
 
-    if (backproped_moves != 0) xmlNodeAddContent(proptable_tb->current_pass_stats, BAD_CAST "\n   ");
+    if (target_dtm != 0) {
+	sprintf(strbuf, "%d", positions_finalized);
+	xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "positions-finalized", BAD_CAST strbuf);
+	sprintf(strbuf, "%lld", backproped_moves);
+	xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "backprop-moves-generated", BAD_CAST strbuf);
+    }
+
+    if ((backproped_moves != 0) || (target_dtm == 0))
+	xmlNodeAddContent(proptable_tb->current_pass_stats, BAD_CAST "\n   ");
 
     total_backproped_moves += backproped_moves;
 
@@ -7766,6 +7779,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     tb->per_pass_stats = xmlNewChild(xmlDocGetRootElement(tb->xml), NULL,
 				     BAD_CAST "per-pass-statistics", NULL);
+    xmlNodeAddContent(tb->per_pass_stats, BAD_CAST "\n   ");
+    tb->current_pass_stats = xmlNewChild(tb->per_pass_stats, NULL, BAD_CAST "pass", NULL);
 
     if (num_propentries != 0) {
 	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
@@ -7804,6 +7819,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     assign_numbers_to_futuremoves(tb);
     compute_pruned_futuremoves(tb);
     if (! check_pruning(tb)) return 0;
+
+    gettimeofday(&pass_start_time, NULL);
 
     if (num_propentries == 0) {
 
