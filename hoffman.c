@@ -111,8 +111,8 @@
  * various mysterious errors at runtime.
  */
 
-/* #include </usr/local/include/aio.h> */
-#include </usr/include/aio.h>
+#include </usr/local/include/aio.h>
+/* #include </usr/include/aio.h> */
 
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
  * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
@@ -2106,7 +2106,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.214 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.215 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
