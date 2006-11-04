@@ -447,6 +447,10 @@ typedef struct {
 
 proptable_entry_t *proptable = NULL;
 
+proptable_entry_t *proptable1 = NULL;
+proptable_entry_t *proptable2 = NULL;
+int zeros_fd = -1;
+
 tablebase_t *proptable_tb = NULL;
 
 /* 0 indicates that we're not use proptables */
@@ -465,6 +469,8 @@ int num_propentries = 0;
 #define SEPERATE_PROPTABLE_FILES 0
 
 #define FINITE_FIELD_INVERSION 1
+
+#define USE_DUAL_PROPTABLES 1
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2145,7 +2151,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.216 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.217 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4110,8 +4116,41 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevecto
 int num_proptables = 0;
 int proptable_output_fd = -1;
 
+struct aiocb proptable_output_aiocb;
+int proptable_write_in_progress = 0;
+
 /* proptable_full() - dump out to disk and empty table
+ *
+ * If we're using dual proptables, then we switch to the empty table and start background async
+ * operations to dump the full one out to disk, and then zero it out.
  */
+
+void finalize_proptable_write(void)
+{
+    const struct aiocb * aiocbs[1];
+    int ret;
+
+    if (!proptable_write_in_progress) return;
+
+    aiocbs[0] = &proptable_output_aiocb;
+    aio_suspend(aiocbs, 1, NULL);
+
+    ret = aio_return(&proptable_output_aiocb);
+
+    if (ret != num_propentries * sizeof(proptable_entry_t)) {
+	fprintf(stderr, "proptable aio_write returned %d, not PROPTABLE_BYTES\n", ret);
+	kill(getpid(), SIGSTOP);
+    }
+
+    /* Whichever proptable is in use, we just finished writing the other one, so zero it out.
+     * If we don't USE_DUAL_PROPTABLES, then proptable1 and proptable2 have the same value.
+     */
+
+    if (proptable == proptable1) memset(proptable2, 0, num_propentries * sizeof(proptable_entry_t));
+    else memset(proptable1, 0, num_propentries * sizeof(proptable_entry_t));
+
+    proptable_write_in_progress = 0;
+}
 
 void proptable_full(void)
 {
@@ -4136,8 +4175,6 @@ void proptable_full(void)
 	return;
     }
 
-    gettimeofday(&tv1, NULL);
-
     xmlNodeAddContent(proptable_tb->current_pass_stats, BAD_CAST "\n      ");
     node = xmlNewChild(proptable_tb->current_pass_stats, NULL, BAD_CAST "proptable", NULL);
     sprintf(strbuf, "%d", proptable_entries);
@@ -4147,15 +4184,49 @@ void proptable_full(void)
     sprintf(strbuf, "%d%%", (100*proptable_entries)/num_propentries);
     xmlNewProp(node, BAD_CAST "occupancy", BAD_CAST strbuf);
 
-    /* xmlElemDump(stderr, proptable_tb->xml, node); */
-    /* fputc('\n', stderr); */
-
     fprintf(stderr, "Writing proptable block %d with %d entries (%d%% occupancy)\n",
 	    num_proptables, proptable_entries, (100*proptable_entries)/num_propentries);
 
-    /* XXX hitting a disk full condition is by no means out of the question here! */
-    do_write(proptable_output_fd, proptable, num_propentries * sizeof(proptable_entry_t));
-    memset(proptable, 0, num_propentries * sizeof(proptable_entry_t));
+    /* If we USE_DUAL_PROPTABLES, and there was a write already running, make sure it's done. */
+    finalize_proptable_write();
+
+    gettimeofday(&tv1, NULL);
+
+    /* Hitting a disk full condition is by no means out of the question here!
+     *
+     * And I haven't really dealt with that yet, so XXX.
+     *
+     * We do fire off an asynchronous write if we're using dual proptables.  That makes the most
+     * sense if the output proptables are on their own disk; otherwise, it might more more sense to
+     * break the write down into a series of smaller ones that we can scatter with the reads.
+     */
+
+    /* do_write(proptable_output_fd, proptable, num_propentries * sizeof(proptable_entry_t)); */
+
+    memset(&proptable_output_aiocb, 0, sizeof(struct aiocb));
+    proptable_output_aiocb.aio_fildes = proptable_output_fd;
+    proptable_output_aiocb.aio_buf = proptable;
+    proptable_output_aiocb.aio_nbytes = num_propentries * sizeof(proptable_entry_t);
+#if SEPERATE_PROPTABLE_FILES
+    proptable_output_aiocb.aio_offset = 0;
+#else
+    proptable_output_aiocb.aio_offset = num_proptables * num_propentries * sizeof(proptable_entry_t);
+#endif
+    proptable_output_aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
+
+    if (aio_write(& proptable_output_aiocb) != 0) {
+	fprintf(stderr, "Can't enqueue aio_write for proptable\n");
+	kill(getpid(), SIGSTOP);
+    }
+
+    proptable_write_in_progress = 1;
+
+#if USE_DUAL_PROPTABLES
+    if (proptable == proptable1) proptable = proptable2;
+    else proptable = proptable1;
+#else
+    finalize_proptable_write();
+#endif
 
     gettimeofday(&tv2, NULL);
     subtract_timeval(&tv2, &tv1);
@@ -4375,8 +4446,9 @@ int proptable_finalize(int target_dtm)
     index_t index;
     int positions_finalized = 0;
 
-    /* Flush out anything in the last proptable */
+    /* Flush out anything in the last proptable, and wait for its write to complete */
     proptable_full();
+    finalize_proptable_write();
 
     num_input_proptables = num_proptables;
 
@@ -4602,8 +4674,9 @@ int proptable_finalize(int target_dtm)
     }
 #endif
 
-    /* Flush out anything in the last proptable */
+    /* Flush out anything in the last proptable, and wait for its write to complete */
     proptable_full();
+    finalize_proptable_write();
 
     return positions_finalized;
 }
@@ -7837,12 +7910,31 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 
     if (num_propentries != 0) {
-#if 0
-	proptable = calloc(num_propentries, sizeof(proptable_entry_t));
-	if (proptable == NULL) {
-	    fprintf(stderr, "Can't calloc proptable\n");
+#if USE_DUAL_PROPTABLES
+	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
+	if (posix_memalign((void **) &proptable1, 1024, num_propentries * sizeof(proptable_entry_t)) != 0) {
+	    fprintf(stderr, "Can't posix_memalign proptable\n");
 	    return 0;
 	}
+	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
+	memset(proptable1, 0, num_propentries * sizeof(proptable_entry_t));
+
+	if (posix_memalign((void **) &proptable2, 1024, num_propentries * sizeof(proptable_entry_t)) != 0) {
+	    fprintf(stderr, "Can't posix_memalign proptable\n");
+	    return 0;
+	}
+	memset(proptable2, 0, num_propentries * sizeof(proptable_entry_t));
+
+	proptable = proptable1;
+
+#if ZERO_PROPTABLES_USING_DISK
+	zeros_fd = open("zeros", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
+	if (zeros_fd == -1) {
+	    fprintf(stderr, "Can't open 'zeros' for writing zero propfile\n");
+	    return 0;
+	}
+	do_write(zeros_fd, proptable1, num_propentries * sizeof(proptable_entry_t));
+#endif
 #else
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
 	if (posix_memalign((void **) &proptable, 1024, num_propentries * sizeof(proptable_entry_t)) != 0) {
@@ -7851,6 +7943,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	}
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
 	memset(proptable, 0, num_propentries * sizeof(proptable_entry_t));
+
+	proptable1 = proptable;
+	proptable2 = proptable;
 #endif
     }
     /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
@@ -7904,10 +7999,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	dtm_limit = back_propagate_all_futurebases(tb);
 	if (dtm_limit == -1) return 0;
 	proptable_full();  /* flush moves out to disk */
+	finalize_proptable_write();
 
 	fprintf(stderr, "Initializing tablebase...\n");
 	propagation_pass(0);
 	proptable_full();  /* flush moves out to disk */
+	finalize_proptable_write();
 
 	/* fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions); */
 	/* fprintf(stderr, "Total moves: %lld\n", total_moves); */
