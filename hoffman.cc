@@ -394,7 +394,7 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 typedef struct tablebase {
     index_t max_index;
     index_t modulus;
-    enum {NAIVE_INDEX=1, SIMPLE_INDEX, XOR_INDEX} index_type;
+    enum {NAIVE_INDEX=1, NAIVE2_INDEX, SIMPLE_INDEX, XOR_INDEX} index_type;
     int total_legal_piece_positions[MAX_PIECES];
     int simple_piece_positions[MAX_PIECES][64];
     int simple_piece_indices[MAX_PIECES][64];
@@ -1171,6 +1171,208 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
     return 1;
 }
 
+/* "Naive2" index.  Assigns a number from 0 to 63 to each square on the board and multiplies them
+ * together for the various pieces.  Differs from "naive" in its handling of multiple identical
+ * pieces, which it stores as a base and an offset, thus saving a single bit.  Currently, only
+ * pairs of identical pieces are correctly handled.
+ */
+
+index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
+{
+    int shift_count = 1;
+    index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+    int piece;
+    unsigned char vals[MAX_PIECES];
+
+    pos->board_vector = 0;
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
+	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
+	    /* This can happen if we're probing a restricted tablebase */
+#if 0
+	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
+#endif
+	    return -1;
+	}
+
+	/* The way we encode en passant capturable pawns is use the column number of the
+	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
+	 * this is completely legit.
+	 */
+	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
+	    && (((tb->piece_color[piece] == WHITE)
+		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		|| ((tb->piece_color[piece] == BLACK)
+		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+	    vals[piece] = COL(pos->en_passant_square);
+	} else {
+	    vals[piece] = pos->piece_position[piece];
+	}
+	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
+	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
+    }
+
+    /* What's all this?
+     *
+     * The idea is to encode two identical pieces using one less bit than needed for encoding them
+     * separately, because n identical pieces introduce n! (n factorial) multiplicity.
+     *
+     * We encode the first piece "normally" and the second piece using a number from 1 to 32
+     * (encoded from 0 to 31) that should be added to the square number of the first piece to obtain
+     * the square number of the second.  We wrap around when doing that math, so if the first piece
+     * is on square 50 and the offset is 20, then the second piece is at square 50+20-64=6.
+     *
+     * What if the second piece is further away than 32 squares?  Then we swap the pieces with each
+     * other before doing anything else...
+     */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	if (tb->next_identical_piece[piece] != -1) {
+
+	    if (((vals[piece] < vals[tb->next_identical_piece[piece]])
+		 && (vals[piece] + 32 < vals[tb->next_identical_piece[piece]]))
+		|| ((vals[tb->next_identical_piece[piece]] < vals[piece])
+		    && (vals[tb->next_identical_piece[piece]] + 32 >= vals[piece]))) {
+
+		unsigned char val;
+		val = vals[piece];
+		vals[piece] = vals[tb->next_identical_piece[piece]];
+		vals[tb->next_identical_piece[piece]] = val;
+	    }
+	}
+
+	if (tb->last_identical_piece[piece] == -1) {
+	    index |= vals[piece] << shift_count;
+	    shift_count += 6;  /* because 2^6=64 */
+	} else {
+	    if (vals[piece] > vals[tb->last_identical_piece[piece]]) {
+		index |= (vals[piece] - vals[tb->last_identical_piece[piece]] - 1) << shift_count;
+	    } else {
+		index |= (64 + vals[piece] - vals[tb->last_identical_piece[piece]] - 1) << shift_count;
+	    }
+	    shift_count += 5; /* the whole point of "naive2" */
+	}
+    }
+
+    /* Check board_vector to make sure an en passant position is legal */
+
+    if (pos->en_passant_square != -1) {
+	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
+	if (pos->side_to_move == WHITE) {
+	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
+	} else {
+	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
+	}
+    }
+
+    return index;
+}
+
+boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+{
+    int piece;
+    unsigned char vals[MAX_PIECES];
+
+    memset(p, 0, sizeof(local_position_t));
+    p->en_passant_square = -1;
+
+    p->side_to_move = index & 1;
+    index >>= 1;
+
+    for (piece = 0; piece < tb->num_pieces; piece++) {
+
+	if (tb->last_identical_piece[piece] == -1) {
+	    vals[piece] = index & 63;
+	    index >>= 6;
+	} else {
+	    vals[piece] = (vals[tb->last_identical_piece[piece]] + (index & 31) + 1) % 64;
+	    index >>= 5;
+
+	    if (vals[piece] < vals[tb->last_identical_piece[piece]]) {
+		unsigned char val;
+
+		/* One of the important tasks of any index_to_local_position() function is to return
+		 * false on all but one of the indices that correspond to identical positions.
+		 * Here, that can only happen when the two identical pieces are exactly 32 squares
+		 * apart, which can be encoded using either piece first.  In this case, we toss out
+		 * the index with the larger of the two squares encoded as the base value, and make
+		 * sure that the "<" and the ">=" match up just right in the previous function.
+		 */
+
+		if (vals[tb->last_identical_piece[piece]] - vals[piece] == 32) return 0;
+
+		val = vals[piece];
+		vals[piece] = vals[tb->last_identical_piece[piece]];
+		vals[tb->last_identical_piece[piece]] = val;
+	    }
+	}
+
+    }
+
+    for (piece = 0; piece < tb->num_pieces; piece++) {
+
+	int square = vals[piece];
+
+	/* En passant */
+	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
+	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
+	    if (tb->piece_color[piece] == WHITE) {
+		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = square + 2*8;
+		square += 3*8;
+	    } else {
+		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = square + 5*8;
+		square += 4*8;
+	    }
+	}
+
+	/* The first place we handle restricted pieces, and one of most important, too, because this
+	 * function is used during initialization to decide which positions are legal and which are
+	 * not.
+	 */
+
+	if (!(tb->semilegal_squares[piece] & BITVECTOR(square))) {
+	    return 0;
+	}
+
+	p->piece_position[piece] = square;
+	if (p->board_vector & BITVECTOR(square)) {
+	    return 0;
+	}
+
+	/* Identical pieces have to appear in sorted order. */
+
+	if ((tb->last_identical_piece[piece] != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
+	    return 0;
+	}
+
+	p->board_vector |= BITVECTOR(square);
+	if (tb->piece_color[piece] == p->side_to_move) {
+	    p->PTM_vector |= BITVECTOR(square);
+	}
+    }
+
+    /* If there is an en passant capturable pawn in this position, then there can't be anything
+     * on the capture square or on the square right behind it (where the pawn just came from),
+     * or its an illegal position.
+     */
+
+    if (p->en_passant_square != -1) {
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->side_to_move == WHITE) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	} else {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	}
+    }
+
+    return 1;
+}
+
 /* "XOR" index.  Assigns a number from 0 to 63 to each square on the board and xor's them together
  * for the various pieces.  Ensures that moving a single piece will result in large strides in the
  * index.
@@ -1554,6 +1756,9 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
     case NAIVE_INDEX:
 	index = local_position_to_naive_index(tb, pos);
 	break;
+    case NAIVE2_INDEX:
+	index = local_position_to_naive2_index(tb, pos);
+	break;
     case XOR_INDEX:
 	index = local_position_to_xor_index(tb, pos);
 	break;
@@ -1589,6 +1794,8 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, local_position_t
     switch (tb->index_type) {
     case NAIVE_INDEX:
 	return naive_index_to_local_position(tb, index, p);
+    case NAIVE2_INDEX:
+	return naive2_index_to_local_position(tb, index, p);
     case XOR_INDEX:
 	return xor_index_to_local_position(tb, index, p);
     case SIMPLE_INDEX:
@@ -1620,10 +1827,17 @@ void check_1000_positions(tablebase_t *tb)
 	position1.side_to_move = rand() % 2;
 	position1.en_passant_square = -1;
 
+    retry:
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    do {
 		position1.piece_position[piece] = rand() % 64;
 	    } while (! (BITVECTOR(position1.piece_position[piece]) & tb->semilegal_squares[piece]));
+	}
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if ((tb->last_identical_piece[piece] != -1) &&
+		(position1.piece_position[piece] <=
+		 position1.piece_position[tb->last_identical_piece[piece]])) goto retry;
 	}
 
 	index = local_position_to_index(tb, &position1);
@@ -1633,7 +1847,7 @@ void check_1000_positions(tablebase_t *tb)
 	    /* PTM_vector wasn't set in position1, so don't check them now */
 
 	    if (!index_to_local_position(tb, index, &position2)
-		|| (position2.PTM_vector = 0,
+		|| (position2.PTM_vector = 0, position2.board_vector = 0,
 		    memcmp(&position1, &position2, sizeof(position1)))) {
 		fprintf(stderr, "Mismatch in check_1000_positions()\n");  /* BREAKPOINT */
 	    }
@@ -1814,6 +2028,16 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	tb->index_type = NAIVE_INDEX;
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
 	tb->max_index = (2<<(6*tb->num_pieces)) - 1;
+    } else if (!strcasecmp((char *) index, "naive2")) {
+	int piece;
+
+	tb->index_type = NAIVE2_INDEX;
+	tb->max_index = 2;
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->last_identical_piece[piece] == -1) tb->max_index <<= 6;
+	    else tb->max_index <<=5;
+	}
+	tb->max_index --;
     } else if (!strcasecmp((char *) index, "xor")) {
 	tb->index_type = XOR_INDEX;
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
@@ -2166,7 +2390,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.219 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.220 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -3363,7 +3587,9 @@ void initialize_entry(tablebase_t *tb, struct fourbyte_entry *entry, int movecnt
 
 void initialize_entry_as_illegal(tablebase_t *tb, struct fourbyte_entry *entry)
 {
+    /* XXX need to look more closely at this (again) */
     initialize_entry(tb, entry, 0, 0);
+    /* initialize_entry(tb, entry, 0, 1); */
 }
 
 void initialize_entry_with_PNTM_mated(tablebase_t *tb, struct fourbyte_entry *entry)
@@ -7970,6 +8196,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     compute_pruned_futuremoves(tb);
     if (! check_pruning(tb)) return 0;
 
+    check_1000_indices(tb);
+    check_1000_positions(tb);
+
     gettimeofday(&pass_start_time, NULL);
 
     if (num_propentries == 0) {
@@ -7990,8 +8219,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions);
 	fprintf(stderr, "Total moves: %lld\n", total_moves);
-
-	check_1000_indices(tb);
 
 	dtm_limit = back_propagate_all_futurebases(tb);
 	if (dtm_limit == -1) return 0;
