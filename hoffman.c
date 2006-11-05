@@ -417,7 +417,7 @@ typedef struct tablebase {
     int move_restrictions[2];		/* one for each color */
     short piece_type[MAX_PIECES];
     short piece_color[MAX_PIECES];
-    int64 piece_legal_squares[MAX_PIECES];
+    int64 semilegal_squares[MAX_PIECES];
 
     int format;
 
@@ -1035,7 +1035,7 @@ index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
-	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
+	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
 	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
@@ -1116,7 +1116,7 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 	 * not.
 	 */
 
-	if (!(tb->piece_legal_squares[piece] & BITVECTOR(square))) {
+	if (!(tb->semilegal_squares[piece] & BITVECTOR(square))) {
 	    return 0;
 	}
 
@@ -1177,7 +1177,7 @@ index_t local_position_to_xor_index(tablebase_t *tb, local_position_t *pos)
     /* for (piece = tb->num_pieces - 1; piece >= 0; piece--) { */
 
 	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
-	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
+	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
 	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
@@ -1323,7 +1323,7 @@ boolean xor_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 	 * not.
 	 */
 
-	if (!(tb->piece_legal_squares[piece] & BITVECTOR(square))) {
+	if (!(tb->semilegal_squares[piece] & BITVECTOR(square))) {
 	    return 0;
 	}
 
@@ -1381,7 +1381,7 @@ index_t local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
 	index *= tb->total_legal_piece_positions[piece];
 
 	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
-	    || !(tb->piece_legal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
+	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
 	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
@@ -1464,7 +1464,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 
 	/* This should never happen. */
 
-	if (!(tb->piece_legal_squares[piece] & BITVECTOR(square))) {
+	if (!(tb->semilegal_squares[piece] & BITVECTOR(square))) {
 	    fprintf(stderr, "Illegal piece position in simple_index_to_local_position!\n");
 	    return 0;
 	}
@@ -1608,7 +1608,7 @@ void check_1000_positions(tablebase_t *tb)
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    do {
 		position1.piece_position[piece] = rand() % 64;
-	    } while (! (BITVECTOR(position1.piece_position[piece]) & tb->piece_legal_squares[piece]));
+	    } while (! (BITVECTOR(position1.piece_position[piece]) & tb->semilegal_squares[piece]));
 	}
 
 	index = local_position_to_index(tb, &position1);
@@ -1712,16 +1712,16 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 	    if (location == NULL) {
 		if (tb->piece_type[piece] == PAWN) {
-		    tb->piece_legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
+		    tb->semilegal_squares[piece] = LEGAL_PAWN_BITVECTOR;
 		} else {
-		    tb->piece_legal_squares[piece] = allones_bitvector;
+		    tb->semilegal_squares[piece] = allones_bitvector;
 		}
 	    } else {
 		int j = 0;
-		tb->piece_legal_squares[piece] = 0;
+		tb->semilegal_squares[piece] = 0;
 		while ((location[j] >= 'a') && (location[j] <= 'h')
 		       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
-		    tb->piece_legal_squares[piece]
+		    tb->semilegal_squares[piece]
 			|= BITVECTOR(square(location[j+1] - '1', location[j] - 'a'));
 		    j += 2;
 		    while (location[j] == ' ') j ++;
@@ -1749,11 +1749,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    for (piece2 = piece - 1; piece2 >= 0; piece2 --) {
 		if ((tb->piece_color[piece2] == tb->piece_color[piece])
 		    && (tb->piece_type[piece2] == tb->piece_type[piece])) {
-		    if (tb->piece_legal_squares[piece2] == tb->piece_legal_squares[piece]) {
+		    if (tb->semilegal_squares[piece2] == tb->semilegal_squares[piece]) {
 			tb->last_identical_piece[piece] = piece2;
 			tb->next_identical_piece[piece2] = piece;
 			break;
-		    } else if (tb->piece_legal_squares[piece2] & tb->piece_legal_squares[piece]) {
+		    } else if (tb->semilegal_squares[piece2] & tb->semilegal_squares[piece]) {
 			fprintf(stderr, "Identical pieces with overlapping non-identical move restrictions not allowed\n");
 			return NULL;
 		    }
@@ -1812,7 +1812,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    for (square = 0; square < 64; square ++) {
-		if (! (tb->piece_legal_squares[piece] & BITVECTOR(square))) continue;
+		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
 		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
 		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
@@ -2151,7 +2151,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.217 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.218 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -2488,7 +2488,7 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 		fprintf(stderr, "More than one missing piece in translation\n");
 		return -1;
 	    }
-	} else if (!(tb2->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
+	} else if (!(tb2->semilegal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
 	    if (restricted_piece == NONE) restricted_piece = piece;
 	    else {
 		/* This can happen if the futurebase is more liberal */
@@ -2589,7 +2589,7 @@ index_t global_position_to_local_position(tablebase_t *tb, global_position_t *gl
 		/* fprintf(stderr, "More than one missing piece in translation\n"); */
 		return -1;
 	    }
-	} else if (!(tb->piece_legal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
+	} else if (!(tb->semilegal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
 	    if (restricted_piece == NONE) restricted_piece = piece;
 	    else {
 		/* This can happen if we're probing a whole bunch of radically different tablebases. */
@@ -5123,7 +5123,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		 */
 
 		if (!(position.board_vector & BITVECTOR(promotion_sq - promotion_move))
-		    && (tb->piece_legal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
+		    && (tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put the
@@ -5332,7 +5332,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		if ((COL(promotion_sq) != 0)
 		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
-		    && (tb->piece_legal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
+		    && (tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put the
@@ -5380,7 +5380,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		if ((COL(promotion_sq) != 7)
 		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
-		    && (tb->piece_legal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
+		    && (tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put the
@@ -5513,7 +5513,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 	 * ends up on a different square from the captured piece.
 	 */
 
-	if (!(tb->piece_legal_squares[captured_piece]
+	if (!(tb->semilegal_squares[captured_piece]
 	      & BITVECTOR(position->piece_position[captured_piece]))) {
 	    return;
 	}
@@ -5532,7 +5532,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		 * for it.  Now check the capturing piece.
 		 */
 
-		if (! (tb->piece_legal_squares[capturing_piece] & movementptr->vector)) continue;
+		if (! (tb->semilegal_squares[capturing_piece] & movementptr->vector)) continue;
 
 		/* Move the capturing piece... */
 
@@ -5596,11 +5596,11 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 	    /* Move back the capturing pawn and see if it came from a legal square for it. */
 
 	    position->piece_position[capturing_piece] = movementptr->square;
-	    if (! (tb->piece_legal_squares[capturing_piece] & movementptr->vector)) continue;
+	    if (! (tb->semilegal_squares[capturing_piece] & movementptr->vector)) continue;
 
 	    /* And if the captured piece is also on a legal square for it... */
 
-	    if ((tb->piece_legal_squares[captured_piece]
+	    if ((tb->semilegal_squares[captured_piece]
 		 & BITVECTOR(position->piece_position[captured_piece]))) {
 
 		/* I update board_vector here because I want to check for en passant legality before
@@ -5669,7 +5669,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		    position->en_passant_square = position->piece_position[captured_piece];
 		    position->piece_position[captured_piece] += 8;
 
-		    if ((tb->piece_legal_squares[captured_piece]
+		    if ((tb->semilegal_squares[captured_piece]
 			 & BITVECTOR(position->piece_position[captured_piece]))) {
 
 			position->board_vector &= ~BITVECTOR(position->en_passant_square);
@@ -5731,7 +5731,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		    position->en_passant_square = position->piece_position[captured_piece];
 		    position->piece_position[captured_piece] -= 8;
 
-		    if ((tb->piece_legal_squares[captured_piece]
+		    if ((tb->semilegal_squares[captured_piece]
 			 & BITVECTOR(position->piece_position[captured_piece]))) {
 
 			position->board_vector &= ~BITVECTOR(position->en_passant_square);
@@ -5988,7 +5988,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 		 * that this is the only legal back-move from this point, well...
 		 */
 
-		if (! (tb->piece_legal_squares[piece]
+		if (! (tb->semilegal_squares[piece]
 		       & BITVECTOR(current_position.piece_position[piece]))) {
 		    continue;
 		}
@@ -6028,7 +6028,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 			/* We never back out into a restricted position (obviously) */
 
-			if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
+			if (! (tb->semilegal_squares[piece] & movementptr->vector)) continue;
 
 			/* Back stepping a half move here involves several things: flipping the
 			 * side-to-move flag, clearing any en passant pawns into regular pawns, moving
@@ -6070,7 +6070,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		    /* We never back out into a restricted position (obviously) */
 
-		    if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
+		    if (! (tb->semilegal_squares[piece] & movementptr->vector)) continue;
 
 		    /* Do we have a backwards pawn move here?
 		     *
@@ -6164,8 +6164,8 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 		     (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
 		    || (futurebase->invert_colors &&
 			(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-		if ((tb->piece_legal_squares[piece] & futurebase->piece_legal_squares[future_piece])
-		    != tb->piece_legal_squares[piece]) {
+		if ((tb->semilegal_squares[piece] & futurebase->semilegal_squares[future_piece])
+		    != tb->semilegal_squares[piece]) {
 		    /* This can be OK if we have piece and/or move restrictions in effect */
 		    /* fprintf(stderr, "WARNING: matched a piece but futurebase is more restrictive\n"); */
 		    piece_vector ^= (1 << piece);
@@ -6507,8 +6507,8 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	for (sq = 0; sq < 64; sq ++) {
-	    if (BITVECTOR(sq) == tb->piece_legal_squares[piece]) {
-		frozen_vector |= tb->piece_legal_squares[piece];
+	    if (BITVECTOR(sq) == tb->semilegal_squares[piece]) {
+		frozen_vector |= tb->semilegal_squares[piece];
 		break;
 	    }
 	}
@@ -6539,12 +6539,12 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		 tb->piece_color[capturing_piece] == WHITE ? (sq >= 0) : (sq <= 63);
 		 tb->piece_color[capturing_piece] == WHITE ? sq-- : sq++) {
 
-		if (tb->piece_legal_squares[capturing_piece] & BITVECTOR(sq)) {
+		if (tb->semilegal_squares[capturing_piece] & BITVECTOR(sq)) {
 		    if (tb->piece_type[capturing_piece] != PAWN) {
 			for (dir = 0; dir < number_of_movement_directions[tb->piece_type[capturing_piece]]; dir++) {
 			    for (movementptr = movements[tb->piece_type[capturing_piece]][sq][dir];
 				 movementptr->square != -1; movementptr++) {
-				if (movementptr->vector & tb->piece_legal_squares[captured_piece]) {
+				if (movementptr->vector & tb->semilegal_squares[captured_piece]) {
 				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
 				    num_futuremoves ++;
 				    goto next_pair_of_pieces;
@@ -6557,7 +6557,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			for (movementptr = capture_pawn_movements[sq][tb->piece_color[capturing_piece]];
 			     movementptr->square != -1; movementptr++) {
 
-			    if (movementptr->vector & tb->piece_legal_squares[captured_piece]) {
+			    if (movementptr->vector & tb->semilegal_squares[captured_piece]) {
 
 				futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
 
@@ -6576,14 +6576,14 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			    if (tb->piece_type[captured_piece] == PAWN) {
 
 				if ((tb->piece_type[capturing_piece] == WHITE) && (ROW(sq) == 4)
-				    && (tb->piece_legal_squares[captured_piece]
+				    && (tb->semilegal_squares[captured_piece]
 					& BITVECTOR(movementptr->square - 8))) {
 				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
 				    num_futuremoves ++;
 				    goto next_pair_of_pieces;
 				}
 				if ((tb->piece_type[capturing_piece] == BLACK) && (ROW(sq) == 3)
-				    && (tb->piece_legal_squares[captured_piece]
+				    && (tb->semilegal_squares[captured_piece]
 					& BITVECTOR(movementptr->square + 8))) {
 				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
 				    num_futuremoves ++;
@@ -6614,7 +6614,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	if (tb->piece_type[piece] == PAWN) {
 	    for (sq = (tb->piece_color[piece] == WHITE ? 48 : 8);
 		 sq <= (tb->piece_color[piece] == WHITE ? 55 : 15); sq++) {
-		if (tb->piece_legal_squares[piece] & BITVECTOR(sq)) {
+		if (tb->semilegal_squares[piece] & BITVECTOR(sq)) {
 		    promotions[piece] = num_futuremoves;
 		    num_futuremoves += PROMOTION_POSSIBILITIES;
 		    break;
@@ -6633,7 +6633,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	for (sq = 0; sq < 64; sq ++) {
 
-	    if (! (tb->piece_legal_squares[piece] & BITVECTOR(sq))) continue;
+	    if (! (tb->semilegal_squares[piece] & BITVECTOR(sq))) continue;
 
 	    if (tb->piece_type[piece] != PAWN) {
 
@@ -6650,7 +6650,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			/* If the piece is moving outside its restricted squares, it's a futuremove */
 
-			if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
 				futuremoves[piece][movementptr->square] = num_futuremoves;
 				num_futuremoves ++;
@@ -6680,7 +6680,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			/* If the pawn is moving outside its restricted squares, it's a futuremove */
 
-			if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
 				futuremoves[piece][movementptr->square] = num_futuremoves;
 				num_futuremoves ++;
@@ -6827,9 +6827,9 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->piece_legal_squares[pawn] & 0x00ff000000000000LL)) break;
+		if (! (tb->semilegal_squares[pawn] & 0x00ff000000000000LL)) break;
 	    } else {
-		if (! (tb->piece_legal_squares[pawn] & 0x000000000000ff00LL)) break;
+		if (! (tb->semilegal_squares[pawn] & 0x000000000000ff00LL)) break;
 	    }
 
 	    /* Check to see that the other piece can be on a square where it could be promotion
@@ -6841,9 +6841,9 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->piece_legal_squares[captured_piece] & 0xff00000000000000LL)) continue;
+		if (! (tb->semilegal_squares[captured_piece] & 0xff00000000000000LL)) continue;
 	    } else {
-		if (! (tb->piece_legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
+		if (! (tb->semilegal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
 	    }
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
@@ -7068,9 +7068,9 @@ boolean check_pruning(tablebase_t *tb) {
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->piece_legal_squares[pawn] & 0x00ff000000000000LL)) break;
+		if (! (tb->semilegal_squares[pawn] & 0x00ff000000000000LL)) break;
 	    } else {
-		if (! (tb->piece_legal_squares[pawn] & 0x000000000000ff00LL)) break;
+		if (! (tb->semilegal_squares[pawn] & 0x000000000000ff00LL)) break;
 	    }
 
 	    /* Check to see that the other piece can be on a square where it could be promotion
@@ -7082,9 +7082,9 @@ boolean check_pruning(tablebase_t *tb) {
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->piece_legal_squares[captured_piece] & 0xff00000000000000LL)) continue;
+		if (! (tb->semilegal_squares[captured_piece] & 0xff00000000000000LL)) continue;
 	    } else {
-		if (! (tb->piece_legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
+		if (! (tb->semilegal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
 	    }
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
@@ -7356,7 +7356,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
 	     * is the only legal back-move from this point, well...
 	     */
 
-	    if (! (tb->piece_legal_squares[en_passant_pawn]
+	    if (! (tb->semilegal_squares[en_passant_pawn]
 		   & BITVECTOR(position.piece_position[en_passant_pawn]))) {
 		return;
 	    }
@@ -7400,7 +7400,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
 
 		    /* We never back out into a restricted position (obviously) */
 
-		    if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
+		    if (! (tb->semilegal_squares[piece] & movementptr->vector)) continue;
 
 		    /* Back stepping a half move here involves several things: flipping the
 		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
@@ -7438,7 +7438,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
 
 		/* We never back out into a restricted position (obviously) */
 
-		if (! (tb->piece_legal_squares[piece] & movementptr->vector)) continue;
+		if (! (tb->semilegal_squares[piece] & movementptr->vector)) continue;
 
 		/* Do we have a backwards pawn move here?
 		 *
@@ -7625,7 +7625,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 			 * as a futurebase (since it will require back prop from futurebases)
 			 */
 
-			if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
@@ -7701,7 +7701,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 			 * as a futurebase (since it will require back prop from futurebases)
 			 */
 
-			if (!(tb->piece_legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
