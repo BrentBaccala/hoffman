@@ -413,6 +413,21 @@ typedef struct tablebase {
     xmlNodePtr per_pass_stats;
     xmlNodePtr current_pass_stats;
 
+    /* Pieces can restricted according to which squares they are allowed to move on.
+     *
+     * Legal squares are just that.
+     *
+     * "Semilegal" squares are squares that might be legal for a given piece, but we can't be sure
+     * until we've considered other pieces in the position as well.  This becomes a factor when
+     * we've got multiple identical pieces with overlapping, non-identical move restrictions.
+     * Consider, for example, a tablebase with two rooks: one unrestricted, the other restricted to
+     * its back rank.  Let's say we're moving a rook off the back rank.  If the other rook is on the
+     * back rank, then the move is legal.  If the other rook is somewhere else, then the move would
+     * be illegal.  So we make the entire board "semilegal" for both rooks, process the move
+     * normally, and only when it's time to convert the entire position to an index in the tablebase
+     * do we actually decide if the position is fully legal.
+     */
+
     int num_pieces;
     int move_restrictions[2];		/* one for each color */
     short piece_type[MAX_PIECES];
@@ -2151,7 +2166,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.218 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.219 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
