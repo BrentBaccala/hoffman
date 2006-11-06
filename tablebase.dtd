@@ -1,8 +1,13 @@
-<!ELEMENT tablebase (move-restriction*, piece+, futurebase*, prune*, generated-by?, generation-info?, statistics?)>
+<!ELEMENT tablebase (move-restriction*, index?, piece+, futurebase*, prune*, generated-by?, generation-info?, statistics?)>
 <!ELEMENT move-restriction EMPTY>
 <!ELEMENT piece EMPTY>
 <!ELEMENT futurebase EMPTY>
 <!ELEMENT prune EMPTY>
+
+<!ELEMENT index EMPTY>
+<!ATTLIST index
+	type (naive|naive2|simple|xor)		#REQUIRED
+	modulus CDATA				#IMPLIED>
 
 <!ELEMENT generated-by (program, args, time, user-time, system-time, real-time, host)>
 <!ELEMENT generation-info (program, args, completion-time, user-time, system-time, real-time, page-faults, page-reclaims, host)>
