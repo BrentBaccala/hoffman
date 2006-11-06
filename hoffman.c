@@ -157,6 +157,23 @@ inline int rowcol2square(int row, int col)
     return (col + row*8);
 }
 
+/* diagonal_reflection() flips along the a1/h8 diagonal by simply interchanging the row and column */
+
+int diagonal_reflection(int square)
+{
+    return rowcol2square(COL(square), ROW(square));
+}
+
+int horizontal_reflection(int square)
+{
+    return rowcol2square(ROW(square), 7-COL(square));
+}
+
+int vertical_reflection(int square)
+{
+    return rowcol2square(7-ROW(square), COL(square));
+}
+
 /***** GLOBAL CONSTANTS *****/
 
 /* Maximum number of pieces; used to simplify various arrays
@@ -402,6 +419,7 @@ typedef struct tablebase {
     index_t max_index;
     index_t modulus;
     int index_type;
+    int symmetry;
     int total_legal_piece_positions[MAX_PIECES];
     int simple_piece_positions[MAX_PIECES][64];
     int simple_piece_indices[MAX_PIECES][64];
@@ -1042,6 +1060,38 @@ int invert_in_finite_field(int b, int modulus)
 }
 #endif
 
+int eight_way_white_king_position_to_index(local_position_t *pos)
+{
+    int white_king = pos->piece_position[WHITE_KING];
+    static int index[4][4] = {{ 6, -1, -1, -1},
+			      { 0,  7, -1, -1},
+			      { 1,  3,  6, -1},
+			      { 2,  4,  5,  7}};
+
+    return index[COL(white_king)][ROW(white_king)];
+}
+
+int eight_way_white_king_index_to_position(int index)
+{
+    if (index <= 2) return index + 1;
+    else if (index <= 4) return index + 7;
+    else if (index == 5) return 19;
+    else if (index == 6) return 0;
+    else return 9;
+}
+
+int eight_way_black_king_position_to_index(local_position_t *pos)
+{
+    int white_king = pos->piece_position[WHITE_KING];
+    int black_king = pos->piece_position[BLACK_KING];
+
+    if ((ROW(white_king) == COL(white_king)) && (ROW(white_king) >= 2)) {
+	return diagonal_reflection(black_king);
+    } else {
+	return black_king;
+    }
+}
+
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and
  * multiplies them together for the various pieces.  Simple and fast.
  */
@@ -1075,13 +1125,26 @@ index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 		|| ((tb->piece_color[piece] == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 	    index |= COL(pos->en_passant_square) << shift_count;
+	    shift_count += 6;  /* because 2^6=64 */
+	} else if ((piece == WHITE_KING) && (tb->symmetry == 2)) {
+	    /* white king is in left half of board */
+	    index |= ROW(pos->piece_position[piece]) << shift_count;
+	    shift_count += 3;
+	    index |= COL(pos->piece_position[piece]) << shift_count;
+	    shift_count += 2;
+	} else if ((piece == WHITE_KING) && (tb->symmetry == 4)) {
+	    /* white king is in lower left quarter of board */
+	    index |= ROW(pos->piece_position[piece]) << shift_count;
+	    shift_count += 2;
+	    index |= COL(pos->piece_position[piece]) << shift_count;
+	    shift_count += 2;
 	} else {
 	    index |= pos->piece_position[piece] << shift_count;
+	    shift_count += 6;  /* because 2^6=64 */
 	}
 	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
 	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
 
-	shift_count += 6;  /* because 2^6=64 */
     }
 
     /* Check board_vector to make sure an en passant position is legal */
@@ -1117,7 +1180,18 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
 
-	int square = index & 63;
+	int square;
+
+	if ((tb->symmetry == 2) && (piece == WHITE_KING)) {
+	    square = rowcol2square(index & 7, (index >> 3) & 3);
+	    index >>= 5;
+	} else if ((tb->symmetry == 4) && (piece == WHITE_KING)) {
+	    square = rowcol2square(index & 3, (index >> 2) & 3);
+	    index >>= 4;
+	} else {
+	    square = index & 63;
+	    index >>= 6;
+	}
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
@@ -1158,7 +1232,6 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 	if (tb->piece_color[piece] == p->side_to_move) {
 	    p->PTM_vector |= BITVECTOR(square);
 	}
-	index >>= 6;
     }
 
     /* If there is an en passant capturable pawn in this position, then there can't be anything
@@ -1250,7 +1323,19 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 	    }
 	}
 
-	if (tb->last_identical_piece[piece] == -1) {
+	if ((piece == WHITE_KING) && (tb->symmetry == 2)) {
+	    /* white king is in left half of board */
+	    index |= ROW(vals[piece]) << shift_count;
+	    shift_count += 3;
+	    index |= COL(vals[piece]) << shift_count;
+	    shift_count += 2;
+	} else if ((piece == WHITE_KING) && (tb->symmetry == 4)) {
+	    /* white king is in lower left quarter of board */
+	    index |= ROW(vals[piece]) << shift_count;
+	    shift_count += 2;
+	    index |= COL(vals[piece]) << shift_count;
+	    shift_count += 2;
+	} else if (tb->last_identical_piece[piece] == -1) {
 	    index |= vals[piece] << shift_count;
 	    shift_count += 6;  /* because 2^6=64 */
 	} else {
@@ -1290,7 +1375,13 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
 
-	if (tb->last_identical_piece[piece] == -1) {
+	if ((tb->symmetry == 2) && (piece == WHITE_KING)) {
+	    vals[piece] = rowcol2square(index & 7, (index >> 3) & 3);
+	    index >>= 5;
+	} else if ((tb->symmetry == 4) && (piece == WHITE_KING)) {
+	    vals[piece] = rowcol2square(index & 3, (index >> 2) & 3);
+	    index >>= 4;
+	} else if (tb->last_identical_piece[piece] == -1) {
 	    vals[piece] = index & 63;
 	    index >>= 6;
 	} else {
@@ -1741,12 +1832,59 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
     int piece2;
     index_t index;
 
-    /* Sort any identical pieces so that the lowest square number always comes first.  We don't want
-     * to change around the original position, so we use a copy of it.
+    /* We don't want to change around the original position, during these next transformations, so
+     * we use a copy of it.
      */
 
     local_position_t copy = *pos;
     pos = &copy;
+
+    /* Reflect the pieces around to get the white king where we want him for symmetry.
+     *
+     * 2-way symmetry: white king always on left side of board
+     *
+     * 4-way symmetry: white king always in lower left quarter of board
+     *
+     * 8-way symmetry: white king always in a1-a4-d4 triangle, and if white king is on a1-d4
+     * diagonal, then black king is on or below a1-h8 diagonal
+     */
+
+    if (tb->symmetry >= 2) {
+	if (COL(pos->piece_position[WHITE_KING]) >= 4) {
+	    for (piece = 0; piece < tb->num_pieces; piece ++) {
+		pos->piece_position[piece] = horizontal_reflection(pos->piece_position[piece]);
+	    }
+	}
+    }
+
+    if (tb->symmetry >= 4) {
+	if (ROW(pos->piece_position[WHITE_KING]) >= 4) {
+	    for (piece = 0; piece < tb->num_pieces; piece ++) {
+		pos->piece_position[piece] = vertical_reflection(pos->piece_position[piece]);
+	    }
+	}
+    }
+
+    if (tb->symmetry == 8) {
+	if (ROW(pos->piece_position[WHITE_KING]) > COL(pos->piece_position[WHITE_KING])) {
+	    for (piece = 0; piece < tb->num_pieces; piece ++) {
+		pos->piece_position[piece] = diagonal_reflection(pos->piece_position[piece]);
+	    }
+	}
+#if 0
+	if (ROW(pos->piece_position[WHITE_KING]) == COL(pos->piece_position[WHITE_KING])) {
+	    if (ROW(pos->piece_position[BLACK_KING]) > COL(pos->piece_position[BLACK_KING])) {
+		for (piece = 0; piece < tb->num_pieces; piece ++) {
+		    pos->piece_position[piece] = diagonal_reflection(pos->piece_position[piece]);
+		}
+	    }
+	}
+#endif
+    }
+
+    /* Sort any identical pieces so that the lowest square number always comes first. (Do we really
+     * need this for naive2?)
+     */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
@@ -2050,19 +2188,100 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
     }
 
+    /* Extract index symmetry (if it was specified) */
+
+    if (xmlGetProp(index_node, BAD_CAST "symmetry") != NULL) {
+	tb->symmetry = atoi((char *) xmlGetProp(index_node, BAD_CAST "symmetry"));
+	if ((tb->symmetry != 1) && (tb->symmetry != 2) && (tb->symmetry != 4) && (tb->symmetry != 8)) {
+	    fprintf(stderr, "Bad index symmetry %d\n", tb->symmetry);
+	    return NULL;
+	}
+    } else {
+	tb->symmetry = 1;
+    }
+
+    /* Check piece specification to make sure it matches symmetry
+     *
+     * XXX Some piece restrictions should be allowed for, so long as the restrictions themselves are
+     * symmetric.  For example, a rook restricted to a single row is consistent with 2-way symmetry.
+     */
+
+    if ((tb->symmetry == 8) && ((tb->index_type == NAIVE_INDEX) || (tb->index_type == NAIVE2_INDEX))) {
+	fprintf(stderr, "8-way symmetry incompatible with naive/naive2 index types\n");
+	return NULL;
+    }
+
+    if ((tb->symmetry > 1) && (tb->index_type == XOR_INDEX)) {
+	fprintf(stderr, "Symmetry doesn't work with xor index type\n");
+	return NULL;
+    }
+
+    if (tb->symmetry == 8) {
+	fprintf(stderr, "8-way symmetry doesn't work (yet)\n");
+	return NULL;
+    }
+
+    if (tb->symmetry >= 4) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->piece_type[piece] == PAWN) {
+		fprintf(stderr, "Pawns not allowed with 4/8-way symmetric indices\n");
+		return NULL;
+	    }
+	}
+    }
+
+    if (tb->symmetry > 1) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (((tb->piece_type[piece] != PAWN) && (tb->semilegal_squares[piece] != allones_bitvector))
+		|| ((tb->piece_type[piece] == PAWN) && (tb->semilegal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
+		fprintf(stderr, "Piece restrictions not allowed with symmetric indices\n");
+		return NULL;
+	    }
+	    if (tb->next_identical_piece[piece] != -1) {
+		fprintf(stderr, "Can't handle identical pieces with symmetric indices (yet)\n");
+		return NULL;
+	    }
+	}
+    }
+
     /* Compute tb->max_index (but see next section of code where it might be modified) */
 
     switch (tb->index_type) {
     case NAIVE_INDEX:
 
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
-	tb->max_index = (2<<(6*tb->num_pieces)) - 1;
+	switch (tb->symmetry) {
+	case 1:
+	    tb->max_index = (2<<(6*tb->num_pieces)) - 1;
+	    break;
+	case 2:
+	    tb->max_index = (2<<(6*tb->num_pieces - 1)) - 1;
+	    break;
+	case 4:
+	    tb->max_index = (2<<(6*tb->num_pieces - 2)) - 1;
+	    break;
+	}
 	break;
 
     case NAIVE2_INDEX:
 
 	tb->max_index = 2;
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	/* do the white king "by hand" */
+	switch (tb->symmetry) {
+	case 1:
+	    tb->max_index <<= 6;
+	    break;
+	case 2:
+	    tb->max_index <<= 5;
+	    break;
+	case 4:
+	    tb->max_index <<= 4;
+	    break;
+	}
+
+	/* now do everything else */
+	for (piece = 1; piece < tb->num_pieces; piece ++) {
 	    if (tb->last_identical_piece[piece] == -1) tb->max_index <<= 6;
 	    else tb->max_index <<=5;
 	}
@@ -2084,6 +2303,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    for (square = 0; square < 64; square ++) {
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
+		if ((piece == WHITE_KING) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == WHITE_KING) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == WHITE_KING) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
 		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
 		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
@@ -2419,7 +2641,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.221 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.222 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -3598,7 +3820,7 @@ int get_DTM(tablebase_t *tb, index_t index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 1029 */
+/* #define DEBUG_MOVE 1036 */
 
 /* Four possible ways we can initialize a tablebase entry for a position:
  *  - it's illegal
@@ -5038,20 +5260,24 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 	entry.dtc = dtc;
 	entry.movecnt = 1;
 
-	commit_proptable_entry(&entry, fetch_fourbyte_entry(proptable_tb, index));
-
 	/* Don't track futuremoves for illegal (DTM 1) positions */
 
 	if ((proptable_tb->futurevectors != NULL) && (get_DTM(proptable_tb, index) != 1)) {
 
 	    if ((futurevector & proptable_tb->futurevectors[index]) != futurevector) {
+		/* This could happen simply if the futuremove has already been considered */
+#if 0
 		global_position_t global;
 		index_to_global_position(proptable_tb, index, &global);
-		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
+		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
+#endif
+		return;
 	    }
 
 	    proptable_tb->futurevectors[index] ^= futurevector;
 	}
+
+	commit_proptable_entry(&entry, fetch_fourbyte_entry(proptable_tb, index));
 
 	return;
     }
@@ -7223,6 +7449,11 @@ boolean check_pruning(tablebase_t *tb) {
 	/* load_futurebase_from_file() already printed some kind of error message */
 	if (futurebases[fbnum] == NULL) return 0;
 
+	if (futurebases[fbnum]->symmetry != 1) {
+	    fprintf(stderr, "Can't backprop from 2/8-way symmetric futurebases (yet)\n");
+	    return 0;
+	}
+
 	futurebases[fbnum]->invert_colors = 0;
 	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], (const xmlChar *) "colors");
 	if (colors_property != NULL) {
@@ -8226,7 +8457,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (! check_pruning(tb)) return 0;
 
     check_1000_indices(tb);
-    check_1000_positions(tb);
+    /* check_1000_positions(tb); */  /* This becomes a problem with symmetry, among other things */
 
     gettimeofday(&pass_start_time, NULL);
 
