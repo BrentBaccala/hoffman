@@ -2149,17 +2149,28 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+    /* get the format */
+
     format = xmlGetProp(tablebase, (const xmlChar *) "format");
-    if (format == NULL) {
-	tb->format = FORMAT_FOURBYTE;
-	xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) formats[tb->format]);
-	fprintf(stderr, "Format not expressly specified; assuming FOURBYTE\n");
-    } else {
+    if (format != NULL) {
 	tb->format = find_name_in_array((char *) format, formats);
 	if (tb->format == -1) {
 	    fprintf(stderr, "Unknown tablebase format '%s'\n", format);
 	    return NULL;
 	}
+    } else {
+	context = xmlXPathNewContext(tb->xml);
+	result = xmlXPathEvalExpression((const xmlChar *) "//format", context);
+	if (result->nodesetval->nodeNr == 1) {
+	    /* XXX don't actually do anything with the format yet */
+	    tb->format = FORMAT_ONE_BYTE_DTM;
+	} else {
+	    tb->format = FORMAT_FOURBYTE;
+	    xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) formats[tb->format]);
+	    fprintf(stderr, "Format not expressly specified; assuming FOURBYTE\n");
+	}
+	xmlXPathFreeObject(result);
+	xmlXPathFreeContext(context);
     }
 
     /* Fetch the index type */
@@ -2419,9 +2430,6 @@ tablebase_t * parse_XML_control_file(char *filename)
     tb = parse_XML_into_tablebase(doc);
     if (tb == NULL) return NULL;
 
-    /* XXX We use fourbyte during calculation even if it's a one-byte-DTM tablebase */
-    tb->format = FORMAT_FOURBYTE;
-
     /* We don't free the XML doc because the tablebase struct contains a pointer to it */
 
     return tb;
@@ -2641,7 +2649,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.222 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.223 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -2721,7 +2729,6 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     FILE *file;
     xmlNodePtr tablebase;
     xmlChar *buf;
-    xmlChar *format;
     int size;
     int padded_size;
     char str[16];
@@ -2757,10 +2764,6 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
     do_write(fd, buf, size);
     xmlFree(buf);
-
-    /* We set the format to fourbyte during calcuation no matter what, so reset it here */
-    format = xmlGetProp(tablebase, (const xmlChar *) "format");
-    tb->format = find_name_in_array((char *) format, formats);
 
     if (tb->format == FORMAT_FOURBYTE) {
 	if (lseek(fd, padded_size, SEEK_SET) != padded_size) {
