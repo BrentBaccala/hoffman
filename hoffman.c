@@ -152,7 +152,7 @@ typedef int32 index_t;
 #define ROW(square) ((square) / 8)
 #define COL(square) ((square) % 8)
 
-inline int square(int row, int col)
+inline int rowcol2square(int row, int col)
 {
     return (col + row*8);
 }
@@ -391,10 +391,17 @@ char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
 
 char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 
+#define NAIVE_INDEX 0
+#define NAIVE2_INDEX 1
+#define SIMPLE_INDEX 2
+#define XOR_INDEX 3
+
+char * index_types[] = {"naive", "naive2", "simple", "xor"};
+
 typedef struct tablebase {
     index_t max_index;
     index_t modulus;
-    enum {NAIVE_INDEX=1, NAIVE2_INDEX, SIMPLE_INDEX, XOR_INDEX} index_type;
+    int index_type;
     int total_legal_piece_positions[MAX_PIECES];
     int simple_piece_positions[MAX_PIECES][64];
     int simple_piece_indices[MAX_PIECES][64];
@@ -1889,9 +1896,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
     xmlNodePtr tablebase;
+    xmlNodePtr index_node;
     xmlChar * format;
     xmlChar * index;
     xmlChar * modulus;
+    int piece, piece2, square;
 
     tb = malloc(sizeof(tablebase_t));
     if (tb == NULL) {
@@ -1924,8 +1933,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	fprintf(stderr, "Too many pieces!\n");
 	return NULL;
     } else {
-	int piece;
-	int piece2;
 
 	tb->num_pieces = result->nodesetval->nodeNr;
 
@@ -1951,7 +1958,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		while ((location[j] >= 'a') && (location[j] <= 'h')
 		       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
 		    tb->semilegal_squares[piece]
-			|= BITVECTOR(square(location[j+1] - '1', location[j] - 'a'));
+			|= BITVECTOR(rowcol2square(location[j+1] - '1', location[j] - 'a'));
 		    j += 2;
 		    while (location[j] == ' ') j ++;
 		}
@@ -2017,36 +2024,61 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
     }
 
-    /* Fetch the index type and compute tb->max_index (but see next section of code) */
+    /* Fetch the index type */
 
     index = xmlGetProp(tablebase, (const xmlChar *) "index");
-    if ((index == NULL) || !strcasecmp((char *) index, "naive")) {
-	if (index == NULL) {
-	    xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive");
-	    fprintf(stderr, "Index type not expressly specified; assuming NAIVE\n");
+    index_node = tablebase;  /* XXX here for backwards compatibility */
+    if (index == NULL) {
+	context = xmlXPathNewContext(tb->xml);
+	result = xmlXPathEvalExpression((const xmlChar *) "//index", context);
+	if (result->nodesetval->nodeNr == 1) {
+	    index_node = result->nodesetval->nodeTab[0];
+	    index = xmlGetProp(index_node, BAD_CAST "type");
 	}
+	xmlXPathFreeObject(result);
+	xmlXPathFreeContext(context);
+    }
+    if (index == NULL) {
 	tb->index_type = NAIVE_INDEX;
+	xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive");
+	fprintf(stderr, "Index type not expressly specified; assuming NAIVE\n");
+    } else {
+	tb->index_type = find_name_in_array((char *) index, index_types);
+	if (tb->index_type == -1) {
+	    fprintf(stderr, "Unknown tablebase index type '%s'\n", index);
+	    return NULL;
+	}
+    }
+
+    /* Compute tb->max_index (but see next section of code where it might be modified) */
+
+    switch (tb->index_type) {
+    case NAIVE_INDEX:
+
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
 	tb->max_index = (2<<(6*tb->num_pieces)) - 1;
-    } else if (!strcasecmp((char *) index, "naive2")) {
-	int piece;
+	break;
 
-	tb->index_type = NAIVE2_INDEX;
+    case NAIVE2_INDEX:
+
 	tb->max_index = 2;
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->last_identical_piece[piece] == -1) tb->max_index <<= 6;
 	    else tb->max_index <<=5;
 	}
 	tb->max_index --;
-    } else if (!strcasecmp((char *) index, "xor")) {
-	tb->index_type = XOR_INDEX;
+
+	break;
+
+    case XOR_INDEX:
+
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
 	tb->max_index = (2<<(6*tb->num_pieces)) - 1;
-    } else if (!strcasecmp((char *) index, "simple")) {
-	int piece, square;
+	break;
+
+    case SIMPLE_INDEX:
 
 	/* The "2" is because side-to-play is part of the position */
-	tb->index_type = SIMPLE_INDEX;
 	tb->max_index = 2;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -2069,13 +2101,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
 
 	tb->max_index --;
-
-    } else {
-	fprintf(stderr, "Unknown index type (%s) in XML\n", index);
-	return NULL;
+	break;
     }
 
-    /* See if a modulus was specified for inversion in a finite field */
+    /* See if an index modulus was specified for inversion in a finite field */
 
     modulus = xmlGetProp(tablebase, (const xmlChar *) "modulus");
     if (modulus != NULL) {
@@ -2390,7 +2419,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.220 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.221 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -2581,7 +2610,7 @@ void invert_colors_of_global_position(global_position_t *global)
     for (squareA=0; squareA < NUM_SQUARES/2; squareA++) {
 	unsigned char pieceA;
 	unsigned char pieceB;
-	int squareB = square(7-ROW(squareA),COL(squareA));
+	int squareB = rowcol2square(7-ROW(squareA),COL(squareA));
 
 	pieceA = global->board[squareA];
 	pieceB = global->board[squareB];
@@ -2676,7 +2705,7 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
 	int sq = foreign->piece_position[foreign_piece];
 
-	if (invert_colors) sq = square(7 - ROW(sq), COL(sq));
+	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
 
 	for (piece = 0; piece < tb2->num_pieces; piece ++) {
 
@@ -2933,45 +2962,45 @@ boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_pos
 		break;
 
 	    case 'k':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, KING)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, KING)) return 0;
 		break;
 	    case 'K':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, KING)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, KING)) return 0;
 		break;
 
 	    case 'q':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, QUEEN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, QUEEN)) return 0;
 		break;
 	    case 'Q':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, QUEEN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, QUEEN)) return 0;
 		break;
 
 	    case 'r':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, ROOK)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, ROOK)) return 0;
 		break;
 	    case 'R':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, ROOK)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, ROOK)) return 0;
 		break;
 
 	    case 'b':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, BISHOP)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, BISHOP)) return 0;
 		break;
 	    case 'B':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, BISHOP)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, BISHOP)) return 0;
 		break;
 
 	    case 'n':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, KNIGHT)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, KNIGHT)) return 0;
 		break;
 	    case 'N':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, KNIGHT)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, KNIGHT)) return 0;
 		break;
 
 	    case 'p':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), BLACK, PAWN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, PAWN)) return 0;
 		break;
 	    case 'P':
-		if (!place_piece_in_local_position(tb, pos, square(row, col), WHITE, PAWN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, PAWN)) return 0;
 		break;
 	    }
 	    FEN_string++;
@@ -3006,7 +3035,7 @@ boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_pos
 
     if ((FEN_string[0] >= 'a') && (FEN_string[0] <= 'h')
 	&& (FEN_string[1] >= '1') && (FEN_string[1] <= '8')) {
-	pos->en_passant_square = square(FEN_string[1] - '1', FEN_string[0] - 'a');
+	pos->en_passant_square = rowcol2square(FEN_string[1] - '1', FEN_string[0] - 'a');
     }
 
     return 1;
@@ -3036,45 +3065,45 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 		break;
 
 	    case 'k':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, KING)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, KING)) return 0;
 		break;
 	    case 'K':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, KING)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, KING)) return 0;
 		break;
 
 	    case 'q':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, QUEEN)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, QUEEN)) return 0;
 		break;
 	    case 'Q':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, QUEEN)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, QUEEN)) return 0;
 		break;
 
 	    case 'r':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, ROOK)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, ROOK)) return 0;
 		break;
 	    case 'R':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, ROOK)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, ROOK)) return 0;
 		break;
 
 	    case 'b':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, BISHOP)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, BISHOP)) return 0;
 		break;
 	    case 'B':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, BISHOP)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, BISHOP)) return 0;
 		break;
 
 	    case 'n':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, KNIGHT)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, KNIGHT)) return 0;
 		break;
 	    case 'N':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, KNIGHT)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, KNIGHT)) return 0;
 		break;
 
 	    case 'p':
-		if (!place_piece_in_global_position(pos, square(row, col), BLACK, PAWN)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, PAWN)) return 0;
 		break;
 	    case 'P':
-		if (!place_piece_in_global_position(pos, square(row, col), WHITE, PAWN)) return 0;
+		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, PAWN)) return 0;
 		break;
 	    }
 	    FEN_string++;
@@ -3109,7 +3138,7 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 
     if ((FEN_string[0] >= 'a') && (FEN_string[0] <= 'h')
 	&& (FEN_string[1] >= '1') && (FEN_string[1] <= '8')) {
-	pos->en_passant_square = square(FEN_string[1] - '1', FEN_string[0] - 'a');
+	pos->en_passant_square = rowcol2square(FEN_string[1] - '1', FEN_string[0] - 'a');
     }
 
     return 1;
@@ -3127,14 +3156,14 @@ char * global_position_to_FEN(global_position_t *position)
     for (row=7; row>=0; row--) {
 	empty_squares=0;
 	for (col=0; col<=7; col++) {
-	    if ((position->board[square(row, col)] == ' ') || (position->board[square(row,col)] == 0)) {
+	    if ((position->board[rowcol2square(row, col)] == ' ') || (position->board[rowcol2square(row,col)] == 0)) {
 		empty_squares++;
 	    } else {
 		if (empty_squares > 0) {
 		    *(ptr++) = '0' + empty_squares;
 		    empty_squares = 0;
 		}
-		*(ptr++) = position->board[square(row,col)];
+		*(ptr++) = position->board[rowcol2square(row,col)];
 	    }
 	}
 	if (empty_squares > 0) {
@@ -5348,7 +5377,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		int promotion_sq = foreign_position.piece_position[extra_piece];
 
 		if (invert_colors_of_futurebase)
-		    promotion_sq = square(7 - ROW(promotion_sq), COL(promotion_sq));
+		    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
 		/* The extra piece has to be on the back rank.  We can safely 'break' here due to
 		 * identical pieces being sorted into ascending square number.  If we've backed up
@@ -5418,7 +5447,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 			= foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]];
 
 		    if (invert_colors_of_futurebase)
-			new_promotion_sq = square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
+			new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
 
 		    for (piece = 0; piece < tb->num_pieces; piece ++) {
 			if (position.piece_position[piece] == new_promotion_sq) {
@@ -5534,7 +5563,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		int promotion_sq = foreign_position.piece_position[extra_piece];
 
 		if (invert_colors_of_futurebase)
-		    promotion_sq = square(7 - ROW(promotion_sq), COL(promotion_sq));
+		    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
 		/* The extra piece has to be on the back rank.  We can safely 'break' here due to
 		 * identical pieces being sorted into ascending square number.  If we've backed up
@@ -5681,7 +5710,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			= foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]];
 
 		    if (invert_colors_of_futurebase)
-			new_promotion_sq = square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
+			new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
 
 		    for (piece = 0; piece < tb->num_pieces; piece ++) {
 			if (position.piece_position[piece] == new_promotion_sq) {
