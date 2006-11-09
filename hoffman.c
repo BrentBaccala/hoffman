@@ -413,8 +413,9 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 #define NAIVE2_INDEX 1
 #define SIMPLE_INDEX 2
 #define XOR_INDEX 3
+#define COMPACT_INDEX 4
 
-char * index_types[] = {"naive", "naive2", "simple", "xor"};
+char * index_types[] = {"naive", "naive2", "simple", "xor", "compact"};
 
 typedef struct tablebase {
     index_t max_index;
@@ -1835,6 +1836,177 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
     return 1;
 }
 
+/* "compact" index
+ *
+ * XXX if more than one tablebase use these differently (piece restrictions), could be a problem
+ * that these variables are global...
+ */
+
+int compact_white_king_positions[64*64];
+int compact_black_king_positions[64*64];
+int compact_king_indices[64][64];
+int total_legal_compact_king_positions = 0;
+
+index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
+{
+    index_t index;
+    int piece;
+
+    index = 0;
+    pos->board_vector = 0;
+
+    index = compact_king_indices[pos->piece_position[WHITE_KING]][pos->piece_position[BLACK_KING]];
+
+    for (piece = 2; piece < tb->num_pieces; piece ++) {
+
+	index *= tb->total_legal_piece_positions[piece];
+
+	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
+	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
+	    /* This can happen if we're probing a restricted tablebase */
+#if 0
+	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
+#endif
+	    return -1;
+	}
+
+	/* The way we encode en passant capturable pawns is use the column number of the
+	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
+	 * this is completely legit.
+	 */
+	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
+	    && (((tb->piece_color[piece] == WHITE)
+		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		|| ((tb->piece_color[piece] == BLACK)
+		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+	    index += tb->simple_piece_indices[piece][COL(pos->en_passant_square)];
+	} else {
+	    index += tb->simple_piece_indices[piece][pos->piece_position[piece]];
+	}
+
+	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
+	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
+    }
+
+    /* Check board_vector to make sure an en passant position is legal */
+
+    if (pos->en_passant_square != -1) {
+	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
+	if (pos->side_to_move == WHITE) {
+	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
+	} else {
+	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
+	}
+    }
+
+    /* We've still got code that assumes flipping the index's LSB flip side-to-move.
+     *
+     * Actually, we don't anymore, but I want to put it back because it's more efficient.
+     */
+
+    index *= 2;
+    index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+
+#if 0
+    /* Possibly a quicker check for position legality that all that en passant stuff */
+    /* The problem is that the entries array might not be valid */
+
+    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
+#endif
+
+    return index;
+}
+
+boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+{
+    int piece;
+
+    memset(p, 0, sizeof(local_position_t));
+    p->en_passant_square = -1;
+
+    p->side_to_move = index % 2;
+    index /= 2;
+
+    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+
+	int square = tb->simple_piece_positions[piece][index % tb->total_legal_piece_positions[piece]];
+	index /= tb->total_legal_piece_positions[piece];
+
+	/* En passant */
+	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
+	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
+	    if (tb->piece_color[piece] == WHITE) {
+		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = square + 2*8;
+		square += 3*8;
+	    } else {
+		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = square + 5*8;
+		square += 4*8;
+	    }
+	}
+
+	/* This should never happen. */
+
+	if (!(tb->semilegal_squares[piece] & BITVECTOR(square))) {
+	    fprintf(stderr, "Illegal piece position in simple_index_to_local_position!\n");
+	    return 0;
+	}
+
+	p->piece_position[piece] = square;
+	if (p->board_vector & BITVECTOR(square)) {
+	    return 0;
+	}
+
+	p->board_vector |= BITVECTOR(square);
+	if (tb->piece_color[piece] == p->side_to_move) {
+	    p->PTM_vector |= BITVECTOR(square);
+	}
+    }
+
+    p->piece_position[WHITE_KING] = compact_white_king_positions[index];
+    p->piece_position[BLACK_KING] = compact_black_king_positions[index];
+    if (p->board_vector & BITVECTOR(p->piece_position[WHITE_KING])) return 0;
+    if (p->board_vector & BITVECTOR(p->piece_position[BLACK_KING])) return 0;
+    p->board_vector |= BITVECTOR(p->piece_position[WHITE_KING]);
+    p->board_vector |= BITVECTOR(p->piece_position[BLACK_KING]);
+    if (p->side_to_move == WHITE)
+	p->PTM_vector |= BITVECTOR(p->piece_position[WHITE_KING]);
+    else
+	p->PTM_vector |= BITVECTOR(p->piece_position[BLACK_KING]);
+    index /= total_legal_compact_king_positions;
+
+    /* Identical pieces have to appear in sorted order. */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	if ((tb->last_identical_piece[piece] != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
+	    return 0;
+	}
+    }
+
+    if (index != 0) {
+	fprintf (stderr, "index != 0 at end of simple_index_to_local_position!\n");  /* BREAKPOINT */
+	return 0;
+    }
+
+    /* If there is an en passant capturable pawn in this position, then there can't be anything
+     * on the capture square or on the square right behind it (where the pawn just came from),
+     * or its an illegal position.
+     */
+
+    if (p->en_passant_square != -1) {
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->side_to_move == WHITE) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	} else {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	}
+    }
+
+    return 1;
+}
+
 index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
 {
     int piece;
@@ -1923,6 +2095,9 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
     case SIMPLE_INDEX:
 	index = local_position_to_simple_index(tb, &copy);
 	break;
+    case COMPACT_INDEX:
+	index = local_position_to_compact_index(tb, &copy);
+	break;
     default:
 	fprintf(stderr, "Unknown index type in local_position_to_index()\n");  /* BREAKPOINT */
 	return -1;
@@ -1976,6 +2151,9 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
 	break;
     case SIMPLE_INDEX:
 	ret = simple_index_to_local_position(tb, index, p);
+	break;
+    case COMPACT_INDEX:
+	ret = compact_index_to_local_position(tb, index, p);
 	break;
     default:
 	fprintf(stderr, "Unknown index type in index_to_local_position()\n");  /* BREAKPOINT */
@@ -2108,7 +2286,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlChar * format;
     xmlChar * index;
     xmlChar * modulus;
-    int piece, piece2, square;
+    int piece, piece2, square, white_king_square, black_king_square;
 
     tb = malloc(sizeof(tablebase_t));
     if (tb == NULL) {
@@ -2384,6 +2562,55 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	tb->max_index = 2;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    for (square = 0; square < 64; square ++) {
+		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
+		if ((piece == WHITE_KING) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == WHITE_KING) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == WHITE_KING) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
+		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
+		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
+		tb->total_legal_piece_positions[piece] ++;
+
+		/* if the pawn is en-passant capturable, add an index for that */
+		if ((tb->piece_type[piece] == PAWN)
+		    && (((tb->piece_color[piece] == WHITE) && (ROW(square) == 3))
+			|| ((tb->piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
+		    tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = COL(square);
+		    tb->simple_piece_indices[piece][COL(square)] = tb->total_legal_piece_positions[piece];
+		    tb->total_legal_piece_positions[piece] ++;
+		}
+	    }
+	    tb->max_index *= tb->total_legal_piece_positions[piece];
+	}
+
+	tb->max_index --;
+	break;
+
+    case COMPACT_INDEX:
+
+	/* The "2" is because side-to-play is part of the position */
+	tb->max_index = 2;
+
+	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
+	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
+		/* if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue; */
+		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+		if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+		    && (ROW(black_king_square) > COL(black_king_square))) continue;
+#if CHECK_KING_LEGALITY_EARLY
+		if (! check_king_legality(white_king_square, black_king_square)) continue;
+#endif
+		compact_white_king_positions[total_legal_compact_king_positions] = white_king_square;
+		compact_black_king_positions[total_legal_compact_king_positions] = black_king_square;
+		compact_king_indices[white_king_square][black_king_square] = total_legal_compact_king_positions;
+		total_legal_compact_king_positions ++;
+	    }
+	}
+	tb->max_index *= total_legal_compact_king_positions;
+
+	for (piece = 2; piece < tb->num_pieces; piece ++) {
 	    for (square = 0; square < 64; square ++) {
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
 		if ((piece == WHITE_KING) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
@@ -2721,7 +2948,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.226 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.227 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
