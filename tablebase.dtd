@@ -6,7 +6,7 @@
 
 <!ELEMENT index EMPTY>
 <!ATTLIST index
-	type (naive|naive2|simple|xor)		#REQUIRED
+	type (naive|naive2|simple|xor|compact)		#REQUIRED
 	symmetry (1|2|4|8)			#IMPLIED
 	modulus CDATA				#IMPLIED>
 
