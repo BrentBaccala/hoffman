@@ -304,6 +304,7 @@ typedef struct {
     int64 PTM_vector;
     short side_to_move;
     short en_passant_square;
+    short multiplicity;
     short piece_position[MAX_PIECES];
 } local_position_t;
 
@@ -1826,7 +1827,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
     return 1;
 }
 
-index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
+index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
 {
     int piece;
     int piece2;
@@ -1836,8 +1837,7 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
      * we use a copy of it.
      */
 
-    local_position_t copy = *pos;
-    pos = &copy;
+    local_position_t copy = *original;
 
     /* Reflect the pieces around to get the white king where we want him for symmetry.
      *
@@ -1850,32 +1850,32 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
      */
 
     if (tb->symmetry >= 2) {
-	if (COL(pos->piece_position[WHITE_KING]) >= 4) {
+	if (COL(copy.piece_position[WHITE_KING]) >= 4) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		pos->piece_position[piece] = horizontal_reflection(pos->piece_position[piece]);
+		copy.piece_position[piece] = horizontal_reflection(copy.piece_position[piece]);
 	    }
 	}
     }
 
     if (tb->symmetry >= 4) {
-	if (ROW(pos->piece_position[WHITE_KING]) >= 4) {
+	if (ROW(copy.piece_position[WHITE_KING]) >= 4) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		pos->piece_position[piece] = vertical_reflection(pos->piece_position[piece]);
+		copy.piece_position[piece] = vertical_reflection(copy.piece_position[piece]);
 	    }
 	}
     }
 
     if (tb->symmetry == 8) {
-	if (ROW(pos->piece_position[WHITE_KING]) > COL(pos->piece_position[WHITE_KING])) {
+	if (ROW(copy.piece_position[WHITE_KING]) > COL(copy.piece_position[WHITE_KING])) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		pos->piece_position[piece] = diagonal_reflection(pos->piece_position[piece]);
+		copy.piece_position[piece] = diagonal_reflection(copy.piece_position[piece]);
 	    }
 	}
 #if 0
-	if (ROW(pos->piece_position[WHITE_KING]) == COL(pos->piece_position[WHITE_KING])) {
-	    if (ROW(pos->piece_position[BLACK_KING]) > COL(pos->piece_position[BLACK_KING])) {
+	if (ROW(copy.piece_position[WHITE_KING]) == COL(copy.piece_position[WHITE_KING])) {
+	    if (ROW(copy.piece_position[BLACK_KING]) > COL(copy.piece_position[BLACK_KING])) {
 		for (piece = 0; piece < tb->num_pieces; piece ++) {
-		    pos->piece_position[piece] = diagonal_reflection(pos->piece_position[piece]);
+		    copy.piece_position[piece] = diagonal_reflection(copy.piece_position[piece]);
 		}
 	    }
 	}
@@ -1889,26 +1889,26 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
 	while ((tb->last_identical_piece[piece2] != -1)
-	       && (pos->piece_position[piece2] < pos->piece_position[tb->last_identical_piece[piece2]])) {
-	    int square = pos->piece_position[piece2];
-	    pos->piece_position[piece2] = pos->piece_position[tb->last_identical_piece[piece2]];
-	    pos->piece_position[tb->last_identical_piece[piece2]] = square;
+	       && (copy.piece_position[piece2] < copy.piece_position[tb->last_identical_piece[piece2]])) {
+	    int square = copy.piece_position[piece2];
+	    copy.piece_position[piece2] = copy.piece_position[tb->last_identical_piece[piece2]];
+	    copy.piece_position[tb->last_identical_piece[piece2]] = square;
 	    piece2 = tb->last_identical_piece[piece2];
 	}
     }
 
     switch (tb->index_type) {
     case NAIVE_INDEX:
-	index = local_position_to_naive_index(tb, pos);
+	index = local_position_to_naive_index(tb, &copy);
 	break;
     case NAIVE2_INDEX:
-	index = local_position_to_naive2_index(tb, pos);
+	index = local_position_to_naive2_index(tb, &copy);
 	break;
     case XOR_INDEX:
-	index = local_position_to_xor_index(tb, pos);
+	index = local_position_to_xor_index(tb, &copy);
 	break;
     case SIMPLE_INDEX:
-	index = local_position_to_simple_index(tb, pos);
+	index = local_position_to_simple_index(tb, &copy);
 	break;
     default:
 	fprintf(stderr, "Unknown index type in local_position_to_index()\n");  /* BREAKPOINT */
@@ -1923,11 +1923,25 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *pos)
 #endif
     }
 
+    /* Multiplicity - number of non-identical positions that this index corresponds to.  We want to
+     * update the original position structure that got passed in.
+     */
+
+    if ((tb->symmetry == 8)
+	&& (ROW(copy.piece_position[WHITE_KING]) != COL(copy.piece_position[WHITE_KING]))) {
+	original->multiplicity = 2;
+    } else {
+	original->multiplicity = 1;
+    }
+
     return index;
 }
 
-boolean index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, local_position_t *p)
 {
+    int ret;
+    int piece;
+
     if ((index != 0) && (tb->modulus != 0)) {
 #if FINITE_FIELD_INVERSION
 	index = invert_in_finite_field(index, tb->modulus);
@@ -1938,17 +1952,49 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, local_position_t
 
     switch (tb->index_type) {
     case NAIVE_INDEX:
-	return naive_index_to_local_position(tb, index, p);
+	ret = naive_index_to_local_position(tb, index, p);
+	break;
     case NAIVE2_INDEX:
-	return naive2_index_to_local_position(tb, index, p);
+	ret = naive2_index_to_local_position(tb, index, p);
+	break;
     case XOR_INDEX:
-	return xor_index_to_local_position(tb, index, p);
+	ret = xor_index_to_local_position(tb, index, p);
+	break;
     case SIMPLE_INDEX:
-	return simple_index_to_local_position(tb, index, p);
+	ret = simple_index_to_local_position(tb, index, p);
+	break;
     default:
 	fprintf(stderr, "Unknown index type in index_to_local_position()\n");  /* BREAKPOINT */
 	return 0;
     }
+
+    if (!ret) return 0;
+
+    /* Multiplicity - number of non-identical positions that this index corresponds to */
+
+    if ((tb->symmetry == 8)
+	&& (ROW(p->piece_position[WHITE_KING]) != COL(p->piece_position[WHITE_KING]))) {
+	p->multiplicity = 2;
+    } else {
+	p->multiplicity = 1;
+    }
+
+    if (symmetry == 1) {
+	if (ROW(p->piece_position[WHITE_KING]) == COL(p->piece_position[WHITE_KING])) return 0;
+
+	/* diagonal reflection */
+	p->board_vector = 0;
+	p->PTM_vector = 0;
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    p->piece_position[piece] = diagonal_reflection(p->piece_position[piece]);
+	    p->board_vector |= BITVECTOR(p->piece_position[piece]);
+	    if (tb->piece_color[piece] == p->side_to_move)
+		p->PTM_vector |= BITVECTOR(p->piece_position[piece]);
+	}
+	if (p->en_passant_square > 0) p->en_passant_square = diagonal_reflection(p->en_passant_square);
+    }
+
+    return 1;
 }
 
 /* check_1000_positions(); check_1000_indices() - used just to double check the code above.
@@ -1991,7 +2037,7 @@ void check_1000_positions(tablebase_t *tb)
 
 	    /* PTM_vector wasn't set in position1, so don't check them now */
 
-	    if (!index_to_local_position(tb, index, &position2)
+	    if (!index_to_local_position(tb, index, 0, &position2)
 		|| (position2.PTM_vector = 0, position2.board_vector = 0,
 		    memcmp(&position1, &position2, sizeof(position1)))) {
 		fprintf(stderr, "Mismatch in check_1000_positions()\n");  /* BREAKPOINT */
@@ -2011,7 +2057,7 @@ void check_1000_indices(tablebase_t *tb)
 
 	index = rand() % (tb->max_index + 1);
 
-	if (index_to_local_position(tb, index, &position)) {
+	if (index_to_local_position(tb, index, 0, &position)) {
 	    index2 = local_position_to_index(tb, &position);
 	    if (index != index2) {
 		fprintf(stderr, "Mismatch in check_1000_indices()\n");  /* BREAKPOINT */
@@ -2227,10 +2273,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	return NULL;
     }
 
+#if 0
     if (tb->symmetry == 8) {
 	fprintf(stderr, "8-way symmetry doesn't work (yet)\n");
 	return NULL;
     }
+#endif
 
     if (tb->symmetry >= 4) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -2649,7 +2697,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.223 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.224 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -2800,7 +2848,7 @@ int index_to_side_to_move(tablebase_t *tb, index_t index)
 {
     local_position_t position;
 
-    if (! index_to_local_position(tb, index, &position)) return -1;
+    if (! index_to_local_position(tb, index, 0, &position)) return -1;
     else return position.side_to_move;
 }
 
@@ -3000,7 +3048,7 @@ int translate_foreign_index_to_local_position(tablebase_t *tb1, index_t index1,
 {
     local_position_t foreign_position;
 
-    if (! index_to_local_position(tb1, index1, &foreign_position)) return -1;
+    if (! index_to_local_position(tb1, index1, 0, &foreign_position)) return -1;
 
     return translate_foreign_position_to_local_position(tb1, &foreign_position, tb2, local, invert_colors);
 }
@@ -3123,7 +3171,7 @@ boolean index_to_global_position(tablebase_t *tb, index_t index, global_position
 
     memset(global, 0, sizeof(global_position_t));
 
-    if (! index_to_local_position(tb, index, &local)) return 0;
+    if (! index_to_local_position(tb, index, 0, &local)) return 0;
 
     global->side_to_move = local.side_to_move;
     global->en_passant_square = local.en_passant_square;
@@ -3823,7 +3871,7 @@ int get_DTM(tablebase_t *tb, index_t index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 1036 */
+/* #define DEBUG_MOVE 61538 */
 
 /* Four possible ways we can initialize a tablebase entry for a position:
  *  - it's illegal
@@ -4540,7 +4588,7 @@ int proptable_merges = 0;
 /* We insert into the propagation table using an "address calculation insertion sort".
  */
 
-void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char dtc,
+void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char dtc, short movecnt,
 			 futurevector_t futurevector)
 {
 #ifdef DEBUG_MOVE
@@ -4553,7 +4601,7 @@ void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char 
     proptable[propentry].index = index;
     proptable[propentry].dtm = dtm;
     proptable[propentry].dtc = dtc;
-    proptable[propentry].movecnt = 1;
+    proptable[propentry].movecnt = movecnt;
     proptable[propentry].futurevector = futurevector;
 }
 
@@ -4590,7 +4638,7 @@ void merge_propentrys(proptable_entry_t *dest, proptable_entry_t *src)
     dest->futurevector |= src->futurevector;
 }
 
-void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevector_t futurevector)
+void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movecnt, futurevector_t futurevector)
 {
     proptable_entry_t src;
 
@@ -4602,7 +4650,7 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, futurevecto
     /* src.index = index; */
     src.dtm = dtm;
     src.dtc = dtc;
-    src.movecnt = 1;
+    src.movecnt = movecnt;
     src.futurevector = futurevector;
 
     merge_propentrys(&proptable[propentry], &src);
@@ -4763,7 +4811,7 @@ void commit_proptable_entry(proptable_entry_t *propentry, struct fourbyte_entry 
  * Start a new set of proptables and commit the old set into the entries array.
  */
 
-void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, int dtc);
+void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symmetry, int dtm, int dtc);
 
 /* fetch_next_propentry()
  *
@@ -5139,7 +5187,10 @@ int proptable_finalize(int target_dtm)
 	}
 
 	if ((target_dtm != 0) && (get_entry_DTM(fourbyte_entry) == target_dtm)) {
-	    back_propagate_index_within_table(proptable_tb, index, target_dtm, fourbyte_entry->dtc);
+	    back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, fourbyte_entry->dtc);
+	    if (proptable_tb->symmetry == 8) {
+		back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, fourbyte_entry->dtc);
+	    }
 	    positions_finalized ++;
 	}
 
@@ -5214,8 +5265,28 @@ int propagation_pass(int target_dtm)
 
 	    struct fourbyte_entry *fourbyte_entry = fetch_fourbyte_entry(proptable_tb, index);
 
+	    /* The symmetry code needs a bit more work here.  It really depends on the relative
+	     * multiplicity of the position we prop'ing from and the position we prop'ing to
+	     * to decide what should be done here.
+	     *
+	     * For now, I've just commented out the code in propagate_one_minimove_within_table()
+	     * that would insert into the proptable with multiplicity higher than one, so here we
+	     * just want to double up on calls to back_propagate_index_within_table() almost no
+	     * matter what.  A tighter version of this code would only back prop more than once here
+	     * if there was an increase of multiplicity going from the future position backwards.
+	     *
+	     * Considering that we merge multiple identical entries in the proptable, I don't think
+	     * there's any loss here if we're disk bound... this inefficiency only costs us CPU
+	     * time.
+	     */
+
 	    if ((target_dtm != 0) && (get_entry_DTM(fourbyte_entry) == target_dtm)) {
-		back_propagate_index_within_table(proptable_tb, index, target_dtm, fourbyte_entry->dtc);
+		back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, fourbyte_entry->dtc);
+#if 1
+		if (proptable_tb->symmetry == 8) {
+		    back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, fourbyte_entry->dtc);
+		}
+#endif
 		positions_finalized ++;
 	    }
 	}
@@ -5247,7 +5318,8 @@ int propagation_pass(int target_dtm)
     return positions_finalized;
 }
 
-void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futurevector_t futurevector)
+void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short movecnt,
+			   futurevector_t futurevector)
 {
     int propentry;
     int zerooffset;
@@ -5255,13 +5327,18 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 
     backproped_moves ++;
 
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	printf("insert_into_proptable; index=%d; dtm=%d; movecnt=%d\n", index, dtm, movecnt);
+#endif
+
     if (num_propentries == 0) {
 	proptable_entry_t entry;
 
 	entry.index = index;
 	entry.dtm = dtm;
 	entry.dtc = dtc;
-	entry.movecnt = 1;
+	entry.movecnt = movecnt;
 
 	/* Don't track futuremoves for illegal (DTM 1) positions */
 
@@ -5301,22 +5378,22 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 
     if (proptable[propentry].index == 0) {
 	/* empty slot: insert at propentry */
-	insert_at_propentry(propentry, index, dtm, dtc, futurevector);
+	insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	return;
     } else if (proptable[propentry].index == index) {
 	/* entry at slot with identical index: merge at propentry */
-	merge_at_propentry(propentry, dtm, dtc, futurevector);
+	merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	return;
     } else if (proptable[propentry].index > index) {
 	/* entry at slot greater than index to be inserted */
 	while ((proptable[propentry].index > index) && (propentry > 0)) propentry --;
 	if (proptable[propentry].index == 0) {
 	    /* empty slot at lower end of a block all gt than index: insert there */
-	    insert_at_propentry(propentry, index, dtm, dtc, futurevector);
+	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	} else if (proptable[propentry].index == index) {
 	    /* identical slot in a block: merge there */
-	    merge_at_propentry(propentry, dtm, dtc, futurevector);
+	    merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	    return;
 	} else if (proptable[propentry].index > index) {
 	    /* we're at the beginning of the table and the first entry is gt index */
@@ -5324,7 +5401,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 		if (proptable[zerooffset].index == 0) {
 		    memmove(proptable + 1, proptable,
 			    (zerooffset) * sizeof(proptable_entry_t));
-		    insert_at_propentry(0, index, dtm, dtc, futurevector);
+		    insert_at_propentry(0, index, dtm, dtc, movecnt, futurevector);
 		    return;
 		}
 	    }
@@ -5340,11 +5417,11 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 	       && (propentry < num_propentries - 1)) propentry ++;
 	if (proptable[propentry].index == 0) {
 	    /* empty slot at upper end of a block all lt than index: insert there */
-	    insert_at_propentry(propentry, index, dtm, dtc, futurevector);
+	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	} else if (proptable[propentry].index == index) {
 	    /* identical slot in a block: merge there */
-	    merge_at_propentry(propentry, dtm, dtc, futurevector);
+	    merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	    return;
 	} else if (proptable[propentry].index < index) {
 	    /* we're at the end of the table and the last entry is lt index */
@@ -5353,7 +5430,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 		    memmove(proptable + num_propentries - 1 - zerooffset,
 			    proptable + num_propentries - zerooffset,
 			    (zerooffset) * sizeof(proptable_entry_t));
-		    insert_at_propentry(num_propentries - 1, index, dtm, dtc, futurevector);
+		    insert_at_propentry(num_propentries - 1, index, dtm, dtc, movecnt, futurevector);
 		    return;
 		}
 	    }
@@ -5373,14 +5450,14 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
 	    && (proptable[propentry+zerooffset].index == 0)) {
 	    memmove(proptable + propentry + 2, proptable + propentry + 1,
 		    (zerooffset-1) * sizeof(proptable_entry_t));
-	    insert_at_propentry(propentry+1, index, dtm, dtc, futurevector);
+	    insert_at_propentry(propentry+1, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	}
 	if ((propentry - zerooffset >= 0)
 	    && (proptable[propentry-zerooffset].index == 0)) {
 	    memmove(proptable + propentry - zerooffset, proptable + propentry - zerooffset + 1,
 		    zerooffset * sizeof(proptable_entry_t));
-	    insert_at_propentry(propentry, index, dtm, dtc, futurevector);
+	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	}
     }
@@ -5404,7 +5481,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, futureve
  * set, but we didn't use it.
  */
 
-void propagate_index_from_futurebase(tablebase_t *tb, int dtm, int dtc,
+void propagate_index_from_futurebase(tablebase_t *tb, int dtm, int dtc, short movecnt,
 				     int futuremove, index_t current_index, int *dtm_limit)
 {
     if (futuremove == -1) {
@@ -5422,11 +5499,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm, int dtc,
     /* We insert even if dtm is zero because we have to track futuremoves */
 
     if (dtm > 0) {
-	insert_into_proptable(current_index, -dtm, dtc, FUTUREVECTOR(futuremove));
+	insert_into_proptable(current_index, -dtm, dtc, movecnt, FUTUREVECTOR(futuremove));
     } else if (dtm < 0) {
-	insert_into_proptable(current_index, -dtm+1, dtc+1, FUTUREVECTOR(futuremove));
+	insert_into_proptable(current_index, -dtm+1, dtc+1, movecnt, FUTUREVECTOR(futuremove));
     } else {
-	insert_into_proptable(current_index, 0, 0, FUTUREVECTOR(futuremove));
+	insert_into_proptable(current_index, 0, 0, movecnt, FUTUREVECTOR(futuremove));
     }
 
     /* This is pretty primitive, but we need to track the deepest mates during futurebase back prop
@@ -5455,7 +5532,18 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm, int 
 	return;
     }
 
-    propagate_index_from_futurebase(tb, dtm, dtc, futuremove, current_index, dtm_limit);
+    /* local_position_to_index() updated the position structure's multiplicity, so we know it's
+     * correct.  It actually should be a little more complex than this, but since we're only dealing
+     * with 8-way symmetry where multiplicity is either 1 or 2, this should do.  If we're
+     * backproping from a single multiplicity position into one with double multiplicity, then this
+     * function will get called twice on the same index, because that index will get generating
+     * twice during back prop from the single future position, but since we're using the futuremove
+     * number to toss out additional function calls, we can savely just use the multiplicity here
+     * without worrying about it getting called again.
+     */
+
+    propagate_index_from_futurebase(tb, dtm, dtc, current_position->multiplicity,
+				    futuremove, current_index, dtm_limit);
 }
 
 void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
@@ -5550,7 +5638,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	 * restricted squares.
 	 */
 
-	if (! index_to_local_position(futurebase, future_index, &foreign_position)) continue;
+	if (! index_to_local_position(futurebase, future_index, 0, &foreign_position)) continue;
 
 	conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
 									 tb, &position,
@@ -5736,7 +5824,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	 * can be no pieces on restricted squares.
 	 */
 
-	if (! index_to_local_position(futurebase, future_index, &foreign_position)) continue;
+	if (! index_to_local_position(futurebase, future_index, 0, &foreign_position)) continue;
 
 	conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
 									 tb, &position,
@@ -6949,8 +7037,9 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 
     if (futurevector & conceded_futuremoves) {
 	/* PTM_wins(tb, index, 1, 1); */
-	/* We insert here with DTM=2 (mate in one) and DTC=1 (XXX) */
-	insert_into_proptable(index, 2, 1, 0);
+	/* We insert here with DTM=2 (mate in one), DTC=1 (XXX), movecnt=1 (XXX), and no futuremove */
+	/* XXX I bet we want to insert with position's multiplicity as movecnt */
+	insert_into_proptable(index, 2, 1, 1, 0);
     }
 
     /* discard - we ignore these unhandled futuremoves by decrementing movecnt */
@@ -6960,7 +7049,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	    if (futurevector & discarded_futuremoves & FUTUREVECTOR(futuremove)) {
 		/* tb->entries[index].movecnt --; */
 		/* XXX this isn't handled right - a draw is different from a discard */
-		insert_into_proptable(index, 0, 0, 0);
+		insert_into_proptable(index, 0, 0, 0, 0);
 	    }
 	}
     }
@@ -7452,10 +7541,12 @@ boolean check_pruning(tablebase_t *tb) {
 	/* load_futurebase_from_file() already printed some kind of error message */
 	if (futurebases[fbnum] == NULL) return 0;
 
+#if 1
 	if (futurebases[fbnum]->symmetry != 1) {
 	    fprintf(stderr, "Can't backprop from 2/8-way symmetric futurebases (yet)\n");
 	    return 0;
 	}
+#endif
 
 	futurebases[fbnum]->invert_colors = 0;
 	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], (const xmlChar *) "colors");
@@ -7741,12 +7832,19 @@ void propagate_one_minimove_within_table(tablebase_t *tb, int dtm, int dtc, loca
      * These stalemate and mate counts increment by one every HALF MOVE.
      */
 
+#if 0
     if (dtm > 0) {
-	insert_into_proptable(current_index, -dtm, dtc, 0);
+	insert_into_proptable(current_index, -dtm, dtc, current_position->multiplicity, 0);
     } else if ((dtm < 0) && (dtc < STALEMATE_COUNT)) {
-	insert_into_proptable(current_index, -dtm+1, dtc+1, 0);
+	insert_into_proptable(current_index, -dtm+1, dtc+1, current_position->multiplicity, 0);
     }
-
+#else
+    if (dtm > 0) {
+	insert_into_proptable(current_index, -dtm, dtc, 1, 0);
+    } else if ((dtm < 0) && (dtc < STALEMATE_COUNT)) {
+	insert_into_proptable(current_index, -dtm+1, dtc+1, 1, 0);
+    }
+#endif
 }
 
 void propagate_one_move_within_table(tablebase_t *tb, int dtm, int dtc, local_position_t *position)
@@ -7803,7 +7901,7 @@ void propagate_one_move_within_table(tablebase_t *tb, int dtm, int dtc, local_po
  * (within the tablebase) from the corresponding position.
  */
 
-void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, int dtc)
+void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symmetry, int dtm, int dtc)
 {
     local_position_t position;
     int piece;
@@ -7811,7 +7909,9 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int dtm, 
     int origin_square;
     struct movement *movementptr;
 
-    index_to_local_position(tb, index, &position);
+    /* This can fail if the symmetry isn't valid for this index */
+
+    if (! index_to_local_position(tb, index, symmetry, &position)) return;
 
     flip_side_to_move_local(&position);
 
@@ -8088,7 +8188,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
     struct movement *movementptr;
     int i;
 
-    if (! index_to_local_position(tb, index, &position)) {
+    if (! index_to_local_position(tb, index, 0, &position)) {
 
 	initialize_entry_as_illegal(tb, entry);
 	return 0;
@@ -8329,6 +8429,30 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 	    initialize_entry_with_stalemate(tb, entry);
 	    return 0;
 	} else {
+
+	    /* What's this?  Well, diagonal symmetry is more difficult to handle than other types of
+	     * symmetry because the piece along the diagonal don't actually move when you reflect
+	     * the board.  So, here, we double the movecnt to account for the symmetry so long as
+	     * the white king isn't on the a1/h8 diagonal.
+	     *
+	     * Other kinds of symmetry (horizontal and vertical) we can basically ignore at this
+	     * point, but please explain why.
+	     */
+
+	    /* Symmetry and multiplicty.  If we're using a symmetric index, then there might be more
+	     * than one actual board position that corresponds to a given index value.  The number
+	     * of non-identical board positions for a given index is called its multiplicity.  So
+	     * here we multiply the movecnt by the multiplicity of the position to get the total
+	     * number of moves out of all possible positions that correspond to this index.
+	     */
+
+	    movecnt *= position.multiplicity;
+
+#ifdef DEBUG_MOVE
+	    if (index == DEBUG_MOVE)
+		fprintf(stderr, "initialize index %d: %d movecnt\n", index, movecnt);
+#endif
+
 	    initialize_entry_with_movecnt(tb, entry,
 					  in_check(tb, &position) ? 128 + movecnt : movecnt);
 	    total_moves += movecnt;
@@ -8879,7 +9003,8 @@ int main(int argc, char *argv[])
 
 		    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
 
-			index_to_local_position(tb, index, &pos);
+			if (! index_to_local_position(tb, index, 0, &pos))
+			    index_to_local_position(tb, index, 1, &pos);
 
 			nextpos = pos;
 
@@ -8958,7 +9083,8 @@ int main(int argc, char *argv[])
 
 		    /* PAWNs */
 
-		    index_to_local_position(tb, index, &pos);
+		    if (! index_to_local_position(tb, index, 0, &pos))
+			index_to_local_position(tb, index, 1, &pos);
 		    nextpos = pos;
 		    flip_side_to_move_local(&nextpos);
 
