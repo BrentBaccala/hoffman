@@ -513,6 +513,8 @@ int num_propentries = 0;
 
 #define USE_DUAL_PROPTABLES 1
 
+#define CHECK_KING_LEGALITY_EARLY 1
+
 
 /***** UTILITY FUNCTIONS *****/
 
@@ -583,6 +585,12 @@ int find_name_in_array(char * name, char * array[])
  * structure.  Then we compute the positions of the mobile pieces and plug their bits into the
  * structure's vector at the right places.  Might implement this some day.
  */
+
+boolean check_king_legality(int kingA, int kingB) {
+    if ((ROW(kingA) < ROW(kingB) - 1) || (ROW(kingA) > ROW(kingB) + 1)) return 1;
+    if ((COL(kingA) < COL(kingB) - 1) || (COL(kingA) > COL(kingB) + 1)) return 1;
+    return 0;
+}
 
 unsigned char byte_transform[256];
 
@@ -1833,6 +1841,11 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
     int piece2;
     index_t index;
 
+#if CHECK_KING_LEGALITY_EARLY
+    if (! check_king_legality(original->piece_position[WHITE_KING], original->piece_position[BLACK_KING]))
+	return -1;
+#endif
+
     /* We don't want to change around the original position, during these next transformations, so
      * we use a copy of it.
      */
@@ -1970,6 +1983,10 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
     }
 
     if (!ret) return 0;
+
+#if CHECK_KING_LEGALITY_EARLY
+    if (! check_king_legality(p->piece_position[WHITE_KING], p->piece_position[BLACK_KING])) return 0;
+#endif
 
     if ((tb->symmetry == 8)
 	&& (ROW(p->piece_position[WHITE_KING]) == COL(p->piece_position[WHITE_KING]))
@@ -2704,7 +2721,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.225 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.226 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -5534,8 +5551,10 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm, int 
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == -1) {
+#if !CHECK_KING_LEGALITY_EARLY
 	/* This can happen if we don't fully check en passant legality (but right now, we do) */
 	fprintf(stderr, "Can't lookup local position in futurebase propagation!\n");  /* BREAKPOINT */
+#endif
 	return;
     }
 
@@ -7818,8 +7837,10 @@ void propagate_one_minimove_within_table(tablebase_t *tb, int dtm, int dtc, loca
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == -1) {
+#if !CHECK_KING_LEGALITY_EARLY
 	/* This can happen if we don't fully check en passant legality (but right now, we do) */
 	fprintf(stderr, "Can't lookup position in intratable propagation!\n");  /* BREAKPOINT */
+#endif
 	return;
     }
 
@@ -8232,6 +8253,15 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
 
+#if CHECK_KING_LEGALITY_EARLY
+			if (piece == WHITE_KING) {
+			    if (! check_king_legality(movementptr->square, position.piece_position[BLACK_KING])) continue;
+			}
+			if (piece == BLACK_KING) {
+			    if (! check_king_legality(movementptr->square, position.piece_position[WHITE_KING])) continue;
+			}
+#endif
+
 			/* If a piece is moving outside its restricted squares, we regard this
 			 * as a futurebase (since it will require back prop from futurebases)
 			 */
@@ -8259,6 +8289,16 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 		     * this position is a "mate in 0" (i.e, illegal)
 		     */
 
+#if CHECK_KING_LEGALITY_EARLY
+		    if (piece == WHITE_KING) {
+			if (! check_king_legality(movementptr->square, position.piece_position[BLACK_KING]))
+			    continue;
+		    }
+		    if (piece == BLACK_KING) {
+			if (! check_king_legality(movementptr->square, position.piece_position[WHITE_KING]))
+			    continue;
+		    }
+#endif
 		    if ((movementptr->vector & position.PTM_vector) == 0) {
 			movecnt ++;
 			for (i = 0; i < tb->num_pieces; i ++) {
