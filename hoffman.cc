@@ -1871,7 +1871,7 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
 		copy.piece_position[piece] = diagonal_reflection(copy.piece_position[piece]);
 	    }
 	}
-#if 0
+#if 1
 	if (ROW(copy.piece_position[WHITE_KING]) == COL(copy.piece_position[WHITE_KING])) {
 	    if (ROW(copy.piece_position[BLACK_KING]) > COL(copy.piece_position[BLACK_KING])) {
 		for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -1928,7 +1928,8 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
      */
 
     if ((tb->symmetry == 8)
-	&& (ROW(copy.piece_position[WHITE_KING]) != COL(copy.piece_position[WHITE_KING]))) {
+	&& ((ROW(copy.piece_position[WHITE_KING]) != COL(copy.piece_position[WHITE_KING]))
+	    || (ROW(copy.piece_position[BLACK_KING]) != COL(copy.piece_position[BLACK_KING])))) {
 	original->multiplicity = 2;
     } else {
 	original->multiplicity = 1;
@@ -1970,17 +1971,23 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
 
     if (!ret) return 0;
 
+    if ((tb->symmetry == 8)
+	&& (ROW(p->piece_position[WHITE_KING]) == COL(p->piece_position[WHITE_KING]))
+	&& (ROW(p->piece_position[BLACK_KING]) > COL(p->piece_position[BLACK_KING]))) return 0;
+
     /* Multiplicity - number of non-identical positions that this index corresponds to */
 
     if ((tb->symmetry == 8)
-	&& (ROW(p->piece_position[WHITE_KING]) != COL(p->piece_position[WHITE_KING]))) {
+	&& ((ROW(p->piece_position[WHITE_KING]) != COL(p->piece_position[WHITE_KING]))
+	    || (ROW(p->piece_position[BLACK_KING]) != COL(p->piece_position[BLACK_KING])))) {
 	p->multiplicity = 2;
     } else {
 	p->multiplicity = 1;
     }
 
     if (symmetry == 1) {
-	if (ROW(p->piece_position[WHITE_KING]) == COL(p->piece_position[WHITE_KING])) return 0;
+	if ((ROW(p->piece_position[WHITE_KING]) == COL(p->piece_position[WHITE_KING]))
+	    && (ROW(p->piece_position[BLACK_KING]) == COL(p->piece_position[BLACK_KING]))) return 0;
 
 	/* diagonal reflection */
 	p->board_vector = 0;
@@ -2697,7 +2704,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.224 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.225 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -7541,7 +7548,7 @@ boolean check_pruning(tablebase_t *tb) {
 	/* load_futurebase_from_file() already printed some kind of error message */
 	if (futurebases[fbnum] == NULL) return 0;
 
-#if 1
+#if 0
 	if (futurebases[fbnum]->symmetry != 1) {
 	    fprintf(stderr, "Can't backprop from 2/8-way symmetric futurebases (yet)\n");
 	    return 0;
