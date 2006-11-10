@@ -395,7 +395,6 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 struct format {
     int8 total_bytes;
     int32 dtm_mask;
-    int max_positive_dtm;
     int8 dtm_offset;
     int32 dtc_mask;
     int8 dtc_offset;
@@ -411,7 +410,7 @@ struct format {
 
 /* This is our old "fourbyte" format */
 
-struct format entries_format = {4, 0xff,0x7f,0, 0xff00,8, 0x7f0000,16, 0,0, 0,0, 0x800000,23};
+struct format entries_format = {4, 0xff,0, 0xff00,8, 0x7f0000,16, 0,0, 0,0, 0x800000,23};
 
 typedef int32 entry_t;
 
@@ -2965,7 +2964,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.228 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.229 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4101,26 +4100,53 @@ inline boolean is_position_valid(tablebase_t *tb, index_t index)
     else return (fetch_DTM_from_disk(tb,index) != 1);
 }
 
-inline int get_entry_raw_DTM(entry_t entry)
+inline int get_signed_field(int32 structure, int32 mask, int offset)
 {
-    int dtm = (entry & entries_format.dtm_mask) >> entries_format.dtm_offset;
+    int val = (structure & mask) >> offset;
 
     /* sign extend */
-    if (dtm > entries_format.max_positive_dtm)
-	dtm |= (~ entries_format.max_positive_dtm);
+    if (val > (mask >> (offset+1)))
+	val |= (~ (mask >> (offset+1)));
 
-    return dtm;
+    return val;
+}
+
+inline int32 set_signed_field(int32 structure, int32 mask, int offset, int val)
+{
+    if ((val > 0) && (val > (mask >> (offset+1)))) {
+	fprintf(stderr, "value too large in set_signed_field\n");  /* BREAKPOINT */
+    }
+    if ((val < 0) && (val < ~(mask >> (offset+1)))) {
+	fprintf(stderr, "value too small in set_signed_field\n");  /* BREAKPOINT */
+    }
+    structure &= (~ mask);
+    structure |= (val << offset) & mask;
+    return structure;
+}
+
+inline unsigned int get_unsigned_field(int32 structure, int32 mask, int offset)
+{
+    return (structure & mask) >> offset;
+}
+
+inline int32 set_unsigned_field(int32 structure, int32 mask, int offset, unsigned int val)
+{
+    if (val > mask) {
+	fprintf(stderr, "value too large in set_unsigned_field\n");  /* BREAKPOINT */
+    }
+    structure &= (~ mask);
+    structure |= (val << offset) & mask;
+    return structure;
+}
+
+inline int get_entry_raw_DTM(entry_t entry)
+{
+    return get_signed_field(entry, entries_format.dtm_mask, entries_format.dtm_offset);
 }
 
 inline entry_t set_entry_raw_DTM(entry_t entry, int dtm)
 {
-    if (dtm > entries_format.max_positive_dtm) {
-	/* XXX want to check negative values too */
-	fprintf(stderr, "DTM too large\n");  /* BREAKPOINT */
-    }
-    entry &= (~ entries_format.dtm_mask);
-    entry |= (dtm << entries_format.dtm_offset) & entries_format.dtm_mask;
-    return entry;
+    return set_signed_field(entry, entries_format.dtm_mask, entries_format.dtm_offset, dtm);
 }
 
 inline int get_raw_DTM(tablebase_t *tb, index_t index)
@@ -4130,17 +4156,12 @@ inline int get_raw_DTM(tablebase_t *tb, index_t index)
 
 inline int get_entry_DTC(entry_t entry)
 {
-    return (entry & entries_format.dtc_mask) >> entries_format.dtc_offset;
+    return get_unsigned_field(entry, entries_format.dtc_mask, entries_format.dtc_offset);
 }
 
 inline entry_t set_entry_DTC(entry_t entry, int dtc)
 {
-    if (dtc > entries_format.dtc_mask) {
-	fprintf(stderr, "DTC too large\n");
-    }
-    entry &= (~ entries_format.dtc_mask);
-    entry |= (dtc << entries_format.dtc_offset) & entries_format.dtc_mask;
-    return entry;
+    return set_unsigned_field(entry, entries_format.dtc_mask, entries_format.dtc_offset, dtc);
 }
 
 inline int get_DTC(tablebase_t *tb, index_t index)
@@ -4150,17 +4171,12 @@ inline int get_DTC(tablebase_t *tb, index_t index)
 
 inline int get_entry_movecnt(entry_t entry)
 {
-    return (entry & entries_format.movecnt_mask) >> entries_format.movecnt_offset;
+    return get_unsigned_field(entry, entries_format.movecnt_mask, entries_format.movecnt_offset);
 }
 
 inline entry_t set_entry_movecnt(entry_t entry, int movecnt)
 {
-    if (movecnt > entries_format.movecnt_mask) {
-	fprintf(stderr, "movecnt too large\n");
-    }
-    entry &= (~ entries_format.movecnt_mask);
-    entry |= (movecnt << entries_format.movecnt_offset) & entries_format.movecnt_mask;
-    return entry;
+    return set_unsigned_field(entry, entries_format.movecnt_mask, entries_format.movecnt_offset, movecnt);
 }
 
 inline int get_movecnt(tablebase_t *tb, index_t index)
@@ -4170,17 +4186,14 @@ inline int get_movecnt(tablebase_t *tb, index_t index)
 
 inline int get_entry_in_check_flag(entry_t entry)
 {
-    return (entry >> entries_format.in_check_flag_offset) & 1;
+    return get_unsigned_field(entry, 1 << entries_format.in_check_flag_offset,
+			      entries_format.in_check_flag_offset);
 }
 
 inline entry_t set_entry_in_check_flag(entry_t entry, int in_check_flag)
 {
-    if ((in_check_flag != 0) && (in_check_flag != 1)) {
-	fprintf(stderr, "in_check_flag not boolean\n");    /* BREAKPOINT */
-    }
-    entry &= (~ entries_format.in_check_flag_mask);
-    entry |= in_check_flag << entries_format.in_check_flag_offset;
-    return entry;
+    return set_unsigned_field(entry, 1 << entries_format.in_check_flag_offset,
+			      entries_format.in_check_flag_offset, in_check_flag);
 }
 
 inline int get_in_check_flag(tablebase_t *tb, index_t index)
