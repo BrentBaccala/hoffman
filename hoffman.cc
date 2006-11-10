@@ -144,6 +144,7 @@
 
 typedef unsigned long long int int64;
 typedef unsigned int int32;
+typedef unsigned char int8;
 typedef short boolean;
 
 typedef int32 index_t;
@@ -391,12 +392,28 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
  *
  */
 
-struct fourbyte_entry {
-    unsigned char movecnt;
-    char dtm;
-    unsigned char dtc;
-    unsigned char resv;
+struct format {
+    int8 total_bytes;
+    int32 dtm_mask;
+    int max_positive_dtm;
+    int8 dtm_offset;
+    int32 dtc_mask;
+    int8 dtc_offset;
+    int32 movecnt_mask;
+    int8 movecnt_offset;
+    int32 white_flag_mask;
+    int8 white_flag_offset;
+    int32 black_flag_mask;
+    int8 black_flag_offset;
+    int32 in_check_flag_mask;
+    int8 in_check_flag_offset;
 };
+
+/* This is our old "fourbyte" format */
+
+struct format entries_format = {4, 0xff,0x7f,0, 0xff00,8, 0x7f0000,16, 0,0, 0,0, 0x800000,23};
+
+typedef int32 entry_t;
 
 #define RESTRICTION_NONE 0
 #define RESTRICTION_DISCARD 1
@@ -464,7 +481,7 @@ typedef struct tablebase {
     int format;
 
     int entries_fd;
-    struct fourbyte_entry *entries;
+    entry_t *entries;
     futurevector_t *futurevectors;
 } tablebase_t;
 
@@ -1120,7 +1137,7 @@ index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
+	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
 #endif
 	    return -1;
 	}
@@ -1282,7 +1299,7 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
+	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
 #endif
 	    return -1;
 	}
@@ -1505,7 +1522,7 @@ index_t local_position_to_xor_index(tablebase_t *tb, local_position_t *pos)
 	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
+	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
 #endif
 	    return -1;
 	}
@@ -1709,7 +1726,7 @@ index_t local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
 	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
+	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
 #endif
 	    return -1;
 	}
@@ -1865,7 +1882,7 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 #if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");  /* BREAKPOINT */
+	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
 #endif
 	    return -1;
 	}
@@ -2948,7 +2965,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.227 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.228 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -3064,13 +3081,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     do_write(fd, buf, size);
     xmlFree(buf);
 
-    if (tb->format == FORMAT_FOURBYTE) {
-	if (lseek(fd, padded_size, SEEK_SET) != padded_size) {
-	    fprintf(stderr, "seek failed\n");
-	}
-	do_write(fd, tb->entries, sizeof(struct fourbyte_entry) * (tb->max_index + 1));
-	close(fd);
-    } else if (tb->format == FORMAT_ONE_BYTE_DTM) {
+    if (tb->format == FORMAT_ONE_BYTE_DTM) {
 	close(fd);
 	file = fopen(filename, "a");
 	if (file == NULL) {
@@ -3810,10 +3821,8 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  * buffer.  If the red/purple pointer catches up to the yellow pointer, then it means that there are
  * no read or purple buffers at the moment.
  *
- * The only functions "exported" from this section are the singly called init_entry_buffers() and
- * fetch_fourbyte_entry(), which is passed a tablebase pointer and an index and is expected to
- * return a pointer to the correct struct fourbyte_entry, which can be either read or written
- * without any further ado.
+ * The only functions "exported" from this section are the singly called init_entry_buffers(),
+ * fetch_entry(), and store_entry().
  *
  * I'm aiming right now for a target buffer size of 128 KB, since that's my kernel's maximum
  * internal request size.  So, 128 KB / 4 byte entries = 32 K entries = 1<<15
@@ -3821,10 +3830,10 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 
 #define NUM_ENTRY_BUFFERS 4
 #define ENTRY_BUFFER_ENTRIES (1<<15)
-#define ENTRY_BUFFER_BYTES (ENTRY_BUFFER_ENTRIES * sizeof(struct fourbyte_entry))
+#define ENTRY_BUFFER_BYTES (ENTRY_BUFFER_ENTRIES * sizeof(entry_t))
 
 struct entry_buffer {
-    struct fourbyte_entry *buffer;
+    entry_t *buffer;
     index_t start;
     struct aiocb aiocb;
 };
@@ -3847,7 +3856,7 @@ void turn_entry_buffer_blue(int fd, int buffernum)
     entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
     entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
     entry_buffers[buffernum].aiocb.aio_offset
-	= entry_buffers[buffernum].start * sizeof(struct fourbyte_entry);
+	= entry_buffers[buffernum].start * sizeof(entry_t);
 
     if (aio_read(& entry_buffers[buffernum].aiocb) != 0) {
 	fprintf(stderr, "Can't enqueue aio_read for entry buffer\n");
@@ -3880,7 +3889,7 @@ void wait_for_entry_buffer_green(int buffernum)
 	/* zero byte read - this is OK the first time through */
 	memset(entry_buffers[buffernum].buffer, 0, ENTRY_BUFFER_BYTES);
     } else if ((retval != ENTRY_BUFFER_BYTES)
-	       && (retval != sizeof(struct fourbyte_entry)
+	       && (retval != sizeof(entry_t)
 		   * ((proptable_tb->max_index - 1) % ENTRY_BUFFER_ENTRIES)))  {
 	fprintf(stderr, "entry buffer aio_read didn't return ENTRY_BUFFER_BYTES\n");
 	kill(getpid(), SIGSTOP);
@@ -3899,7 +3908,7 @@ void turn_entry_buffer_red(int fd, int buffernum)
     entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
     entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
     entry_buffers[buffernum].aiocb.aio_offset
-	= entry_buffers[buffernum].start * sizeof(struct fourbyte_entry);
+	= entry_buffers[buffernum].start * sizeof(entry_t);
 
     if (aio_write(& entry_buffers[buffernum].aiocb) != 0) {
 	fprintf(stderr, "Can't enqueue aio_write for entry buffer\n");
@@ -3948,7 +3957,7 @@ void init_entry_buffers(tablebase_t *tb)
     wait_for_entry_buffer_green(0);
 }
 
-struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
+entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 {
     if (tb->entries != NULL) {
 
@@ -4035,7 +4044,7 @@ struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
     if ((index < entry_buffers[yellow_entry_buffer].start)
 	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
 
-	fprintf(stderr, "fetch_fourbyte_entry(): special read; needed %d had %d\n",
+	fprintf(stderr, "fetch_entry_pointer(): special read; needed %d had %d\n",
 		index, entry_buffers[yellow_entry_buffer].start);  /* BREAKPOINT */
 
 	entry_buffers[yellow_entry_buffer].start = (index / ENTRY_BUFFER_ENTRIES) * ENTRY_BUFFER_ENTRIES;
@@ -4049,10 +4058,24 @@ struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
 
     if ((index < entry_buffers[yellow_entry_buffer].start)
 	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
-	fprintf(stderr, "Can't fetch in fetch_fourbyte_entry\n");
+	fprintf(stderr, "Can't fetch in fetch_entry_pointer\n");
     }
 
     return &entry_buffers[yellow_entry_buffer].buffer[index - entry_buffers[yellow_entry_buffer].start];
+}
+
+/* These last two functions are real simple right now, but I'm holding out the possibility that I'll
+ * want to flag buffers dirty when I store into them.
+ */
+
+entry_t fetch_entry(tablebase_t *tb, index_t index)
+{
+    return *fetch_entry_pointer(tb, index);
+}
+
+void store_entry(tablebase_t *tb, index_t index, entry_t entry)
+{
+    *fetch_entry_pointer(tb, index) = entry;
 }
 
 
@@ -4072,28 +4095,107 @@ struct fourbyte_entry * fetch_fourbyte_entry(tablebase_t *tb, index_t index)
  *
  */
 
-inline short does_PTM_win(struct fourbyte_entry *entry)
-{
-    return (entry->dtm > 0);
-}
-
-inline short does_PNTM_win(struct fourbyte_entry *entry)
-{
-    return ((entry->movecnt & 127) == 0) && (entry->dtm < 0);
-}
-
 inline boolean is_position_valid(tablebase_t *tb, index_t index)
 {
     if (tb->entries != NULL) return (get_DTM(tb,index) != 1);
     else return (fetch_DTM_from_disk(tb,index) != 1);
 }
 
+inline int get_entry_raw_DTM(entry_t entry)
+{
+    int dtm = (entry & entries_format.dtm_mask) >> entries_format.dtm_offset;
+
+    /* sign extend */
+    if (dtm > entries_format.max_positive_dtm)
+	dtm |= (~ entries_format.max_positive_dtm);
+
+    return dtm;
+}
+
+inline entry_t set_entry_raw_DTM(entry_t entry, int dtm)
+{
+    if (dtm > entries_format.max_positive_dtm) {
+	/* XXX want to check negative values too */
+	fprintf(stderr, "DTM too large\n");  /* BREAKPOINT */
+    }
+    entry &= (~ entries_format.dtm_mask);
+    entry |= (dtm << entries_format.dtm_offset) & entries_format.dtm_mask;
+    return entry;
+}
+
+inline int get_raw_DTM(tablebase_t *tb, index_t index)
+{
+    return get_entry_raw_DTM(fetch_entry(tb, index));
+}
+
+inline int get_entry_DTC(entry_t entry)
+{
+    return (entry & entries_format.dtc_mask) >> entries_format.dtc_offset;
+}
+
+inline entry_t set_entry_DTC(entry_t entry, int dtc)
+{
+    if (dtc > entries_format.dtc_mask) {
+	fprintf(stderr, "DTC too large\n");
+    }
+    entry &= (~ entries_format.dtc_mask);
+    entry |= (dtc << entries_format.dtc_offset) & entries_format.dtc_mask;
+    return entry;
+}
+
 inline int get_DTC(tablebase_t *tb, index_t index)
 {
-    struct fourbyte_entry *entry;
+    return get_entry_DTC(fetch_entry(tb, index));
+}
 
-    entry = fetch_fourbyte_entry(tb, index);
-    return entry->dtc;
+inline int get_entry_movecnt(entry_t entry)
+{
+    return (entry & entries_format.movecnt_mask) >> entries_format.movecnt_offset;
+}
+
+inline entry_t set_entry_movecnt(entry_t entry, int movecnt)
+{
+    if (movecnt > entries_format.movecnt_mask) {
+	fprintf(stderr, "movecnt too large\n");
+    }
+    entry &= (~ entries_format.movecnt_mask);
+    entry |= (movecnt << entries_format.movecnt_offset) & entries_format.movecnt_mask;
+    return entry;
+}
+
+inline int get_movecnt(tablebase_t *tb, index_t index)
+{
+    return get_entry_movecnt(fetch_entry(tb, index));
+}
+
+inline int get_entry_in_check_flag(entry_t entry)
+{
+    return (entry >> entries_format.in_check_flag_offset) & 1;
+}
+
+inline entry_t set_entry_in_check_flag(entry_t entry, int in_check_flag)
+{
+    if ((in_check_flag != 0) && (in_check_flag != 1)) {
+	fprintf(stderr, "in_check_flag not boolean\n");    /* BREAKPOINT */
+    }
+    entry &= (~ entries_format.in_check_flag_mask);
+    entry |= in_check_flag << entries_format.in_check_flag_offset;
+    return entry;
+}
+
+inline int get_in_check_flag(tablebase_t *tb, index_t index)
+{
+    return get_entry_in_check_flag(fetch_entry(tb, index));
+}
+
+inline short does_PTM_win(entry_t entry)
+{
+    return (get_entry_raw_DTM(entry) > 0);
+}
+
+inline short does_PNTM_win(entry_t entry)
+{
+    return (get_entry_movecnt(entry) == 0) && (get_entry_raw_DTM(entry) < 0);
 }
 
 /* Get the result in a format suitable for a one-byte DTM tablebase
@@ -4103,26 +4205,27 @@ inline int get_DTC(tablebase_t *tb, index_t index)
  * N = mate in N-1
  * -1 = PTM checkmated
  * -N = PNTM will have a mate in N-1 after this move
+ *
+ * The difference between get_DTM (here) and get_raw_DTM (above) is that if the DTM value is less
+ * than zero (PNTM wins), but movecnt is still greater than zero, then there are still moves that
+ * might let PTM slip off the hook, so in that case we indicate draw.
  */
 
-int get_entry_DTM(struct fourbyte_entry *entry)
+int get_entry_DTM(entry_t entry)
 {
-    return (does_PTM_win(entry) || does_PNTM_win(entry)) ? entry->dtm : 0;
+    return (does_PTM_win(entry) || does_PNTM_win(entry)) ? get_entry_raw_DTM(entry) : 0;
 }
 
 int get_DTM(tablebase_t *tb, index_t index)
 {
-    struct fourbyte_entry *entry;
-
-    entry = fetch_fourbyte_entry(tb, index);
-    return get_entry_DTM(entry);
+    return get_entry_DTM(fetch_entry(tb, index));
 }
 
 /* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 61538 */
+/* #define DEBUG_MOVE 11762 */
 
 /* Four possible ways we can initialize a tablebase entry for a position:
  *  - it's illegal
@@ -4131,86 +4234,104 @@ int get_DTM(tablebase_t *tb, index_t index)
  *  - any other position, with 'movecnt' possible moves out the position
  */
 
-void initialize_entry(tablebase_t *tb, struct fourbyte_entry *entry, int movecnt, int dtm)
+void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm, int in_check_flag)
 {
-    entry->movecnt = movecnt;
-    entry->dtm = dtm;
-    entry->dtc = 0;
+    entry_t entry = 0;
+
+    entry = set_entry_movecnt(entry, movecnt);
+    entry = set_entry_raw_DTM(entry, dtm);
+    entry = set_entry_in_check_flag(entry, in_check_flag);
+
+    store_entry(tb, index, entry);
 }
 
-void initialize_entry_as_illegal(tablebase_t *tb, struct fourbyte_entry *entry)
+void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
 {
     /* XXX need to look more closely at this (again) */
-    initialize_entry(tb, entry, 0, 0);
+    initialize_entry(tb, index, 0, 0, 0);
     /* initialize_entry(tb, entry, 0, 1); */
 }
 
-void initialize_entry_with_PNTM_mated(tablebase_t *tb, struct fourbyte_entry *entry)
+void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
 {
-    initialize_entry(tb, entry, 0, 1);
+    initialize_entry(tb, index, 0, 1, 0);
     total_legal_positions ++;
     total_PNTM_mated_positions ++;
 }
 
-void initialize_entry_with_stalemate(tablebase_t *tb, struct fourbyte_entry *entry)
+void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
 {
     /* use movecnt 127 as stalemate for now */
-    initialize_entry(tb, entry, 127, 0);
+    /* XXX this should at least be (movecnt_mask - 1) */
+    initialize_entry(tb, index, 127, 0, 0);
     total_legal_positions ++;
     total_stalemate_positions ++;
 }
 
-void initialize_entry_with_movecnt(tablebase_t *tb, struct fourbyte_entry *entry, int movecnt)
+void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt, int in_check)
 {
-    initialize_entry(tb, entry, movecnt, 0);
+    initialize_entry(tb, index, movecnt, 0, in_check);
     total_legal_positions ++;
 }
 
-inline void PTM_wins(struct fourbyte_entry *entry, int dtm, int dtc)
+inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
 {
+    entry_t entry = fetch_entry(tb, index);
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	printf("PTM_wins; index=%d; dtm=%d\n", index, dtm);
+#endif
 
     if (dtm < 0) {
 	fprintf(stderr, "Negative distance to mate in PTM_wins!?\n"); /* BREAKPOINT */
-    } else if ((dtm < entry->dtm) || (entry->dtm <= 0)) {
-	entry->dtm = dtm;
-	entry->dtc = dtc;
+    } else if ((dtm < get_entry_raw_DTM(entry)) || (get_entry_raw_DTM(entry) <= 0)) {
+	entry = set_entry_raw_DTM(entry, dtm);
+	entry = set_entry_DTC(entry, dtc);
+	store_entry(tb, index, entry);
     }
 }
 
-inline void add_one_to_PNTM_wins(struct fourbyte_entry *entry, int dtm, int dtc)
+inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
 {
+    entry_t entry = fetch_entry(tb, index);
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	printf("PNTM_wins; index=%d; dtm=%d\n", index, dtm);
+#endif
 
     if (dtm > 0) {
 	fprintf(stderr, "Positive distance to mate in PNTM_wins!?\n"); /* BREAKPOINT */
     } else {
-	entry->movecnt --;
-	if ((dtm < entry->dtm) && (entry->dtm <= 0)) {
+	entry = set_entry_movecnt(entry, get_entry_movecnt(entry) - 1);
+	if ((dtm < get_entry_raw_DTM(entry)) && (get_entry_raw_DTM(entry) <= 0)) {
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
 	    /* XXX need to think more about the stalemates */
-	    entry->dtm = dtm;
-	    entry->dtc = dtc;
+	    entry = set_entry_raw_DTM(entry, dtm);
+	    entry = set_entry_DTC(entry, dtc);
 	}
 
-	if ((entry->movecnt == 0) && (entry->dtm == -1)) {
+	if ((get_entry_movecnt(entry) == 0) && (!get_entry_in_check_flag(entry))
+	    && (get_entry_raw_DTM(entry) == -1)) {
 
 	    /* In this case, the only moves at PTM's disposal move him into check (DTM is now one,
 	     * so it would drop to zero on next move).  So we need to distinguish here between being
-	     * in check (it's checkmate) and not being in check (stalemate).  I went to the trouble
-	     * in initialize_tablebase() to check for this (no pun intended) and set the high order
-	     * bit of movecnt on in-check positions.  So the only way movecnt has actually made it
-	     * to zero here is if we're not in check, so this is stalemate...
+	     * in check (it's checkmate) and not being in check (stalemate).  This is stalemate...
 	     */
 
 	    total_stalemate_positions ++;
 
-	    entry->dtm = 0;
-	    entry->dtc = 0;
+	    entry = set_entry_raw_DTM(entry, 0);
+	    entry = set_entry_DTC(entry, 0);
 	}
 
 	/* XXX not sure about this stalemate code */
-	if (dtc < entry->dtc) {
-	    entry->dtc = dtc;
+	if (dtc < get_entry_DTC(entry)) {
+	    entry = set_entry_DTC(entry, dtc);
 	}
+
+	store_entry(tb, index, entry);
     }
 }
 
@@ -5037,7 +5158,7 @@ void proptable_full(void)
 #endif
 }
 
-void commit_proptable_entry(proptable_entry_t *propentry, struct fourbyte_entry *entry)
+void commit_proptable_entry(proptable_entry_t *propentry)
 {
     int dtm = propentry->dtm;
     int i;
@@ -5046,13 +5167,13 @@ void commit_proptable_entry(proptable_entry_t *propentry, struct fourbyte_entry 
      * propagation for illegal positions.
      */
 
-    if (entry->dtm == 1) return;
+    if (get_raw_DTM(proptable_tb, propentry->index) == 1) return;
 
     if (dtm > 0) {
-	PTM_wins(entry, dtm, propentry->dtc);
+	PTM_wins(proptable_tb, propentry->index, dtm, propentry->dtc);
     } else if (dtm < 0) {
 	for (i=0; i<propentry->movecnt; i++) {
-	    add_one_to_PNTM_wins(entry, dtm, propentry->dtc);
+	    add_one_to_PNTM_wins(proptable_tb, propentry->index, dtm, propentry->dtc);
 	}
     }
 }
@@ -5215,7 +5336,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
     dest->index = proptable_tb->max_index + 1;
 }
 
-futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct fourbyte_entry *entry);
+futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
 
 int proptable_finalize(int target_dtm)
@@ -5384,7 +5505,7 @@ int proptable_finalize(int target_dtm)
 
     for (index = 0; index <= proptable_tb->max_index; index ++) {
 
-	struct fourbyte_entry *fourbyte_entry = fetch_fourbyte_entry(proptable_tb, index);
+	entry_t entry = fetch_entry(proptable_tb, index);
 	futurevector_t futurevector = 0;
 	futurevector_t possible_futuremoves;
 
@@ -5393,12 +5514,12 @@ int proptable_finalize(int target_dtm)
 	}
 
 	if (target_dtm == 0) {
-	    possible_futuremoves = initialize_tablebase_entry(proptable_tb, index, fourbyte_entry);
+	    possible_futuremoves = initialize_tablebase_entry(proptable_tb, index);
 	}
 
 	while (sorting_network[1].index == index ) {
 
-	    commit_proptable_entry(&sorting_network[1], fourbyte_entry);
+	    commit_proptable_entry(&sorting_network[1]);
 
 	    if (sorting_network[1].futurevector & futurevector) {
 		global_position_t global;
@@ -5426,7 +5547,7 @@ int proptable_finalize(int target_dtm)
 
 	/* Don't track futuremoves for illegal (DTM 1) positions */
 
-	if ((target_dtm == 0) && (get_entry_DTM(fourbyte_entry) != 1)) {
+	if ((target_dtm == 0) && (get_entry_DTM(entry) != 1)) {
 
 	    if ((futurevector & possible_futuremoves) != futurevector) {
 		global_position_t global;
@@ -5437,10 +5558,10 @@ int proptable_finalize(int target_dtm)
 	    finalize_futuremove(proptable_tb, index, possible_futuremoves ^ futurevector);
 	}
 
-	if ((target_dtm != 0) && (get_entry_DTM(fourbyte_entry) == target_dtm)) {
-	    back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, fourbyte_entry->dtc);
+	if ((target_dtm != 0) && (get_entry_DTM(entry) == target_dtm)) {
+	    back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, get_entry_DTC(entry));
 	    if (proptable_tb->symmetry == 8) {
-		back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, fourbyte_entry->dtc);
+		back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, get_entry_DTC(entry));
 	    }
 	    positions_finalized ++;
 	}
@@ -5514,7 +5635,7 @@ int propagation_pass(int target_dtm)
 
 	for (index = 0; index <= proptable_tb->max_index; index ++) {
 
-	    struct fourbyte_entry *fourbyte_entry = fetch_fourbyte_entry(proptable_tb, index);
+	    entry_t entry = fetch_entry(proptable_tb, index);
 
 	    /* The symmetry code needs a bit more work here.  It really depends on the relative
 	     * multiplicity of the position we prop'ing from and the position we prop'ing to
@@ -5531,11 +5652,11 @@ int propagation_pass(int target_dtm)
 	     * time.
 	     */
 
-	    if ((target_dtm != 0) && (get_entry_DTM(fourbyte_entry) == target_dtm)) {
-		back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, fourbyte_entry->dtc);
+	    if ((target_dtm != 0) && (get_entry_DTM(entry) == target_dtm)) {
+		back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, get_entry_DTC(entry));
 #if 1
 		if (proptable_tb->symmetry == 8) {
-		    back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, fourbyte_entry->dtc);
+		    back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, get_entry_DTC(entry));
 		}
 #endif
 		positions_finalized ++;
@@ -5608,7 +5729,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 	    proptable_tb->futurevectors[index] ^= futurevector;
 	}
 
-	commit_proptable_entry(&entry, fetch_fourbyte_entry(proptable_tb, index));
+	commit_proptable_entry(&entry);
 
 	return;
     }
@@ -5780,7 +5901,7 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm, int 
     if (current_index == -1) {
 #if !CHECK_KING_LEGALITY_EARLY
 	/* This can happen if we don't fully check en passant legality (but right now, we do) */
-	fprintf(stderr, "Can't lookup local position in futurebase propagation!\n");  /* BREAKPOINT */
+	fprintf(stderr, "Can't lookup local position in futurebase propagation!\n");
 #endif
 	return;
     }
@@ -8066,14 +8187,14 @@ void propagate_one_minimove_within_table(tablebase_t *tb, int dtm, int dtc, loca
     if (current_index == -1) {
 #if !CHECK_KING_LEGALITY_EARLY
 	/* This can happen if we don't fully check en passant legality (but right now, we do) */
-	fprintf(stderr, "Can't lookup position in intratable propagation!\n");  /* BREAKPOINT */
+	fprintf(stderr, "Can't lookup position in intratable propagation!\n");
 #endif
 	return;
     }
 
 #ifdef DEBUG_MOVE
     if (current_index == DEBUG_MOVE)
-	printf("propagate_one_minimove_within_table:  current_index=%d; dtm=%d\n", current_index, dtm);
+	printf("propagate_one_minimove_within_table:  current_index=%d; dtm=%d; dtc=%d\n", current_index, dtm, dtc);
 #endif
 
     /* Parent position is the FUTURE position.  We now back-propagate to
@@ -8435,7 +8556,7 @@ int in_check(tablebase_t *tb, local_position_t *position)
     return 0;
 }
 
-futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct fourbyte_entry *entry)
+futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 {
     local_position_t position;
     int piece;
@@ -8445,7 +8566,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 
     if (! index_to_local_position(tb, index, 0, &position)) {
 
-	initialize_entry_as_illegal(tb, entry);
+	initialize_entry_as_illegal(tb, index);
 	return 0;
 
     } else {
@@ -8531,7 +8652,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 			for (i = 0; i < tb->num_pieces; i ++) {
 			    if (movementptr->square == position.piece_position[i]) {
 				if ((i == BLACK_KING) || (i == WHITE_KING)) {
-				    initialize_entry_with_PNTM_mated(tb, entry);
+				    initialize_entry_with_PNTM_mated(tb, index);
 				    return 0;
 				}
 				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
@@ -8630,12 +8751,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 
 		    if (position.side_to_move == WHITE) {
 			if (movementptr->square == position.piece_position[BLACK_KING]) {
-			    initialize_entry_with_PNTM_mated(tb, entry);
+			    initialize_entry_with_PNTM_mated(tb, index);
 			    return 0;
 			}
 		    } else {
 			if (movementptr->square == position.piece_position[WHITE_KING]) {
-			    initialize_entry_with_PNTM_mated(tb, entry);
+			    initialize_entry_with_PNTM_mated(tb, index);
 			    return 0;
 			}
 		    }
@@ -8700,7 +8821,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 	 */
 
 	if (movecnt == 0) {
-	    initialize_entry_with_stalemate(tb, entry);
+	    initialize_entry_with_stalemate(tb, index);
 	    return 0;
 	} else {
 
@@ -8727,8 +8848,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index, struct
 		fprintf(stderr, "initialize index %d: %d movecnt\n", index, movecnt);
 #endif
 
-	    initialize_entry_with_movecnt(tb, entry,
-					  in_check(tb, &position) ? 128 + movecnt : movecnt);
+	    initialize_entry_with_movecnt(tb, index, movecnt, in_check(tb, &position));
 	    total_moves += movecnt;
 	    total_futuremoves += futuremovecnt;
 	    return futurevector;
@@ -8741,7 +8861,7 @@ void initialize_tablebase(tablebase_t *tb)
     index_t index;
 
     for (index=0; index <= tb->max_index; index++) {
-	tb->futurevectors[index] = initialize_tablebase_entry(tb, index, fetch_fourbyte_entry(tb, index));
+	tb->futurevectors[index] = initialize_tablebase_entry(tb, index);
     }
 }
 
@@ -8805,7 +8925,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	}
 	init_entry_buffers(tb);
     } else {
-	tb->entries = (struct fourbyte_entry *) calloc(tb->max_index + 1, sizeof(struct fourbyte_entry));
+	tb->entries = (entry_t *) calloc(tb->max_index + 1, sizeof(entry_t));
 	if (tb->entries == NULL) {
 	    fprintf(stderr, "Can't malloc tablebase entries\n");
 	}
