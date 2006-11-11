@@ -500,6 +500,7 @@ typedef struct tablebase {
  * use 64 byte cache lines.
  */
 
+#if 0
 typedef struct {
     index_t index;
     short dtm;
@@ -507,6 +508,12 @@ typedef struct {
     unsigned char movecnt;
     futurevector_t futurevector;
 } proptable_entry_t;
+#else
+typedef struct {
+    int64 a;
+    int64 b;
+} proptable_entry_t;
+#endif
 
 proptable_entry_t *proptable = NULL;
 
@@ -536,6 +543,13 @@ int num_propentries = 0;
 #define USE_DUAL_PROPTABLES 1
 
 #define CHECK_KING_LEGALITY_EARLY 1
+
+
+/* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
+ * doing to process a single move.
+ */
+
+/* #define DEBUG_MOVE 30339 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2969,7 +2983,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.231 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.232 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -3833,7 +3847,7 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  */
 
 #define NUM_ENTRY_BUFFERS 4
-#define ENTRY_BUFFER_ENTRIES (1<<15)
+#define ENTRY_BUFFER_ENTRIES (1<<12)
 #define ENTRY_BUFFER_BYTES (ENTRY_BUFFER_ENTRIES * sizeof(entry_t))
 
 struct entry_buffer {
@@ -4074,11 +4088,19 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 entry_t fetch_entry(tablebase_t *tb, index_t index)
 {
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	fprintf(stderr, "fetching 0x%x from %d\n", *fetch_entry_pointer(tb, index), index);
+#endif
     return *fetch_entry_pointer(tb, index);
 }
 
 void store_entry(tablebase_t *tb, index_t index, entry_t entry)
 {
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	fprintf(stderr, "storing 0x%x to %d\n", entry, index);
+#endif
     *fetch_entry_pointer(tb, index) = entry;
 }
 
@@ -4260,12 +4282,6 @@ int get_DTM(tablebase_t *tb, index_t index)
     return get_entry_DTM(fetch_entry(tb, index));
 }
 
-/* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
- * doing to process a single move.
- */
-
-/* #define DEBUG_MOVE 7 */
-
 /* Four possible ways we can initialize a tablebase entry for a position:
  *  - it's illegal
  *  - PNTM's mated
@@ -4337,7 +4353,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dt
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("PNTM_wins; index=%d; dtm=%d\n", index, dtm);
+	printf("add_one_to_PNTM_wins; index=%d; dtm=%d\n", index, dtm);
 #endif
 
     if (dtm > 0) {
@@ -5017,59 +5033,90 @@ void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char 
     set_unsigned_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset, futurevector);
 }
 
-void merge_propentrys(proptable_entry_t *dest, proptable_entry_t *src)
+index_t get_propentry_index(proptable_entry_t *propentry)
 {
-    if (src->dtm > 0) {
-	/* DTM > 0 - this move lets PTM mate from this position.  Update the proptable entry if
-	 * either we don't have any PTM mates yet (table's dtm <= 0), or if this new mate is faster
-	 * than the old one.
-	 */
-	if ((dest->dtm <= 0) || (src->dtm < dest->dtm)) {
-	    dest->dtm = src->dtm;
-	    dest->dtc = src->dtc;
-	}
-    } else if (src->dtm < 0) {
-	/* DTM < 0 - this move lets PNTM mate from this position.  Update the proptable entry only
-	 * if we don't have any PTM mates (table's dtm <= 0) and this PNTM mate is slower than the
-	 * old one.
-	 */
-	if ((dest->dtm <= 0) && (src->dtm < dest->dtm)) {
-	    dest->dtm = src->dtm;
-	    dest->dtc = src->dtc;
-	}
-    }
+    int32 *ptr = (int32 *) propentry;
+    return get_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset);
+}
 
-    dest->movecnt += src->movecnt;
+void set_propentry_index(proptable_entry_t *propentry, index_t index)
+{
+    int32 *ptr = (int32 *) propentry;
+    set_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset, index);
+}
 
-    if (dest->futurevector & src->futurevector) {
-	global_position_t global;
-	index_to_global_position(proptable_tb, dest->index, &global);
-	/* This might happen just because of symmetry issues */
-#if 0
-	fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
-#endif
-    }
-
-    dest->futurevector |= src->futurevector;
+futurevector_t get_propentry_futurevector(proptable_entry_t *propentry)
+{
+    int32 *ptr = (int32 *) propentry;
+    return get_unsigned_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset);
 }
 
 void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movecnt, futurevector_t futurevector)
 {
-    proptable_entry_t src;
-
+    int32 *dest = (int32 *) &proptable[propentry];
+    int dest_dtm = get_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset);
     proptable_merges ++;
 
-    /* merge_propentrys() never uses the source index, because it's assumed to be identical to the
-     * destination index (it's a merge, after all)
-     */
-    /* src.index = index; */
-    src.dtm = dtm;
-    src.dtc = dtc;
-    src.movecnt = movecnt;
-    src.futurevector = futurevector;
+    if (dtm > 0) {
+	/* DTM > 0 - this move lets PTM mate from this position.  Update the proptable entry if
+	 * either we don't have any PTM mates yet (table's dtm <= 0), or if this new mate is faster
+	 * than the old one.
+	 */
+	if ((dest_dtm <= 0) || (dtm < dest_dtm)) {
+	    set_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset, dtm);
+	    set_unsigned_field(dest, proptable_format.dtc_mask, proptable_format.dtc_offset, dtc);
+	}
+    } else if (dtm < 0) {
+	/* DTM < 0 - this move lets PNTM mate from this position.  Update the proptable entry only
+	 * if we don't have any PTM mates (table's dtm <= 0) and this PNTM mate is slower than the
+	 * old one.
+	 */
+	if ((dest_dtm <= 0) && (dtm < dest_dtm)) {
+	    set_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset, dtm);
+	    set_unsigned_field(dest, proptable_format.dtc_mask, proptable_format.dtc_offset, dtc);
+	}
+    }
 
-    merge_propentrys(&proptable[propentry], &src);
+    set_unsigned_field(dest, proptable_format.movecnt_mask, proptable_format.movecnt_offset,
+		       get_unsigned_field(dest, proptable_format.movecnt_mask, proptable_format.movecnt_offset) + movecnt);
+
+    if (get_unsigned_field(dest, proptable_format.futurevector_mask, proptable_format.futurevector_offset) & futurevector) {
+	global_position_t global;
+	index_to_global_position(proptable_tb, get_propentry_index(&proptable[propentry]), &global);
+	/* This might happen just because of symmetry issues */
+#if 0
+	fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
+#endif
+    }
+
+    set_unsigned_field(dest, proptable_format.futurevector_mask, proptable_format.futurevector_offset,
+		       futurevector | get_propentry_futurevector(&proptable[propentry]));
 }
+
+void commit_proptable_entry(proptable_entry_t *propentry)
+{
+    int32 *ptr = (int32 *) propentry;
+    index_t index = get_propentry_index(propentry);
+    int dtm = get_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset);
+    int dtc = get_unsigned_field(ptr, proptable_format.dtc_mask, proptable_format.dtc_offset);
+    int movecnt = get_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset);
+    int i;
+
+    /* Skip everything if the position isn't valid.  In particular, we don't track futuremove
+     * propagation for illegal positions.
+     */
+
+    if (get_raw_DTM(proptable_tb, index) == 1) return;
+
+    if (dtm > 0) {
+	PTM_wins(proptable_tb, index, dtm, dtc);
+    } else if (dtm < 0) {
+	for (i=0; i<movecnt; i++) {
+	    add_one_to_PNTM_wins(proptable_tb, index, dtm, dtc);
+	}
+    }
+}
+
 
 int num_proptables = 0;
 int proptable_output_fd = -1;
@@ -5201,26 +5248,6 @@ void proptable_full(void)
 #endif
 }
 
-void commit_proptable_entry(proptable_entry_t *propentry)
-{
-    int dtm = propentry->dtm;
-    int i;
-
-    /* Skip everything if the position isn't valid.  In particular, we don't track futuremove
-     * propagation for illegal positions.
-     */
-
-    if (get_raw_DTM(proptable_tb, propentry->index) == 1) return;
-
-    if (dtm > 0) {
-	PTM_wins(proptable_tb, propentry->index, dtm, propentry->dtc);
-    } else if (dtm < 0) {
-	for (i=0; i<propentry->movecnt; i++) {
-	    add_one_to_PNTM_wins(proptable_tb, propentry->index, dtm, propentry->dtc);
-	}
-    }
-}
-
 /* proptable_finalize()
  *
  * Start a new set of proptables and commit the old set into the entries array.
@@ -5291,7 +5318,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	while (proptable_buffer_index[tablenum] < PROPTABLE_BUFFER_ENTRIES) {
 
-	    if (proptable_buffer[current_propbuf(tablenum)][proptable_buffer_index[tablenum]].index != 0) {
+	    if (get_propentry_index(&proptable_buffer[current_propbuf(tablenum)][proptable_buffer_index[tablenum]]) != 0) {
 		*dest = proptable_buffer[current_propbuf(tablenum)][proptable_buffer_index[tablenum]];
 		proptable_buffer_index[tablenum] ++;
 		return;
@@ -5376,7 +5403,8 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
     /* No, we're really at the end! */
 
-    dest->index = proptable_tb->max_index + 1;
+    /* XXX could be a problem if max_index + 1 won't fit in the index element */
+    set_propentry_index(dest, proptable_tb->max_index + 1);
 }
 
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
@@ -5529,13 +5557,15 @@ int proptable_finalize(int target_dtm)
 	    fetch_next_propentry(i, &sorting_network[highbit + i]);
 	    proptable_num[highbit + i] = i;
 	} else {
-	    sorting_network[highbit + i].index = proptable_tb->max_index + 1;
+	    /* XXX could be a problem if max_index + 1 won't fit in the index element */
+	    set_propentry_index(&sorting_network[highbit + i], proptable_tb->max_index + 1);
 	    proptable_num[highbit + i] = -1;
 	}
     }
 
     for (network_node = highbit-1; network_node > 0; network_node --) {
-	if (sorting_network[2*network_node].index < sorting_network[2*network_node+1].index) {
+	if (get_propentry_index(&sorting_network[2*network_node])
+	    < get_propentry_index(&sorting_network[2*network_node+1])) {
 	    sorting_network[network_node] = sorting_network[2*network_node];
 	    proptable_num[network_node] = proptable_num[2*network_node];
 	} else {
@@ -5548,11 +5578,11 @@ int proptable_finalize(int target_dtm)
 
     for (index = 0; index <= proptable_tb->max_index; index ++) {
 
-	entry_t entry = fetch_entry(proptable_tb, index);
+	entry_t entry;
 	futurevector_t futurevector = 0;
 	futurevector_t possible_futuremoves;
 
-	if (sorting_network[1].index < index) {
+	if (get_propentry_index(&sorting_network[1]) < index) {
 	    fprintf(stderr, "Out-of-order entries in sorting network\n");   /* BREAKPOINT */
 	}
 
@@ -5560,17 +5590,17 @@ int proptable_finalize(int target_dtm)
 	    possible_futuremoves = initialize_tablebase_entry(proptable_tb, index);
 	}
 
-	while (sorting_network[1].index == index ) {
+	while (get_propentry_index(&sorting_network[1]) == index ) {
 
 	    commit_proptable_entry(&sorting_network[1]);
 
-	    if (sorting_network[1].futurevector & futurevector) {
+	    if (get_propentry_futurevector(&sorting_network[1]) & futurevector) {
 		global_position_t global;
-		index_to_global_position(proptable_tb, sorting_network[1].index, &global);
+		index_to_global_position(proptable_tb, get_propentry_index(&sorting_network[1]), &global);
 		fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
 	    }
 
-	    futurevector |= sorting_network[1].futurevector;
+	    futurevector |= get_propentry_futurevector(&sorting_network[1]);
 
 	    fetch_next_propentry(proptable_num[1], &sorting_network[highbit + proptable_num[1]]);
 
@@ -5578,7 +5608,8 @@ int proptable_finalize(int target_dtm)
 
 	    while (network_node > 1) {
 		network_node >>= 1;
-		if (sorting_network[2*network_node].index < sorting_network[2*network_node+1].index) {
+		if (get_propentry_index(&sorting_network[2*network_node])
+		    < get_propentry_index(&sorting_network[2*network_node+1])) {
 		    sorting_network[network_node] = sorting_network[2*network_node];
 		    proptable_num[network_node] = proptable_num[2*network_node];
 		} else {
@@ -5587,6 +5618,8 @@ int proptable_finalize(int target_dtm)
 		}
 	    }
 	}
+
+	entry = fetch_entry(proptable_tb, index);
 
 	/* Don't track futuremoves for illegal (DTM 1) positions */
 
@@ -5749,11 +5782,12 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 
     if (num_propentries == 0) {
 	proptable_entry_t entry;
+	int32 *ptr = (int32 *) &entry;
 
-	entry.index = index;
-	entry.dtm = dtm;
-	entry.dtc = dtc;
-	entry.movecnt = movecnt;
+	set_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset, index);
+	set_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset, dtm);
+	set_unsigned_field(ptr, proptable_format.dtc_mask, proptable_format.dtc_offset, dtc);
+	set_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset, movecnt);
 
 	/* Don't track futuremoves for illegal (DTM 1) positions */
 
@@ -5791,29 +5825,29 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 
     propentry = index / scaling_factor;
 
-    if (proptable[propentry].index == 0) {
+    if (get_propentry_index(&proptable[propentry]) == 0) {
 	/* empty slot: insert at propentry */
 	insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	return;
-    } else if (proptable[propentry].index == index) {
+    } else if (get_propentry_index(&proptable[propentry]) == index) {
 	/* entry at slot with identical index: merge at propentry */
 	merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	return;
-    } else if (proptable[propentry].index > index) {
+    } else if (get_propentry_index(&proptable[propentry]) > index) {
 	/* entry at slot greater than index to be inserted */
-	while ((proptable[propentry].index > index) && (propentry > 0)) propentry --;
-	if (proptable[propentry].index == 0) {
+	while ((get_propentry_index(&proptable[propentry]) > index) && (propentry > 0)) propentry --;
+	if (get_propentry_index(&proptable[propentry]) == 0) {
 	    /* empty slot at lower end of a block all gt than index: insert there */
 	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
-	} else if (proptable[propentry].index == index) {
+	} else if (get_propentry_index(&proptable[propentry]) == index) {
 	    /* identical slot in a block: merge there */
 	    merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	    return;
-	} else if (proptable[propentry].index > index) {
+	} else if (get_propentry_index(&proptable[propentry]) > index) {
 	    /* we're at the beginning of the table and the first entry is gt index */
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
-		if (proptable[zerooffset].index == 0) {
+		if (get_propentry_index(&proptable[zerooffset]) == 0) {
 		    memmove(proptable + 1, proptable,
 			    (zerooffset) * sizeof(proptable_entry_t));
 		    insert_at_propentry(0, index, dtm, dtc, movecnt, futurevector);
@@ -5828,20 +5862,20 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 	}
     } else {
 	/* entry at slot less than index to be inserted */
-	while ((proptable[propentry].index != 0) && (proptable[propentry].index < index)
+	while ((get_propentry_index(&proptable[propentry]) != 0) && (get_propentry_index(&proptable[propentry]) < index)
 	       && (propentry < num_propentries - 1)) propentry ++;
-	if (proptable[propentry].index == 0) {
+	if (get_propentry_index(&proptable[propentry]) == 0) {
 	    /* empty slot at upper end of a block all lt than index: insert there */
 	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
-	} else if (proptable[propentry].index == index) {
+	} else if (get_propentry_index(&proptable[propentry]) == index) {
 	    /* identical slot in a block: merge there */
 	    merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	    return;
-	} else if (proptable[propentry].index < index) {
+	} else if (get_propentry_index(&proptable[propentry]) < index) {
 	    /* we're at the end of the table and the last entry is lt index */
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
-		if (proptable[num_propentries - 1 - zerooffset].index == 0) {
+		if (get_propentry_index(&proptable[num_propentries - 1 - zerooffset]) == 0) {
 		    memmove(proptable + num_propentries - 1 - zerooffset,
 			    proptable + num_propentries - zerooffset,
 			    (zerooffset) * sizeof(proptable_entry_t));
@@ -5862,14 +5896,14 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 
     for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
 	if ((propentry + zerooffset < num_propentries - 1)
-	    && (proptable[propentry+zerooffset].index == 0)) {
+	    && (get_propentry_index(&proptable[propentry+zerooffset]) == 0)) {
 	    memmove(proptable + propentry + 2, proptable + propentry + 1,
 		    (zerooffset-1) * sizeof(proptable_entry_t));
 	    insert_at_propentry(propentry+1, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	}
 	if ((propentry - zerooffset >= 0)
-	    && (proptable[propentry-zerooffset].index == 0)) {
+	    && (get_propentry_index(&proptable[propentry-zerooffset]) == 0)) {
 	    memmove(proptable + propentry - zerooffset, proptable + propentry - zerooffset + 1,
 		    zerooffset * sizeof(proptable_entry_t));
 	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
@@ -8331,6 +8365,11 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
     /* This can fail if the symmetry isn't valid for this index */
 
     if (! index_to_local_position(tb, index, symmetry, &position)) return;
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	fprintf(stderr, "back_propagate_index_within_table; index=%d\n", index);
+#endif
 
     flip_side_to_move_local(&position);
 
