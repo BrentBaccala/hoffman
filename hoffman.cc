@@ -400,16 +400,22 @@ struct format {
     int8 dtc_offset;
     int32 movecnt_mask;
     int8 movecnt_offset;
+    int8 in_check_flag_offset;
     int32 white_flag_mask;
     int8 white_flag_offset;
     int32 black_flag_mask;
     int8 black_flag_offset;
-    int8 in_check_flag_offset;
+    int32 index_mask;
+    int8 index_offset;
+    int32 futurevector_mask;
+    int8 futurevector_offset;
 };
 
 /* This is our old "fourbyte" format */
 
-struct format entries_format = {4, 0xff,0, 0xff,8, 0x7f,16, 0,0, 0,0, 23};
+struct format entries_format = {4, 0xff,0, 0xff,8, 0x7f,16, 23, 0,0, 0,0, 0,0, 0,0};
+
+struct format proptable_format = {16, 0xffff,32, 0xff,48, 0xff,56, 0, 0,0, 0,0, 0xffffffff,0, 0xffffffff,64};
 
 typedef int32 entry_t;
 
@@ -2963,7 +2969,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.230 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.231 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4103,7 +4109,7 @@ inline int get_signed_field(int32 *ptr, int32 mask, int offset)
 {
     int val;
 
-    while (offset > 32) {
+    while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
     }
@@ -4118,7 +4124,7 @@ inline int get_signed_field(int32 *ptr, int32 mask, int offset)
 
 inline void set_signed_field(int32 *ptr, int32 mask, int offset, int val)
 {
-    while (offset > 32) {
+    while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
     }
@@ -4135,7 +4141,7 @@ inline void set_signed_field(int32 *ptr, int32 mask, int offset, int val)
 
 inline unsigned int get_unsigned_field(int32 *ptr, int32 mask, int offset)
 {
-    while (offset > 32) {
+    while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
     }
@@ -4145,7 +4151,7 @@ inline unsigned int get_unsigned_field(int32 *ptr, int32 mask, int offset)
 
 inline void set_unsigned_field(int32 *ptr, int32 mask, int offset, unsigned int val)
 {
-    while (offset > 32) {
+    while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
     }
@@ -4258,7 +4264,7 @@ int get_DTM(tablebase_t *tb, index_t index)
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 11762 */
+/* #define DEBUG_MOVE 7 */
 
 /* Four possible ways we can initialize a tablebase entry for a position:
  *  - it's illegal
@@ -4996,6 +5002,7 @@ int proptable_merges = 0;
 void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char dtc, short movecnt,
 			 futurevector_t futurevector)
 {
+    int32 *ptr = (int32 *) &proptable[propentry];
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	printf("insert_at_propentry; index=%d; propentry=%d; dtm=%d\n", index, propentry, dtm);
@@ -5003,11 +5010,11 @@ void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char 
 
     proptable_entries ++;
 
-    proptable[propentry].index = index;
-    proptable[propentry].dtm = dtm;
-    proptable[propentry].dtc = dtc;
-    proptable[propentry].movecnt = movecnt;
-    proptable[propentry].futurevector = futurevector;
+    set_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset, index);
+    set_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset, dtm);
+    set_unsigned_field(ptr, proptable_format.dtc_mask, proptable_format.dtc_offset, dtc);
+    set_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset, movecnt);
+    set_unsigned_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset, futurevector);
 }
 
 void merge_propentrys(proptable_entry_t *dest, proptable_entry_t *src)
@@ -5037,7 +5044,10 @@ void merge_propentrys(proptable_entry_t *dest, proptable_entry_t *src)
     if (dest->futurevector & src->futurevector) {
 	global_position_t global;
 	index_to_global_position(proptable_tb, dest->index, &global);
+	/* This might happen just because of symmetry issues */
+#if 0
 	fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
+#endif
     }
 
     dest->futurevector |= src->futurevector;
