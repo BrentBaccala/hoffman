@@ -417,7 +417,7 @@ struct format entries_format = {4, 0xff,0, 0xff,8, 0x7f,16, 23, 0,0, 0,0, 0,0, 0
 
 struct format proptable_format = {16, 0xffff,32, 0xff,48, 0xff,56, 0, 0,0, 0,0, 0xffffffff,0, 0xffffffff,64};
 
-typedef int32 entry_t;
+typedef void entry_t;
 
 #define RESTRICTION_NONE 0
 #define RESTRICTION_DISCARD 1
@@ -2973,7 +2973,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.233 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.234 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -3099,7 +3099,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 		fputc(0, file);
 	    }
 	    for (index = 0; index <= tb->max_index; index ++) {
-		fputc(get_DTM(tb, index), file);
+		fputc(get_entry_DTM(tb, index), file);
 	    }
 	}
 	fclose(file);
@@ -3838,7 +3838,7 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 
 #define NUM_ENTRY_BUFFERS 4
 #define ENTRY_BUFFER_ENTRIES (1<<12)
-#define ENTRY_BUFFER_BYTES (ENTRY_BUFFER_ENTRIES * sizeof(entry_t))
+#define ENTRY_BUFFER_BYTES (ENTRY_BUFFER_ENTRIES * entries_format.bytes)
 
 struct entry_buffer {
     entry_t *buffer;
@@ -3864,7 +3864,7 @@ void turn_entry_buffer_blue(int fd, int buffernum)
     entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
     entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
     entry_buffers[buffernum].aiocb.aio_offset
-	= entry_buffers[buffernum].start * sizeof(entry_t);
+	= entry_buffers[buffernum].start * entries_format.bytes;
 
     if (aio_read(& entry_buffers[buffernum].aiocb) != 0) {
 	fprintf(stderr, "Can't enqueue aio_read for entry buffer\n");
@@ -3897,7 +3897,7 @@ void wait_for_entry_buffer_green(int buffernum)
 	/* zero byte read - this is OK the first time through */
 	memset(entry_buffers[buffernum].buffer, 0, ENTRY_BUFFER_BYTES);
     } else if ((retval != ENTRY_BUFFER_BYTES)
-	       && (retval != sizeof(entry_t)
+	       && (retval != entries_format.bytes
 		   * ((proptable_tb->max_index - 1) % ENTRY_BUFFER_ENTRIES)))  {
 	fprintf(stderr, "entry buffer aio_read didn't return ENTRY_BUFFER_BYTES\n");
 	kill(getpid(), SIGSTOP);
@@ -3916,7 +3916,7 @@ void turn_entry_buffer_red(int fd, int buffernum)
     entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
     entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
     entry_buffers[buffernum].aiocb.aio_offset
-	= entry_buffers[buffernum].start * sizeof(entry_t);
+	= entry_buffers[buffernum].start * entries_format.bytes;
 
     if (aio_write(& entry_buffers[buffernum].aiocb) != 0) {
 	fprintf(stderr, "Can't enqueue aio_write for entry buffer\n");
@@ -3970,7 +3970,7 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     if (tb->entries != NULL) {
 
 	/* entries array exists in memory - so just return a pointer into it */
-	return &tb->entries[index];
+	return (void *)(tb->entries) + index * entries_format.bytes;
 
     } else if ((index < entry_buffers[yellow_entry_buffer].start)
 	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
@@ -4069,29 +4069,8 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	fprintf(stderr, "Can't fetch in fetch_entry_pointer\n");
     }
 
-    return &entry_buffers[yellow_entry_buffer].buffer[index - entry_buffers[yellow_entry_buffer].start];
-}
-
-/* These last two functions are real simple right now, but I'm holding out the possibility that I'll
- * want to flag buffers dirty when I store into them.
- */
-
-entry_t fetch_entry(tablebase_t *tb, index_t index)
-{
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	fprintf(stderr, "fetching 0x%x from %d\n", *fetch_entry_pointer(tb, index), index);
-#endif
-    return *fetch_entry_pointer(tb, index);
-}
-
-void store_entry(tablebase_t *tb, index_t index, entry_t entry)
-{
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	fprintf(stderr, "storing 0x%x to %d\n", entry, index);
-#endif
-    *fetch_entry_pointer(tb, index) = entry;
+    return (void *) (entry_buffers[yellow_entry_buffer].buffer)
+	+ (index - entry_buffers[yellow_entry_buffer].start) * entries_format.bytes;
 }
 
 
@@ -4113,7 +4092,7 @@ void store_entry(tablebase_t *tb, index_t index, entry_t entry)
 
 inline boolean is_position_valid(tablebase_t *tb, index_t index)
 {
-    if (tb->entries != NULL) return (get_DTM(tb,index) != 1);
+    if (tb->entries != NULL) return (get_entry_DTM(tb,index) != 1);
     else return (fetch_DTM_from_disk(tb,index) != 1);
 }
 
@@ -4175,78 +4154,62 @@ inline void set_unsigned_field(int32 *ptr, int32 mask, int offset, unsigned int 
     *ptr |= (val & mask) << offset;
 }
 
-inline int get_entry_raw_DTM(entry_t entry)
+inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
 {
-    return get_signed_field(&entry, entries_format.dtm_mask, entries_format.dtm_offset);
+    return get_signed_field(fetch_entry_pointer(tb, index),
+			    entries_format.dtm_mask, entries_format.dtm_offset);
 }
 
-inline entry_t set_entry_raw_DTM(entry_t entry, int dtm)
+inline void set_entry_raw_DTM(tablebase_t *tb, index_t index, int dtm)
 {
-    set_signed_field(&entry, entries_format.dtm_mask, entries_format.dtm_offset, dtm);
-    return entry;
+    set_signed_field(fetch_entry_pointer(tb, index),
+		     entries_format.dtm_mask, entries_format.dtm_offset, dtm);
 }
 
-inline int get_raw_DTM(tablebase_t *tb, index_t index)
+inline int get_entry_DTC(tablebase_t *tb, index_t index)
 {
-    return get_entry_raw_DTM(fetch_entry(tb, index));
+    return get_unsigned_field(fetch_entry_pointer(tb, index),
+			      entries_format.dtc_mask, entries_format.dtc_offset);
 }
 
-inline int get_entry_DTC(entry_t entry)
+inline void set_entry_DTC(tablebase_t *tb, index_t index, int dtc)
 {
-    return get_unsigned_field(&entry, entries_format.dtc_mask, entries_format.dtc_offset);
+    set_unsigned_field(fetch_entry_pointer(tb, index),
+		       entries_format.dtc_mask, entries_format.dtc_offset, dtc);
 }
 
-inline entry_t set_entry_DTC(entry_t entry, int dtc)
+inline int get_entry_movecnt(tablebase_t *tb, index_t index)
 {
-    set_unsigned_field(&entry, entries_format.dtc_mask, entries_format.dtc_offset, dtc);
-    return entry;
+    return get_unsigned_field(fetch_entry_pointer(tb, index),
+			      entries_format.movecnt_mask, entries_format.movecnt_offset);
 }
 
-inline int get_DTC(tablebase_t *tb, index_t index)
+inline void set_entry_movecnt(tablebase_t *tb, index_t index, int movecnt)
 {
-    return get_entry_DTC(fetch_entry(tb, index));
+    set_unsigned_field(fetch_entry_pointer(tb, index),
+		       entries_format.movecnt_mask, entries_format.movecnt_offset, movecnt);
 }
 
-inline int get_entry_movecnt(entry_t entry)
+inline int get_entry_in_check_flag(tablebase_t *tb, index_t index)
 {
-    return get_unsigned_field(&entry, entries_format.movecnt_mask, entries_format.movecnt_offset);
+    return get_unsigned_field(fetch_entry_pointer(tb, index),
+			      1, entries_format.in_check_flag_offset);
 }
 
-inline entry_t set_entry_movecnt(entry_t entry, int movecnt)
+inline void set_entry_in_check_flag(tablebase_t *tb, index_t index, int in_check_flag)
 {
-    set_unsigned_field(&entry, entries_format.movecnt_mask, entries_format.movecnt_offset, movecnt);
-    return entry;
+    set_unsigned_field(fetch_entry_pointer(tb, index),
+		       1, entries_format.in_check_flag_offset, in_check_flag);
 }
 
-inline int get_movecnt(tablebase_t *tb, index_t index)
+inline short does_PTM_win(tablebase_t *tb, index_t index)
 {
-    return get_entry_movecnt(fetch_entry(tb, index));
+    return (get_entry_raw_DTM(tb, index) > 0);
 }
 
-inline int get_entry_in_check_flag(entry_t entry)
+inline short does_PNTM_win(tablebase_t *tb, index_t index)
 {
-    return get_unsigned_field(&entry, 1, entries_format.in_check_flag_offset);
-}
-
-inline entry_t set_entry_in_check_flag(entry_t entry, int in_check_flag)
-{
-    set_unsigned_field(&entry, 1, entries_format.in_check_flag_offset, in_check_flag);
-    return entry;
-}
-
-inline int get_in_check_flag(tablebase_t *tb, index_t index)
-{
-    return get_entry_in_check_flag(fetch_entry(tb, index));
-}
-
-inline short does_PTM_win(entry_t entry)
-{
-    return (get_entry_raw_DTM(entry) > 0);
-}
-
-inline short does_PNTM_win(entry_t entry)
-{
-    return (get_entry_movecnt(entry) == 0) && (get_entry_raw_DTM(entry) < 0);
+    return (get_entry_movecnt(tb, index) == 0) && (get_entry_raw_DTM(tb, index) < 0);
 }
 
 /* Get the result in a format suitable for a one-byte DTM tablebase
@@ -4262,14 +4225,9 @@ inline short does_PNTM_win(entry_t entry)
  * might let PTM slip off the hook, so in that case we indicate draw.
  */
 
-int get_entry_DTM(entry_t entry)
+int get_entry_DTM(tablebase_t *tb, index_t index)
 {
-    return (does_PTM_win(entry) || does_PNTM_win(entry)) ? get_entry_raw_DTM(entry) : 0;
-}
-
-int get_DTM(tablebase_t *tb, index_t index)
-{
-    return get_entry_DTM(fetch_entry(tb, index));
+    return (does_PTM_win(tb, index) || does_PNTM_win(tb, index)) ? get_entry_raw_DTM(tb, index) : 0;
 }
 
 /* Four possible ways we can initialize a tablebase entry for a position:
@@ -4281,13 +4239,9 @@ int get_DTM(tablebase_t *tb, index_t index)
 
 void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm, int in_check_flag)
 {
-    entry_t entry = 0;
-
-    entry = set_entry_movecnt(entry, movecnt);
-    entry = set_entry_raw_DTM(entry, dtm);
-    entry = set_entry_in_check_flag(entry, in_check_flag);
-
-    store_entry(tb, index, entry);
+    set_entry_movecnt(tb, index, movecnt);
+    set_entry_raw_DTM(tb, index, dtm);
+    set_entry_in_check_flag(tb, index, in_check_flag);
 }
 
 void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
@@ -4321,8 +4275,6 @@ void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt, 
 
 inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
 {
-    entry_t entry = fetch_entry(tb, index);
-
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	printf("PTM_wins; index=%d; dtm=%d\n", index, dtm);
@@ -4330,17 +4282,14 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
 
     if (dtm < 0) {
 	fprintf(stderr, "Negative distance to mate in PTM_wins!?\n"); /* BREAKPOINT */
-    } else if ((dtm < get_entry_raw_DTM(entry)) || (get_entry_raw_DTM(entry) <= 0)) {
-	entry = set_entry_raw_DTM(entry, dtm);
-	entry = set_entry_DTC(entry, dtc);
-	store_entry(tb, index, entry);
+    } else if ((dtm < get_entry_raw_DTM(tb, index)) || (get_entry_raw_DTM(tb, index) <= 0)) {
+	set_entry_raw_DTM(tb, index, dtm);
+	set_entry_DTC(tb, index, dtc);
     }
 }
 
 inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
 {
-    entry_t entry = fetch_entry(tb, index);
-
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	printf("add_one_to_PNTM_wins; index=%d; dtm=%d\n", index, dtm);
@@ -4349,16 +4298,16 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dt
     if (dtm > 0) {
 	fprintf(stderr, "Positive distance to mate in PNTM_wins!?\n"); /* BREAKPOINT */
     } else {
-	entry = set_entry_movecnt(entry, get_entry_movecnt(entry) - 1);
-	if ((dtm < get_entry_raw_DTM(entry)) && (get_entry_raw_DTM(entry) <= 0)) {
+	set_entry_movecnt(tb, index, get_entry_movecnt(tb, index) - 1);
+	if ((dtm < get_entry_raw_DTM(tb, index)) && (get_entry_raw_DTM(tb, index) <= 0)) {
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
 	    /* XXX need to think more about the stalemates */
-	    entry = set_entry_raw_DTM(entry, dtm);
-	    entry = set_entry_DTC(entry, dtc);
+	    set_entry_raw_DTM(tb, index, dtm);
+	    set_entry_DTC(tb, index, dtc);
 	}
 
-	if ((get_entry_movecnt(entry) == 0) && (!get_entry_in_check_flag(entry))
-	    && (get_entry_raw_DTM(entry) == -1)) {
+	if ((get_entry_movecnt(tb, index) == 0) && (!get_entry_in_check_flag(tb, index))
+	    && (get_entry_raw_DTM(tb, index) == -1)) {
 
 	    /* In this case, the only moves at PTM's disposal move him into check (DTM is now one,
 	     * so it would drop to zero on next move).  So we need to distinguish here between being
@@ -4367,16 +4316,14 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dt
 
 	    total_stalemate_positions ++;
 
-	    entry = set_entry_raw_DTM(entry, 0);
-	    entry = set_entry_DTC(entry, 0);
+	    set_entry_raw_DTM(tb, index, 0);
+	    set_entry_DTC(tb, index, 0);
 	}
 
 	/* XXX not sure about this stalemate code */
-	if (dtc < get_entry_DTC(entry)) {
-	    entry = set_entry_DTC(entry, dtc);
+	if (dtc < get_entry_DTC(tb, index)) {
+	    set_entry_DTC(tb, index, dtc);
 	}
-
-	store_entry(tb, index, entry);
     }
 }
 
@@ -5098,7 +5045,7 @@ void commit_proptable_entry(proptable_entry_t *propentry)
      * propagation for illegal positions.
      */
 
-    if (get_raw_DTM(proptable_tb, index) == 1) return;
+    if (get_entry_raw_DTM(proptable_tb, index) == 1) return;
 
     if (dtm > 0) {
 	PTM_wins(proptable_tb, index, dtm, dtc);
@@ -5579,7 +5526,6 @@ int proptable_finalize(int target_dtm)
 
     for (index = 0; index <= proptable_tb->max_index; index ++) {
 
-	entry_t entry;
 	futurevector_t futurevector = 0;
 	futurevector_t possible_futuremoves;
 
@@ -5622,11 +5568,9 @@ int proptable_finalize(int target_dtm)
 	    }
 	}
 
-	entry = fetch_entry(proptable_tb, index);
-
 	/* Don't track futuremoves for illegal (DTM 1) positions */
 
-	if ((target_dtm == 0) && (get_entry_DTM(entry) != 1)) {
+	if ((target_dtm == 0) && (get_entry_DTM(proptable_tb, index) != 1)) {
 
 	    if ((futurevector & possible_futuremoves) != futurevector) {
 		global_position_t global;
@@ -5637,10 +5581,10 @@ int proptable_finalize(int target_dtm)
 	    finalize_futuremove(proptable_tb, index, possible_futuremoves ^ futurevector);
 	}
 
-	if ((target_dtm != 0) && (get_entry_DTM(entry) == target_dtm)) {
-	    back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, get_entry_DTC(entry));
+	if ((target_dtm != 0) && (get_entry_DTM(proptable_tb, index) == target_dtm)) {
+	    back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, get_entry_DTC(proptable_tb, index));
 	    if (proptable_tb->symmetry == 8) {
-		back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, get_entry_DTC(entry));
+		back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, get_entry_DTC(proptable_tb, index));
 	    }
 	    positions_finalized ++;
 	}
@@ -5714,8 +5658,6 @@ int propagation_pass(int target_dtm)
 
 	for (index = 0; index <= proptable_tb->max_index; index ++) {
 
-	    entry_t entry = fetch_entry(proptable_tb, index);
-
 	    /* The symmetry code needs a bit more work here.  It really depends on the relative
 	     * multiplicity of the position we prop'ing from and the position we prop'ing to
 	     * to decide what should be done here.
@@ -5731,11 +5673,11 @@ int propagation_pass(int target_dtm)
 	     * time.
 	     */
 
-	    if ((target_dtm != 0) && (get_entry_DTM(entry) == target_dtm)) {
-		back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, get_entry_DTC(entry));
+	    if ((target_dtm != 0) && (get_entry_DTM(proptable_tb, index) == target_dtm)) {
+		back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, get_entry_DTC(proptable_tb, index));
 #if 1
 		if (proptable_tb->symmetry == 8) {
-		    back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, get_entry_DTC(entry));
+		    back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, get_entry_DTC(proptable_tb, index));
 		}
 #endif
 		positions_finalized ++;
@@ -5795,7 +5737,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 
 	/* Don't track futuremoves for illegal (DTM 1) positions */
 
-	if ((proptable_tb->futurevectors != NULL) && (get_DTM(proptable_tb, index) != 1)) {
+	if ((proptable_tb->futurevectors != NULL) && (get_entry_DTM(proptable_tb, index) != 1)) {
 
 	    if ((futurevector & proptable_tb->futurevectors[index]) != futurevector) {
 		/* This could happen simply if the futuremove has already been considered */
@@ -9011,7 +8953,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	}
 	init_entry_buffers(tb);
     } else {
-	tb->entries = (entry_t *) calloc(tb->max_index + 1, sizeof(entry_t));
+	tb->entries = (entry_t *) calloc(tb->max_index + 1, entries_format.bytes);
 	if (tb->entries == NULL) {
 	    fprintf(stderr, "Can't malloc tablebase entries\n");
 	}
