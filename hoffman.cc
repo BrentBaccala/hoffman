@@ -393,7 +393,7 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
  */
 
 struct format {
-    int8 total_bytes;
+    int8 bytes;
     int32 dtm_mask;
     int8 dtm_offset;
     int32 dtc_mask;
@@ -498,22 +498,12 @@ typedef struct tablebase {
  * Currently, proptable entries are 16 bytes (128 bits) - a 32 bit index, 32 more bits of
  * housekeeping, and a 64 bit futurevector.  This is significant because many Pentium architectures
  * use 64 byte cache lines.
+ *
+ * I'm changing this to make the propentries variable using a 'struct format'.  That's why they're
+ * void.
  */
 
-#if 0
-typedef struct {
-    index_t index;
-    short dtm;
-    unsigned char dtc;
-    unsigned char movecnt;
-    futurevector_t futurevector;
-} proptable_entry_t;
-#else
-typedef struct {
-    int64 a;
-    int64 b;
-} proptable_entry_t;
-#endif
+typedef void proptable_entry_t;
 
 proptable_entry_t *proptable = NULL;
 
@@ -2983,7 +2973,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.232 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.233 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -5012,13 +5002,15 @@ void verify_movements()
 int proptable_entries = 0;
 int proptable_merges = 0;
 
+#define PROPTABLE_ELEM(n)  ((void *)proptable + proptable_format.bytes * (n))
+
 /* We insert into the propagation table using an "address calculation insertion sort".
  */
 
 void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char dtc, short movecnt,
 			 futurevector_t futurevector)
 {
-    int32 *ptr = (int32 *) &proptable[propentry];
+    int32 *ptr = (int32 *) PROPTABLE_ELEM(propentry);
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	printf("insert_at_propentry; index=%d; propentry=%d; dtm=%d\n", index, propentry, dtm);
@@ -5053,7 +5045,7 @@ futurevector_t get_propentry_futurevector(proptable_entry_t *propentry)
 
 void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movecnt, futurevector_t futurevector)
 {
-    int32 *dest = (int32 *) &proptable[propentry];
+    int32 *dest = (int32 *) PROPTABLE_ELEM(propentry);
     int dest_dtm = get_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset);
     proptable_merges ++;
 
@@ -5082,7 +5074,7 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movec
 
     if (get_unsigned_field(dest, proptable_format.futurevector_mask, proptable_format.futurevector_offset) & futurevector) {
 	global_position_t global;
-	index_to_global_position(proptable_tb, get_propentry_index(&proptable[propentry]), &global);
+	index_to_global_position(proptable_tb, get_propentry_index(PROPTABLE_ELEM(propentry)), &global);
 	/* This might happen just because of symmetry issues */
 #if 0
 	fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
@@ -5090,7 +5082,7 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movec
     }
 
     set_unsigned_field(dest, proptable_format.futurevector_mask, proptable_format.futurevector_offset,
-		       futurevector | get_propentry_futurevector(&proptable[propentry]));
+		       futurevector | get_propentry_futurevector(PROPTABLE_ELEM(propentry)));
 }
 
 void commit_proptable_entry(proptable_entry_t *propentry)
@@ -5142,7 +5134,7 @@ void finalize_proptable_write(void)
 
     ret = aio_return(&proptable_output_aiocb);
 
-    if (ret != num_propentries * sizeof(proptable_entry_t)) {
+    if (ret != num_propentries * proptable_format.bytes) {
 	fprintf(stderr, "proptable aio_write returned %d, not PROPTABLE_BYTES\n", ret);
 	kill(getpid(), SIGSTOP);
     }
@@ -5151,8 +5143,8 @@ void finalize_proptable_write(void)
      * If we don't USE_DUAL_PROPTABLES, then proptable1 and proptable2 have the same value.
      */
 
-    if (proptable == proptable1) memset(proptable2, 0, num_propentries * sizeof(proptable_entry_t));
-    else memset(proptable1, 0, num_propentries * sizeof(proptable_entry_t));
+    if (proptable == proptable1) memset(proptable2, 0, num_propentries * proptable_format.bytes);
+    else memset(proptable1, 0, num_propentries * proptable_format.bytes);
 
     proptable_write_in_progress = 0;
 }
@@ -5211,11 +5203,11 @@ void proptable_full(void)
     memset(&proptable_output_aiocb, 0, sizeof(struct aiocb));
     proptable_output_aiocb.aio_fildes = proptable_output_fd;
     proptable_output_aiocb.aio_buf = proptable;
-    proptable_output_aiocb.aio_nbytes = num_propentries * sizeof(proptable_entry_t);
+    proptable_output_aiocb.aio_nbytes = num_propentries * proptable_format.bytes;
 #if SEPERATE_PROPTABLE_FILES
     proptable_output_aiocb.aio_offset = 0;
 #else
-    proptable_output_aiocb.aio_offset = num_proptables * num_propentries * sizeof(proptable_entry_t);
+    proptable_output_aiocb.aio_offset = num_proptables * num_propentries * proptable_format.bytes;
 #endif
     proptable_output_aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
 
@@ -5297,7 +5289,7 @@ int *proptable_current_buffernum;
  */
 
 #define PROPTABLE_BUFFER_ENTRIES (1<<13)
-#define PROPTABLE_BUFFER_BYTES (PROPTABLE_BUFFER_ENTRIES * sizeof(proptable_entry_t))
+#define PROPTABLE_BUFFER_BYTES (PROPTABLE_BUFFER_ENTRIES * proptable_format.bytes)
 #define BUFFERS_PER_PROPTABLE 4
 
 #define propbuf(tablenum, buffernum) (((tablenum) * BUFFERS_PER_PROPTABLE) + buffernum)
@@ -5318,8 +5310,13 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	while (proptable_buffer_index[tablenum] < PROPTABLE_BUFFER_ENTRIES) {
 
-	    if (get_propentry_index(&proptable_buffer[current_propbuf(tablenum)][proptable_buffer_index[tablenum]]) != 0) {
-		*dest = proptable_buffer[current_propbuf(tablenum)][proptable_buffer_index[tablenum]];
+	    if (get_propentry_index(proptable_buffer[current_propbuf(tablenum)]
+				    + proptable_format.bytes * (proptable_buffer_index[tablenum])) != 0) {
+		memcpy(dest,
+		       proptable_buffer[current_propbuf(tablenum)]
+		       + proptable_format.bytes * (proptable_buffer_index[tablenum]),
+		       proptable_format.bytes);
+
 		proptable_buffer_index[tablenum] ++;
 		return;
 	    }
@@ -5341,7 +5338,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	offset = proptable_aiocb[current_propbuf(tablenum)].aio_offset
 	    + PROPTABLE_BUFFER_BYTES * BUFFERS_PER_PROPTABLE;
-	if (offset % (num_propentries * sizeof(proptable_entry_t))
+	if (offset % (num_propentries * proptable_format.bytes)
 	    < PROPTABLE_BUFFER_BYTES * BUFFERS_PER_PROPTABLE) offset = 0;
 
 	memset(&proptable_aiocb[current_propbuf(tablenum)], 0, sizeof(struct aiocb));
@@ -5417,7 +5414,7 @@ int proptable_finalize(int target_dtm)
     int num_input_proptables;
     struct timeval tv1, tv2;
 
-    proptable_entry_t *sorting_network;
+    void *sorting_network;
     int *proptable_num;
     int highbit;
     int network_node;
@@ -5428,6 +5425,8 @@ int proptable_finalize(int target_dtm)
 #else
     int proptable_input_fd;
 #endif
+
+#define SORTING_NETWORK_ELEM(n)  (sorting_network + proptable_format.bytes * (n))
 
     index_t index;
     int positions_finalized = 0;
@@ -5448,7 +5447,7 @@ int proptable_finalize(int target_dtm)
     for (highbit = 1; highbit <= num_input_proptables; highbit <<= 1);
 
     proptable_buffer = (proptable_entry_t **)
-	malloc(BUFFERS_PER_PROPTABLE * num_input_proptables * sizeof(proptable_entry_t *));
+	malloc(BUFFERS_PER_PROPTABLE * num_input_proptables * proptable_format.bytes);
     proptable_aiocb = (struct aiocb *)
 	calloc(BUFFERS_PER_PROPTABLE * num_input_proptables, sizeof(struct aiocb));
     proptable_buffer_index = (int *) calloc(num_input_proptables, sizeof(int));
@@ -5513,7 +5512,7 @@ int proptable_finalize(int target_dtm)
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_offset = PROPTABLE_BUFFER_BYTES * bufnum;
 #else
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_offset
-		= tablenum * num_propentries * sizeof(proptable_entry_t) + PROPTABLE_BUFFER_BYTES * bufnum;
+		= tablenum * num_propentries * proptable_format.bytes + PROPTABLE_BUFFER_BYTES * bufnum;
 #endif
 
 	    if (aio_read(& proptable_aiocb[propbuf(tablenum, bufnum)]) != 0) {
@@ -5537,7 +5536,7 @@ int proptable_finalize(int target_dtm)
     subtract_timeval(&tv2, &tv1);
     add_timeval(&proptable_preload_time, &tv2);
 
-    sorting_network = malloc(2*highbit * sizeof(proptable_entry_t));
+    sorting_network = malloc(2*highbit * proptable_format.bytes);
     proptable_num = malloc(2*highbit * sizeof(int));
 
     if ((sorting_network == NULL) || (proptable_num == NULL)) {
@@ -5554,22 +5553,24 @@ int proptable_finalize(int target_dtm)
 
     for (i = 0; i < highbit; i ++) {
 	if (i < num_input_proptables) {
-	    fetch_next_propentry(i, &sorting_network[highbit + i]);
+	    fetch_next_propentry(i, SORTING_NETWORK_ELEM(highbit + i));
 	    proptable_num[highbit + i] = i;
 	} else {
 	    /* XXX could be a problem if max_index + 1 won't fit in the index element */
-	    set_propentry_index(&sorting_network[highbit + i], proptable_tb->max_index + 1);
+	    set_propentry_index(SORTING_NETWORK_ELEM(highbit + i), proptable_tb->max_index + 1);
 	    proptable_num[highbit + i] = -1;
 	}
     }
 
     for (network_node = highbit-1; network_node > 0; network_node --) {
-	if (get_propentry_index(&sorting_network[2*network_node])
-	    < get_propentry_index(&sorting_network[2*network_node+1])) {
-	    sorting_network[network_node] = sorting_network[2*network_node];
+	if (get_propentry_index(SORTING_NETWORK_ELEM(2*network_node))
+	    < get_propentry_index(SORTING_NETWORK_ELEM(2*network_node + 1))) {
+	    memcpy(SORTING_NETWORK_ELEM(network_node),
+		   SORTING_NETWORK_ELEM(2*network_node), proptable_format.bytes);
 	    proptable_num[network_node] = proptable_num[2*network_node];
 	} else {
-	    sorting_network[network_node] = sorting_network[2*network_node+1];
+	    memcpy(SORTING_NETWORK_ELEM(network_node),
+		   SORTING_NETWORK_ELEM(2*network_node + 1), proptable_format.bytes);
 	    proptable_num[network_node] = proptable_num[2*network_node+1];
 	}
     }
@@ -5582,7 +5583,7 @@ int proptable_finalize(int target_dtm)
 	futurevector_t futurevector = 0;
 	futurevector_t possible_futuremoves;
 
-	if (get_propentry_index(&sorting_network[1]) < index) {
+	if (get_propentry_index(SORTING_NETWORK_ELEM(1)) < index) {
 	    fprintf(stderr, "Out-of-order entries in sorting network\n");   /* BREAKPOINT */
 	}
 
@@ -5590,30 +5591,32 @@ int proptable_finalize(int target_dtm)
 	    possible_futuremoves = initialize_tablebase_entry(proptable_tb, index);
 	}
 
-	while (get_propentry_index(&sorting_network[1]) == index ) {
+	while (get_propentry_index(SORTING_NETWORK_ELEM(1)) == index ) {
 
-	    commit_proptable_entry(&sorting_network[1]);
+	    commit_proptable_entry(SORTING_NETWORK_ELEM(1));
 
-	    if (get_propentry_futurevector(&sorting_network[1]) & futurevector) {
+	    if (get_propentry_futurevector(SORTING_NETWORK_ELEM(1)) & futurevector) {
 		global_position_t global;
-		index_to_global_position(proptable_tb, get_propentry_index(&sorting_network[1]), &global);
+		index_to_global_position(proptable_tb, get_propentry_index(SORTING_NETWORK_ELEM(1)), &global);
 		fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
 	    }
 
-	    futurevector |= get_propentry_futurevector(&sorting_network[1]);
+	    futurevector |= get_propentry_futurevector(SORTING_NETWORK_ELEM(1));
 
-	    fetch_next_propentry(proptable_num[1], &sorting_network[highbit + proptable_num[1]]);
+	    fetch_next_propentry(proptable_num[1], SORTING_NETWORK_ELEM(highbit + proptable_num[1]));
 
 	    network_node = highbit + proptable_num[1];
 
 	    while (network_node > 1) {
 		network_node >>= 1;
-		if (get_propentry_index(&sorting_network[2*network_node])
-		    < get_propentry_index(&sorting_network[2*network_node+1])) {
-		    sorting_network[network_node] = sorting_network[2*network_node];
+		if (get_propentry_index(SORTING_NETWORK_ELEM(2*network_node))
+		    < get_propentry_index(SORTING_NETWORK_ELEM(2*network_node+1))) {
+		    memcpy(SORTING_NETWORK_ELEM(network_node),
+			   SORTING_NETWORK_ELEM(2*network_node), proptable_format.bytes);
 		    proptable_num[network_node] = proptable_num[2*network_node];
 		} else {
-		    sorting_network[network_node] = sorting_network[2*network_node+1];
+		    memcpy(SORTING_NETWORK_ELEM(network_node),
+			   SORTING_NETWORK_ELEM(2*network_node + 1), proptable_format.bytes);
 		    proptable_num[network_node] = proptable_num[2*network_node+1];
 		}
 	    }
@@ -5781,8 +5784,9 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 #endif
 
     if (num_propentries == 0) {
-	proptable_entry_t entry;
-	int32 *ptr = (int32 *) &entry;
+	/* XXX assume here that a propentry will never be more than 16 bytes */
+	struct {int64 a; int64 b;} entry;
+	void *ptr = &entry;
 
 	set_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset, index);
 	set_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset, dtm);
@@ -5825,31 +5829,31 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 
     propentry = index / scaling_factor;
 
-    if (get_propentry_index(&proptable[propentry]) == 0) {
+    if (get_propentry_index(PROPTABLE_ELEM(propentry)) == 0) {
 	/* empty slot: insert at propentry */
 	insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	return;
-    } else if (get_propentry_index(&proptable[propentry]) == index) {
+    } else if (get_propentry_index(PROPTABLE_ELEM(propentry)) == index) {
 	/* entry at slot with identical index: merge at propentry */
 	merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	return;
-    } else if (get_propentry_index(&proptable[propentry]) > index) {
+    } else if (get_propentry_index(PROPTABLE_ELEM(propentry)) > index) {
 	/* entry at slot greater than index to be inserted */
-	while ((get_propentry_index(&proptable[propentry]) > index) && (propentry > 0)) propentry --;
-	if (get_propentry_index(&proptable[propentry]) == 0) {
+	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) > index) && (propentry > 0)) propentry --;
+	if (get_propentry_index(PROPTABLE_ELEM(propentry)) == 0) {
 	    /* empty slot at lower end of a block all gt than index: insert there */
 	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
-	} else if (get_propentry_index(&proptable[propentry]) == index) {
+	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) == index) {
 	    /* identical slot in a block: merge there */
 	    merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	    return;
-	} else if (get_propentry_index(&proptable[propentry]) > index) {
+	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) > index) {
 	    /* we're at the beginning of the table and the first entry is gt index */
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
-		if (get_propentry_index(&proptable[zerooffset]) == 0) {
+		if (get_propentry_index(PROPTABLE_ELEM(zerooffset)) == 0) {
 		    memmove(proptable + 1, proptable,
-			    (zerooffset) * sizeof(proptable_entry_t));
+			    (zerooffset) * proptable_format.bytes);
 		    insert_at_propentry(0, index, dtm, dtc, movecnt, futurevector);
 		    return;
 		}
@@ -5862,23 +5866,23 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 	}
     } else {
 	/* entry at slot less than index to be inserted */
-	while ((get_propentry_index(&proptable[propentry]) != 0) && (get_propentry_index(&proptable[propentry]) < index)
+	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) != 0) && (get_propentry_index(PROPTABLE_ELEM(propentry)) < index)
 	       && (propentry < num_propentries - 1)) propentry ++;
-	if (get_propentry_index(&proptable[propentry]) == 0) {
+	if (get_propentry_index(PROPTABLE_ELEM(propentry)) == 0) {
 	    /* empty slot at upper end of a block all lt than index: insert there */
 	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
-	} else if (get_propentry_index(&proptable[propentry]) == index) {
+	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) == index) {
 	    /* identical slot in a block: merge there */
 	    merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	    return;
-	} else if (get_propentry_index(&proptable[propentry]) < index) {
+	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) < index) {
 	    /* we're at the end of the table and the last entry is lt index */
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
-		if (get_propentry_index(&proptable[num_propentries - 1 - zerooffset]) == 0) {
+		if (get_propentry_index(PROPTABLE_ELEM(num_propentries - 1 - zerooffset)) == 0) {
 		    memmove(proptable + num_propentries - 1 - zerooffset,
 			    proptable + num_propentries - zerooffset,
-			    (zerooffset) * sizeof(proptable_entry_t));
+			    (zerooffset) * proptable_format.bytes);
 		    insert_at_propentry(num_propentries - 1, index, dtm, dtc, movecnt, futurevector);
 		    return;
 		}
@@ -5896,16 +5900,16 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 
     for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
 	if ((propentry + zerooffset < num_propentries - 1)
-	    && (get_propentry_index(&proptable[propentry+zerooffset]) == 0)) {
+	    && (get_propentry_index(PROPTABLE_ELEM(propentry+zerooffset)) == 0)) {
 	    memmove(proptable + propentry + 2, proptable + propentry + 1,
-		    (zerooffset-1) * sizeof(proptable_entry_t));
+		    (zerooffset-1) * proptable_format.bytes);
 	    insert_at_propentry(propentry+1, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	}
 	if ((propentry - zerooffset >= 0)
-	    && (get_propentry_index(&proptable[propentry-zerooffset]) == 0)) {
+	    && (get_propentry_index(PROPTABLE_ELEM(propentry-zerooffset)) == 0)) {
 	    memmove(proptable + propentry - zerooffset, proptable + propentry - zerooffset + 1,
-		    zerooffset * sizeof(proptable_entry_t));
+		    zerooffset * proptable_format.bytes);
 	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	}
@@ -9016,18 +9020,18 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (num_propentries != 0) {
 #if USE_DUAL_PROPTABLES
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
-	if (posix_memalign((void **) &proptable1, 1024, num_propentries * sizeof(proptable_entry_t)) != 0) {
+	if (posix_memalign((void **) &proptable1, 1024, num_propentries * proptable_format.bytes) != 0) {
 	    fprintf(stderr, "Can't posix_memalign proptable\n");
 	    return 0;
 	}
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
-	memset(proptable1, 0, num_propentries * sizeof(proptable_entry_t));
+	memset(proptable1, 0, num_propentries * proptable_format.bytes);
 
-	if (posix_memalign((void **) &proptable2, 1024, num_propentries * sizeof(proptable_entry_t)) != 0) {
+	if (posix_memalign((void **) &proptable2, 1024, num_propentries * proptable_format.bytes) != 0) {
 	    fprintf(stderr, "Can't posix_memalign proptable\n");
 	    return 0;
 	}
-	memset(proptable2, 0, num_propentries * sizeof(proptable_entry_t));
+	memset(proptable2, 0, num_propentries * proptable_format.bytes);
 
 	proptable = proptable1;
 
@@ -9037,16 +9041,16 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    fprintf(stderr, "Can't open 'zeros' for writing zero propfile\n");
 	    return 0;
 	}
-	do_write(zeros_fd, proptable1, num_propentries * sizeof(proptable_entry_t));
+	do_write(zeros_fd, proptable1, num_propentries * proptable_format.bytes);
 #endif
 #else
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
-	if (posix_memalign((void **) &proptable, 1024, num_propentries * sizeof(proptable_entry_t)) != 0) {
+	if (posix_memalign((void **) &proptable, 1024, num_propentries * proptable_format.bytes) != 0) {
 	    fprintf(stderr, "Can't posix_memalign proptable\n");
 	    return 0;
 	}
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
-	memset(proptable, 0, num_propentries * sizeof(proptable_entry_t));
+	memset(proptable, 0, num_propentries * proptable_format.bytes);
 
 	proptable1 = proptable;
 	proptable2 = proptable;
@@ -9347,7 +9351,7 @@ int main(int argc, char *argv[])
 	    break;
 	case 'P':
 	    /* set size of proptable in megabytes */
-	    num_propentries = strtol(optarg, NULL, 0) * 1024 * 1024 / sizeof(proptable_entry_t);
+	    num_propentries = strtol(optarg, NULL, 0) * 1024 * 1024 / proptable_format.bytes;
 	    break;
 	}
     }
