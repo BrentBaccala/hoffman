@@ -218,6 +218,8 @@ int64 total_moves = 0;
 int64 total_futuremoves = 0;
 int64 total_backproped_moves = 0;
 int64 total_passes = 0;
+int max_dtm = 0;
+int min_dtm = 0;
 
 struct timeval program_start_time;
 struct timeval pass_start_time;
@@ -549,7 +551,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-#define DEBUG_MOVE 19
+/* #define DEBUG_MOVE 19 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2956,6 +2958,12 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     sprintf(strbuf, "%lld", total_passes);
     xmlNewChild(node, NULL, (const xmlChar *) "passes", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%d", max_dtm);
+    xmlNewChild(node, NULL, (const xmlChar *) "max-dtm", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    sprintf(strbuf, "%d", min_dtm);
+    xmlNewChild(node, NULL, (const xmlChar *) "min-dtm", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n");
 
     xmlNodeAddContent(tablebase, BAD_CAST "\n");
@@ -2983,7 +2991,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.235 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.236 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -5761,6 +5769,11 @@ int propagation_pass(int target_dtm)
 
     total_backproped_moves += backproped_moves;
 
+    if (positions_finalized > 0) {
+	if (target_dtm > max_dtm) max_dtm = target_dtm;
+	if (target_dtm < min_dtm) min_dtm = target_dtm;
+    }
+
     fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized);
     /* fprint_system_time(); */
 
@@ -5796,7 +5809,8 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 
 	    if ((futurevector & proptable_tb->futurevectors[index]) != futurevector) {
 		/* This could happen simply if the futuremove has already been considered */
-#if 1
+		/* XXX In particular, I need to turn this off right now for symmetric tablebases */
+#if 0
 		global_position_t global;
 		index_to_global_position(proptable_tb, index, &global);
 		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
