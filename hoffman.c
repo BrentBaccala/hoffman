@@ -396,26 +396,36 @@ struct format {
     int8 bytes;
     int32 dtm_mask;
     int8 dtm_offset;
+    int8 dtm_bits;
     int32 dtc_mask;
     int8 dtc_offset;
+    int8 dtc_bits;
     int32 movecnt_mask;
     int8 movecnt_offset;
+    int8 movecnt_bits;
     int8 in_check_flag_offset;
     int32 white_flag_mask;
     int8 white_flag_offset;
+    int8 white_flag_bits;
     int32 black_flag_mask;
     int8 black_flag_offset;
+    int8 black_flag_bits;
     int32 index_mask;
     int8 index_offset;
-    int32 futurevector_mask;
+    int8 index_bits;
+    int64 futurevector_mask;
     int8 futurevector_offset;
+    int8 futurevector_bits;
 };
 
 /* This is our old "fourbyte" format */
 
-struct format entries_format = {4, 0xff,0, 0xff,8, 0x7f,16, 23, 0,0, 0,0, 0,0, 0,0};
+struct format entries_format = {4, 0xff,0,8, 0xff,8,8, 0x7f,16,7, 23, 0,0,0, 0,0,0, 0,0,0, 0,0,0};
 
-struct format proptable_format = {16, 0xffff,32, 0xff,48, 0xff,56, 0, 0,0, 0,0, 0xffffffff,0, 0xffffffff,64};
+struct format proptable_format = {16, 0xffff,32,16, 0xff,48,8, 0xff,56,8, 0, 0,0,0, 0,0,0,
+				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64};
+
+#define MAX_FORMAT_BYTES 16
 
 typedef void entry_t;
 
@@ -539,7 +549,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 30339 */
+#define DEBUG_MOVE 19
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2973,7 +2983,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.234 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.235 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4154,6 +4164,34 @@ inline void set_unsigned_field(int32 *ptr, int32 mask, int offset, unsigned int 
     *ptr |= (val & mask) << offset;
 }
 
+inline int64 get_unsigned64bit_field(void *fieldptr, int64 mask, int offset)
+{
+    int64 *ptr = (int64 *)fieldptr;
+
+    while (offset >= 64) {
+	offset -= 64;
+	ptr ++;
+    }
+
+    return (*ptr >> offset) & mask;
+}
+
+inline void set_unsigned64bit_field(void *fieldptr, int64 mask, int offset, int64 val)
+{
+    int64 *ptr = (int64 *)fieldptr;
+
+    while (offset >= 64) {
+	offset -= 64;
+	ptr ++;
+    }
+
+    if (val > mask) {
+	fprintf(stderr, "value too large in set_unsigned_field\n");  /* BREAKPOINT */
+    }
+    *ptr &= (~ (mask << offset));
+    *ptr |= (val & mask) << offset;
+}
+
 inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_signed_field(fetch_entry_pointer(tb, index),
@@ -4960,7 +4998,8 @@ void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char 
     int32 *ptr = (int32 *) PROPTABLE_ELEM(propentry);
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("insert_at_propentry; index=%d; propentry=%d; dtm=%d\n", index, propentry, dtm);
+	fprintf(stderr, "insert_at_propentry; index=%d; propentry=%d; dtm=%d; futurevector=%llx\n",
+		index, propentry, dtm, futurevector);
 #endif
 
     proptable_entries ++;
@@ -4969,7 +5008,12 @@ void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char 
     set_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset, dtm);
     set_unsigned_field(ptr, proptable_format.dtc_mask, proptable_format.dtc_offset, dtc);
     set_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset, movecnt);
-    set_unsigned_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset, futurevector);
+    set_unsigned64bit_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset, futurevector);
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	fprintf(stderr, "Propentry: %llx %llx\n", *((int64 *) ptr), *(((int64 *) ptr) + 1));
+#endif
 }
 
 index_t get_propentry_index(proptable_entry_t *propentry)
@@ -4987,7 +5031,7 @@ void set_propentry_index(proptable_entry_t *propentry, index_t index)
 futurevector_t get_propentry_futurevector(proptable_entry_t *propentry)
 {
     int32 *ptr = (int32 *) propentry;
-    return get_unsigned_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset);
+    return get_unsigned64bit_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset);
 }
 
 void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movecnt, futurevector_t futurevector)
@@ -4995,6 +5039,12 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movec
     int32 *dest = (int32 *) PROPTABLE_ELEM(propentry);
     int dest_dtm = get_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset);
     proptable_merges ++;
+
+#ifdef DEBUG_MOVE
+    if (get_propentry_index(PROPTABLE_ELEM(propentry)) == DEBUG_MOVE)
+	fprintf(stderr, "merge_at_propentry; index=%d; propentry=%d; dtm=%d; futurevector=%llx\n",
+		get_propentry_index(PROPTABLE_ELEM(propentry)), propentry, dtm, futurevector);
+#endif
 
     if (dtm > 0) {
 	/* DTM > 0 - this move lets PTM mate from this position.  Update the proptable entry if
@@ -5019,7 +5069,7 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movec
     set_unsigned_field(dest, proptable_format.movecnt_mask, proptable_format.movecnt_offset,
 		       get_unsigned_field(dest, proptable_format.movecnt_mask, proptable_format.movecnt_offset) + movecnt);
 
-    if (get_unsigned_field(dest, proptable_format.futurevector_mask, proptable_format.futurevector_offset) & futurevector) {
+    if (get_unsigned64bit_field(dest, proptable_format.futurevector_mask, proptable_format.futurevector_offset) & futurevector) {
 	global_position_t global;
 	index_to_global_position(proptable_tb, get_propentry_index(PROPTABLE_ELEM(propentry)), &global);
 	/* This might happen just because of symmetry issues */
@@ -5028,8 +5078,8 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movec
 #endif
     }
 
-    set_unsigned_field(dest, proptable_format.futurevector_mask, proptable_format.futurevector_offset,
-		       futurevector | get_propentry_futurevector(PROPTABLE_ELEM(propentry)));
+    set_unsigned64bit_field(dest, proptable_format.futurevector_mask, proptable_format.futurevector_offset,
+			    futurevector | get_propentry_futurevector(PROPTABLE_ELEM(propentry)));
 }
 
 void commit_proptable_entry(proptable_entry_t *propentry)
@@ -5539,6 +5589,12 @@ int proptable_finalize(int target_dtm)
 
 	while (get_propentry_index(SORTING_NETWORK_ELEM(1)) == index ) {
 
+#ifdef DEBUG_MOVE
+	    if (index == DEBUG_MOVE)
+		fprintf(stderr, "Commiting sorting element 1: %llx %llx\n",
+			*((int64 *) SORTING_NETWORK_ELEM(1)), *(((int64 *) SORTING_NETWORK_ELEM(1)) + 1));
+#endif
+
 	    commit_proptable_entry(SORTING_NETWORK_ELEM(1));
 
 	    if (get_propentry_futurevector(SORTING_NETWORK_ELEM(1)) & futurevector) {
@@ -5575,7 +5631,7 @@ int proptable_finalize(int target_dtm)
 	    if ((futurevector & possible_futuremoves) != futurevector) {
 		global_position_t global;
 		index_to_global_position(proptable_tb, index, &global);
-		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global)); /* BREAKPOINT */
+		fprintf(stderr, "Futuremove discrepancy: %d %s\n", index, global_position_to_FEN(&global)); /* BREAKPOINT */
 	    }
 
 	    finalize_futuremove(proptable_tb, index, possible_futuremoves ^ futurevector);
@@ -5726,9 +5782,8 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 #endif
 
     if (num_propentries == 0) {
-	/* XXX assume here that a propentry will never be more than 16 bytes */
-	struct {int64 a; int64 b;} entry;
-	void *ptr = &entry;
+	char entry[MAX_FORMAT_BYTES];
+	void *ptr = entry;
 
 	set_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset, index);
 	set_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset, dtm);
@@ -5741,7 +5796,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 
 	    if ((futurevector & proptable_tb->futurevectors[index]) != futurevector) {
 		/* This could happen simply if the futuremove has already been considered */
-#if 0
+#if 1
 		global_position_t global;
 		index_to_global_position(proptable_tb, index, &global);
 		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
@@ -5773,10 +5828,12 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 
     if (get_propentry_index(PROPTABLE_ELEM(propentry)) == 0) {
 	/* empty slot: insert at propentry */
+	/* proptable[propentry] = entry; */
 	insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	return;
     } else if (get_propentry_index(PROPTABLE_ELEM(propentry)) == index) {
 	/* entry at slot with identical index: merge at propentry */
+	/* proptable[propentry] += entry; */
 	merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	return;
     } else if (get_propentry_index(PROPTABLE_ELEM(propentry)) > index) {
@@ -5784,18 +5841,22 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) > index) && (propentry > 0)) propentry --;
 	if (get_propentry_index(PROPTABLE_ELEM(propentry)) == 0) {
 	    /* empty slot at lower end of a block all gt than index: insert there */
+	    /* proptable[propentry] = entry; */
 	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) == index) {
 	    /* identical slot in a block: merge there */
+	    /* proptable[propentry] += entry; */
 	    merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	    return;
 	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) > index) {
 	    /* we're at the beginning of the table and the first entry is gt index */
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
 		if (get_propentry_index(PROPTABLE_ELEM(zerooffset)) == 0) {
-		    memmove(proptable + 1, proptable,
+		    /* proptable[1:zerooffset] = proptable[0:zerooffset-1]; */
+		    memmove(proptable + proptable_format.bytes, proptable,
 			    (zerooffset) * proptable_format.bytes);
+		    /* proptable[0] = entry; */
 		    insert_at_propentry(0, index, dtm, dtc, movecnt, futurevector);
 		    return;
 		}
@@ -5808,23 +5869,30 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
 	}
     } else {
 	/* entry at slot less than index to be inserted */
-	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) != 0) && (get_propentry_index(PROPTABLE_ELEM(propentry)) < index)
+	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) != 0)
+	       && (get_propentry_index(PROPTABLE_ELEM(propentry)) < index)
 	       && (propentry < num_propentries - 1)) propentry ++;
 	if (get_propentry_index(PROPTABLE_ELEM(propentry)) == 0) {
 	    /* empty slot at upper end of a block all lt than index: insert there */
+	    /* proptable[propentry] = entry; */
 	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) == index) {
 	    /* identical slot in a block: merge there */
+	    /* proptable[propentry] += entry; */
 	    merge_at_propentry(propentry, dtm, dtc, movecnt, futurevector);
 	    return;
 	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) < index) {
 	    /* we're at the end of the table and the last entry is lt index */
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
 		if (get_propentry_index(PROPTABLE_ELEM(num_propentries - 1 - zerooffset)) == 0) {
-		    memmove(proptable + num_propentries - 1 - zerooffset,
-			    proptable + num_propentries - zerooffset,
+		    /* proptable[num_propentries-zerooffset-1 : num_propentrys-2]
+		     *    = proptable[num_propentries-zerooffset : num_propentries-1];
+		     */
+		    memmove(proptable + (num_propentries - 1 - zerooffset) * proptable_format.bytes,
+			    proptable + (num_propentries - zerooffset) * proptable_format.bytes,
 			    (zerooffset) * proptable_format.bytes);
+		    /* proptable[num_propentries-1] = entry; */
 		    insert_at_propentry(num_propentries - 1, index, dtm, dtc, movecnt, futurevector);
 		    return;
 		}
@@ -5843,15 +5911,25 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
     for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
 	if ((propentry + zerooffset < num_propentries - 1)
 	    && (get_propentry_index(PROPTABLE_ELEM(propentry+zerooffset)) == 0)) {
-	    memmove(proptable + propentry + 2, proptable + propentry + 1,
+	    /* proptable[propentry+2 : propentry+zerooffset]
+	     *    = proptable[propentry+1 : propentry+zerooffset-1];
+	     */
+	    memmove(proptable + proptable_format.bytes * (propentry + 2),
+		    proptable + proptable_format.bytes * (propentry + 1),
 		    (zerooffset-1) * proptable_format.bytes);
+	    /* proptable[propentry+1] = entry; */
 	    insert_at_propentry(propentry+1, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	}
 	if ((propentry - zerooffset >= 0)
 	    && (get_propentry_index(PROPTABLE_ELEM(propentry-zerooffset)) == 0)) {
-	    memmove(proptable + propentry - zerooffset, proptable + propentry - zerooffset + 1,
+	    /* proptable[propentry-zerooffset : propentry-1]
+	     *    = proptable[propentry-zerooffset+1 : propentry];
+	     */
+	    memmove(proptable + proptable_format.bytes * (propentry - zerooffset),
+		    proptable + proptable_format.bytes * (propentry - zerooffset + 1),
 		    zerooffset * proptable_format.bytes);
+	    /* proptable[propentry] = entry; */
 	    insert_at_propentry(propentry, index, dtm, dtc, movecnt, futurevector);
 	    return;
 	}
@@ -7678,9 +7756,19 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     }
 
     fprintf(stderr, "%d possible futuremoves\n", num_futuremoves);
-    if (num_futuremoves > (sizeof(futurevector_t)*8)) {
-	fprintf(stderr, "Too many!  (%d max)\n", sizeof(futurevector_t)*8);
-	exit(EXIT_FAILURE);
+
+    if (num_propentries == 0) {
+	if (num_futuremoves > sizeof(futurevector_t)*8) {
+	    fprintf(stderr, "Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
+		    num_futuremoves, sizeof(futurevector_t)*8);
+	    exit(EXIT_FAILURE);
+	}
+    } else {
+	if (num_futuremoves > proptable_format.futurevector_bits) {
+	    fprintf(stderr, "Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
+		    num_futuremoves, proptable_format.futurevector_bits);
+	    exit(EXIT_FAILURE);
+	}
     }
 }
 
@@ -8001,7 +8089,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
-		    if (! (pruned_futuremoves & (1 << futurecaptures[capturing_piece][captured_piece]))) {
+		    if (! (pruned_futuremoves & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
 			fprintf(stderr, "No futurebase or pruning for %s move %s\n",
 				colors[tb->piece_color[capturing_piece]],
 				movestr[futurecaptures[capturing_piece][captured_piece]]);
@@ -8111,7 +8199,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 		if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
 
-		if (! (pruned_futuremoves & (1 << (futurecaptures[pawn][captured_piece] + i)))) {
+		if (! (pruned_futuremoves & FUTUREVECTOR(futurecaptures[pawn][captured_piece] + i))) {
 		    fprintf(stderr, "No futurebase or pruning for %s move %s\n",
 			    colors[tb->piece_color[pawn]],
 			    movestr[futurecaptures[pawn][captured_piece] + i]);
@@ -8146,7 +8234,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 	    if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
 
-	    if (! (pruned_futuremoves & (1 << (promotions[pawn] + i)))) {
+	    if (! (pruned_futuremoves & FUTUREVECTOR(promotions[pawn] + i))) {
 
 		fprintf(stderr, "No futurebase or pruning for %s move %s\n",
 			colors[tb->piece_color[pawn]], movestr[promotions[pawn] + i]);
@@ -8172,7 +8260,7 @@ boolean check_pruning(tablebase_t *tb) {
 	    for (sq = 0; sq < 64; sq ++) {
 		if (futuremoves[piece][sq] != -1) {
 
-		    if (! (pruned_futuremoves & (1 << (futuremoves[piece][sq])))) {
+		    if (! (pruned_futuremoves & FUTUREVECTOR(futuremoves[piece][sq]))) {
 			fprintf(stderr, "No futurebase or pruning for %s move %s\n",
 				colors[tb->piece_color[piece]], movestr[futuremoves[piece][sq]]);
 			return 0;
@@ -8873,7 +8961,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE)
-		fprintf(stderr, "initialize index %d: %d movecnt\n", index, movecnt);
+		fprintf(stderr, "initialize index %d: %d movecnt; futurevector %llx\n", index, movecnt, futurevector);
 #endif
 
 	    initialize_entry_with_movecnt(tb, index, movecnt, in_check(tb, &position));
@@ -8936,6 +9024,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     tablebase_t *tb;
     int dtm_limit;
+    int i;
 
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
@@ -9003,6 +9092,11 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     assign_numbers_to_futuremoves(tb);
     compute_pruned_futuremoves(tb);
+#if 0
+    for (i=0; i < num_futuremoves; i ++) {
+	fprintf(stderr, "Futuremove %i: %s\n", i, movestr[i]);
+    }
+#endif
     if (! check_pruning(tb)) return 0;
 
     check_1000_indices(tb);
