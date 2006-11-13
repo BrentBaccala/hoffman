@@ -150,38 +150,15 @@ typedef short boolean;
 typedef int32 index_t;
 
 
-#define ROW(square) ((square) / 8)
-#define COL(square) ((square) % 8)
-
-inline int rowcol2square(int row, int col)
-{
-    return (col + row*8);
-}
-
-/* diagonal_reflection() flips along the a1/h8 diagonal by simply interchanging the row and column */
-
-int diagonal_reflection(int square)
-{
-    return rowcol2square(COL(square), ROW(square));
-}
-
-int horizontal_reflection(int square)
-{
-    return rowcol2square(ROW(square), 7-COL(square));
-}
-
-int vertical_reflection(int square)
-{
-    return rowcol2square(7-ROW(square), COL(square));
-}
-
 /***** GLOBAL CONSTANTS *****/
 
 /* Maximum number of pieces; used to simplify various arrays
  *
- * "8" may seem absurd, but it's probably about right.  "4" is easily doable in memory.  "5"
- * requires sweeping passes across a file on disk.  "6" and "7" are worse than "5", but doable with
- * severe restrictions on the movements of the pieces.  So "8" is enough.
+ * Since this includes frozen as well as mobile pieces, "16" may seem absurd, but it's probably
+ * about right.  4 fully mobile pieces are easily doable in memory.  5 mobiles can often be done in
+ * memory if you use either symmetry or a machine with lots of RAM.  6 mobiles requires sweeping
+ * passes across a file on disk.  7 or more mobiles are only doable with severe restrictions on the
+ * movements of the pieces.
  */
 
 #define MAX_PIECES 16
@@ -285,6 +262,9 @@ futurevector_t discarded_futuremoves = 0;
  * then they get out of sync, and its tempting to just leave them that way because you rarely need
  * them to be right at that point.  This really came back to haunt me when implementing en passant.
  *
+ * "Multiplicity" is used in conjunction with symmetric indices, and indicates the actual number of
+ * board positions that corresponds to this one.
+ *
  * Global positions contain an 8x8 unsigned char array with ASCII characters representing each
  * piece.
  *
@@ -367,31 +347,8 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 #define BLACK 1
 
 
-/* tablebase_t
- *
- * The 'xml' in the tablebase is authoritative; much of the other info is extracted from it
- * for efficiency.
- *
- * To make this work for either white or black positions, let's adopt the notation PTM (Player to
- * move) and PNTM (Player not to move)
- *
- * 'movecnt' is is the number of moves FORWARD from this position that haven't been analyzed yet,
- * with the high bit (128) set if PTM is in check.
- *
- * 'dtm' (Distance to Mate) is the number of moves required to force a mate.  It is positive
- * for a PTM mate and negative for a PNTM mate.
- *
- * Now PTM can mate with even a single move out of a position, so a postive dtm means PTM mates.
- * PNTM can only mate if PTM has no possible move that leads to mate, so a negative dtm coupled with
- * a 0 or 128 movecnt means PNTM mates.
- *
- * So, if we backtrace from a single PTM WINS, then this position becomes PTM WINS.  If we backtrace
- * from PNTM WINS, we decrement movecnt and adjust dtm to the lowest value (the slowest mate).  If
- * movecnt reaches 0 or 128, then the position becomes PNTM WINS.  When we're all done backtracing
- * possible wins, anything left with a non-zero movecnt, or a zero dtm, is a DRAW.
- *
- * We also need a mate-in count and a stalemate (conversion) count.
- *
+/* A 'struct format' gives the layout of a dynamic structure (one whose bit layout is specified at
+ * run time).  See the section "DYNAMIC STRUCTURES" for more details on how this bugger works.
  */
 
 struct format {
@@ -450,6 +407,34 @@ struct format proptable_format = {16, 0xffff,32,16, 0xff,48,8, 0xff,56,8, 0, 0,0
 
 
 typedef void entry_t;
+
+
+/* tablebase_t
+ *
+ * The 'xml' in the tablebase is authoritative; much of the other info is extracted from it
+ * for efficiency.
+ *
+ * To make this work for either white or black positions, let's adopt the notation PTM (Player to
+ * move) and PNTM (Player not to move)
+ *
+ * 'movecnt' is is the number of moves FORWARD from this position that haven't been analyzed yet,
+ * with the high bit (128) set if PTM is in check.
+ *
+ * 'dtm' (Distance to Mate) is the number of moves required to force a mate.  It is positive
+ * for a PTM mate and negative for a PNTM mate.
+ *
+ * Now PTM can mate with even a single move out of a position, so a postive dtm means PTM mates.
+ * PNTM can only mate if PTM has no possible move that leads to mate, so a negative dtm coupled with
+ * a 0 or 128 movecnt means PNTM mates.
+ *
+ * So, if we backtrace from a single PTM WINS, then this position becomes PTM WINS.  If we backtrace
+ * from PNTM WINS, we decrement movecnt and adjust dtm to the lowest value (the slowest mate).  If
+ * movecnt reaches 0 or 128, then the position becomes PNTM WINS.  When we're all done backtracing
+ * possible wins, anything left with a non-zero movecnt, or a zero dtm, is a DRAW.
+ *
+ * We also need a mate-in count and a stalemate (conversion) count.
+ *
+ */
 
 #define RESTRICTION_NONE 0
 #define RESTRICTION_DISCARD 1
@@ -591,6 +576,91 @@ int find_name_in_array(char * name, char * array[])
     }
 
     return -1;
+}
+
+/* do_write() is like the system call write(), but keeps repeating until the write is complete */
+
+int do_write(int fd, void *ptr, int length)
+{
+    while (length > 0) {
+	int writ = write(fd, ptr, length);
+	if (writ == -1) {
+	    perror("do_write");
+	    return -1;
+	}
+	ptr += writ;
+	length -= writ;
+    }
+    return 0;
+}
+
+#define ROW(square) ((square) / 8)
+#define COL(square) ((square) % 8)
+
+inline int rowcol2square(int row, int col)
+{
+    return (col + row*8);
+}
+
+/* diagonal_reflection() flips along the a1/h8 diagonal by simply interchanging the row and column */
+
+int diagonal_reflection(int square)
+{
+    return rowcol2square(COL(square), ROW(square));
+}
+
+int horizontal_reflection(int square)
+{
+    return rowcol2square(ROW(square), 7-COL(square));
+}
+
+int vertical_reflection(int square)
+{
+    return rowcol2square(7-ROW(square), COL(square));
+}
+
+void subtract_timeval(struct timeval *dest, struct timeval *src)
+{
+    dest->tv_sec -= src->tv_sec;
+    if (dest->tv_usec > src->tv_usec) {
+	dest->tv_usec -= src->tv_usec;
+    } else {
+	dest->tv_usec = 1000000 + dest->tv_usec - src->tv_usec;
+	dest->tv_sec --;
+    }
+}
+
+void add_timeval(struct timeval *dest, struct timeval *src)
+{
+    dest->tv_sec += src->tv_sec;
+    dest->tv_usec += src->tv_usec;
+    if (dest->tv_usec >= 1000000) {
+	dest->tv_usec -= 1000000;
+	dest->tv_sec ++;
+    }
+}
+
+void sprint_timeval(char *strbuf, struct timeval *timevalp)
+{
+    if (timevalp->tv_sec < 60) {
+	sprintf(strbuf, "%ld.%03lds", timevalp->tv_sec, timevalp->tv_usec/1000);
+    } else if (timevalp->tv_sec < 3600) {
+	sprintf(strbuf, "%ldm%02ld.%03lds", timevalp->tv_sec/60, timevalp->tv_sec%60,
+		timevalp->tv_usec/1000);
+    } else {
+	sprintf(strbuf, "%ldh%02ldm%02ld.%03lds", timevalp->tv_sec/3600,
+		(timevalp->tv_sec/60)%60, timevalp->tv_sec%60, timevalp->tv_usec/1000);
+    }
+}
+
+void fprint_system_time(void)
+{
+    struct rusage rusage;
+    char strbuf[256];
+
+    getrusage(RUSAGE_SELF, &rusage);
+    sprint_timeval(strbuf, &rusage.ru_stime);
+    fprintf(stderr, "System time: %s\n", strbuf);
 }
 
 
@@ -2435,13 +2505,14 @@ void check_1000_indices(tablebase_t *tb)
 
 /* parse_format()
  *
- * Parse an XML format specification into a format array.  A simple XML format looks something like:
+ * Parse an XML format specification (for a dynamic structure) into a format structure.  A simple
+ * XML format looks something like:
  *
  *   <format>
  *      <dtm bits="8"/>
  *   </format>
  *
- * Essentially, this specifies the layout of a C structure at run-time, but we have to jump through
+ * Essentially, this specifies the layout of a C structure at run-time, and we have to jump through
  * all kinds of obscure nonsense to get dynamic structures.  Basically, we end up doing everything
  * with shifts and masks rather than normal structure operations.
  *
@@ -2772,13 +2843,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	return NULL;
     }
 
-#if 0
-    if (tb->symmetry == 8) {
-	fprintf(stderr, "8-way symmetry doesn't work (yet)\n");
-	return NULL;
-    }
-#endif
-
     if (tb->symmetry >= 4) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->piece_type[piece] == PAWN) {
@@ -3015,14 +3079,6 @@ tablebase_t * parse_XML_control_file(char *filename)
     /* free up the parser context */
     xmlFreeParserCtxt(ctxt);
 
-#if 0
-    doc = xmlReadFile(filename, NULL, 0);
-    if (doc == NULL) {
-	fprintf(stderr, "'%s' failed XML read\n", filename);
-	return NULL;
-    }
-#endif
-
     tb = parse_XML_into_tablebase(doc);
     if (tb == NULL) return NULL;
 
@@ -3072,29 +3128,6 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     return tb;
 }
 
-#if 0
-char fetch_next_DTM_from_disk(tablebase_t *tb)
-{
-    int retval;
-
-    if (tb->file == NULL) {
-	fprintf(stderr, "Attempt to fetch_next_DTM_from_disk() from a non-preloaded tablebase\n");
-	return 0;
-    } else if (tb->format != FORMAT_ONE_BYTE_DTM) {
-	fprintf(stderr, "Can't fetch_next_DTM_from_disk() on anything but a one-byte-dtm (yet)\n");
-	return 0;
-    } else {
-	retval = gzgetc(tb->file);
-	if (retval == EOF) {
-	    fprintf(stderr, "fetch_next_DTM_from_disk() hit EOF\n");
-	    return 0;
-	} else {
-	    return (char) retval;
-	}
-    }
-}
-#endif
-
 char fetch_DTM_from_disk(tablebase_t *tb, index_t index)
 {
     int retval;
@@ -3128,50 +3161,6 @@ void unload_futurebase(tablebase_t *tb)
  * later to reflect the actual byte offset of the tablebase entries, and a "generated-by" block
  * indicating the program, time, and host that generated the data.
  */
-
-void subtract_timeval(struct timeval *dest, struct timeval *src)
-{
-    dest->tv_sec -= src->tv_sec;
-    if (dest->tv_usec > src->tv_usec) {
-	dest->tv_usec -= src->tv_usec;
-    } else {
-	dest->tv_usec = 1000000 + dest->tv_usec - src->tv_usec;
-	dest->tv_sec --;
-    }
-}
-
-void add_timeval(struct timeval *dest, struct timeval *src)
-{
-    dest->tv_sec += src->tv_sec;
-    dest->tv_usec += src->tv_usec;
-    if (dest->tv_usec >= 1000000) {
-	dest->tv_usec -= 1000000;
-	dest->tv_sec ++;
-    }
-}
-
-void sprint_timeval(char *strbuf, struct timeval *timevalp)
-{
-    if (timevalp->tv_sec < 60) {
-	sprintf(strbuf, "%ld.%03lds", timevalp->tv_sec, timevalp->tv_usec/1000);
-    } else if (timevalp->tv_sec < 3600) {
-	sprintf(strbuf, "%ldm%02ld.%03lds", timevalp->tv_sec/60, timevalp->tv_sec%60,
-		timevalp->tv_usec/1000);
-    } else {
-	sprintf(strbuf, "%ldh%02ldm%02ld.%03lds", timevalp->tv_sec/3600,
-		(timevalp->tv_sec/60)%60, timevalp->tv_sec%60, timevalp->tv_usec/1000);
-    }
-}
-
-void fprint_system_time(void)
-{
-    struct rusage rusage;
-    char strbuf[256];
-
-    getrusage(RUSAGE_SELF, &rusage);
-    sprint_timeval(strbuf, &rusage.ru_stime);
-    fprintf(stderr, "System time: %s\n", strbuf);
-}
 
 xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 {
@@ -3251,7 +3240,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.237 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.238 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -3305,22 +3294,6 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlAddNextSibling(node, tb->per_pass_stats);
 
     return tb->xml;
-}
-
-/* do_write() is like the system call write(), but keeps repeating until the write is complete */
-
-int do_write(int fd, void *ptr, int length)
-{
-    while (length > 0) {
-	int writ = write(fd, ptr, length);
-	if (writ == -1) {
-	    perror("do_write");
-	    return -1;
-	}
-	ptr += writ;
-	length -= writ;
-    }
-    return 0;
 }
 
 
@@ -5102,13 +5075,39 @@ void verify_movements()
 
 /***** PROPAGATION TABLE *****/
 
+/* When propagating a change from one position to another, we go through this table to do it.  By
+ * maintaining this table sorted, we avoid the random accesses that would be required to propagate
+ * directly from one position to another.  It only makes sense to use a propagation table if the
+ * tablebase can't fit in memory.  If the tablebase does fit in memory, we set num_propentries to
+ * zero and bypass almost this entire section of code.
+ *
+ * We insert into the propagation table using an "address calculation insertion sort".  Knuth
+ * described it by analogy to shelving books.  You're sorting the books as you place them onto the
+ * shelf; that makes it an "insertion sort" (as opposed to something like an exchange sort, where
+ * you place them first and then sort by swapping).  You look at the author's last name to try and
+ * "guess" where it should go on the shelf - "Alfors" all the way to the left; "Munkres" about in
+ * the middle; "van der Waerden" towards the right.  That's the "address calculation" part.
+ *
+ * We do this with indices, dividing them by a scaling factor to get an offset into the propagation
+ * table (in memory).  This type of sort works well if the indices are well spread out, and not so
+ * well in they are clumped together.  That's why we invert indices in a finite field - to spread
+ * out the mating positions that naturally clump together into groups of similar positions.  Once we
+ * start having to move things around too much to do an insertion, we write the current proptable
+ * out to disk, zero out the memory, and start again fresh.
+ *
+ * Once we've got a bunch of proptables written to disk, we then need to read them back in.  We do
+ * this "semi-sequentially" - each individual table is read sequentially, even though we need to
+ * jump our reads around between them.  We run the entries from each table through a sort tree to
+ * produce a single stream of sorted proptable entries, which are then committed into the tablebase.
+ *
+ * To optimize all of this, we simultaneously read one set of proptables and write another set while
+ * making a single pass through the tablebase.
+ */
+
 int proptable_entries = 0;
 int proptable_merges = 0;
 
 #define PROPTABLE_ELEM(n)  ((void *)proptable + proptable_format.bytes * (n))
-
-/* We insert into the propagation table using an "address calculation insertion sort".
- */
 
 void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char dtc, short movecnt,
 			 futurevector_t futurevector)
