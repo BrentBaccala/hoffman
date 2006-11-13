@@ -142,12 +142,12 @@
  * integers makes a bunch of stuff a lot easier.  Might have to be careful with this if porting.
  */
 
-typedef unsigned long long int int64;
-typedef unsigned int int32;
-typedef unsigned char int8;
+typedef unsigned long long int uint64;
+typedef unsigned int uint32;
+typedef unsigned char uint8;
 typedef short boolean;
 
-typedef int32 index_t;
+typedef uint32 index_t;
 
 
 /***** GLOBAL CONSTANTS *****/
@@ -186,15 +186,15 @@ typedef int32 index_t;
 
 /* Variables for gathering statistics */
 
-int64 backproped_moves = 0;
+uint64 backproped_moves = 0;
 
-int64 total_legal_positions = 0;
-int64 total_PNTM_mated_positions = 0;
-int64 total_stalemate_positions = 0;
-int64 total_moves = 0;
-int64 total_futuremoves = 0;
-int64 total_backproped_moves = 0;
-int64 total_passes = 0;
+uint64 total_legal_positions = 0;
+uint64 total_PNTM_mated_positions = 0;
+uint64 total_stalemate_positions = 0;
+uint64 total_moves = 0;
+uint64 total_futuremoves = 0;
+uint64 total_backproped_moves = 0;
+uint64 total_passes = 0;
 int max_dtm = 0;
 int min_dtm = 0;
 
@@ -221,7 +221,7 @@ struct timeval proptable_preload_time = {0, 0};
  * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move.
  */
 
-typedef int64 futurevector_t;
+typedef uint64 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 
@@ -283,8 +283,8 @@ futurevector_t discarded_futuremoves = 0;
 
 typedef struct {
     struct tablebase *tb;
-    int64 board_vector;
-    int64 PTM_vector;
+    uint64 board_vector;
+    uint64 PTM_vector;
     short side_to_move;
     short en_passant_square;
     short multiplicity;
@@ -305,8 +305,8 @@ typedef struct {
 
 /* bitvector gets initialized in init_movements() */
 
-int64 bitvector[64];
-int64 allones_bitvector = 0xffffffffffffffffLL;
+uint64 bitvector[64];
+uint64 allones_bitvector = 0xffffffffffffffffLL;
 
 /* pawn can't be on the first or last eight squares of the board */
 #define LEGAL_PAWN_BITVECTOR 0x00ffffffffffff00LL
@@ -352,29 +352,29 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
  */
 
 struct format {
-    int8 bytes;
-    int32 dtm_mask;
-    int8 dtm_offset;
-    int8 dtm_bits;
-    int32 dtc_mask;
-    int8 dtc_offset;
-    int8 dtc_bits;
-    int32 movecnt_mask;
-    int8 movecnt_offset;
-    int8 movecnt_bits;
-    int8 in_check_flag_offset;
-    int32 PTM_flags_mask;
-    int8 PTM_flags_offset;
-    int8 PTM_flags_bits;
-    int32 PNTM_flags_mask;
-    int8 PNTM_flags_offset;
-    int8 PNTM_flags_bits;
-    int32 index_mask;
-    int8 index_offset;
-    int8 index_bits;
-    int64 futurevector_mask;
-    int8 futurevector_offset;
-    int8 futurevector_bits;
+    uint8 bytes;
+    uint32 dtm_mask;
+    uint8 dtm_offset;
+    uint8 dtm_bits;
+    uint32 dtc_mask;
+    uint8 dtc_offset;
+    uint8 dtc_bits;
+    uint32 movecnt_mask;
+    uint8 movecnt_offset;
+    uint8 movecnt_bits;
+    uint8 in_check_flag_offset;
+    uint32 PTM_flags_mask;
+    uint8 PTM_flags_offset;
+    uint8 PTM_flags_bits;
+    uint32 PNTM_flags_mask;
+    uint8 PNTM_flags_offset;
+    uint8 PNTM_flags_bits;
+    uint32 index_mask;
+    uint8 index_offset;
+    uint8 index_bits;
+    uint64 futurevector_mask;
+    uint8 futurevector_offset;
+    uint8 futurevector_bits;
 };
 
 char * format_fields[] = {"dtm", "dtc", "movecnt", "in-check-flag", "PTM-flags", "PNTM-flags",
@@ -499,7 +499,7 @@ typedef struct tablebase {
     int move_restrictions[2];		/* one for each color */
     short piece_type[MAX_PIECES];
     short piece_color[MAX_PIECES];
-    int64 semilegal_squares[MAX_PIECES];
+    uint64 semilegal_squares[MAX_PIECES];
 
     int entries_fd;
     entry_t *entries;
@@ -677,7 +677,7 @@ void fprint_system_time(void)
  * big enough to accommodate every possibility.
  */
 
-inline int get_signed_field(int32 *ptr, int32 mask, int offset)
+inline int get_signed_field(uint32 *ptr, uint32 mask, int offset)
 {
     int val;
 
@@ -694,7 +694,7 @@ inline int get_signed_field(int32 *ptr, int32 mask, int offset)
     return val;
 }
 
-inline void set_signed_field(int32 *ptr, int32 mask, int offset, int val)
+inline void set_signed_field(uint32 *ptr, uint32 mask, int offset, int val)
 {
     while (offset >= 32) {
 	offset -= 32;
@@ -711,7 +711,7 @@ inline void set_signed_field(int32 *ptr, int32 mask, int offset, int val)
     *ptr |= (val & mask) << offset;
 }
 
-inline unsigned int get_unsigned_field(int32 *ptr, int32 mask, int offset)
+inline unsigned int get_unsigned_field(uint32 *ptr, uint32 mask, int offset)
 {
     while (offset >= 32) {
 	offset -= 32;
@@ -721,7 +721,7 @@ inline unsigned int get_unsigned_field(int32 *ptr, int32 mask, int offset)
     return (*ptr >> offset) & mask;
 }
 
-inline void set_unsigned_field(int32 *ptr, int32 mask, int offset, unsigned int val)
+inline void set_unsigned_field(uint32 *ptr, uint32 mask, int offset, unsigned int val)
 {
     while (offset >= 32) {
 	offset -= 32;
@@ -735,9 +735,9 @@ inline void set_unsigned_field(int32 *ptr, int32 mask, int offset, unsigned int 
     *ptr |= (val & mask) << offset;
 }
 
-inline int64 get_unsigned64bit_field(void *fieldptr, int64 mask, int offset)
+inline uint64 get_unsigned64bit_field(void *fieldptr, uint64 mask, int offset)
 {
-    int64 *ptr = (int64 *)fieldptr;
+    uint64 *ptr = (uint64 *)fieldptr;
 
     while (offset >= 64) {
 	offset -= 64;
@@ -747,9 +747,9 @@ inline int64 get_unsigned64bit_field(void *fieldptr, int64 mask, int offset)
     return (*ptr >> offset) & mask;
 }
 
-inline void set_unsigned64bit_field(void *fieldptr, int64 mask, int offset, int64 val)
+inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uint64 val)
 {
-    int64 *ptr = (int64 *)fieldptr;
+    uint64 *ptr = (uint64 *)fieldptr;
 
     while (offset >= 64) {
 	offset -= 64;
@@ -1174,13 +1174,13 @@ void initialize_byte_transform(void)
                                                                                                 \
                           " : "+c" (INDEX) : "a" (MODULUS) : "bx", "dx", "di", "si", "cc")
 
-int32 invert_in_finite_field(int32 b, int32 m)
+uint32 invert_in_finite_field(uint32 b, uint32 m)
 {
 #if 0
-    int32 x = m;
-    int32 y = b;
-    int32 bx = 0;
-    int32 by = 1;
+    uint32 x = m;
+    uint32 y = b;
+    uint32 bx = 0;
+    uint32 by = 1;
 
     int test = b;
     ASM_invert_in_finite_field(test, m);
@@ -3240,7 +3240,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.238 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.239 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4470,7 +4470,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dt
  */
 
 struct movement {
-    int64 vector;
+    uint64 vector;
     short square;
 };
 
@@ -5112,7 +5112,7 @@ int proptable_merges = 0;
 void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char dtc, short movecnt,
 			 futurevector_t futurevector)
 {
-    int32 *ptr = (int32 *) PROPTABLE_ELEM(propentry);
+    uint32 *ptr = (uint32 *) PROPTABLE_ELEM(propentry);
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	fprintf(stderr, "insert_at_propentry; index=%d; propentry=%d; dtm=%d; futurevector=%llx\n",
@@ -5129,31 +5129,31 @@ void insert_at_propentry(int propentry, index_t index, short dtm, unsigned char 
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	fprintf(stderr, "Propentry: %llx %llx\n", *((int64 *) ptr), *(((int64 *) ptr) + 1));
+	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
 #endif
 }
 
 index_t get_propentry_index(proptable_entry_t *propentry)
 {
-    int32 *ptr = (int32 *) propentry;
+    uint32 *ptr = (uint32 *) propentry;
     return get_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset);
 }
 
 void set_propentry_index(proptable_entry_t *propentry, index_t index)
 {
-    int32 *ptr = (int32 *) propentry;
+    uint32 *ptr = (uint32 *) propentry;
     set_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset, index);
 }
 
 futurevector_t get_propentry_futurevector(proptable_entry_t *propentry)
 {
-    int32 *ptr = (int32 *) propentry;
+    uint32 *ptr = (uint32 *) propentry;
     return get_unsigned64bit_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset);
 }
 
 void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movecnt, futurevector_t futurevector)
 {
-    int32 *dest = (int32 *) PROPTABLE_ELEM(propentry);
+    uint32 *dest = (uint32 *) PROPTABLE_ELEM(propentry);
     int dest_dtm = get_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset);
     proptable_merges ++;
 
@@ -5201,7 +5201,7 @@ void merge_at_propentry(int propentry, short dtm, unsigned char dtc, short movec
 
 void commit_proptable_entry(proptable_entry_t *propentry)
 {
-    int32 *ptr = (int32 *) propentry;
+    uint32 *ptr = (uint32 *) propentry;
     index_t index = get_propentry_index(propentry);
     int dtm = get_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset);
     int dtc = get_unsigned_field(ptr, proptable_format.dtc_mask, proptable_format.dtc_offset);
@@ -5413,7 +5413,7 @@ int *proptable_current_buffernum;
 void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 {
     const struct aiocb * aiocbs[1];
-    int32 offset;
+    uint32 offset;
     int ret;
 
     do {
@@ -5709,7 +5709,7 @@ int proptable_finalize(int target_dtm)
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE)
 		fprintf(stderr, "Commiting sorting element 1: %llx %llx\n",
-			*((int64 *) SORTING_NETWORK_ELEM(1)), *(((int64 *) SORTING_NETWORK_ELEM(1)) + 1));
+			*((uint64 *) SORTING_NETWORK_ELEM(1)), *(((uint64 *) SORTING_NETWORK_ELEM(1)) + 1));
 #endif
 
 	    commit_proptable_entry(SORTING_NETWORK_ELEM(1));
@@ -6209,7 +6209,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
     int dtm;
     local_position_t foreign_position;
     local_position_t position;
-    int32 conversion_result;
+    uint32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
     int true_pawn;
 
@@ -6395,7 +6395,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
     int dtm;
     local_position_t foreign_position;
     local_position_t position;
-    int32 conversion_result;
+    uint32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
     int true_captured_piece;
     int true_pawn;
@@ -6992,7 +6992,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
     int dtm;
     local_position_t current_position;
     int piece;
-    int32 conversion_result;
+    uint32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
 
     for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
@@ -7084,7 +7084,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
     int dtc;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
-    int32 conversion_result;
+    uint32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
     int piece;
     int dir;
@@ -7684,7 +7684,7 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 
 void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
-    int64 frozen_vector = 0LL;
+    uint64 frozen_vector = 0LL;
     int piece;
     int captured_piece;
     int capturing_piece;
