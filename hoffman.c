@@ -406,12 +406,12 @@ struct format {
     int8 movecnt_offset;
     int8 movecnt_bits;
     int8 in_check_flag_offset;
-    int32 white_flag_mask;
-    int8 white_flag_offset;
-    int8 white_flag_bits;
-    int32 black_flag_mask;
-    int8 black_flag_offset;
-    int8 black_flag_bits;
+    int32 PTM_flags_mask;
+    int8 PTM_flags_offset;
+    int8 PTM_flags_bits;
+    int32 PNTM_flags_mask;
+    int8 PNTM_flags_offset;
+    int8 PNTM_flags_bits;
     int32 index_mask;
     int8 index_offset;
     int8 index_bits;
@@ -420,14 +420,34 @@ struct format {
     int8 futurevector_bits;
 };
 
-/* This is our old "fourbyte" format */
+char * format_fields[] = {"dtm", "dtc", "movecnt", "in-check-flag", "PTM-flags", "PNTM-flags",
+			  "index", "futurevector", NULL};
+
+#define FORMAT_FIELD_DTM 0
+#define FORMAT_FIELD_DTC 1
+#define FORMAT_FIELD_MOVECNT 2
+#define FORMAT_FIELD_IN_CHECK_FLAG 3
+#define FORMAT_FIELD_PTM_FLAGS 4
+#define FORMAT_FIELD_PNTM_FLAGS 5
+#define FORMAT_FIELD_INDEX 6
+#define FORMAT_FIELD_FUTUREVECTOR 7
+
+#define MAX_FORMAT_BYTES 16
+
+/* This is our old "fourbyte" format that we use for in-memory tablebase arrays */
 
 struct format entries_format = {4, 0xff,0,8, 0xff,8,8, 0x7f,16,7, 23, 0,0,0, 0,0,0, 0,0,0, 0,0,0};
+
+/* This is the "one-byte-dtm" format */
+
+struct format one_byte_dtm_format = {1, 0xff,0,8};
+
+/* And this is the sixteen byte format we use by default for proptable entries */
 
 struct format proptable_format = {16, 0xffff,32,16, 0xff,48,8, 0xff,56,8, 0, 0,0,0, 0,0,0,
 				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64};
 
-#define MAX_FORMAT_BYTES 16
+
 
 typedef void entry_t;
 
@@ -461,6 +481,8 @@ typedef struct tablebase {
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
 
+    struct format format;
+
     /* for futurebases only */
     gzFile file;
     long offset;
@@ -493,8 +515,6 @@ typedef struct tablebase {
     short piece_type[MAX_PIECES];
     short piece_color[MAX_PIECES];
     int64 semilegal_squares[MAX_PIECES];
-
-    int format;
 
     int entries_fd;
     entry_t *entries;
@@ -571,6 +591,106 @@ int find_name_in_array(char * name, char * array[])
     }
 
     return -1;
+}
+
+
+/***** DYNAMIC STRUCTURES *****/
+
+/* Hoffman uses "dynamic structures" extensively, for its entries and proptable arrays.  A dynamic
+ * structure is one whose bit layout is specified at run time by the XML control file.  Since we
+ * can't use standard C structures (they require bit layouts to be set at compile time), we've got
+ * to do all of this nonsense.
+ *
+ * Does it slow down the program?  You bet.  But for larger tablebases, which are disk bound and not
+ * CPU bound, this actually speeds things up by giving us the flexibility of setting structure
+ * layouts based on the needs of individual tablebases, and not having to use generic structures
+ * big enough to accommodate every possibility.
+ */
+
+inline int get_signed_field(int32 *ptr, int32 mask, int offset)
+{
+    int val;
+
+    while (offset >= 32) {
+	offset -= 32;
+	ptr ++;
+    }
+
+    val = (*ptr >> offset) & mask;
+
+    /* sign extend */
+    if (val > (mask >> 1)) val |= (~ (mask >> 1));
+
+    return val;
+}
+
+inline void set_signed_field(int32 *ptr, int32 mask, int offset, int val)
+{
+    while (offset >= 32) {
+	offset -= 32;
+	ptr ++;
+    }
+
+    if ((val > 0) && (val > (mask >> 1))) {
+	fprintf(stderr, "value too large in set_signed_field\n");  /* BREAKPOINT */
+    }
+    if ((val < 0) && (val < ~(mask >> 1))) {
+	fprintf(stderr, "value too small in set_signed_field\n");  /* BREAKPOINT */
+    }
+    *ptr &= (~ (mask << offset));
+    *ptr |= (val & mask) << offset;
+}
+
+inline unsigned int get_unsigned_field(int32 *ptr, int32 mask, int offset)
+{
+    while (offset >= 32) {
+	offset -= 32;
+	ptr ++;
+    }
+
+    return (*ptr >> offset) & mask;
+}
+
+inline void set_unsigned_field(int32 *ptr, int32 mask, int offset, unsigned int val)
+{
+    while (offset >= 32) {
+	offset -= 32;
+	ptr ++;
+    }
+
+    if (val > mask) {
+	fprintf(stderr, "value too large in set_unsigned_field\n");  /* BREAKPOINT */
+    }
+    *ptr &= (~ (mask << offset));
+    *ptr |= (val & mask) << offset;
+}
+
+inline int64 get_unsigned64bit_field(void *fieldptr, int64 mask, int offset)
+{
+    int64 *ptr = (int64 *)fieldptr;
+
+    while (offset >= 64) {
+	offset -= 64;
+	ptr ++;
+    }
+
+    return (*ptr >> offset) & mask;
+}
+
+inline void set_unsigned64bit_field(void *fieldptr, int64 mask, int offset, int64 val)
+{
+    int64 *ptr = (int64 *)fieldptr;
+
+    while (offset >= 64) {
+	offset -= 64;
+	ptr ++;
+    }
+
+    if (val > mask) {
+	fprintf(stderr, "value too large in set_unsigned_field\n");  /* BREAKPOINT */
+    }
+    *ptr &= (~ (mask << offset));
+    *ptr |= (val & mask) << offset;
 }
 
 
@@ -2313,6 +2433,144 @@ void check_1000_indices(tablebase_t *tb)
  * that the validation provides most of the error checks.
  */
 
+/* parse_format()
+ *
+ * Parse an XML format specification into a format array.  A simple XML format looks something like:
+ *
+ *   <format>
+ *      <dtm bits="8"/>
+ *   </format>
+ *
+ * Essentially, this specifies the layout of a C structure at run-time, but we have to jump through
+ * all kinds of obscure nonsense to get dynamic structures.  Basically, we end up doing everything
+ * with shifts and masks rather than normal structure operations.
+ *
+ * The XML format can be specified with either explicit or implicit offsets.  Explicit offsets are
+ * just that: <dtc bits="8" offset="8"/> specifies an 8-bit field at an 8-bit offset into the
+ * structure.  Implicit offsets assign the offset values counting up from zero (like the first
+ * example above).  The two can not be mixed in the same format spec.
+ *
+ * The total size of a format is silently rounded up to a power-of-two byte boundary.  This is done
+ * to make sure that the resulting structures can't straddle buffer boundaries.
+ */
+
+boolean parse_format(xmlNodePtr formatNode, struct format *format)
+{
+    xmlNodePtr child;
+    int auto_offset = 0;
+
+    memset(format, 0, sizeof(struct format));
+
+    for (child = formatNode->children; child != NULL; child = child->next) {
+	if (child->type == XML_ELEMENT_NODE) {
+	    char * bitstr = (char *) xmlGetProp(child, BAD_CAST "bits");
+	    char * offsetstr = (char *) xmlGetProp(child, BAD_CAST "offset");
+	    int bits = (bitstr != NULL) ? atoi(bitstr) : 0;
+	    int offset = (offsetstr != NULL) ? atoi(offsetstr) : -1;
+	    int format_field = find_name_in_array((char *) child->name, format_fields);
+
+	    if (format_field == -1) {
+		fprintf(stderr, "Unknown field in format: %s\n", (char *) child->name);
+		return 0;
+	    }
+	    if ((bits == 0) && (format_field != FORMAT_FIELD_IN_CHECK_FLAG)) {
+		fprintf(stderr, "Non-zero 'bits' value must be specified in format field '%s'\n",
+			(char *) child->name);
+		return 0;
+	    }
+	    if ((bitstr != NULL) && (bits != 1) && (format_field == FORMAT_FIELD_IN_CHECK_FLAG)) {
+		fprintf(stderr, "Format field 'in-check-flag' only accepts bits=\"1\"\n");
+		return 0;
+	    }
+	    if (format_field == FORMAT_FIELD_IN_CHECK_FLAG) {
+		bits = 1;
+	    }
+
+	    if ((offset == -1) && (auto_offset == -1)) {
+		fprintf(stderr, "Can't mix explicit and implicit offsets in format\n");
+		return 0;
+	    }
+
+	    if (offset == -1) {
+		offset = auto_offset;
+		auto_offset += bits;
+	    } else {
+		auto_offset = -1;
+	    }
+
+	    if ((format_field != FORMAT_FIELD_FUTUREVECTOR) && (offset/32 != (offset+bits-1) / 32)) {
+		fprintf(stderr, "Most format fields can't straddle a 32-bit boundary\n");
+		return 0;
+	    }
+
+	    if (offset/64 != (offset+bits-1) / 64) {
+		fprintf(stderr, "Format fields can't straddle a 64-bit boundary\n");
+		return 0;
+	    }
+
+	    if ((offset + bits + 7)/8 > format->bytes) {
+		format->bytes = (offset + bits + 7)/8;
+	    }
+
+	    switch (format_field) {
+	    case FORMAT_FIELD_DTM:
+		format->dtm_bits = bits;
+		format->dtm_offset = offset;
+		format->dtm_mask = (1 << bits) - 1;
+		break;
+	    case FORMAT_FIELD_DTC:
+		format->dtc_bits = bits;
+		format->dtc_offset = offset;
+		format->dtc_mask = (1 << bits) - 1;
+		break;
+	    case FORMAT_FIELD_MOVECNT:
+		format->movecnt_bits = bits;
+		format->movecnt_offset = offset;
+		format->movecnt_mask = (1 << bits) - 1;
+		break;
+	    case FORMAT_FIELD_IN_CHECK_FLAG:
+		format->in_check_flag_offset = offset;
+		break;
+	    case FORMAT_FIELD_PTM_FLAGS:
+		format->PTM_flags_bits = bits;
+		format->PTM_flags_offset = offset;
+		format->PTM_flags_mask = (1 << bits) - 1;
+		break;
+	    case FORMAT_FIELD_PNTM_FLAGS:
+		format->PNTM_flags_bits = bits;
+		format->PNTM_flags_offset = offset;
+		format->PNTM_flags_mask = (1 << bits) - 1;
+		break;
+	    case FORMAT_FIELD_INDEX:
+		format->index_bits = bits;
+		format->index_offset = offset;
+		format->index_mask = (1 << bits) - 1;
+		break;
+	    case FORMAT_FIELD_FUTUREVECTOR:
+		format->futurevector_bits = bits;
+		format->futurevector_offset = offset;
+		format->futurevector_mask = (1LL << bits) - 1;
+		break;
+	    }
+	}
+    }
+
+    /* Round up total number of bytes to a power-of-two boundary.  This should probably be a little
+     * less dependant on the assumption that MAX_FORMAT_BYTES is no more than 16.
+     */
+
+    if (format->bytes == 3) format->bytes = 4;
+    if ((format->bytes > 4) && (format->bytes < 8)) format->bytes = 8;
+    if ((format->bytes > 8) && (format->bytes < 16)) format->bytes = 16;
+
+    if (format->bytes > MAX_FORMAT_BYTES) {
+	fprintf(stderr, "Maximum number of bytes in format exceeded\n");
+	return 0;
+    }
+
+    return 1;
+}
+
 tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 {
     tablebase_t *tb;
@@ -2438,8 +2696,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     format = xmlGetProp(tablebase, (const xmlChar *) "format");
     if (format != NULL) {
-	tb->format = find_name_in_array((char *) format, formats);
-	if (tb->format == -1) {
+	switch (find_name_in_array((char *) format, formats)) {
+	case FORMAT_ONE_BYTE_DTM:
+	    tb->format = one_byte_dtm_format;
+	    break;
+	default:
 	    fprintf(stderr, "Unknown tablebase format '%s'\n", format);
 	    return NULL;
 	}
@@ -2447,12 +2708,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	context = xmlXPathNewContext(tb->xml);
 	result = xmlXPathEvalExpression((const xmlChar *) "//format", context);
 	if (result->nodesetval->nodeNr == 1) {
-	    /* XXX don't actually do anything with the format yet */
-	    tb->format = FORMAT_ONE_BYTE_DTM;
+	    parse_format(result->nodesetval->nodeTab[0], &tb->format);
 	} else {
-	    tb->format = FORMAT_FOURBYTE;
-	    xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) formats[tb->format]);
-	    fprintf(stderr, "Format not expressly specified; assuming FOURBYTE\n");
+	    xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "one-byte-dtm");
+	    tb->format = one_byte_dtm_format;
+	    fprintf(stderr, "Format not expressly specified; assuming ONE-BYTE-DTM\n");
 	}
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
@@ -2812,6 +3072,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     return tb;
 }
 
+#if 0
 char fetch_next_DTM_from_disk(tablebase_t *tb)
 {
     int retval;
@@ -2832,25 +3093,24 @@ char fetch_next_DTM_from_disk(tablebase_t *tb)
 	}
     }
 }
+#endif
 
 char fetch_DTM_from_disk(tablebase_t *tb, index_t index)
 {
     int retval;
+    char entry[MAX_FORMAT_BYTES];
 
     if (tb->file == NULL) {
 	fprintf(stderr, "Attempt to fetch_DTM_from_disk() from a non-preloaded tablebase\n");/* BREAKPOINT */
 	return 0;
-    } else if (tb->format != FORMAT_ONE_BYTE_DTM) {
-	fprintf(stderr, "Can't fetch_DTM_from_disk() on anything but a one-byte-dtm\n");  /* BREAKPOINT */
-	return 0;
     } else {
-	gzseek(tb->file, tb->offset + index, SEEK_SET);
-	retval = gzgetc(tb->file);
+	gzseek(tb->file, tb->offset + tb->format.bytes * index, SEEK_SET);
+	retval = gzread(tb->file, entry, tb->format.bytes);
 	if (retval == EOF) {
-	    fprintf(stderr, "fetch_next_DTM_from_disk() hit EOF\n");
+	    fprintf(stderr, "fetch_DTM_from_disk() hit EOF\n");
 	    return 0;
 	} else {
-	    return (char) retval;
+	    return get_signed_field((void *)entry, tb->format.dtm_mask, tb->format.dtm_offset);
 	}
     }
 }
@@ -2991,7 +3251,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.236 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.237 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -3061,70 +3321,6 @@ int do_write(int fd, void *ptr, int length)
 	length -= writ;
     }
     return 0;
-}
-
-void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
-{
-    xmlDocPtr doc;
-    int fd;
-    int index;
-    FILE *file;
-    xmlNodePtr tablebase;
-    xmlChar *buf;
-    int size;
-    int padded_size;
-    char str[16];
-
-    fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (fd == -1) {
-	fprintf(stderr, "Can't open '%s' for writing tablebase\n", filename);
-	return;
-    }
-
-    doc = finalize_XML_header(tb, options);
-
-    /* We want at least one zero byte after the XML header, because that's how we figure out where
-     * it ends when we read it back it, and I also want to align the tablebase on a four-byte
-     * boundary for the hell of it.  (size+5)&(~3) achieves these goals.  I then modify the XML
-     * header with the updated string that gives the offset to the tablebase, and make sure that its
-     * size hasn't changed.
-     */
-
-    xmlDocDumpMemory(doc, &buf, &size);
-    padded_size = (size+5)&(~3);
-
-    sprintf(str, "0x%04x", padded_size);
-
-    tablebase = xmlDocGetRootElement(doc);
-    xmlSetProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) str);
-
-    xmlDocDumpMemory(doc, &buf, &size);
-
-    if (padded_size != ((size+5)&(~3))) {
-	fprintf(stderr, "sizes don't match in write_tablebase_to_file\n");
-    }
-
-    do_write(fd, buf, size);
-    xmlFree(buf);
-
-    if (tb->format == FORMAT_ONE_BYTE_DTM) {
-	close(fd);
-	file = fopen(filename, "a");
-	if (file == NULL) {
-	    fprintf(stderr, "Can't fopen output file\n");
-	} else {
-	    while (ftell(file) < padded_size) {
-		fputc(0, file);
-	    }
-	    for (index = 0; index <= tb->max_index; index ++) {
-		fputc(get_entry_DTM(tb, index), file);
-	    }
-	}
-	fclose(file);
-    } else {
-	fprintf(stderr, "Unknown format in write_tablebase_to_file()\n");
-    }
-
 }
 
 
@@ -4112,92 +4308,6 @@ inline boolean is_position_valid(tablebase_t *tb, index_t index)
 {
     if (tb->entries != NULL) return (get_entry_DTM(tb,index) != 1);
     else return (fetch_DTM_from_disk(tb,index) != 1);
-}
-
-inline int get_signed_field(int32 *ptr, int32 mask, int offset)
-{
-    int val;
-
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-    val = (*ptr >> offset) & mask;
-
-    /* sign extend */
-    if (val > (mask >> 1)) val |= (~ (mask >> 1));
-
-    return val;
-}
-
-inline void set_signed_field(int32 *ptr, int32 mask, int offset, int val)
-{
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-    if ((val > 0) && (val > (mask >> 1))) {
-	fprintf(stderr, "value too large in set_signed_field\n");  /* BREAKPOINT */
-    }
-    if ((val < 0) && (val < ~(mask >> 1))) {
-	fprintf(stderr, "value too small in set_signed_field\n");  /* BREAKPOINT */
-    }
-    *ptr &= (~ (mask << offset));
-    *ptr |= (val & mask) << offset;
-}
-
-inline unsigned int get_unsigned_field(int32 *ptr, int32 mask, int offset)
-{
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-    return (*ptr >> offset) & mask;
-}
-
-inline void set_unsigned_field(int32 *ptr, int32 mask, int offset, unsigned int val)
-{
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-    if (val > mask) {
-	fprintf(stderr, "value too large in set_unsigned_field\n");  /* BREAKPOINT */
-    }
-    *ptr &= (~ (mask << offset));
-    *ptr |= (val & mask) << offset;
-}
-
-inline int64 get_unsigned64bit_field(void *fieldptr, int64 mask, int offset)
-{
-    int64 *ptr = (int64 *)fieldptr;
-
-    while (offset >= 64) {
-	offset -= 64;
-	ptr ++;
-    }
-
-    return (*ptr >> offset) & mask;
-}
-
-inline void set_unsigned64bit_field(void *fieldptr, int64 mask, int offset, int64 val)
-{
-    int64 *ptr = (int64 *)fieldptr;
-
-    while (offset >= 64) {
-	offset -= 64;
-	ptr ++;
-    }
-
-    if (val > mask) {
-	fprintf(stderr, "value too large in set_unsigned_field\n");  /* BREAKPOINT */
-    }
-    *ptr &= (~ (mask << offset));
-    *ptr |= (val & mask) << offset;
 }
 
 inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
@@ -6118,7 +6228,8 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	dtm = fetch_next_DTM_from_disk(futurebase);
+	/* dtm = fetch_next_DTM_from_disk(futurebase); */
+	dtm = fetch_DTM_from_disk(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -6304,7 +6415,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	dtm = fetch_next_DTM_from_disk(futurebase);
+	/* dtm = fetch_next_DTM_from_disk(futurebase); */
+	dtm = fetch_DTM_from_disk(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -6891,7 +7003,8 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	dtm = fetch_next_DTM_from_disk(futurebase);
+	/* dtm = fetch_next_DTM_from_disk(futurebase); */
+	dtm = fetch_DTM_from_disk(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -6989,7 +7102,8 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	 * tablebase.
 	 */
 
-	dtm = fetch_next_DTM_from_disk(futurebase);
+	/* dtm = fetch_next_DTM_from_disk(futurebase); */
+	dtm = fetch_DTM_from_disk(futurebase, future_index);
 
 	/* XXX have to fetch DTC as well */
 
@@ -9026,6 +9140,88 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
 	dtm ++;
     }
 
+}
+
+void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
+{
+    xmlDocPtr doc;
+    int fd;
+    int index;
+    FILE *file;
+    xmlNodePtr tablebase;
+    xmlChar *buf;
+    int size;
+    int padded_size;
+    char str[16];
+    char entrybuf[MAX_FORMAT_BYTES];
+    void *entry = entrybuf;
+
+    fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    if (fd == -1) {
+	fprintf(stderr, "Can't open '%s' for writing tablebase\n", filename);
+	return;
+    }
+
+    doc = finalize_XML_header(tb, options);
+
+    /* We want at least one zero byte after the XML header, because that's how we figure out where
+     * it ends when we read it back it, and I also want to align the tablebase on a four-byte
+     * boundary for the hell of it.  (size+5)&(~3) achieves these goals.  I then modify the XML
+     * header with the updated string that gives the offset to the tablebase, and make sure that its
+     * size hasn't changed.
+     */
+
+    xmlDocDumpMemory(doc, &buf, &size);
+    padded_size = (size+5)&(~3);
+
+    sprintf(str, "0x%04x", padded_size);
+
+    tablebase = xmlDocGetRootElement(doc);
+    xmlSetProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) str);
+
+    xmlDocDumpMemory(doc, &buf, &size);
+
+    if (padded_size != ((size+5)&(~3))) {
+	fprintf(stderr, "sizes don't match in write_tablebase_to_file\n");
+    }
+
+    do_write(fd, buf, size);
+    xmlFree(buf);
+    close(fd);
+
+    file = fopen(filename, "a");
+    if (file == NULL) {
+	fprintf(stderr, "Can't fopen output file\n");
+    } else {
+	while (ftell(file) < padded_size) {
+	    fputc(0, file);
+	}
+	for (index = 0; index <= tb->max_index; index ++) {
+	    memset(entry, 0, tb->format.bytes);
+	    if (tb->format.dtm_bits > 0) {
+		int dtm;
+		/* If we're saving movecnt, then use the raw DTM, else "cook" it. */
+		if (tb->format.movecnt_bits > 0) {
+		    dtm = get_entry_raw_DTM(tb, index);
+		} else {
+		    dtm = get_entry_DTM(tb, index);
+		}
+		set_signed_field(entry, tb->format.dtm_mask, tb->format.dtm_offset, dtm);
+	    }
+	    if (tb->format.dtc_bits > 0) {
+		int dtc = get_entry_DTC(tb, index);
+		set_unsigned_field(entry, tb->format.dtc_mask, tb->format.dtc_offset, dtc);
+	    }
+	    if (tb->format.movecnt_bits > 0) {
+		int movecnt = get_entry_movecnt(tb, index);
+		set_unsigned_field(entry, tb->format.movecnt_mask, tb->format.movecnt_offset,
+				   movecnt);
+	    }
+	    fwrite(entry, tb->format.bytes, 1, file);
+	}
+    }
+
+    fclose(file);
 }
 
 /* The "master routine" for tablebase generation.
