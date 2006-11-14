@@ -471,6 +471,8 @@ typedef struct tablebase {
     /* for futurebases only */
     gzFile file;
     long offset;
+    int max_dtm;
+    int min_dtm;
     int invert_colors;
     int extra_piece;
     int missing_pawn;
@@ -2671,6 +2673,24 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+    /* Some statistics we'll use if this is a futurebase */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression((const xmlChar *) "//max-dtm", context);
+    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	tb->max_dtm = atoi((char *) xmlNodeGetContent(result->nodesetval->nodeTab[0]));
+    }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression((const xmlChar *) "//min-dtm", context);
+    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	tb->min_dtm = atoi((char *) xmlNodeGetContent(result->nodesetval->nodeTab[0]));
+    }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
     /* Fetch the pieces from the XML */
 
     context = xmlXPathNewContext(doc);
@@ -3220,7 +3240,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.240 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.241 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -6082,7 +6102,7 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
  */
 
 void propagate_index_from_futurebase(tablebase_t *tb, int dtm, int dtc, short movecnt,
-				     int futuremove, index_t current_index, int *dtm_limit)
+				     int futuremove, index_t current_index)
 {
     if (futuremove == -1) {
 	static int errors = 0;
@@ -6106,6 +6126,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm, int dtc, short mo
 	insert_into_proptable(current_index, 0, 0, movecnt, FUTUREVECTOR(futuremove));
     }
 
+#if 0
     /* This is pretty primitive, but we need to track the deepest mates during futurebase back prop
      * in order to know how deep we have to look during intra-table propagation.  We could improve
      * on this by only bumping dtm_limit if we called PTM_wins(), or if we called
@@ -6114,11 +6135,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm, int dtc, short mo
 
     if ((dtm > 0) && (*dtm_limit < dtm)) *dtm_limit = dtm;
     if ((dtm < 0) && (*dtm_limit < -dtm)) *dtm_limit = -dtm;
+#endif
 }
 
 void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
-						  int futuremove, local_position_t *current_position,
-						  int *dtm_limit)
+						  int futuremove, local_position_t *current_position)
 {
     index_t current_index;
 
@@ -6145,12 +6166,11 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm, int 
      */
 
     propagate_index_from_futurebase(tb, dtm, dtc, current_position->multiplicity,
-				    futuremove, current_index, dtm_limit);
+				    futuremove, current_index);
 }
 
 void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
-					      int futuremove, local_position_t *position,
-					      int *dtm_limit)
+					      int futuremove, local_position_t *position)
 {
     int piece;
 
@@ -6164,7 +6184,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
      * en passant positions.
      */
 
-    propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position, dtm_limit);
+    propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position);
 
     if (position->en_passant_square == -1) {
 
@@ -6182,7 +6202,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
 		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position, dtm_limit);
+		propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position);
 	    }
 
 	    if ((tb->piece_color[piece] == BLACK)
@@ -6190,7 +6210,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
 		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position, dtm_limit);
+		propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position);
 	    }
 
 	    position->en_passant_square = -1;
@@ -6206,8 +6226,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
 
 void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 					       int invert_colors_of_futurebase,
-					       int pawn,
-					       int *dtm_limit)
+					       int pawn)
 {
     index_t future_index;
     int dtm;
@@ -6349,7 +6368,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		    propagate_local_position_from_futurebase(tb, dtm, 0,
 							     promotions[true_pawn]
 							     + futurebase->piece_type[extra_piece] - 1,
-							     &position, dtm_limit);
+							     &position);
 
 		    /* We may be about to use this position again, so put the board_vector back... */
 
@@ -6393,8 +6412,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
 						       int invert_colors_of_futurebase,
-						       int pawn,
-						       int *dtm_limit)
+						       int pawn)
 {
     index_t future_index;
     int dtm;
@@ -6559,7 +6577,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    propagate_local_position_from_futurebase(tb, dtm, 0,
 							     futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
-							     &position, dtm_limit);
+							     &position);
 
 		    /* We're about to use this position again, so put the board_vector back... */
 
@@ -6607,7 +6625,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    propagate_local_position_from_futurebase(tb, dtm, 0,
 							     futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
-							     &position, dtm_limit);
+							     &position);
 
 		    /* We're about to use this position again, so put the board_vector back... */
 
@@ -6667,7 +6685,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 void consider_possible_captures(tablebase_t *tb, int dtm,
 				local_position_t *position,
-				int capturing_piece, int captured_piece, int *dtm_limit)
+				int capturing_piece, int captured_piece)
 {
     int dir;
     struct movement *movementptr;
@@ -6767,7 +6785,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 		propagate_local_position_from_futurebase(tb, dtm, 0,
 							 futurecaptures[true_capturing_piece][true_captured_piece],
-							 position, dtm_limit);
+							 position);
 
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
@@ -6833,7 +6851,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 		propagate_local_position_from_futurebase(tb, dtm, 0,
 							 futurecaptures[true_capturing_piece][true_captured_piece],
-							 position, dtm_limit);
+							 position);
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
 
@@ -6899,7 +6917,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 			propagate_local_position_from_futurebase(tb, dtm, 0,
 								 futurecaptures[true_capturing_piece][true_captured_piece],
-								 position, dtm_limit);
+								 position);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
 			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
@@ -6961,7 +6979,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 
 			propagate_local_position_from_futurebase(tb, dtm, 0,
 								 futurecaptures[true_capturing_piece][true_captured_piece],
-								 position, dtm_limit);
+								 position);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
 			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
@@ -6992,7 +7010,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 }
 
 void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-					     int invert_colors_of_futurebase, int captured_piece, int *dtm_limit)
+					     int invert_colors_of_futurebase, int captured_piece)
 {
     index_t future_index;
     int dtm;
@@ -7063,7 +7081,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		for (piece = 0; piece < tb->num_pieces; piece++) {
 
 		    consider_possible_captures(tb, dtm, &current_position,
-					       piece, captured_piece, dtm_limit);
+					       piece, captured_piece);
 		}
 
 	    } else {
@@ -7071,7 +7089,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		/* One piece was on a restricted square.  It's the only possible capturing piece. */
 
 		consider_possible_captures(tb, dtm, &current_position,
-					   restricted_piece, captured_piece, dtm_limit);
+					   restricted_piece, captured_piece);
 
 	    }
 
@@ -7084,7 +7102,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
  */
 
 void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-					    int invert_colors_of_futurebase, int *dtm_limit)
+					    int invert_colors_of_futurebase)
 {
     index_t future_index;
     int dtm;
@@ -7194,7 +7212,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		propagate_local_position_from_futurebase(tb, dtm, 0,
 							 futuremoves[piece][origin_square],
-							 &current_position, dtm_limit);
+							 &current_position);
 
 		continue;
 
@@ -7253,7 +7271,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 			propagate_local_position_from_futurebase(tb, dtm, dtc,
 								 futuremoves[piece][origin_square],
-								 &current_position, dtm_limit);
+								 &current_position);
 		    }
 		}
 
@@ -7309,7 +7327,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		    propagate_local_position_from_futurebase(tb, dtm, 0,
 							     futuremoves[piece][origin_square],
-							     &current_position, dtm_limit);
+							     &current_position);
 
 		}
 	    }
@@ -7414,14 +7432,13 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
  * Runs through the parsed XML control file, pulls out all the futurebases, and back-propagates each
  * one.
  *
- * Returns maximum mate_in value, or -1 if something went wrong
+ * Returns true, or false if something went wrong
  */
 
-int back_propagate_all_futurebases(tablebase_t *tb) {
+boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
-    int dtm_limit = 0;
 
     /* Fetch the futurebases from the XML */
 
@@ -7444,7 +7461,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 	    futurebase = preload_futurebase_from_file((char *) filename);
 
 	    /* load_futurebase_from_file() already printed some kind of error message */
-	    if (futurebase == NULL) return -1;
+	    if (futurebase == NULL) return 0;
 
 	    futurebase->invert_colors = 0;
 	    colors_property = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "colors");
@@ -7453,7 +7470,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 		xmlFree(colors_property);
 	    }
 
-	    if (! compute_extra_and_missing_pieces(tb, futurebase, (char *) filename)) return -1;
+	    if (! compute_extra_and_missing_pieces(tb, futurebase, (char *) filename)) return 0;
 
 	    /* Various combinations of missing/extra pieces are legal for different futurebase
 	     * types.
@@ -7469,7 +7486,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 		if (futurebase->extra_piece != -1) {
 		    fprintf(stderr, "'%s': Extra piece in capture futurebase\n", filename);
-		    return -1;
+		    return 0;
 		}
 
 		if ((futurebase->missing_pawn != -1) && (futurebase->missing_non_pawn != -1)) {
@@ -7485,7 +7502,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
-		propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors, piece, &dtm_limit);
+		propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors, piece);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion")) {
 
@@ -7496,7 +7513,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 		if (futurebase->extra_piece == -1) {
 		    fprintf(stderr, "'%s': No extra piece in promotion futurebase\n", filename);
-		    return -1;
+		    return 0;
 		}
 
 		if (futurebase->missing_non_pawn != -1) {
@@ -7512,7 +7529,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
 		propagate_moves_from_promotion_futurebase(tb, futurebase, futurebase->invert_colors,
-							  futurebase->missing_pawn, &dtm_limit);
+							  futurebase->missing_pawn);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion-capture")) {
 
@@ -7523,7 +7540,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 		if (futurebase->extra_piece == -1) {
 		    fprintf(stderr, "'%s': No extra piece in promotion capture futurebase\n", filename);
-		    return -1;
+		    return 0;
 		}
 
 		if (futurebase->missing_non_pawn == -1) {
@@ -7540,14 +7557,13 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
 		propagate_moves_from_promotion_capture_futurebase(tb, futurebase, futurebase->invert_colors,
-								  futurebase->missing_pawn,
-								  &dtm_limit);
+								  futurebase->missing_pawn);
 
 	    } else if ((type != NULL) && !strcasecmp((char *) type, "normal")) {
 
 		if (futurebase->extra_piece != -1) {
 		    fprintf(stderr, "'%s': Extra piece in normal futurebase\n", filename);
-		    return -1;
+		    return 0;
 		}
 
 		if ((futurebase->missing_pawn != -1) || (futurebase->missing_non_pawn != -1)) {
@@ -7556,13 +7572,13 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
 		fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
 
-		propagate_moves_from_normal_futurebase(tb, futurebase, futurebase->invert_colors, &dtm_limit);
+		propagate_moves_from_normal_futurebase(tb, futurebase, futurebase->invert_colors);
 
 	    } else {
 
 		fprintf(stderr, "'%s': Unknown back propagation type (%s)\n",
 			(char *) filename, (char *) type);
-		return -1;
+		return 0;
 
 	    }
 
@@ -7572,8 +7588,7 @@ int back_propagate_all_futurebases(tablebase_t *tb) {
 
     xmlXPathFreeContext(context);
 
-    return dtm_limit;
-
+    return 1;
 }
 
 /***** PRUNING *****/
@@ -8124,7 +8139,7 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
  * problem.
  */
 
-boolean check_pruning(tablebase_t *tb) {
+boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
     tablebase_t **futurebases;
     int num_futurebases;
@@ -8161,12 +8176,13 @@ boolean check_pruning(tablebase_t *tb) {
 	/* load_futurebase_from_file() already printed some kind of error message */
 	if (futurebases[fbnum] == NULL) return 0;
 
-#if 0
-	if (futurebases[fbnum]->symmetry != 1) {
-	    fprintf(stderr, "Can't backprop from 2/8-way symmetric futurebases (yet)\n");
+	if (futurebases[fbnum]->symmetry < tb->symmetry) {
+	    fprintf(stderr, "Futurebases can't be less symmetric than the tablebase under construction\n");
 	    return 0;
 	}
-#endif
+
+	if (futurebases[fbnum]->max_dtm > *max_dtm) *max_dtm = futurebases[fbnum]->max_dtm;
+	if (futurebases[fbnum]->min_dtm < *min_dtm) *min_dtm = futurebases[fbnum]->min_dtm;
 
 	futurebases[fbnum]->invert_colors = 0;
 	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], (const xmlChar *) "colors");
@@ -9121,11 +9137,11 @@ void initialize_tablebase(tablebase_t *tb)
  * more progress is made on a given pass.
  */
 
-void propagate_all_moves_within_tablebase(tablebase_t *tb, int dtm_limit)
+void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, int upper_dtm_limit)
 {
     int dtm = 1;
 
-    while (dtm <= dtm_limit) {
+    while ((dtm <= upper_dtm_limit) || (-dtm >= lower_dtm_limit)) {
 
 	/* PTM wins */
 	propagation_pass(dtm);
@@ -9240,7 +9256,8 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 boolean generate_tablebase_from_control_file(char *control_filename, char *output_filename, char *options) {
 
     tablebase_t *tb;
-    int dtm_limit;
+    int max_dtm = 0;
+    int min_dtm = 0;
     int i;
 
     tb = parse_XML_control_file(control_filename);
@@ -9314,7 +9331,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	fprintf(stderr, "Futuremove %i: %s\n", i, movestr[i]);
     }
 #endif
-    if (! check_pruning(tb)) return 0;
+    if (! check_pruning(tb, &max_dtm, &min_dtm)) return 0;
 
     check_1000_indices(tb);
     /* check_1000_positions(tb); */  /* This becomes a problem with symmetry, among other things */
@@ -9340,8 +9357,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions);
 	fprintf(stderr, "Total moves: %lld\n", total_moves);
 
-	dtm_limit = back_propagate_all_futurebases(tb);
-	if (dtm_limit == -1) return 0;
+	if (! back_propagate_all_futurebases(tb)) return 0;
 
 	fprintf(stderr, "Checking futuremoves...\n");
 	propagation_pass(0);
@@ -9358,8 +9374,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * into it, checking each position move as we go to make sure its futuremoves are handled.
 	 */
 
-	dtm_limit = back_propagate_all_futurebases(tb);
-	if (dtm_limit == -1) return 0;
+	if (! back_propagate_all_futurebases(tb)) return 0;
 	proptable_full();  /* flush moves out to disk */
 	finalize_proptable_write();
 
@@ -9382,7 +9397,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
      */
 
     fprintf(stderr, "Intra-table propagating\n");
-    propagate_all_moves_within_tablebase(tb, dtm_limit+1);
+    propagate_all_moves_within_tablebase(tb, min_dtm-1, max_dtm+1);
 
     write_tablebase_to_file(tb, output_filename, options);
 
