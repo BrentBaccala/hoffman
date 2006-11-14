@@ -3240,7 +3240,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.241 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.242 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -5383,7 +5383,7 @@ void proptable_full(void)
  * Start a new set of proptables and commit the old set into the entries array.
  */
 
-void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symmetry, int dtm, int dtc);
+void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symmetry);
 
 /* fetch_next_propentry()
  *
@@ -5779,9 +5779,9 @@ int proptable_finalize(int target_dtm)
 	}
 
 	if ((target_dtm != 0) && (get_entry_DTM(proptable_tb, index) == target_dtm)) {
-	    back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, get_entry_DTC(proptable_tb, index));
+	    back_propagate_index_within_table(proptable_tb, index, 0);
 	    if (proptable_tb->symmetry == 8) {
-		back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, get_entry_DTC(proptable_tb, index));
+		back_propagate_index_within_table(proptable_tb, index, 1);
 	    }
 	    positions_finalized ++;
 	}
@@ -5871,10 +5871,10 @@ int propagation_pass(int target_dtm)
 	     */
 
 	    if ((target_dtm != 0) && (get_entry_DTM(proptable_tb, index) == target_dtm)) {
-		back_propagate_index_within_table(proptable_tb, index, 0, target_dtm, get_entry_DTC(proptable_tb, index));
+		back_propagate_index_within_table(proptable_tb, index, 0);
 #if 1
 		if (proptable_tb->symmetry == 8) {
-		    back_propagate_index_within_table(proptable_tb, index, 1, target_dtm, get_entry_DTC(proptable_tb, index));
+		    back_propagate_index_within_table(proptable_tb, index, 1);
 		}
 #endif
 		positions_finalized ++;
@@ -6101,9 +6101,12 @@ void insert_into_proptable(index_t index, short dtm, unsigned char dtc, short mo
  * set, but we didn't use it.
  */
 
-void propagate_index_from_futurebase(tablebase_t *tb, int dtm, int dtc, short movecnt,
-				     int futuremove, index_t current_index)
+void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
+				     short movecnt, int futuremove, index_t current_index)
 {
+    int dtm = get_entry_DTM(futurebase, future_index);
+    int dtc = 0;
+
     if (futuremove == -1) {
 	static int errors = 0;
 	global_position_t global;
@@ -6138,7 +6141,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, int dtm, int dtc, short mo
 #endif
 }
 
-void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
+void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
 						  int futuremove, local_position_t *current_position)
 {
     index_t current_index;
@@ -6165,11 +6168,11 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, int dtm, int 
      * without worrying about it getting called again.
      */
 
-    propagate_index_from_futurebase(tb, dtm, dtc, current_position->multiplicity,
+    propagate_index_from_futurebase(tb, futurebase, future_index, current_position->multiplicity,
 				    futuremove, current_index);
 }
 
-void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
+void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
 					      int futuremove, local_position_t *position)
 {
     int piece;
@@ -6184,7 +6187,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
      * en passant positions.
      */
 
-    propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position);
+    propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 
     if (position->en_passant_square == -1) {
 
@@ -6202,7 +6205,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
 		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position);
+		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
 	    if ((tb->piece_color[piece] == BLACK)
@@ -6210,7 +6213,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, int dtm, int dtc,
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
 		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_minilocal_position_from_futurebase(tb, dtm, dtc, futuremove, position);
+		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
 	    position->en_passant_square = -1;
@@ -6229,7 +6232,6 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 					       int pawn)
 {
     index_t future_index;
-    int dtm;
     local_position_t foreign_position;
     local_position_t position;
     uint32 conversion_result;
@@ -6249,10 +6251,6 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
-
-	/* dtm = fetch_next_DTM_from_disk(futurebase); */
-	/* dtm = fetch_DTM_from_disk(futurebase, future_index); */
-	dtm = get_entry_DTM(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -6365,7 +6363,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		     * this is a pawn move.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, dtm, 0,
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
 							     promotions[true_pawn]
 							     + futurebase->piece_type[extra_piece] - 1,
 							     &position);
@@ -6415,7 +6413,6 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 						       int pawn)
 {
     index_t future_index;
-    int dtm;
     local_position_t foreign_position;
     local_position_t position;
     uint32 conversion_result;
@@ -6436,10 +6433,6 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
-
-	/* dtm = fetch_next_DTM_from_disk(futurebase); */
-	/* dtm = fetch_DTM_from_disk(futurebase, future_index); */
-	dtm = get_entry_DTM(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -6575,7 +6568,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		     * because this is a pawn move.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, dtm, 0,
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
 							     futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 							     &position);
 
@@ -6623,7 +6616,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		     * because this is a pawn move.
 		     */
 
-		    propagate_local_position_from_futurebase(tb, dtm, 0,
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
 							     futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 							     &position);
 
@@ -6683,7 +6676,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
  * on invert_colors_of_global position.
  */
 
-void consider_possible_captures(tablebase_t *tb, int dtm,
+void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
 				local_position_t *position,
 				int capturing_piece, int captured_piece)
 {
@@ -6783,7 +6776,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		 * a capture.
 		 */
 
-		propagate_local_position_from_futurebase(tb, dtm, 0,
+		propagate_local_position_from_futurebase(tb, futurebase, future_index,
 							 futurecaptures[true_capturing_piece][true_captured_piece],
 							 position);
 
@@ -6849,7 +6842,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 		 * this is a capture (and a pawn move).
 		 */
 
-		propagate_local_position_from_futurebase(tb, dtm, 0,
+		propagate_local_position_from_futurebase(tb, futurebase, future_index,
 							 futurecaptures[true_capturing_piece][true_captured_piece],
 							 position);
 
@@ -6915,7 +6908,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 			    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
 			}
 
-			propagate_local_position_from_futurebase(tb, dtm, 0,
+			propagate_local_position_from_futurebase(tb, futurebase, future_index,
 								 futurecaptures[true_capturing_piece][true_captured_piece],
 								 position);
 
@@ -6977,7 +6970,7 @@ void consider_possible_captures(tablebase_t *tb, int dtm,
 			    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
 			}
 
-			propagate_local_position_from_futurebase(tb, dtm, 0,
+			propagate_local_position_from_futurebase(tb, futurebase, future_index,
 								 futurecaptures[true_capturing_piece][true_captured_piece],
 								 position);
 
@@ -7013,7 +7006,6 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 					     int invert_colors_of_futurebase, int captured_piece)
 {
     index_t future_index;
-    int dtm;
     local_position_t current_position;
     int piece;
     uint32 conversion_result;
@@ -7025,10 +7017,6 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
-
-	/* dtm = fetch_next_DTM_from_disk(futurebase); */
-	/* dtm = fetch_DTM_from_disk(futurebase, future_index); */
-	dtm = get_entry_DTM(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -7080,7 +7068,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 
 		for (piece = 0; piece < tb->num_pieces; piece++) {
 
-		    consider_possible_captures(tb, dtm, &current_position,
+		    consider_possible_captures(tb, futurebase, future_index, &current_position,
 					       piece, captured_piece);
 		}
 
@@ -7088,7 +7076,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 
 		/* One piece was on a restricted square.  It's the only possible capturing piece. */
 
-		consider_possible_captures(tb, dtm, &current_position,
+		consider_possible_captures(tb, futurebase, future_index, &current_position,
 					   restricted_piece, captured_piece);
 
 	    }
@@ -7105,8 +7093,6 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 					    int invert_colors_of_futurebase)
 {
     index_t future_index;
-    int dtm;
-    int dtc;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
     uint32 conversion_result;
@@ -7125,14 +7111,6 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	 * if none of them were on restricted squares, then this would be a position in the current
 	 * tablebase.
 	 */
-
-	/* dtm = fetch_next_DTM_from_disk(futurebase); */
-	/* dtm = fetch_DTM_from_disk(futurebase, future_index); */
-	dtm = get_entry_DTM(futurebase, future_index);
-
-	/* XXX have to fetch DTC as well */
-
-	dtc = 0;
 
 	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
 	 * with multiple restricted pieces that should be quietly ignored.
@@ -7210,7 +7188,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		/* DTC is zero because this is a pawn move */
 
-		propagate_local_position_from_futurebase(tb, dtm, 0,
+		propagate_local_position_from_futurebase(tb, futurebase, future_index,
 							 futuremoves[piece][origin_square],
 							 &current_position);
 
@@ -7269,7 +7247,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 			current_position.board_vector |= BITVECTOR(movementptr->square);
 
-			propagate_local_position_from_futurebase(tb, dtm, dtc,
+			propagate_local_position_from_futurebase(tb, futurebase, future_index,
 								 futuremoves[piece][origin_square],
 								 &current_position);
 		    }
@@ -7325,7 +7303,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		    current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
 
-		    propagate_local_position_from_futurebase(tb, dtm, 0,
+		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
 							     futuremoves[piece][origin_square],
 							     &current_position);
 
@@ -8440,9 +8418,11 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
  * positions that could have gotten us here and update their counters in various obscure ways.
  */
 
-void propagate_one_minimove_within_table(tablebase_t *tb, int dtm, int dtc, local_position_t *current_position)
+void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, local_position_t *current_position)
 {
     index_t current_index;
+    int dtm = get_entry_DTM(tb, future_index);
+    int dtc = get_entry_DTC(tb, future_index);
 
     current_index = local_position_to_index(tb, current_position);
 
@@ -8485,7 +8465,7 @@ void propagate_one_minimove_within_table(tablebase_t *tb, int dtm, int dtc, loca
 #endif
 }
 
-void propagate_one_move_within_table(tablebase_t *tb, int dtm, int dtc, local_position_t *position)
+void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, local_position_t *position)
 {
     int piece;
 
@@ -8499,7 +8479,7 @@ void propagate_one_move_within_table(tablebase_t *tb, int dtm, int dtc, local_po
      * en passant positions.
      */
 
-    propagate_one_minimove_within_table(tb, dtm, dtc, position);
+    propagate_one_minimove_within_table(tb, future_index, position);
 
     if (position->en_passant_square == -1) {
 
@@ -8517,7 +8497,7 @@ void propagate_one_move_within_table(tablebase_t *tb, int dtm, int dtc, local_po
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
 		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_one_minimove_within_table(tb, dtm, dtc, position);
+		propagate_one_minimove_within_table(tb, future_index, position);
 	    }
 
 	    if ((tb->piece_color[piece] == BLACK)
@@ -8525,7 +8505,7 @@ void propagate_one_move_within_table(tablebase_t *tb, int dtm, int dtc, local_po
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
 		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_one_minimove_within_table(tb, dtm, dtc, position);
+		propagate_one_minimove_within_table(tb, future_index, position);
 	    }
 
 	    position->en_passant_square = -1;
@@ -8539,7 +8519,7 @@ void propagate_one_move_within_table(tablebase_t *tb, int dtm, int dtc, local_po
  * (within the tablebase) from the corresponding position.
  */
 
-void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symmetry, int dtm, int dtc)
+void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symmetry)
 {
     local_position_t position;
     int piece;
@@ -8608,7 +8588,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
 		return;
 	    }
 
-	    propagate_one_move_within_table(tb, dtm, dtc, &position);
+	    propagate_one_move_within_table(tb, index, &position);
 	}
 
 	return;
@@ -8669,7 +8649,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
 
 		    position.board_vector |= BITVECTOR(movementptr->square);
 
-		    propagate_one_move_within_table(tb, dtm, dtc, &position);
+		    propagate_one_move_within_table(tb, index, &position);
 
 		    position.board_vector &= ~BITVECTOR(movementptr->square);
 		}
@@ -8719,7 +8699,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
 
 		position.board_vector |= BITVECTOR(movementptr->square);
 
-		propagate_one_move_within_table(tb, dtm, dtc, &position);
+		propagate_one_move_within_table(tb, index, &position);
 
 		position.board_vector &= ~BITVECTOR(movementptr->square);
 	    }
