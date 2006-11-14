@@ -3128,26 +3128,6 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     return tb;
 }
 
-char fetch_DTM_from_disk(tablebase_t *tb, index_t index)
-{
-    int retval;
-    char entry[MAX_FORMAT_BYTES];
-
-    if (tb->file == NULL) {
-	fprintf(stderr, "Attempt to fetch_DTM_from_disk() from a non-preloaded tablebase\n");/* BREAKPOINT */
-	return 0;
-    } else {
-	gzseek(tb->file, tb->offset + tb->format.bytes * index, SEEK_SET);
-	retval = gzread(tb->file, entry, tb->format.bytes);
-	if (retval == EOF) {
-	    fprintf(stderr, "fetch_DTM_from_disk() hit EOF\n");
-	    return 0;
-	} else {
-	    return get_signed_field((void *)entry, tb->format.dtm_mask, tb->format.dtm_offset);
-	}
-    }
-}
-
 void unload_futurebase(tablebase_t *tb)
 {
     if (tb->xml != NULL) xmlFreeDoc(tb->xml);
@@ -3240,7 +3220,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.239 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.240 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4159,6 +4139,31 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	/* entries array exists in memory - so just return a pointer into it */
 	return (void *)(tb->entries) + index * entries_format.bytes;
 
+    } else if (tb->file != NULL) {
+
+	/* it's a preloaded tablebase - we're reading from a compressed file */
+
+	/* XXX I can't see any reason why this shouldn't be integrated into the next code case. */
+
+	static char entry[MAX_FORMAT_BYTES];
+	static tablebase_t *cached_tb = NULL;
+	static index_t cached_index = 0;
+	int retval;
+
+	if ((cached_tb == tb) && (cached_index == index)) return entry;
+
+	if ((cached_tb != tb) || (cached_index + 1 != index)) {
+	    gzseek(tb->file, tb->offset + tb->format.bytes * index, SEEK_SET);
+	}
+	retval = gzread(tb->file, entry, tb->format.bytes);
+	if (retval == EOF) {
+	    fprintf(stderr, "fetch_entry_pointer() hit EOF reading from disk\n");
+	}
+
+	cached_tb = tb;
+	cached_index = index;
+	return entry;
+
     } else if ((index < entry_buffers[yellow_entry_buffer].start)
 	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
 
@@ -4277,12 +4282,6 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
  *
  */
 
-inline boolean is_position_valid(tablebase_t *tb, index_t index)
-{
-    if (tb->entries != NULL) return (get_entry_DTM(tb,index) != 1);
-    else return (fetch_DTM_from_disk(tb,index) != 1);
-}
-
 inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_signed_field(fetch_entry_pointer(tb, index),
@@ -4357,6 +4356,11 @@ inline short does_PNTM_win(tablebase_t *tb, index_t index)
 int get_entry_DTM(tablebase_t *tb, index_t index)
 {
     return (does_PTM_win(tb, index) || does_PNTM_win(tb, index)) ? get_entry_raw_DTM(tb, index) : 0;
+}
+
+inline boolean is_position_valid(tablebase_t *tb, index_t index)
+{
+    return (get_entry_DTM(tb,index) != 1);
 }
 
 /* Four possible ways we can initialize a tablebase entry for a position:
@@ -6228,7 +6232,8 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	 */
 
 	/* dtm = fetch_next_DTM_from_disk(futurebase); */
-	dtm = fetch_DTM_from_disk(futurebase, future_index);
+	/* dtm = fetch_DTM_from_disk(futurebase, future_index); */
+	dtm = get_entry_DTM(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -6415,7 +6420,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	 */
 
 	/* dtm = fetch_next_DTM_from_disk(futurebase); */
-	dtm = fetch_DTM_from_disk(futurebase, future_index);
+	/* dtm = fetch_DTM_from_disk(futurebase, future_index); */
+	dtm = get_entry_DTM(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -7003,7 +7009,8 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 	 */
 
 	/* dtm = fetch_next_DTM_from_disk(futurebase); */
-	dtm = fetch_DTM_from_disk(futurebase, future_index);
+	/* dtm = fetch_DTM_from_disk(futurebase, future_index); */
+	dtm = get_entry_DTM(futurebase, future_index);
 
 	/* Take the position from the futurebase and translate it into a local position for the
 	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -7102,7 +7109,8 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	 */
 
 	/* dtm = fetch_next_DTM_from_disk(futurebase); */
-	dtm = fetch_DTM_from_disk(futurebase, future_index);
+	/* dtm = fetch_DTM_from_disk(futurebase, future_index); */
+	dtm = get_entry_DTM(futurebase, future_index);
 
 	/* XXX have to fetch DTC as well */
 
@@ -9437,7 +9445,8 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
     for (index = 0; index <= tb->max_index; index++) {
 	if (index_to_global_position(tb, index, &global)) {
 
-	    int dtm = fetch_DTM_from_disk(tb, index);
+	    /* int dtm = fetch_DTM_from_disk(tb, index); */
+	    int dtm = get_entry_DTM(tb, index);
 
 	    if (dtm == 1) {
 
@@ -9522,7 +9531,8 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
 
 void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm)
 {
-    int dtm = fetch_DTM_from_disk(tb, index);
+    /* int dtm = fetch_DTM_from_disk(tb, index); */
+    int dtm = get_entry_DTM(tb, index);
 
     if (dtm == 0) {
 	printf("Draw\n");
