@@ -360,12 +360,6 @@ struct format {
     uint8 movecnt_offset;
     uint8 movecnt_bits;
     uint8 in_check_flag_offset;
-    uint32 PTM_flags_mask;
-    uint8 PTM_flags_offset;
-    uint8 PTM_flags_bits;
-    uint32 PNTM_flags_mask;
-    uint8 PNTM_flags_offset;
-    uint8 PNTM_flags_bits;
     uint32 index_mask;
     uint8 index_offset;
     uint8 index_bits;
@@ -374,22 +368,19 @@ struct format {
     uint8 futurevector_bits;
 };
 
-char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "PTM-flags", "PNTM-flags",
-			  "index", "futurevector", NULL};
+char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index", "futurevector", NULL};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_MOVECNT 1
 #define FORMAT_FIELD_IN_CHECK_FLAG 2
-#define FORMAT_FIELD_PTM_FLAGS 3
-#define FORMAT_FIELD_PNTM_FLAGS 4
-#define FORMAT_FIELD_INDEX 5
-#define FORMAT_FIELD_FUTUREVECTOR 6
+#define FORMAT_FIELD_INDEX 3
+#define FORMAT_FIELD_FUTUREVECTOR 4
 
 #define MAX_FORMAT_BYTES 16
 
 /* This is our old "fourbyte" format that we use for in-memory tablebase arrays */
 
-struct format entries_format = {4, 0xff,0,8, 0x7f,16,7, 23, 0,0,0, 0,0,0, 0,0,0, 0,0,0};
+struct format entries_format = {4, 0xff,0,8, 0x7f,16,7, 23};
 
 /* This is the "one-byte-dtm" format */
 
@@ -397,7 +388,7 @@ struct format one_byte_dtm_format = {1, 0xff,0,8};
 
 /* And this is the sixteen byte format we use by default for proptable entries */
 
-struct format proptable_format = {16, 0xffff,32,16, 0xff,56,8, 0, 0,0,0, 0,0,0,
+struct format proptable_format = {16, 0xffff,32,16, 0xff,56,8, 0,
 				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64};
 
 
@@ -2595,16 +2586,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	    case FORMAT_FIELD_IN_CHECK_FLAG:
 		format->in_check_flag_offset = offset;
 		break;
-	    case FORMAT_FIELD_PTM_FLAGS:
-		format->PTM_flags_bits = bits;
-		format->PTM_flags_offset = offset;
-		format->PTM_flags_mask = (1 << bits) - 1;
-		break;
-	    case FORMAT_FIELD_PNTM_FLAGS:
-		format->PNTM_flags_bits = bits;
-		format->PNTM_flags_offset = offset;
-		format->PNTM_flags_mask = (1 << bits) - 1;
-		break;
 	    case FORMAT_FIELD_INDEX:
 		format->index_bits = bits;
 		format->index_offset = offset;
@@ -3231,7 +3212,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.245 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.246 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
