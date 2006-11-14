@@ -3231,7 +3231,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.244 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.245 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -5104,24 +5104,6 @@ int proptable_merges = 0;
 
 #define PROPTABLE_ELEM(n)  ((void *)proptable + proptable_format.bytes * (n))
 
-void insert_at_propentry(int propentry, proptable_entry_t * pentry)
-{
-#ifdef DEBUG_MOVE
-    if (get_propentry_index(pentry) == DEBUG_MOVE)
-	fprintf(stderr, "insert_at_propentry; index=%d; propentry=%d\n",
-		get_propentry_index(pentry), propentry);
-#endif
-
-    memcpy(PROPTABLE_ELEM(propentry), pentry, proptable_format.bytes);
-
-    proptable_entries ++;
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
-#endif
-}
-
 index_t get_propentry_index(proptable_entry_t *propentry)
 {
     uint32 *ptr = (uint32 *) propentry;
@@ -5146,11 +5128,54 @@ void set_propentry_futurevector(proptable_entry_t *propentry, futurevector_t fut
     set_unsigned64bit_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset, futurevector);
 }
 
+int get_propentry_dtm(proptable_entry_t *propentry)
+{
+    uint32 *ptr = (uint32 *) propentry;
+    return get_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset);
+}
+
+void set_propentry_dtm(proptable_entry_t *propentry, int distance)
+{
+    uint32 *ptr = (uint32 *) propentry;
+    set_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset, distance);
+}
+
+int get_propentry_movecnt(proptable_entry_t *propentry)
+{
+    uint32 *ptr = (uint32 *) propentry;
+    return get_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset);
+}
+
+void set_propentry_movecnt(proptable_entry_t *propentry, int movecnt)
+{
+    uint32 *ptr = (uint32 *) propentry;
+    set_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset, movecnt);
+}
+
+void insert_at_propentry(int propentry, proptable_entry_t * pentry)
+{
+#ifdef DEBUG_MOVE
+    if (get_propentry_index(pentry) == DEBUG_MOVE)
+	fprintf(stderr, "insert_at_propentry; index=%d; propentry=%d\n",
+		get_propentry_index(pentry), propentry);
+#endif
+
+    memcpy(PROPTABLE_ELEM(propentry), pentry, proptable_format.bytes);
+
+    proptable_entries ++;
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
+#endif
+}
+
 void merge_at_propentry(int propentry, proptable_entry_t *src)
 {
     uint32 *dest = (uint32 *) PROPTABLE_ELEM(propentry);
-    int dest_dtm = get_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset);
-    int src_dtm = get_signed_field(src, proptable_format.dtm_mask, proptable_format.dtm_offset);
+    int dest_dtm = get_propentry_dtm(dest);
+    int src_dtm = get_propentry_dtm(src);
+
     proptable_merges ++;
 
 #ifdef DEBUG_MOVE
@@ -5165,7 +5190,7 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 	 * than the old one.
 	 */
 	if ((dest_dtm <= 0) || (src_dtm < dest_dtm)) {
-	    set_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset, src_dtm);
+	    set_propentry_dtm(dest, src_dtm);
 	}
     } else if (src_dtm < 0) {
 	/* DTM < 0 - this move lets PNTM mate from this position.  Update the proptable entry only
@@ -5173,12 +5198,11 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 	 * old one.
 	 */
 	if ((dest_dtm <= 0) && (src_dtm < dest_dtm)) {
-	    set_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset, src_dtm);
+	    set_propentry_dtm(dest, src_dtm);
 	}
     }
 
-    set_unsigned_field(dest, proptable_format.movecnt_mask, proptable_format.movecnt_offset,
-		       get_unsigned_field(dest, proptable_format.movecnt_mask, proptable_format.movecnt_offset) + get_unsigned_field(src, proptable_format.movecnt_mask, proptable_format.movecnt_offset));
+    set_propentry_movecnt(dest, get_propentry_movecnt(dest) + get_propentry_movecnt(src));
 
     if (get_propentry_futurevector(dest) & get_propentry_futurevector(src)) {
 	global_position_t global;
@@ -5196,8 +5220,8 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 {
     uint32 *ptr = (uint32 *) propentry;
     index_t index = get_propentry_index(propentry);
-    int dtm = get_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset);
-    int movecnt = get_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset);
+    int dtm = get_propentry_dtm(ptr);
+    int movecnt = get_propentry_movecnt(ptr);
     futurevector_t futurevector = get_propentry_futurevector(ptr);
     int i;
 
