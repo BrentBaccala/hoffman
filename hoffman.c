@@ -356,9 +356,6 @@ struct format {
     uint32 dtm_mask;
     uint8 dtm_offset;
     uint8 dtm_bits;
-    uint32 dtc_mask;
-    uint8 dtc_offset;
-    uint8 dtc_bits;
     uint32 movecnt_mask;
     uint8 movecnt_offset;
     uint8 movecnt_bits;
@@ -377,23 +374,22 @@ struct format {
     uint8 futurevector_bits;
 };
 
-char * format_fields[] = {"dtm", "dtc", "movecnt", "in-check-flag", "PTM-flags", "PNTM-flags",
+char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "PTM-flags", "PNTM-flags",
 			  "index", "futurevector", NULL};
 
 #define FORMAT_FIELD_DTM 0
-#define FORMAT_FIELD_DTC 1
-#define FORMAT_FIELD_MOVECNT 2
-#define FORMAT_FIELD_IN_CHECK_FLAG 3
-#define FORMAT_FIELD_PTM_FLAGS 4
-#define FORMAT_FIELD_PNTM_FLAGS 5
-#define FORMAT_FIELD_INDEX 6
-#define FORMAT_FIELD_FUTUREVECTOR 7
+#define FORMAT_FIELD_MOVECNT 1
+#define FORMAT_FIELD_IN_CHECK_FLAG 2
+#define FORMAT_FIELD_PTM_FLAGS 3
+#define FORMAT_FIELD_PNTM_FLAGS 4
+#define FORMAT_FIELD_INDEX 5
+#define FORMAT_FIELD_FUTUREVECTOR 6
 
 #define MAX_FORMAT_BYTES 16
 
 /* This is our old "fourbyte" format that we use for in-memory tablebase arrays */
 
-struct format entries_format = {4, 0xff,0,8, 0xff,8,8, 0x7f,16,7, 23, 0,0,0, 0,0,0, 0,0,0, 0,0,0};
+struct format entries_format = {4, 0xff,0,8, 0x7f,16,7, 23, 0,0,0, 0,0,0, 0,0,0, 0,0,0};
 
 /* This is the "one-byte-dtm" format */
 
@@ -401,7 +397,7 @@ struct format one_byte_dtm_format = {1, 0xff,0,8};
 
 /* And this is the sixteen byte format we use by default for proptable entries */
 
-struct format proptable_format = {16, 0xffff,32,16, 0xff,48,8, 0xff,56,8, 0, 0,0,0, 0,0,0,
+struct format proptable_format = {16, 0xffff,32,16, 0xff,56,8, 0, 0,0,0, 0,0,0,
 				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64};
 
 
@@ -2519,7 +2515,7 @@ void check_1000_indices(tablebase_t *tb)
  * with shifts and masks rather than normal structure operations.
  *
  * The XML format can be specified with either explicit or implicit offsets.  Explicit offsets are
- * just that: <dtc bits="8" offset="8"/> specifies an 8-bit field at an 8-bit offset into the
+ * just that: <dtm bits="8" offset="8"/> specifies an 8-bit field at an 8-bit offset into the
  * structure.  Implicit offsets assign the offset values counting up from zero (like the first
  * example above).  The two can not be mixed in the same format spec.
  *
@@ -2590,11 +2586,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		format->dtm_bits = bits;
 		format->dtm_offset = offset;
 		format->dtm_mask = (1 << bits) - 1;
-		break;
-	    case FORMAT_FIELD_DTC:
-		format->dtc_bits = bits;
-		format->dtc_offset = offset;
-		format->dtc_mask = (1 << bits) - 1;
 		break;
 	    case FORMAT_FIELD_MOVECNT:
 		format->movecnt_bits = bits;
@@ -3240,7 +3231,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.243 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.244 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4314,18 +4305,6 @@ inline void set_entry_raw_DTM(tablebase_t *tb, index_t index, int dtm)
 		     entries_format.dtm_mask, entries_format.dtm_offset, dtm);
 }
 
-inline int get_entry_DTC(tablebase_t *tb, index_t index)
-{
-    return get_unsigned_field(fetch_entry_pointer(tb, index),
-			      entries_format.dtc_mask, entries_format.dtc_offset);
-}
-
-inline void set_entry_DTC(tablebase_t *tb, index_t index, int dtc)
-{
-    set_unsigned_field(fetch_entry_pointer(tb, index),
-		       entries_format.dtc_mask, entries_format.dtc_offset, dtc);
-}
-
 inline int get_entry_movecnt(tablebase_t *tb, index_t index)
 {
     return get_unsigned_field(fetch_entry_pointer(tb, index),
@@ -4426,7 +4405,7 @@ void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt, 
     total_legal_positions ++;
 }
 
-inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
+inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -4437,11 +4416,10 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
 	fprintf(stderr, "Negative distance to mate in PTM_wins!?\n"); /* BREAKPOINT */
     } else if ((dtm < get_entry_raw_DTM(tb, index)) || (get_entry_raw_DTM(tb, index) <= 0)) {
 	set_entry_raw_DTM(tb, index, dtm);
-	set_entry_DTC(tb, index, dtc);
     }
 }
 
-inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dtc)
+inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -4456,7 +4434,6 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dt
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
 	    /* XXX need to think more about the stalemates */
 	    set_entry_raw_DTM(tb, index, dtm);
-	    set_entry_DTC(tb, index, dtc);
 	}
 
 	if ((get_entry_movecnt(tb, index) == 0) && (!get_entry_in_check_flag(tb, index))
@@ -4470,12 +4447,6 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm, int dt
 	    total_stalemate_positions ++;
 
 	    set_entry_raw_DTM(tb, index, 0);
-	    set_entry_DTC(tb, index, 0);
-	}
-
-	/* XXX not sure about this stalemate code */
-	if (dtc < get_entry_DTC(tb, index)) {
-	    set_entry_DTC(tb, index, dtc);
 	}
     }
 }
@@ -5195,7 +5166,6 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 	 */
 	if ((dest_dtm <= 0) || (src_dtm < dest_dtm)) {
 	    set_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset, src_dtm);
-	    /* set_unsigned_field(dest, proptable_format.dtc_mask, proptable_format.dtc_offset, dtc);*/
 	}
     } else if (src_dtm < 0) {
 	/* DTM < 0 - this move lets PNTM mate from this position.  Update the proptable entry only
@@ -5204,7 +5174,6 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 	 */
 	if ((dest_dtm <= 0) && (src_dtm < dest_dtm)) {
 	    set_signed_field(dest, proptable_format.dtm_mask, proptable_format.dtm_offset, src_dtm);
-	    /* set_unsigned_field(dest, proptable_format.dtc_mask, proptable_format.dtc_offset, dtc); */
 	}
     }
 
@@ -5228,7 +5197,6 @@ void commit_proptable_entry(proptable_entry_t *propentry)
     uint32 *ptr = (uint32 *) propentry;
     index_t index = get_propentry_index(propentry);
     int dtm = get_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset);
-    int dtc = get_unsigned_field(ptr, proptable_format.dtc_mask, proptable_format.dtc_offset);
     int movecnt = get_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset);
     futurevector_t futurevector = get_propentry_futurevector(ptr);
     int i;
@@ -5264,10 +5232,10 @@ void commit_proptable_entry(proptable_entry_t *propentry)
     }
 
     if (dtm > 0) {
-	PTM_wins(proptable_tb, index, dtm, dtc);
+	PTM_wins(proptable_tb, index, dtm);
     } else if (dtm < 0) {
 	for (i=0; i<movecnt; i++) {
-	    add_one_to_PNTM_wins(proptable_tb, index, dtm, dtc);
+	    add_one_to_PNTM_wins(proptable_tb, index, dtm);
 	}
     }
 }
@@ -6089,7 +6057,7 @@ void insert_or_commit_propentry(proptable_entry_t *propentry)
     }
 }
 
-void insert_or_commit_trivial_propentry(index_t index, short dtm, unsigned char dtc, short movecnt,
+void insert_or_commit_trivial_propentry(index_t index, short dtm, short movecnt,
 					futurevector_t futurevector)
 {
     char entry[MAX_FORMAT_BYTES];
@@ -6099,7 +6067,6 @@ void insert_or_commit_trivial_propentry(index_t index, short dtm, unsigned char 
 
     set_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset, index);
     set_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset, dtm);
-    set_unsigned_field(ptr, proptable_format.dtc_mask, proptable_format.dtc_offset, dtc);
     set_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset, movecnt);
     set_unsigned64bit_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset, futurevector);
 
@@ -6144,7 +6111,6 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 				     short movecnt, int futuremove, index_t current_index)
 {
     int dtm = get_entry_DTM(futurebase, future_index);
-    int dtc = 0;
 
     if (futuremove == -1) {
 	static int errors = 0;
@@ -6161,11 +6127,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
     /* We insert even if dtm is zero because we have to track futuremoves */
 
     if (dtm > 0) {
-	insert_or_commit_trivial_propentry(current_index, -dtm, dtc, movecnt, FUTUREVECTOR(futuremove));
+	insert_or_commit_trivial_propentry(current_index, -dtm, movecnt, FUTUREVECTOR(futuremove));
     } else if (dtm < 0) {
-	insert_or_commit_trivial_propentry(current_index, -dtm+1, dtc+1, movecnt, FUTUREVECTOR(futuremove));
+	insert_or_commit_trivial_propentry(current_index, -dtm+1, movecnt, FUTUREVECTOR(futuremove));
     } else {
-	insert_or_commit_trivial_propentry(current_index, 0, 0, movecnt, FUTUREVECTOR(futuremove));
+	insert_or_commit_trivial_propentry(current_index, 0, movecnt, FUTUREVECTOR(futuremove));
     }
 
 #if 0
@@ -6398,8 +6364,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		    }
 
 		    /* This function also back props any similar positions with one of the pawns from
-		     * the side that didn't promote in an en passant state.  DTC is zero because
-		     * this is a pawn move.
+		     * the side that didn't promote in an en passant state.
 		     */
 
 		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
@@ -6603,8 +6568,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		    }
 
 		    /* This function also back props any similar positions with one of the pawns
-		     * from the side that didn't promote in an en passant state.  DTC is zero
-		     * because this is a pawn move.
+		     * from the side that didn't promote in an en passant state.
 		     */
 
 		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
@@ -6651,8 +6615,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		    }
 
 		    /* This function also back props any similar positions with one of the pawns
-		     * from the side that didn't promote in an en passant state.  DTC is zero
-		     * because this is a pawn move.
+		     * from the side that didn't promote in an en passant state.
 		     */
 
 		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
@@ -6811,8 +6774,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 		}
 
 		/* This function also back props any similar positions with one of the pawns from
-		 * the side that didn't capture in an en passant state.  DTC is zero because this is
-		 * a capture.
+		 * the side that didn't capture in an en passant state.
 		 */
 
 		propagate_local_position_from_futurebase(tb, futurebase, future_index,
@@ -6877,8 +6839,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 		}
 
 		/* This function also back props any similar positions with one of the pawns from
-		 * the side that didn't capture in an en passant state.  DTC is zero because
-		 * this is a capture (and a pawn move).
+		 * the side that didn't capture in an en passant state.
 		 */
 
 		propagate_local_position_from_futurebase(tb, futurebase, future_index,
@@ -7224,8 +7185,6 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 		       & BITVECTOR(current_position.piece_position[piece]))) {
 		    continue;
 		}
-
-		/* DTC is zero because this is a pawn move */
 
 		propagate_local_position_from_futurebase(tb, futurebase, future_index,
 							 futuremoves[piece][origin_square],
@@ -7679,9 +7638,9 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 
     if (futurevector & conceded_futuremoves) {
 	/* PTM_wins(tb, index, 1, 1); */
-	/* We insert here with DTM=2 (mate in one), DTC=1 (XXX), movecnt=1 (XXX), and no futuremove */
+	/* We insert here with DTM=2 (mate in one), movecnt=1 (XXX), and no futuremove */
 	/* XXX I bet we want to insert with position's multiplicity as movecnt */
-	insert_or_commit_trivial_propentry(index, 2, 1, 1, 0);
+	insert_or_commit_trivial_propentry(index, 2, 1, 0);
     }
 
     /* discard - we ignore these unhandled futuremoves by decrementing movecnt */
@@ -7691,7 +7650,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	    if (futurevector & discarded_futuremoves & FUTUREVECTOR(futuremove)) {
 		/* tb->entries[index].movecnt --; */
 		/* XXX this isn't handled right - a draw is different from a discard */
-		insert_or_commit_trivial_propentry(index, 0, 0, 0, 0);
+		insert_or_commit_trivial_propentry(index, 0, 0, 0);
 	    }
 	}
     }
@@ -8463,7 +8422,6 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 {
     index_t current_index;
     int dtm = get_entry_DTM(tb, future_index);
-    int dtc = get_entry_DTC(tb, future_index);
 
     current_index = local_position_to_index(tb, current_position);
 
@@ -8477,7 +8435,7 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 
 #ifdef DEBUG_MOVE
     if (current_index == DEBUG_MOVE)
-	printf("propagate_one_minimove_within_table:  current_index=%d; dtm=%d; dtc=%d\n", current_index, dtm, dtc);
+	printf("propagate_one_minimove_within_table:  current_index=%d; dtm=%d\n", current_index, dtm);
 #endif
 
     /* Parent position is the FUTURE position.  We now back-propagate to
@@ -8493,15 +8451,15 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 
 #if 0
     if (dtm > 0) {
-	insert_or_commit_trivial_propentry(current_index, -dtm, dtc, current_position->multiplicity, 0);
+	insert_or_commit_trivial_propentry(current_index, -dtm, current_position->multiplicity, 0);
     } else if ((dtm < 0) && (dtc < STALEMATE_COUNT)) {
-	insert_or_commit_trivial_propentry(current_index, -dtm+1, dtc+1, current_position->multiplicity, 0);
+	insert_or_commit_trivial_propentry(current_index, -dtm+1, current_position->multiplicity, 0);
     }
 #else
     if (dtm > 0) {
-	insert_or_commit_trivial_propentry(current_index, -dtm, dtc, 1, 0);
-    } else if ((dtm < 0) && (dtc < STALEMATE_COUNT)) {
-	insert_or_commit_trivial_propentry(current_index, -dtm+1, dtc+1, 1, 0);
+	insert_or_commit_trivial_propentry(current_index, -dtm, 1, 0);
+    } else if (dtm < 0) {
+	insert_or_commit_trivial_propentry(current_index, -dtm+1, 1, 0);
     }
 #endif
 }
@@ -9251,10 +9209,6 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 		    dtm = get_entry_DTM(tb, index);
 		}
 		set_signed_field(entry, tb->format.dtm_mask, tb->format.dtm_offset, dtm);
-	    }
-	    if (tb->format.dtc_bits > 0) {
-		int dtc = get_entry_DTC(tb, index);
-		set_unsigned_field(entry, tb->format.dtc_mask, tb->format.dtc_offset, dtc);
 	    }
 	    if (tb->format.movecnt_bits > 0) {
 		int movecnt = get_entry_movecnt(tb, index);
