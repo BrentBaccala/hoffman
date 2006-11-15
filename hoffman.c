@@ -460,6 +460,11 @@ typedef struct tablebase {
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
 
+    uint8 compact_white_king_positions[64*64];
+    uint8 compact_black_king_positions[64*64];
+    int compact_king_indices[64][64];
+    int total_legal_compact_king_positions;
+
     struct format format;
 
     /* for futurebases only */
@@ -2063,14 +2068,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 
 /* "compact" index
  *
- * XXX if more than one tablebase use these differently (piece restrictions), could be a problem
- * that these variables are global...
  */
-
-int compact_white_king_positions[64*64];
-int compact_black_king_positions[64*64];
-int compact_king_indices[64][64];
-int total_legal_compact_king_positions = 0;
 
 index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 {
@@ -2135,7 +2133,7 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
      * other before doing anything else...
      */
 
-    index = compact_king_indices[pos->piece_position[WHITE_KING]][pos->piece_position[BLACK_KING]];
+    index = tb->compact_king_indices[pos->piece_position[WHITE_KING]][pos->piece_position[BLACK_KING]];
 
     for (piece = 2; piece < tb->num_pieces; piece ++) {
 
@@ -2271,8 +2269,8 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	}
     }
 
-    p->piece_position[WHITE_KING] = compact_white_king_positions[index];
-    p->piece_position[BLACK_KING] = compact_black_king_positions[index];
+    p->piece_position[WHITE_KING] = tb->compact_white_king_positions[index];
+    p->piece_position[BLACK_KING] = tb->compact_black_king_positions[index];
     if (p->board_vector & BITVECTOR(p->piece_position[WHITE_KING])) return 0;
     if (p->board_vector & BITVECTOR(p->piece_position[BLACK_KING])) return 0;
     p->board_vector |= BITVECTOR(p->piece_position[WHITE_KING]);
@@ -2281,7 +2279,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	p->PTM_vector |= BITVECTOR(p->piece_position[WHITE_KING]);
     else
 	p->PTM_vector |= BITVECTOR(p->piece_position[BLACK_KING]);
-    index /= total_legal_compact_king_positions;
+    index /= tb->total_legal_compact_king_positions;
 
     /* Identical pieces have to appear in sorted order. */
 
@@ -3052,13 +3050,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 #if CHECK_KING_LEGALITY_EARLY
 		if (! check_king_legality(white_king_square, black_king_square)) continue;
 #endif
-		compact_white_king_positions[total_legal_compact_king_positions] = white_king_square;
-		compact_black_king_positions[total_legal_compact_king_positions] = black_king_square;
-		compact_king_indices[white_king_square][black_king_square] = total_legal_compact_king_positions;
-		total_legal_compact_king_positions ++;
+		tb->compact_white_king_positions[tb->total_legal_compact_king_positions] = white_king_square;
+		tb->compact_black_king_positions[tb->total_legal_compact_king_positions] = black_king_square;
+		tb->compact_king_indices[white_king_square][black_king_square] = tb->total_legal_compact_king_positions;
+		tb->total_legal_compact_king_positions ++;
 	    }
 	}
-	tb->max_index *= total_legal_compact_king_positions;
+	tb->max_index *= tb->total_legal_compact_king_positions;
 
 	for (piece = 2; piece < tb->num_pieces; piece ++) {
 
@@ -3306,7 +3304,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.253 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.254 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
