@@ -163,12 +163,6 @@ typedef uint32 index_t;
 
 #define MAX_PIECES 16
 
-/* Why 100?  Well, I just think it's less likely to introduce bugs into this code if I count
- * half-moves instead of moves.  So it takes 100 half-moves to stalemate.
- */
-
-#define STALEMATE_COUNT 100
-
 /* Number of possibilities for pawn promotions.  "2" means queen and knight, but that can cause some
  * problems, as I've learned the hard (and embarrassing) way.
  */
@@ -3212,7 +3206,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.246 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.247 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4413,7 +4407,6 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 	set_entry_movecnt(tb, index, get_entry_movecnt(tb, index) - 1);
 	if ((dtm < get_entry_raw_DTM(tb, index)) && (get_entry_raw_DTM(tb, index) <= 0)) {
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
-	    /* XXX need to think more about the stalemates */
 	    set_entry_raw_DTM(tb, index, dtm);
 	}
 
@@ -8450,8 +8443,6 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
      * player's win count in the PAST position.  On other other hand, if the player not
      * to move in the FUTURE position wins, then the player to move in the PAST position
      * has a winning move (the one we're considering).
-     *
-     * These stalemate and mate counts increment by one every HALF MOVE.
      */
 
 #if 0
