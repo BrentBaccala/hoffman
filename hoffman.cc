@@ -3271,9 +3271,11 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     sprintf(strbuf, "%lld", total_backproped_moves);
     xmlNewChild(node, NULL, (const xmlChar *) "backproped-moves", BAD_CAST strbuf);
+#if 0
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     sprintf(strbuf, "%lld", total_passes);
     xmlNewChild(node, NULL, (const xmlChar *) "passes", BAD_CAST strbuf);
+#endif
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     sprintf(strbuf, "%d", max_dtm);
     xmlNewChild(node, NULL, (const xmlChar *) "max-dtm", BAD_CAST strbuf);
@@ -3307,9 +3309,12 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.249 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.250 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
+    xmlNewChild(node, NULL, (const xmlChar *) "start-time", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -4462,7 +4467,7 @@ void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
 void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
 {
     initialize_entry(tb, index, 0, 1, 0);
-    total_legal_positions ++;
+    /* total_legal_positions ++; */
     total_PNTM_mated_positions ++;
 }
 
