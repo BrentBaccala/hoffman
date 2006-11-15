@@ -180,8 +180,6 @@ typedef uint32 index_t;
 
 /* Variables for gathering statistics */
 
-uint64 backproped_moves = 0;
-
 uint64 total_legal_positions = 0;
 uint64 total_PNTM_mated_positions = 0;
 uint64 total_stalemate_positions = 0;
@@ -193,7 +191,13 @@ int max_dtm = 0;
 int min_dtm = 0;
 
 struct timeval program_start_time;
-struct timeval pass_start_time;
+
+#define MAX_PASSES 100
+struct timeval pass_start_times[MAX_PASSES];
+struct timeval pass_end_times[MAX_PASSES];
+int pass_target_dtms[MAX_PASSES];
+int positions_finalized[MAX_PASSES];
+uint64 backproped_moves[MAX_PASSES];
 
 int entries_write_stalls = 0;
 int entries_read_stalls = 0;
@@ -467,8 +471,6 @@ typedef struct tablebase {
     int missing_non_pawn;
 
     xmlDocPtr xml;
-    xmlNodePtr per_pass_stats;
-    xmlNodePtr current_pass_stats;
 
     /* Pieces can restricted according to which squares they are allowed to move on.
      *
@@ -637,8 +639,12 @@ void sprint_timeval(char *strbuf, struct timeval *timevalp)
     } else if (timevalp->tv_sec < 3600) {
 	sprintf(strbuf, "%ldm%02ld.%03lds", timevalp->tv_sec/60, timevalp->tv_sec%60,
 		timevalp->tv_usec/1000);
-    } else {
+    } else if (timevalp->tv_sec < 24*3600) {
 	sprintf(strbuf, "%ldh%02ldm%02ld.%03lds", timevalp->tv_sec/3600,
+		(timevalp->tv_sec/60)%60, timevalp->tv_sec%60, timevalp->tv_usec/1000);
+    } else {
+	sprintf(strbuf, "%ldd%02ldh%02ldm%02ld.%03lds",
+		timevalp->tv_sec/(24*3600), (timevalp->tv_sec/3600)%3600,
 		(timevalp->tv_sec/60)%60, timevalp->tv_sec%60, timevalp->tv_usec/1000);
     }
 }
@@ -3244,6 +3250,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     char minfltstr[256];
     char majfltstr[256];
     char strbuf[256];
+    int passnum;
 
     tablebase = xmlDocGetRootElement(tb->xml);
 
@@ -3309,7 +3316,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.250 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.251 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -3356,14 +3363,32 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 	xmlNodeAddContent(node, BAD_CAST "\n   ");
 	sprint_timeval(strbuf, &proptable_preload_time);
 	xmlNewChild(node, NULL, (const xmlChar *) "proptable-preload-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n");
     }
 
+    for (passnum = 0; passnum < total_passes; passnum ++) {
+	xmlNodePtr passNode;
+
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	passNode = xmlNewChild(node, NULL, BAD_CAST "pass", NULL);
+
+	sprintf(strbuf, "%d", pass_target_dtms[passnum]);
+	xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
+
+	subtract_timeval(&pass_end_times[passnum], &pass_start_times[passnum]);
+	sprint_timeval(strbuf, &pass_end_times[passnum]);
+	xmlNewProp(passNode, BAD_CAST "real-time", BAD_CAST strbuf);
+
+	if (pass_target_dtms[passnum] != 0) {
+	    sprintf(strbuf, "%d", positions_finalized[passnum]);
+	    xmlNewProp(passNode, BAD_CAST "positions-finalized", BAD_CAST strbuf);
+	    sprintf(strbuf, "%lld", backproped_moves[passnum]);
+	    xmlNewProp(passNode, BAD_CAST "backprop-moves-generated", BAD_CAST strbuf);
+	}
+    }
+
+    xmlNodeAddContent(node, BAD_CAST "\n");
+
     xmlNodeAddContent(tablebase, BAD_CAST "\n");
-
-    xmlNodeAddContent(tb->per_pass_stats, BAD_CAST "\n");
-
-    xmlAddNextSibling(node, tb->per_pass_stats);
 
     return tb->xml;
 }
@@ -5388,8 +5413,6 @@ void proptable_full(void)
 {
     char outfilename[256];
     struct timeval tv1, tv2;
-    xmlNodePtr node;
-    char strbuf[256];
 
     if (proptable_entries == 0) return;
 
@@ -5407,6 +5430,8 @@ void proptable_full(void)
 	return;
     }
 
+    /* XXX redo this by recording this data into an array and generating the XML when we're done */
+#if 0
     xmlNodeAddContent(proptable_tb->current_pass_stats, BAD_CAST "\n      ");
     node = xmlNewChild(proptable_tb->current_pass_stats, NULL, BAD_CAST "proptable", NULL);
     sprintf(strbuf, "%d", proptable_entries);
@@ -5415,6 +5440,7 @@ void proptable_full(void)
     xmlNewProp(node, BAD_CAST "merges", BAD_CAST strbuf);
     sprintf(strbuf, "%d%%", (100*proptable_entries)/num_propentries);
     xmlNewProp(node, BAD_CAST "occupancy", BAD_CAST strbuf);
+#endif
 
     fprintf(stderr, "Writing proptable block %d with %d entries (%d%% occupancy)\n",
 	    num_proptables, proptable_entries, (100*proptable_entries)/num_propentries);
@@ -5924,30 +5950,16 @@ int proptable_finalize(int target_dtm)
 
 int propagation_pass(int target_dtm)
 {
-    int positions_finalized = 0;
-    struct timeval pass_end_time;
-    char strbuf[256];
     index_t index;
 
-    total_passes ++;
-
     if (target_dtm != 0) {
-	gettimeofday(&pass_start_time, NULL);
-	xmlNodeAddContent(proptable_tb->per_pass_stats, BAD_CAST "\n   ");
-	proptable_tb->current_pass_stats
-	    = xmlNewChild(proptable_tb->per_pass_stats, NULL, BAD_CAST "pass", NULL);
+	gettimeofday(&pass_start_times[total_passes], NULL);
     }
 
-    sprintf(strbuf, "%d", target_dtm);
-    xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "dtm", BAD_CAST strbuf);
-
-    /* xmlElemDump(stderr, proptable_tb->xml, proptable_tb->current_pass_stats); */
-    /* fputc('\n', stderr); */
-
-    backproped_moves = 0;
+    pass_target_dtms[total_passes] = target_dtm;
 
     if (num_propentries != 0) {
-	positions_finalized = proptable_finalize(target_dtm);
+	positions_finalized[total_passes] = proptable_finalize(target_dtm);
     } else {
 
 	for (index = 0; index <= proptable_tb->max_index; index ++) {
@@ -5974,40 +5986,26 @@ int propagation_pass(int target_dtm)
 		    back_propagate_index_within_table(proptable_tb, index, 1);
 		}
 #endif
-		positions_finalized ++;
+		positions_finalized[total_passes] ++;
 	    }
 	}
 
     }
 
-    gettimeofday(&pass_end_time, NULL);
-    subtract_timeval(&pass_end_time, &pass_start_time);
+    gettimeofday(&pass_end_times[total_passes], NULL);
 
-    sprint_timeval(strbuf, &pass_end_time);
-    xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "time", BAD_CAST strbuf);
+    total_backproped_moves += backproped_moves[total_passes];
 
-    if (target_dtm != 0) {
-	sprintf(strbuf, "%d", positions_finalized);
-	xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "positions-finalized", BAD_CAST strbuf);
-	sprintf(strbuf, "%lld", backproped_moves);
-	xmlNewProp(proptable_tb->current_pass_stats, BAD_CAST "backprop-moves-generated", BAD_CAST strbuf);
-    }
-
-    if (((backproped_moves != 0) || (target_dtm == 0)) && (num_propentries != 0)) {
-	xmlNodeAddContent(proptable_tb->current_pass_stats, BAD_CAST "\n   ");
-    }
-
-    total_backproped_moves += backproped_moves;
-
-    if (positions_finalized > 0) {
+    if (positions_finalized[total_passes] > 0) {
 	if (target_dtm > max_dtm) max_dtm = target_dtm;
 	if (target_dtm < min_dtm) min_dtm = target_dtm;
     }
 
-    fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized);
-    /* fprint_system_time(); */
+    fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized[total_passes]);
 
-    return positions_finalized;
+    total_passes ++;
+
+    return positions_finalized[total_passes-1];
 }
 
 void insert_into_proptable(proptable_entry_t *pentry)
@@ -6152,7 +6150,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
 
 void insert_or_commit_propentry(proptable_entry_t *propentry)
 {
-    backproped_moves ++;
+    backproped_moves[total_passes] ++;
 
     if (num_propentries == 0) {
 	commit_proptable_entry(propentry);
@@ -9340,11 +9338,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
 
-    tb->per_pass_stats = xmlNewChild(xmlDocGetRootElement(tb->xml), NULL,
-				     BAD_CAST "per-pass-statistics", NULL);
-    xmlNodeAddContent(tb->per_pass_stats, BAD_CAST "\n   ");
-    tb->current_pass_stats = xmlNewChild(tb->per_pass_stats, NULL, BAD_CAST "pass", NULL);
-
     if (num_propentries != 0) {
 	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
 	if (tb->entries_fd == -1) {
@@ -9413,7 +9406,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     check_1000_indices(tb);
     /* check_1000_positions(tb); */  /* This becomes a problem with symmetry, among other things */
 
-    gettimeofday(&pass_start_time, NULL);
+    gettimeofday(&pass_start_times[0], NULL);
 
     if (num_propentries == 0) {
 
