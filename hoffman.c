@@ -191,6 +191,7 @@ int max_dtm = 0;
 int min_dtm = 0;
 
 struct timeval program_start_time;
+struct timeval program_end_time;
 
 #define MAX_PASSES 100
 struct timeval pass_start_times[MAX_PASSES];
@@ -2729,7 +2730,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     /* Fetch tablebase from XML */
 
     context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//tablebase", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//tablebase", context);
     tablebase = result->nodesetval->nodeTab[0];
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
@@ -2737,7 +2738,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     /* Some statistics we'll use if this is a futurebase */
 
     context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//max-dtm", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//max-dtm", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	tb->max_dtm = atoi((char *) xmlNodeGetContent(result->nodesetval->nodeTab[0]));
     }
@@ -2745,7 +2746,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathFreeContext(context);
 
     context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//min-dtm", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//min-dtm", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	tb->min_dtm = atoi((char *) xmlNodeGetContent(result->nodesetval->nodeTab[0]));
     }
@@ -2755,7 +2756,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     /* Fetch the pieces from the XML */
 
     context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression((const xmlChar *) "//piece", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//piece", context);
     if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	fprintf(stderr, "No pieces!\n");
 	return NULL;
@@ -2773,9 +2774,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    xmlChar * color;
 	    xmlChar * type;
 	    xmlChar * location;
-	    color = xmlGetProp(result->nodesetval->nodeTab[piece], (const xmlChar *) "color");
-	    type = xmlGetProp(result->nodesetval->nodeTab[piece], (const xmlChar *) "type");
-	    location = xmlGetProp(result->nodesetval->nodeTab[piece], (const xmlChar *) "location");
+	    color = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "color");
+	    type = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "type");
+	    location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
 	    tb->piece_color[piece] = find_name_in_array((char *) color, colors);
 	    tb->piece_type[piece] = find_name_in_array((char *) type, piece_name);
 
@@ -2846,7 +2847,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     /* get the format */
 
-    format = xmlGetProp(tablebase, (const xmlChar *) "format");
+    format = xmlGetProp(tablebase, BAD_CAST "format");
     if (format != NULL) {
 	switch (find_name_in_array((char *) format, formats)) {
 	case FORMAT_ONE_BYTE_DTM:
@@ -2858,11 +2859,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
     } else {
 	context = xmlXPathNewContext(tb->xml);
-	result = xmlXPathEvalExpression((const xmlChar *) "//format", context);
+	result = xmlXPathEvalExpression(BAD_CAST "//format", context);
 	if (result->nodesetval->nodeNr == 1) {
 	    parse_format(result->nodesetval->nodeTab[0], &tb->format);
 	} else {
-	    xmlNewProp(tablebase, (const xmlChar *) "format", (const xmlChar *) "one-byte-dtm");
+	    xmlNewProp(tablebase, BAD_CAST "format", BAD_CAST "one-byte-dtm");
 	    tb->format = one_byte_dtm_format;
 	    fprintf(stderr, "Format not expressly specified; assuming ONE-BYTE-DTM\n");
 	}
@@ -2872,11 +2873,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     /* Fetch the index type */
 
-    index = xmlGetProp(tablebase, (const xmlChar *) "index");
+    index = xmlGetProp(tablebase, BAD_CAST "index");
     index_node = tablebase;  /* XXX here for backwards compatibility */
     if (index == NULL) {
 	context = xmlXPathNewContext(tb->xml);
-	result = xmlXPathEvalExpression((const xmlChar *) "//index", context);
+	result = xmlXPathEvalExpression(BAD_CAST "//index", context);
 	if (result->nodesetval->nodeNr == 1) {
 	    index_node = result->nodesetval->nodeTab[0];
 	    index = xmlGetProp(index_node, BAD_CAST "type");
@@ -2886,7 +2887,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     }
     if (index == NULL) {
 	tb->index_type = NAIVE_INDEX;
-	xmlNewProp(tablebase, (const xmlChar *) "index", (const xmlChar *) "naive");
+	xmlNewProp(tablebase, BAD_CAST "index", BAD_CAST "naive");
 	fprintf(stderr, "Index type not expressly specified; assuming NAIVE\n");
     } else {
 	tb->index_type = find_name_in_array((char *) index, index_types);
@@ -3092,7 +3093,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     /* See if an index modulus was specified for inversion in a finite field */
 
-    modulus = xmlGetProp(tablebase, (const xmlChar *) "modulus");
+    modulus = xmlGetProp(tablebase, BAD_CAST "modulus");
     if (modulus != NULL) {
 	tb->modulus = strtoll((const char *) modulus, NULL, 0);
 	if (tb->modulus <= tb->max_index) {
@@ -3108,7 +3109,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     /* Fetch the move restrictions */
 
     context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression((const xmlChar *) "//move-restriction", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//move-restriction", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	int i;
 	for (i=0; i < result->nodesetval->nodeNr; i++) {
@@ -3117,8 +3118,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    int color;
 	    int type;
 
-	    color_str = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "color");
-	    type_str = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "type");
+	    color_str = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "color");
+	    type_str = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "type");
 
 	    color = find_name_in_array((char *) color_str, colors);
 	    type = find_name_in_array((char *) type_str, restriction_types);
@@ -3212,7 +3213,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
 	tablebase = xmlDocGetRootElement(doc);
 
-	offsetstr = xmlGetProp(tablebase, (const xmlChar *) "offset");
+	offsetstr = xmlGetProp(tablebase, BAD_CAST "offset");
 	tb->offset = strtol((const char *) offsetstr, NULL, 0);
 
 	gzseek(file, tb->offset, SEEK_SET);
@@ -3238,137 +3239,127 @@ void unload_futurebase(tablebase_t *tb)
 xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 {
     xmlNodePtr tablebase, node;
-    time_t creation_time;
-    char ctimestr[256];
     char hostname[256];
     struct hostent *he;
     struct rusage rusage;
-    char utimestr[256];
-    char stimestr[256];
-    struct timeval program_end_time;
-    char rtimestr[256];
-    char minfltstr[256];
-    char majfltstr[256];
     char strbuf[256];
     int passnum;
 
     tablebase = xmlDocGetRootElement(tb->xml);
 
-    xmlNewProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) "0x1000");
+    xmlNewProp(tablebase, BAD_CAST "offset", BAD_CAST "0x1000");
 
-    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "tablebase-statistics", NULL);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNodeAddContent(tablebase, BAD_CAST "   ");
+    node = xmlNewChild(tablebase, NULL, BAD_CAST "tablebase-statistics", NULL);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%d", tb->max_index + 1);
-    xmlNewChild(node, NULL, (const xmlChar *) "indices", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNewChild(node, NULL, BAD_CAST "indices", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_legal_positions);
-    xmlNewChild(node, NULL, (const xmlChar *) "legal-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNewChild(node, NULL, BAD_CAST "legal-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_PNTM_mated_positions);
-    xmlNewChild(node, NULL, (const xmlChar *) "PNTM-mated-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNewChild(node, NULL, BAD_CAST "PNTM-mated-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_stalemate_positions);
-    xmlNewChild(node, NULL, (const xmlChar *) "stalemate-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNewChild(node, NULL, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_moves);
-    xmlNewChild(node, NULL, (const xmlChar *) "forward-moves", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNewChild(node, NULL, BAD_CAST "forward-moves", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_futuremoves);
-    xmlNewChild(node, NULL, (const xmlChar *) "futuremoves", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNewChild(node, NULL, BAD_CAST "futuremoves", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_backproped_moves);
-    xmlNewChild(node, NULL, (const xmlChar *) "backproped-moves", BAD_CAST strbuf);
+    xmlNewChild(node, NULL, BAD_CAST "backproped-moves", BAD_CAST strbuf);
 #if 0
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_passes);
-    xmlNewChild(node, NULL, (const xmlChar *) "passes", BAD_CAST strbuf);
+    xmlNewChild(node, NULL, BAD_CAST "passes", BAD_CAST strbuf);
 #endif
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%d", max_dtm);
-    xmlNewChild(node, NULL, (const xmlChar *) "max-dtm", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNewChild(node, NULL, BAD_CAST "max-dtm", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%d", min_dtm);
-    xmlNewChild(node, NULL, (const xmlChar *) "min-dtm", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n");
+    xmlNewChild(node, NULL, BAD_CAST "min-dtm", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
 
-    xmlNodeAddContent(tablebase, BAD_CAST "\n");
+    xmlNodeAddContent(tablebase, BAD_CAST "\n   ");
 
-    node = xmlNewChild(tablebase, NULL, (const xmlChar *) "generation-statistics", NULL);
-
-    time(&creation_time);
-    strftime(ctimestr, sizeof(ctimestr), "%c %Z", localtime(&creation_time));
+    node = xmlNewChild(tablebase, NULL, BAD_CAST "generation-statistics", NULL);
 
     gethostname(hostname, sizeof(hostname));
     he = gethostbyname(hostname);
 
     getrusage(RUSAGE_SELF, &rusage);
-    sprint_timeval(utimestr, &rusage.ru_utime);
-    sprint_timeval(stimestr, &rusage.ru_stime);
 
     gettimeofday(&program_end_time, NULL);
-    subtract_timeval(&program_end_time, &program_start_time);
-    sprint_timeval(rtimestr, &program_end_time);
 
-    sprintf(minfltstr, "%ld", rusage.ru_minflt);
-    sprintf(majfltstr, "%ld", rusage.ru_majflt);
-
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.251 $ $Locker: baccala $");
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.252 $ $Locker: baccala $");
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
-    xmlNewChild(node, NULL, (const xmlChar *) "start-time", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "completion-time", (const xmlChar *) ctimestr);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "user-time", (const xmlChar *) utimestr);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "system-time", (const xmlChar *) stimestr);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "real-time", (const xmlChar *) rtimestr);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "page-faults", (const xmlChar *) majfltstr);
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-    xmlNewChild(node, NULL, (const xmlChar *) "page-reclaims", (const xmlChar *) minfltstr);
+    xmlNewChild(node, NULL, BAD_CAST "start-time", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_end_time.tv_sec));
+    xmlNewChild(node, NULL, BAD_CAST "completion-time", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    sprint_timeval(strbuf, &rusage.ru_utime);
+    xmlNewChild(node, NULL, BAD_CAST "user-time", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    sprint_timeval(strbuf, &rusage.ru_stime);
+    xmlNewChild(node, NULL, BAD_CAST "system-time", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    /* Note that we modified program_end_time here to compute the real time used by the program */
+    subtract_timeval(&program_end_time, &program_start_time);
+    sprint_timeval(strbuf, &program_end_time);
+    xmlNewChild(node, NULL, BAD_CAST "real-time", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    sprintf(strbuf, "%ld", rusage.ru_majflt);
+    xmlNewChild(node, NULL, BAD_CAST "page-faults", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    sprintf(strbuf, "%ld", rusage.ru_minflt);
+    xmlNewChild(node, NULL, BAD_CAST "page-reclaims", BAD_CAST strbuf);
 
     if (num_propentries > 0) {
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprintf(strbuf, "%d", entries_write_stalls);
-	xmlNewChild(node, NULL, (const xmlChar *) "entries-write-stalls", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNewChild(node, NULL, BAD_CAST "entries-write-stalls", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprintf(strbuf, "%d", entries_read_stalls);
-	xmlNewChild(node, NULL, (const xmlChar *) "entries-read-stalls", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNewChild(node, NULL, BAD_CAST "entries-read-stalls", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprintf(strbuf, "%d", proptable_read_stalls);
-	xmlNewChild(node, NULL, (const xmlChar *) "proptable-read-stalls", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNewChild(node, NULL, BAD_CAST "proptable-read-stalls", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprintf(strbuf, "%d", proptable_writes);
-	xmlNewChild(node, NULL, (const xmlChar *) "proptable-writes", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNewChild(node, NULL, BAD_CAST "proptable-writes", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprint_timeval(strbuf, &entries_write_stall_time);
-	xmlNewChild(node, NULL, (const xmlChar *) "entries-write-stall-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNewChild(node, NULL, BAD_CAST "entries-write-stall-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprint_timeval(strbuf, &entries_read_stall_time);
-	xmlNewChild(node, NULL, (const xmlChar *) "entries-read-stall-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNewChild(node, NULL, BAD_CAST "entries-read-stall-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprint_timeval(strbuf, &proptable_read_stall_time);
-	xmlNewChild(node, NULL, (const xmlChar *) "proptable-read-stall-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNewChild(node, NULL, BAD_CAST "proptable-read-stall-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprint_timeval(strbuf, &proptable_write_time);
-	xmlNewChild(node, NULL, (const xmlChar *) "proptable-write-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNewChild(node, NULL, BAD_CAST "proptable-write-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprint_timeval(strbuf, &proptable_preload_time);
-	xmlNewChild(node, NULL, (const xmlChar *) "proptable-preload-time", BAD_CAST strbuf);
+	xmlNewChild(node, NULL, BAD_CAST "proptable-preload-time", BAD_CAST strbuf);
     }
 
     for (passnum = 0; passnum < total_passes; passnum ++) {
 	xmlNodePtr passNode;
 
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	passNode = xmlNewChild(node, NULL, BAD_CAST "pass", NULL);
 
 	sprintf(strbuf, "%d", pass_target_dtms[passnum]);
@@ -3386,7 +3377,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 	}
     }
 
-    xmlNodeAddContent(node, BAD_CAST "\n");
+    xmlNodeAddContent(node, BAD_CAST "\n   ");
 
     xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
@@ -7521,7 +7512,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
     /* Fetch the futurebases from the XML */
 
     context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//futurebase", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//futurebase", context);
     if ((tb->num_pieces > 2) && xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	fprintf(stderr, "No futurebases!\n");
     } else {
@@ -7534,7 +7525,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    tablebase_t * futurebase;
 	    int piece;
 
-	    filename = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "filename");
+	    filename = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "filename");
 
 	    futurebase = preload_futurebase_from_file((char *) filename);
 
@@ -7542,7 +7533,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (futurebase == NULL) return 0;
 
 	    futurebase->invert_colors = 0;
-	    colors_property = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "colors");
+	    colors_property = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "colors");
 	    if (colors_property != NULL) {
 		if (!strcasecmp((char *) colors_property, "invert")) futurebase->invert_colors = 1;
 		xmlFree(colors_property);
@@ -7554,7 +7545,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	     * types.
 	     */
 
-	    type = xmlGetProp(result->nodesetval->nodeTab[i], (const xmlChar *) "type");
+	    type = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "type");
 
 	    if ((type != NULL) && !strcasecmp((char *) type, "capture")) {
 
@@ -8020,15 +8011,15 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
     int type;
 
     context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//prune", context);
 
     for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
 	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-					   (const xmlChar *) "color");
+					   BAD_CAST "color");
 	xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-					  (const xmlChar *) "move");
+					  BAD_CAST "move");
 	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
-					  (const xmlChar *) "type");
+					  BAD_CAST "type");
 
 	if (find_name_in_array((char *) prune_color, colors) != color) continue;
 
@@ -8076,13 +8067,13 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
     /* Check pruning statements for consistency */
 
     context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//prune", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//prune", context);
 
     for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
 	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-					   (const xmlChar *) "color");
+					   BAD_CAST "color");
 	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
-					  (const xmlChar *) "type");
+					  BAD_CAST "type");
 	int color = find_name_in_array((char *) prune_color, colors);
 	int type = find_name_in_array((char *) prune_type, restriction_types);
 
@@ -8238,7 +8229,7 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
     /* First, preload all futurebases */
 
     context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression((const xmlChar *) "//futurebase", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//futurebase", context);
     num_futurebases = result->nodesetval->nodeNr;
     futurebases = malloc(sizeof(tablebase_t *) * num_futurebases);
     if (futurebases == NULL) {
@@ -8250,7 +8241,7 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	xmlChar * filename;
 	xmlChar * colors_property;
 
-	filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], (const xmlChar *) "filename");
+	filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "filename");
 	futurebases[fbnum] = preload_futurebase_from_file((char *) filename);
 
 	/* load_futurebase_from_file() already printed some kind of error message */
@@ -8265,7 +8256,7 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	if (futurebases[fbnum]->min_dtm < *min_dtm) *min_dtm = futurebases[fbnum]->min_dtm;
 
 	futurebases[fbnum]->invert_colors = 0;
-	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], (const xmlChar *) "colors");
+	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "colors");
 	if (colors_property != NULL) {
 	    if (!strcasecmp((char *) colors_property, "invert")) futurebases[fbnum]->invert_colors = 1;
 	    xmlFree(colors_property);
@@ -9279,7 +9270,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     sprintf(str, "0x%04x", padded_size);
 
     tablebase = xmlDocGetRootElement(doc);
-    xmlSetProp(tablebase, (const xmlChar *) "offset", (const xmlChar *) str);
+    xmlSetProp(tablebase, BAD_CAST "offset", BAD_CAST str);
 
     xmlDocDumpMemory(doc, &buf, &size);
 
