@@ -187,6 +187,7 @@ uint64 total_moves = 0;
 uint64 total_futuremoves = 0;
 uint64 total_backproped_moves = 0;
 uint64 total_passes = 0;
+uint64 player_wins[2];
 int max_dtm = 0;
 int min_dtm = 0;
 
@@ -3264,6 +3265,12 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(strbuf, "%lld", total_stalemate_positions);
     xmlNewChild(node, NULL, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
+    sprintf(strbuf, "%lld", player_wins[0]);
+    xmlNewChild(node, NULL, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    sprintf(strbuf, "%lld", player_wins[1]);
+    xmlNewChild(node, NULL, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_moves);
     xmlNewChild(node, NULL, BAD_CAST "forward-moves", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -3299,7 +3306,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.252 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.253 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8625,6 +8632,12 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
     if (index == DEBUG_MOVE)
 	fprintf(stderr, "back_propagate_index_within_table; index=%d\n", index);
 #endif
+
+    if (get_entry_DTM(tb, index) > 0) {
+	player_wins[position.side_to_move] ++;
+    } else {
+	player_wins[1 - position.side_to_move] ++;
+    }
 
     flip_side_to_move_local(&position);
 
