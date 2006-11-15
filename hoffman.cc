@@ -372,9 +372,16 @@ char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index", "futurevec
 
 #define MAX_FORMAT_BYTES 16
 
-/* This is our old "fourbyte" format that we use for in-memory tablebase arrays */
+/* This is the format that we use for in-memory tablebase arrays.  The default is equivalent to:
+ *
+ * <format>
+ *    <dtm bits="8" offset="0"/>
+ *    <movecnt bits="7" offset="8"/>
+ *    <in-check-flag bits="1" offset="15"/>
+ * </format>
+ */
 
-struct format entries_format = {4, 0xff,0,8, 0x7f,16,7, 23};
+struct format entries_format = {2, 0xff,0,8, 0x7f,8,7, 15};
 
 /* This is the "one-byte-dtm" format */
 
@@ -3206,7 +3213,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.247 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.248 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
