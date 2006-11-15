@@ -1489,7 +1489,7 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
     int shift_count = 1;
     index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
     int piece;
-    unsigned char vals[MAX_PIECES];
+    uint8 vals[MAX_PIECES];
 
     pos->board_vector = 0;
 
@@ -1592,7 +1592,7 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
-    unsigned char vals[MAX_PIECES];
+    uint8 vals[MAX_PIECES];
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
@@ -2068,15 +2068,12 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 {
     index_t index;
     int piece;
+    uint8 vals[MAX_PIECES];
 
     index = 0;
     pos->board_vector = 0;
 
-    index = compact_king_indices[pos->piece_position[WHITE_KING]][pos->piece_position[BLACK_KING]];
-
     for (piece = 2; piece < tb->num_pieces; piece ++) {
-
-	index *= tb->total_legal_piece_positions[piece];
 
 	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
 	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
@@ -2096,9 +2093,9 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		|| ((tb->piece_color[piece] == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    index += tb->simple_piece_indices[piece][COL(pos->en_passant_square)];
+	    vals[piece] = tb->simple_piece_indices[piece][COL(pos->en_passant_square)];
 	} else {
-	    index += tb->simple_piece_indices[piece][pos->piece_position[piece]];
+	    vals[piece] = tb->simple_piece_indices[piece][pos->piece_position[piece]];
 	}
 
 	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
@@ -2113,6 +2110,54 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
 	} else {
 	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
+	}
+    }
+
+    /* Compute the index.
+     *
+     * We encode two identical pieces using one less bit than needed for encoding them separately,
+     * because n identical pieces introduce n! (n factorial) multiplicity.
+     *
+     * We encode the first piece "normally" and the second piece using a number from 1 to 32
+     * (encoded from 0 to 31) that should be added to the square number of the first piece to obtain
+     * the square number of the second.  We wrap around when doing that math, so if the first piece
+     * is on square 50 and the offset is 20, then the second piece is at square 50+20-64=6.
+     *
+     * What if the second piece is further away than 32 squares?  Then we swap the pieces with each
+     * other before doing anything else...
+     */
+
+    index = compact_king_indices[pos->piece_position[WHITE_KING]][pos->piece_position[BLACK_KING]];
+
+    for (piece = 2; piece < tb->num_pieces; piece ++) {
+
+	if (tb->next_identical_piece[piece] != -1) {
+
+	    if (((vals[piece] < vals[tb->next_identical_piece[piece]])
+		 && (vals[piece] + tb->total_legal_piece_positions[piece]/2
+		     < vals[tb->next_identical_piece[piece]]))
+		|| ((vals[tb->next_identical_piece[piece]] < vals[piece])
+		    && (vals[tb->next_identical_piece[piece]] + tb->total_legal_piece_positions[piece]/2
+			>= vals[piece]))) {
+
+		unsigned char val;
+		val = vals[piece];
+		vals[piece] = vals[tb->next_identical_piece[piece]];
+		vals[tb->next_identical_piece[piece]] = val;
+	    }
+	}
+
+	if (tb->last_identical_piece[piece] == -1) {
+	    index *= tb->total_legal_piece_positions[piece];
+	    index += vals[piece];
+	} else {
+	    index *= tb->total_legal_piece_positions[piece] / 2;
+
+	    if (vals[piece] > vals[tb->last_identical_piece[piece]]) {
+		index += (vals[piece] - vals[tb->last_identical_piece[piece]] - 1);
+	    } else {
+		index += (tb->total_legal_piece_positions[piece] + vals[piece] - vals[tb->last_identical_piece[piece]] - 1);
+	    }
 	}
     }
 
@@ -2137,6 +2182,7 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
+    uint8 vals[MAX_PIECES];
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
@@ -2146,8 +2192,44 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
     for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
 
-	int square = tb->simple_piece_positions[piece][index % tb->total_legal_piece_positions[piece]];
-	index /= tb->total_legal_piece_positions[piece];
+	if (tb->last_identical_piece[piece] == -1) {
+	    vals[piece] = index % tb->total_legal_piece_positions[piece];
+	    index /= tb->total_legal_piece_positions[piece];
+	} else {
+	    vals[piece] = index % (tb->total_legal_piece_positions[piece]/2);
+	    index /= tb->total_legal_piece_positions[piece]/2;
+	}
+    }
+
+    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+
+	int square;
+
+	if (tb->last_identical_piece[piece] != -1) {
+
+	    vals[piece] += vals[tb->last_identical_piece[piece]] + 1;
+	    vals[piece] %= tb->total_legal_piece_positions[piece];
+
+	    /* One of the important tasks of any index_to_local_position() function is to return
+	     * false on all but one of the indices that correspond to identical positions.  Here,
+	     * that can only happen when the two identical pieces are exactly half their total legal
+	     * piece positions squares apart, which can be encoded using either piece first.  In
+	     * this case, we toss out the index with the larger of the two squares encoded as the
+	     * base value, and make sure that the "<" and the ">=" match up just right in the
+	     * previous function.
+	     */
+
+	    if (vals[tb->last_identical_piece[piece]] - vals[piece]
+		== tb->total_legal_piece_positions[piece]) return 0;
+
+	    if (vals[piece] < vals[tb->last_identical_piece[piece]]) {
+		uint8 val = vals[piece];
+		vals[piece] = vals[tb->last_identical_piece[piece]];
+		vals[tb->last_identical_piece[piece]] = val;
+	    }
+	}
+
+	square = tb->simple_piece_positions[piece][vals[piece]];
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
@@ -2897,6 +2979,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 	/* now do everything else */
 	for (piece = 1; piece < tb->num_pieces; piece ++) {
+
+	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
+		fprintf(stderr, "Can't have more than two identical pieces with 'naive2' index (yet)\n");
+		return NULL;
+	    }
+
 	    if (tb->last_identical_piece[piece] == -1) tb->max_index <<= 6;
 	    else tb->max_index <<=5;
 	}
@@ -2965,6 +3053,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	tb->max_index *= total_legal_compact_king_positions;
 
 	for (piece = 2; piece < tb->num_pieces; piece ++) {
+
+	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
+		fprintf(stderr, "Can't have more than two identical pieces with 'compact' index (yet)\n");
+		return NULL;
+	    }
+
 	    for (square = 0; square < 64; square ++) {
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
 		if ((piece == WHITE_KING) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
@@ -3213,7 +3307,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, (const xmlChar *) "host", (const xmlChar *) he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "program",
-		(const xmlChar *) "Hoffman $Revision: 1.248 $ $Locker: baccala $");
+		(const xmlChar *) "Hoffman $Revision: 1.249 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n   ");
     xmlNewChild(node, NULL, (const xmlChar *) "args", (const xmlChar *) options);
     xmlNodeAddContent(node, BAD_CAST "\n   ");
