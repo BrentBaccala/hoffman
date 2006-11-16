@@ -3304,7 +3304,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.254 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.255 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -3593,12 +3593,12 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
 }
 
-int translate_foreign_index_to_local_position(tablebase_t *tb1, index_t index1,
+int translate_foreign_index_to_local_position(tablebase_t *tb1, index_t index1, int symmetry,
 					      tablebase_t *tb2, local_position_t *local, int invert_colors)
 {
     local_position_t foreign_position;
 
-    if (! index_to_local_position(tb1, index1, 0, &foreign_position)) return -1;
+    if (! index_to_local_position(tb1, index1, symmetry, &foreign_position)) return -1;
 
     return translate_foreign_position_to_local_position(tb1, &foreign_position, tb2, local, invert_colors);
 }
@@ -6265,9 +6265,9 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *
      * correct.  It actually should be a little more complex than this, but since we're only dealing
      * with 8-way symmetry where multiplicity is either 1 or 2, this should do.  If we're
      * backproping from a single multiplicity position into one with double multiplicity, then this
-     * function will get called twice on the same index, because that index will get generating
+     * function will get called twice on the same index, because that index will get generated
      * twice during back prop from the single future position, but since we're using the futuremove
-     * number to toss out additional function calls, we can savely just use the multiplicity here
+     * number to toss out additional function calls, we can safely just use the multiplicity here
      * without worrying about it getting called again.
      */
 
@@ -7106,6 +7106,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
     index_t future_index;
     local_position_t current_position;
     int piece;
+    int symmetry;
     uint32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
 
@@ -7116,69 +7117,72 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	/* Take the position from the futurebase and translate it into a local position for the
-	 * current tablebase.  If the futurebase index was illegal, the function will return -1.
-	 * Otherwise, there should be one piece missing from the local position: the piece that was
-	 * captured.  There could possibly be one piece on a restricted square, as well.  If so,
-	 * then it must be the piece that moved in order to capture.
-	 */
+	for (symmetry = 0; symmetry < (futurebase->symmetry == 8 ? 2 : 1); symmetry ++) {
 
-	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
-	 * with multiple restricted pieces that should be quietly ignored.
-	 */
-
-	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
-								      tb, &current_position,
-								      invert_colors_of_futurebase);
-
-	if (conversion_result != -1) {
-
-	    extra_piece = (conversion_result >> 16) & 0xff;
-	    restricted_piece = (conversion_result >> 8) & 0xff;
-	    missing_piece1 = conversion_result & 0xff;
-	    missing_piece2 = (conversion_result >> 24) & 0xff;
-
-	    if ((extra_piece != NONE) || (missing_piece1 != captured_piece) || (missing_piece2 != NONE)) {
-		fprintf(stderr, "Conversion error during capture back-prop\n");  /* BREAKPOINT */
-		continue;
-	    }
-
-	    /* Since the last move had to have been a capture move, there is absolutely no way we
-	     * could have en passant capturable pawns in the futurebase position.
+	    /* Take the position from the futurebase and translate it into a local position for the
+	     * current tablebase.  If the futurebase index was illegal, the function will return -1.
+	     * Otherwise, there should be one piece missing from the local position: the piece that
+	     * was captured.  There could possibly be one piece on a restricted square, as well.  If
+	     * so, then it must be the piece that moved in order to capture.
 	     */
 
-	    if (current_position.en_passant_square != -1) continue;
-
-	    /* Since the position resulted from a capture, we only want to consider future positions
-	     * where the side to move is not the side that captured.
+	    /* XXX If the futurebase is more liberal than the tablebase, then there will be
+	     * positions with multiple restricted pieces that should be quietly ignored.
 	     */
 
-	    if (current_position.side_to_move != tb->piece_color[captured_piece])
-		continue;
+	    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
+									  symmetry,
+									  tb, &current_position,
+									  invert_colors_of_futurebase);
 
-	    /* We're going to back step a half move now */
+	    if (conversion_result != -1) {
 
-	    flip_side_to_move_local(&current_position);
+		extra_piece = (conversion_result >> 16) & 0xff;
+		restricted_piece = (conversion_result >> 8) & 0xff;
+		missing_piece1 = conversion_result & 0xff;
+		missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	    if (restricted_piece == NONE) {
-
-		/* No pieces were on restricted squares.  Check them all. */
-
-		for (piece = 0; piece < tb->num_pieces; piece++) {
-
-		    consider_possible_captures(tb, futurebase, future_index, &current_position,
-					       piece, captured_piece);
+		if ((extra_piece != NONE) || (missing_piece1 != captured_piece) || (missing_piece2 != NONE)) {
+		    fprintf(stderr, "Conversion error during capture back-prop\n");  /* BREAKPOINT */
+		    continue;
 		}
 
-	    } else {
+		/* Since the last move had to have been a capture move, there is absolutely no way
+		 * we could have en passant capturable pawns in the futurebase position.
+		 */
 
-		/* One piece was on a restricted square.  It's the only possible capturing piece. */
+		if (current_position.en_passant_square != -1) continue;
 
-		consider_possible_captures(tb, futurebase, future_index, &current_position,
-					   restricted_piece, captured_piece);
+		/* Since the position resulted from a capture, we only want to consider future
+		 * positions where the side to move is not the side that captured.
+		 */
 
+		if (current_position.side_to_move != tb->piece_color[captured_piece])
+		    continue;
+
+		/* We're going to back step a half move now */
+
+		flip_side_to_move_local(&current_position);
+
+		if (restricted_piece == NONE) {
+
+		    /* No pieces were on restricted squares.  Check them all. */
+
+		    for (piece = 0; piece < tb->num_pieces; piece++) {
+
+			consider_possible_captures(tb, futurebase, future_index, &current_position,
+						   piece, captured_piece);
+		    }
+
+		} else {
+
+		    /* One piece was on a restricted square.  It's the only possible capturing piece. */
+
+		    consider_possible_captures(tb, futurebase, future_index, &current_position,
+					       restricted_piece, captured_piece);
+
+		}
 	    }
-
 	}
     }
 }
@@ -7214,7 +7218,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	 * with multiple restricted pieces that should be quietly ignored.
 	 */
 
-	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
+	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index, 0,
 								      tb, &current_position,
 								      invert_colors_of_futurebase);
 
@@ -8631,10 +8635,17 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
 	fprintf(stderr, "back_propagate_index_within_table; index=%d\n", index);
 #endif
 
-    if (get_entry_DTM(tb, index) > 0) {
-	player_wins[position.side_to_move] ++;
-    } else {
-	player_wins[1 - position.side_to_move] ++;
+    /* Track "player wins" statistics.  We want to count each finalized position once, so we only
+     * increment if 'symmetry' is zero.  Also, we don't want to count illegal (PNTM mated)
+     * positions, so we don't increment anything if DTM is 1.
+     */
+
+    if (symmetry == 0) {
+	if (get_entry_DTM(tb, index) > 1) {
+	    player_wins[position.side_to_move] ++;
+	} else if (get_entry_DTM(tb, index) < 0) {
+	    player_wins[1 - position.side_to_move] ++;
+	}
     }
 
     flip_side_to_move_local(&position);
