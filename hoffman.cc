@@ -3454,7 +3454,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.259 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.260 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6698,37 +6698,21 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 			 */
 
 			position.piece_position[pawn] = promotion_sq - promotion_move;
-			position.board_vector |= BITVECTOR(position.piece_position[pawn]);
 
-			/* Back propagate the resulting position */
+			/* Normalize the position, and back prop it. */
 
-			/* When we convert the position to an index (in local_position_to_index()),
-			 * we'll make a copy of the position and normalize it by sorting the
-			 * identical pieces so that they are in ascending order.  But we have to at
-			 * least be aware of this here, in order to figure out which pawn "actually"
-			 * promoted (we're always called with pawn set to the last piece number of
-			 * any identical pieces), so we can figure out which futuremove number to
-			 * use.
-			 */
+			normalize_position(tb, &position);
 
-			true_pawn = pawn;
-			while ((tb->last_identical_piece[true_pawn] != -1)
-			       && (position.piece_position[pawn]
-				   < position.piece_position[tb->last_identical_piece[true_pawn]])) {
-			    true_pawn = tb->last_identical_piece[true_pawn];
-			}
+			true_pawn = position.permuted_piece[pawn];
 
-			/* This function also back props any similar positions with one of the pawns
-			 * from the side that didn't promote in an en passant state.
-			 */
-
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
-								 promotions[true_pawn]
-								 + futurebase->piece_type[extra_piece] - 1,
-								 &position);
+			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+								      promotions[true_pawn]
+								      + futurebase->piece_type[extra_piece] - 1,
+								      &position);
 
 			/* We may be about to use this position again, so put the board_vector back... */
 
+			denormalize_position(tb, &position);
 			position.board_vector &=~ BITVECTOR(position.piece_position[pawn]);
 		    }
 
@@ -6879,23 +6863,6 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		    /* Put the piece that was captured onto the board on the promotion square. */
 
 		    position.piece_position[missing_piece2] = promotion_sq;
-		    position.board_vector |= BITVECTOR(promotion_sq);
-
-		    /* When we finally convert the position to an index (in
-		     * local_position_to_index()), we'll make a copy of the position and normalize
-		     * it by sorting the identical pieces so that they are in ascending order.  But
-		     * we have to at least be aware of this here, in order to figure out which piece
-		     * "actually" got captured (we're always called with captured_piece set to the
-		     * last piece number of any identical pieces), so we can figure out which
-		     * futuremove number to use.
-		     */
-
-		    true_captured_piece = missing_piece2;
-		    while ((tb->last_identical_piece[true_captured_piece] != -1)
-			   && (position.piece_position[missing_piece2]
-			       < position.piece_position[tb->last_identical_piece[true_captured_piece]])) {
-			true_captured_piece = tb->last_identical_piece[true_captured_piece];
-		    }
 
 		    /* Consider first a capture to the left (white's left).  There has to be an
 		     * empty square where the pawn came from, and it has to be a legal (i.e,
@@ -6912,36 +6879,25 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			 */
 
 			position.piece_position[pawn] = promotion_sq - promotion_move - 1;
-			position.board_vector |= BITVECTOR(position.piece_position[pawn]);
 
 			/* Back propagate the resulting position */
 
-			/* When we convert the position to an index (in local_position_to_index()),
-			 * we'll make a copy of the position and normalize it by sorting the
-			 * identical pieces so that they are in ascending order.  But we have to at
-			 * least be aware of this here, in order to figure out which pawn "actually"
-			 * promoted (we're always called with pawn set to the last piece number of
-			 * any identical pieces), so we can figure out which futuremove number to
-			 * use.
-			 */
+			normalize_position(tb, &position);
 
-			true_pawn = pawn;
-			while ((tb->last_identical_piece[true_pawn] != -1)
-			       && (position.piece_position[pawn]
-				   < position.piece_position[tb->last_identical_piece[true_pawn]])) {
-			    true_pawn = tb->last_identical_piece[true_pawn];
-			}
+			true_captured_piece = position.permuted_piece[missing_piece2];
+			true_pawn = position.permuted_piece[pawn];
 
 			/* This function also back props any similar positions with one of the pawns
 			 * from the side that didn't promote in an en passant state.
 			 */
 
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
 								 futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 								 &position);
 
 			/* We're about to use this position again, so put the board_vector back... */
 
+			denormalize_position(tb, &position);
 			position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
 		    }
 
@@ -6960,36 +6916,19 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			 */
 
 			position.piece_position[pawn] = promotion_sq - promotion_move + 1;
-			position.board_vector |= BITVECTOR(position.piece_position[pawn]);
 
-			/* Back propagate the resulting position */
+			normalize_position(tb, &position);
 
-			/* When we convert the position to an index (in local_position_to_index()),
-			 * we'll make a copy of the position and normalize it by sorting the
-			 * identical pieces so that they are in ascending order.  But we have to at
-			 * least be aware of this here, in order to figure out which pawn "actually"
-			 * promoted (we're always called with pawn set to the last piece number of
-			 * any identical pieces), so we can figure out which futuremove number to
-			 * use.
-			 */
+			true_captured_piece = position.permuted_piece[missing_piece2];
+			true_pawn = position.permuted_piece[pawn];
 
-			true_pawn = pawn;
-			while ((tb->last_identical_piece[true_pawn] != -1)
-			       && (position.piece_position[pawn]
-				   < position.piece_position[tb->last_identical_piece[true_pawn]])) {
-			    true_pawn = tb->last_identical_piece[true_pawn];
-			}
-
-			/* This function also back props any similar positions with one of the pawns
-			 * from the side that didn't promote in an en passant state.
-			 */
-
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
 								 futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 								 &position);
 
 			/* We're about to use this position again, so put the board_vector back... */
 
+			denormalize_position(tb, &position);
 			position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
 		    }
 
