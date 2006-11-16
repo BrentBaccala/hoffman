@@ -3274,9 +3274,11 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_futuremoves);
     xmlNewChild(node, NULL, BAD_CAST "futuremoves", BAD_CAST strbuf);
+#if 0
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_backproped_moves);
     xmlNewChild(node, NULL, BAD_CAST "backproped-moves", BAD_CAST strbuf);
+#endif
 #if 0
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_passes);
@@ -3304,7 +3306,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.255 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.256 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9184,6 +9186,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	    return 0;
 	} else {
 
+	    total_moves += movecnt;
+	    total_futuremoves += futuremovecnt;
+
 	    /* What's this?  Well, diagonal symmetry is more difficult to handle than other types of
 	     * symmetry because the piece along the diagonal don't actually move when you reflect
 	     * the board.  So, here, we double the movecnt to account for the symmetry so long as
@@ -9208,8 +9213,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 #endif
 
 	    initialize_entry_with_movecnt(tb, index, movecnt, in_check(tb, &position));
-	    total_moves += movecnt;
-	    total_futuremoves += futuremovecnt;
+
 	    return futurevector;
 	}
     }
