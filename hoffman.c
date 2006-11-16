@@ -555,7 +555,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 19 */
+#define DEBUG_MOVE 1548427
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2226,7 +2226,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	     */
 
 	    if (vals[tb->last_identical_piece[piece]] - vals[piece]
-		== tb->total_legal_piece_positions[piece]) return 0;
+		== tb->total_legal_piece_positions[piece]/2) return 0;
 
 	    if (vals[piece] < vals[tb->last_identical_piece[piece]]) {
 		uint8 val = vals[piece];
@@ -2291,7 +2291,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
     }
 
     if (index != 0) {
-	fprintf (stderr, "index != 0 at end of simple_index_to_local_position!\n");  /* BREAKPOINT */
+	fprintf (stderr, "index != 0 at end of compact_index_to_local_position!\n");  /* BREAKPOINT */
 	return 0;
     }
 
@@ -2965,10 +2965,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		fprintf(stderr, "Piece restrictions not allowed with symmetric indices\n");
 		return NULL;
 	    }
+#if 0
 	    if (tb->next_identical_piece[piece] != -1) {
 		fprintf(stderr, "Can't handle identical pieces with symmetric indices (yet)\n");
 		return NULL;
 	    }
+#endif
 	}
     }
 
@@ -3108,7 +3110,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		    tb->total_legal_piece_positions[piece] ++;
 		}
 	    }
-	    tb->max_index *= tb->total_legal_piece_positions[piece];
+	    if (tb->last_identical_piece[piece] == -1) {
+		tb->max_index *= tb->total_legal_piece_positions[piece];
+	    } else {
+		tb->max_index *= tb->total_legal_piece_positions[piece]/2;
+	    }
 	}
 
 	tb->max_index --;
@@ -3331,7 +3337,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.257 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.258 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4552,7 +4558,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("add_one_to_PNTM_wins; index=%d; dtm=%d\n", index, dtm);
+	printf("add_one_to_PNTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, get_entry_raw_DTM(tb, index));
 #endif
 
     if (dtm > 0) {
@@ -5293,8 +5299,8 @@ void insert_at_propentry(int propentry, proptable_entry_t * pentry)
     proptable_entries ++;
 
 #ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
+    if (get_propentry_index(pentry) == DEBUG_MOVE)
+	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) pentry), *(((uint64 *) pentry) + 1));
 #endif
 }
 
@@ -6038,11 +6044,6 @@ void insert_into_proptable(proptable_entry_t *pentry)
     index_t index = get_propentry_index(pentry);
     static int scaling_factor = 0;
 
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	printf("insert_into_proptable; index=%d; dtm=%d; movecnt=%d\n", index, dtm, movecnt);
-#endif
-
     /* I had a bug here with the scaling_factor rounding down - that's why we increment by one */
 
     if (scaling_factor == 0) {
@@ -6187,6 +6188,12 @@ void insert_or_commit_trivial_propentry(index_t index, short dtm, short movecnt,
 {
     char entry[MAX_FORMAT_BYTES];
     void *ptr = entry;
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	printf("insert_or_commit_trivial_proptable; index=%d; dtm=%d; movecnt=%d; futurevector=%lld\n",
+	       index, dtm, movecnt, futurevector);
+#endif
 
     memset(ptr, 0, proptable_format.bytes);
 
