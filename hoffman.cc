@@ -289,6 +289,8 @@ typedef struct {
     short en_passant_square;
     short multiplicity;
     short piece_position[MAX_PIECES];
+    uint8 reflection;
+    uint8 permuted_piece[MAX_PIECES];
 } local_position_t;
 
 /* This is a global position, that doesn't depend on a particular tablebase.  It's slower to
@@ -555,7 +557,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-#define DEBUG_MOVE 1548427
+/* #define DEBUG_MOVE 53919 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2312,22 +2314,42 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
     return 1;
 }
 
-index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
+/* Normalization - normalize_position() and denormalize_position()
+ *
+ * Not all positions are created equal.  For example, interchanging two identical pieces doesn't
+ * change the position at all, so a position with rook #1 on e4 and rook #2 on g6 is the same as one
+ * with rook #1 on g6 and rook #2 on e4.  When converting to an index, we deal with this by sorting
+ * identical pieces so the piece on the lowest numbered square always appears first in the position.
+ *
+ * But this creates problems when trying to move a piece.  Consider for example, the two rooks.  If
+ * we now being moving rook #1 along the e file, it moves to e5, then e6, then e7.  Now, at e7, it
+ * has become the rook on the higher numbered square, so the pieces have just "flipped" in the
+ * position structure!  Additionally, if we have symmetry involved, then which piece is on the
+ * higher numbered square can depend on the reflections required to get the kings to their
+ * restricted areas.
+ *
+ * And we can't simply hide all of this in the guts of the position-to-index functions, because we
+ * track futuremoves.  Figuring out "which one" of an identical pair of pieces got captured is
+ * critical to figuring out which bit in the futuremoves vector corresponds to this move.
+ *
+ * So, we deal with this using "normalization".  We call normalize_position() to apply all the
+ * reflection and sorting needed to get the position to a point where it can be directly converted
+ * to an index.  We record these transformations using the 'reflection' variable and an array of
+ * permutations in the position structure, so we can put everything back with
+ * denormalize_position().
+ *
+ * Oh, and we can look into the permutation array to figure out which piece has been swapped where,
+ * so we can figure out futuremove bit vectors accordingly.  So the way we move a rook, like in the
+ * example above, is to move it e5, normalize, back prop, denormalize, then move it to e6,
+ * normalize, back prop, denormalize, move it to e7, etc.
+ *
+ * We also recompute the board vector in both functions, because the reflections can change it
+ * around.
+ */
+
+void normalize_position(tablebase_t *tb, local_position_t *position)
 {
-    int piece;
-    int piece2;
-    index_t index;
-
-#if CHECK_KING_LEGALITY_EARLY
-    if (! check_king_legality(original->piece_position[WHITE_KING], original->piece_position[BLACK_KING]))
-	return -1;
-#endif
-
-    /* We don't want to change around the original position, during these next transformations, so
-     * we use a copy of it.
-     */
-
-    local_position_t copy = *original;
+    int piece, piece2;
 
     /* Reflect the pieces around to get the white king where we want him for symmetry.
      *
@@ -2339,69 +2361,140 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
      * diagonal, then black king is on or below a1-h8 diagonal
      */
 
+    position->reflection = 0;
+
     if (tb->symmetry >= 2) {
-	if (COL(copy.piece_position[WHITE_KING]) >= 4) {
+	if (COL(position->piece_position[WHITE_KING]) >= 4) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		copy.piece_position[piece] = horizontal_reflection(copy.piece_position[piece]);
+		position->piece_position[piece] = horizontal_reflection(position->piece_position[piece]);
 	    }
+	    position->reflection |= 4;
 	}
     }
 
     if (tb->symmetry >= 4) {
-	if (ROW(copy.piece_position[WHITE_KING]) >= 4) {
+	if (ROW(position->piece_position[WHITE_KING]) >= 4) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		copy.piece_position[piece] = vertical_reflection(copy.piece_position[piece]);
+		position->piece_position[piece] = vertical_reflection(position->piece_position[piece]);
 	    }
+	    position->reflection |= 2;
 	}
     }
 
     if (tb->symmetry == 8) {
-	if (ROW(copy.piece_position[WHITE_KING]) > COL(copy.piece_position[WHITE_KING])) {
+	if (ROW(position->piece_position[WHITE_KING]) > COL(position->piece_position[WHITE_KING])) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		copy.piece_position[piece] = diagonal_reflection(copy.piece_position[piece]);
+		position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
 	    }
+	    position->reflection |= 1;
 	}
 #if 1
-	if (ROW(copy.piece_position[WHITE_KING]) == COL(copy.piece_position[WHITE_KING])) {
-	    if (ROW(copy.piece_position[BLACK_KING]) > COL(copy.piece_position[BLACK_KING])) {
+	if (ROW(position->piece_position[WHITE_KING]) == COL(position->piece_position[WHITE_KING])) {
+	    if (ROW(position->piece_position[BLACK_KING]) > COL(position->piece_position[BLACK_KING])) {
 		for (piece = 0; piece < tb->num_pieces; piece ++) {
-		    copy.piece_position[piece] = diagonal_reflection(copy.piece_position[piece]);
+		    position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
 		}
+		position->reflection |= 1;
 	    }
 	}
 #endif
     }
 
-    /* Sort any identical pieces so that the lowest square number always comes first. (Do we really
-     * need this for naive2?)
-     */
+    /* Sort any identical pieces so that the lowest square number always comes first. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
 	while ((tb->last_identical_piece[piece2] != -1)
-	       && (copy.piece_position[piece2] < copy.piece_position[tb->last_identical_piece[piece2]])) {
-	    int square = copy.piece_position[piece2];
-	    copy.piece_position[piece2] = copy.piece_position[tb->last_identical_piece[piece2]];
-	    copy.piece_position[tb->last_identical_piece[piece2]] = square;
+	       && (position->piece_position[piece2]
+		   < position->piece_position[tb->last_identical_piece[piece2]])) {
+	    int square = position->piece_position[piece2];
+	    int permuted_piece = position->permuted_piece[piece2];
+
+	    position->piece_position[piece2] = position->piece_position[tb->last_identical_piece[piece2]];
+	    position->piece_position[tb->last_identical_piece[piece2]] = square;
+
+	    position->permuted_piece[piece2] = position->permuted_piece[tb->last_identical_piece[piece2]];
+	    position->permuted_piece[tb->last_identical_piece[piece2]] = permuted_piece;
+
 	    piece2 = tb->last_identical_piece[piece2];
 	}
     }
 
+    position->board_vector = 0;
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	position->board_vector |= BITVECTOR(position->piece_position[piece]);
+    }
+}
+
+void denormalize_position(tablebase_t *tb, local_position_t *position)
+{
+    int piece;
+
+    position->board_vector = 0;
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	if (position->permuted_piece[piece] != piece) {
+	    int square = position->piece_position[piece];
+
+	    position->piece_position[piece] = position->piece_position[position->permuted_piece[piece]];
+	    position->piece_position[position->permuted_piece[piece]] = square;
+
+	    position->permuted_piece[position->permuted_piece[piece]] = position->permuted_piece[piece];
+	    position->permuted_piece[piece] = piece;
+	}
+
+	if ((position->reflection & 1) == 1) {
+	    position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
+	}
+	if ((position->reflection & 2) == 2) {
+	    position->piece_position[piece] = vertical_reflection(position->piece_position[piece]);
+	}
+	if ((position->reflection & 4) == 4) {
+	    position->piece_position[piece] = horizontal_reflection(position->piece_position[piece]);
+	}
+	position->board_vector |= BITVECTOR(position->piece_position[piece]);
+    }
+
+    if (position->en_passant_square != -1) {
+	if ((position->reflection & 1) == 1) {
+	    position->en_passant_square = diagonal_reflection(position->en_passant_square);
+	}
+	if ((position->reflection & 2) == 2) {
+	    position->en_passant_square = vertical_reflection(position->en_passant_square);
+	}
+	if ((position->reflection & 4) == 4) {
+	    position->en_passant_square = horizontal_reflection(position->en_passant_square);
+	}
+    }
+
+    position->reflection = 0;
+}
+
+index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position)
+{
+    index_t index;
+
+#if CHECK_KING_LEGALITY_EARLY
+    if (! check_king_legality(position->piece_position[WHITE_KING], position->piece_position[BLACK_KING]))
+	return -1;
+#endif
+
     switch (tb->index_type) {
     case NAIVE_INDEX:
-	index = local_position_to_naive_index(tb, &copy);
+	index = local_position_to_naive_index(tb, position);
 	break;
     case NAIVE2_INDEX:
-	index = local_position_to_naive2_index(tb, &copy);
+	index = local_position_to_naive2_index(tb, position);
 	break;
     case XOR_INDEX:
-	index = local_position_to_xor_index(tb, &copy);
+	index = local_position_to_xor_index(tb, position);
 	break;
     case SIMPLE_INDEX:
-	index = local_position_to_simple_index(tb, &copy);
+	index = local_position_to_simple_index(tb, position);
 	break;
     case COMPACT_INDEX:
-	index = local_position_to_compact_index(tb, &copy);
+	index = local_position_to_compact_index(tb, position);
 	break;
     default:
 	fprintf(stderr, "Unknown index type in local_position_to_index()\n");  /* BREAKPOINT */
@@ -2421,12 +2514,31 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
      */
 
     if ((tb->symmetry == 8)
-	&& ((ROW(copy.piece_position[WHITE_KING]) != COL(copy.piece_position[WHITE_KING]))
-	    || (ROW(copy.piece_position[BLACK_KING]) != COL(copy.piece_position[BLACK_KING])))) {
-	original->multiplicity = 2;
+	&& ((ROW(position->piece_position[WHITE_KING]) != COL(position->piece_position[WHITE_KING]))
+	    || (ROW(position->piece_position[BLACK_KING]) != COL(position->piece_position[BLACK_KING])))) {
+	position->multiplicity = 2;
     } else {
-	original->multiplicity = 1;
+	position->multiplicity = 1;
     }
+
+    return index;
+}
+
+index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
+{
+    index_t index;
+
+    /* We don't want to change around the original position, during these next transformations, so
+     * we use a copy of it.  We do, however, update the multiplicity in the original structure.
+     */
+
+    local_position_t copy = *original;
+
+    normalize_position(tb, &copy);
+
+    index = normalized_position_to_index(tb, &copy);
+
+    original->multiplicity = copy.multiplicity;
 
     return index;
 }
@@ -2525,6 +2637,11 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
 	}
 	if (p->en_passant_square > 0) p->en_passant_square = horizontal_reflection(p->en_passant_square);
     }
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	p->permuted_piece[piece] = piece;
+    }
+    p->reflection = 0;
 
     return 1;
 }
@@ -3337,7 +3454,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.258 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.259 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -3549,8 +3666,10 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
     memset(local, 0, sizeof(local_position_t));
 
-    for (piece = 0; piece < tb2->num_pieces; piece ++)
+    for (piece = 0; piece < tb2->num_pieces; piece ++) {
 	local->piece_position[piece] = -1;
+	local->permuted_piece[piece] = piece;
+    }
 
     local->en_passant_square = foreign->en_passant_square;
     local->side_to_move = foreign->side_to_move;
@@ -3654,8 +3773,10 @@ index_t global_position_to_local_position(tablebase_t *tb, global_position_t *gl
 
     memset(local, 0, sizeof(local_position_t));
 
-    for (piece = 0; piece < tb->num_pieces; piece ++)
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 	local->piece_position[piece] = -1;
+	local->permuted_piece[piece] = piece;
+    }
 
     local->en_passant_square = global->en_passant_square;
     local->side_to_move = global->side_to_move;
@@ -3797,9 +3918,15 @@ boolean place_piece_in_global_position(global_position_t *position, int square, 
 boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_position_t *pos)
 {
     int row, col;
+    int piece;
 
     memset(pos, 0, sizeof(local_position_t));
     pos->en_passant_square = -1;
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	pos->piece_position[piece] = -1;
+	pos->permuted_piece[piece] = piece;
+    }
 
     for (row=7; row>=0; row--) {
 	for (col=0; col<=7; col++) {
@@ -6358,6 +6485,86 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
     }
 }
 
+void propagate_mini_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
+						  int futuremove, local_position_t *current_position)
+{
+    index_t current_index;
+
+    /* Look up the position in the current tablebase... */
+
+    current_index = normalized_position_to_index(tb, current_position);
+
+    if (current_index == -1) {
+#if !CHECK_KING_LEGALITY_EARLY
+	/* This can happen if we don't fully check en passant legality (but right now, we do) */
+	fprintf(stderr, "Can't lookup local position in futurebase propagation!\n");
+#endif
+	return;
+    }
+
+    /* local_position_to_index() updated the position structure's multiplicity, so we know it's
+     * correct.  It actually should be a little more complex than this, but since we're only dealing
+     * with 8-way symmetry where multiplicity is either 1 or 2, this should do.  If we're
+     * backproping from a single multiplicity position into one with double multiplicity, then this
+     * function will get called twice on the same index, because that index will get generated
+     * twice during back prop from the single future position, but since we're using the futuremove
+     * number to toss out additional function calls, we can safely just use the multiplicity here
+     * without worrying about it getting called again.
+     */
+
+    propagate_index_from_futurebase(tb, futurebase, future_index, current_position->multiplicity,
+				    futuremove, current_index);
+}
+
+void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
+					      int futuremove, local_position_t *position)
+{
+    int piece;
+
+    /* We may need to consider a bunch of additional positions here that are identical to the base
+     * position except that a single one of the pawns on the fourth or fifth ranks was capturable en
+     * passant.
+     * 
+     * We key off the en_passant flag in the position that was passed in.  If it's set, then we're
+     * back propagating a position that requires en passant, so we just do it.  Otherwise, we're
+     * back propagating a position that doesn't require en passant, so we check for additional
+     * en passant positions.
+     */
+
+    propagate_mini_normalized_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
+
+    if (position->en_passant_square == -1) {
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if (tb->piece_color[piece] == position->side_to_move) continue;
+	    if (tb->piece_type[piece] != PAWN) continue;
+
+	    /* I took care in the calling routines to update board_vector specifically so we can
+	     * check for en passant legality here.
+	     */
+
+	    if ((tb->piece_color[piece] == WHITE)
+		&& (ROW(position->piece_position[piece]) == 3)
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
+		position->en_passant_square = position->piece_position[piece] - 8;
+		propagate_mini_normalized_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
+	    }
+
+	    if ((tb->piece_color[piece] == BLACK)
+		&& (ROW(position->piece_position[piece]) == 4)
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
+		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
+		position->en_passant_square = position->piece_position[piece] + 8;
+		propagate_mini_normalized_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
+	    }
+
+	    position->en_passant_square = -1;
+	}
+    }
+}
+
 /* Back propagate promotion moves
  *
  * Passed a piece (a global position character) that the pawn is promoting into.  Searches
@@ -6862,13 +7069,6 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
      * number of any identical pieces), so we can figure out which futuremove number to use.
      */
 
-    true_captured_piece = captured_piece;
-    while ((tb->last_identical_piece[true_captured_piece] != -1)
-	   && (position->piece_position[captured_piece]
-	       < position->piece_position[tb->last_identical_piece[true_captured_piece]])) {
-	true_captured_piece = tb->last_identical_piece[true_captured_piece];
-    }
-
     /* Now consider all possible backwards movements of the capturing piece. */
 
     if (tb->piece_type[capturing_piece] != PAWN) {
@@ -6900,48 +7100,33 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 
 		if (! (tb->semilegal_squares[capturing_piece] & movementptr->vector)) continue;
 
-		/* Move the capturing piece... */
-
-		/* I update board_vector here because I want to check for en passant legality before
+		/* Move the capturing piece, normalize the position, and back prop it.
+		 *
+		 * We have to figure out the "true" capturing and captured pieces, which might not
+		 * be the pieces we started with (see comments on normalization).
+		 *
+		 * normalize_position() and denormalize_position() both update board_vector.  This
+		 * is good for normalization because I want to check for en passant legality before
 		 * I call local_position_to_index().  It just makes the code a little more robust at
 		 * this point, because then there should be no reason for local_position_to_index()
-		 * to return -1.
-		 *
-		 * By the way, the piece didn't "come from" anywhere other than the capture square,
-		 * which will have the captured piece on it (this is back prop), so we don't need to
-		 * clear anything in board_vector.
+		 * to return -1.  After denormalization though, we do want to clear the bit in
+		 * board_vector for the capturing_piece, because we're about to move it somewhere
+		 * else, and we don't want that for loop above us to get the idea that there's
+		 * a piece on a square that's actually vacant.
 		 */
 
 		position->piece_position[capturing_piece] = movementptr->square;
-		position->board_vector |= BITVECTOR(movementptr->square);
 
-		/* Again, when we convert the position to an index (in local_position_to_index()),
-		 * we'll make a copy of the position and normalize it by sorting the identical
-		 * pieces so that they are in ascending order.  Now we have to figure out the "true"
-		 * capturing piece, which could either be forwards or backwards in the piece list.
-		 */
+		normalize_position(tb, position);
 
-		true_capturing_piece = capturing_piece;
-		while ((tb->last_identical_piece[true_capturing_piece] != -1)
-		       && (movementptr->square
-			   < position->piece_position[tb->last_identical_piece[true_capturing_piece]])) {
-		    true_capturing_piece = tb->last_identical_piece[true_capturing_piece];
-		}
-		while ((tb->next_identical_piece[true_capturing_piece] != -1)
-		       && (movementptr->square
-			   > position->piece_position[tb->next_identical_piece[true_capturing_piece]])) {
-		    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
-		}
+		true_capturing_piece = position->permuted_piece[capturing_piece];
+		true_captured_piece = position->permuted_piece[captured_piece];
 
-		/* This function also back props any similar positions with one of the pawns from
-		 * the side that didn't capture in an en passant state.
-		 */
+		propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+							      futurecaptures[true_capturing_piece][true_captured_piece],
+							      position);
 
-		propagate_local_position_from_futurebase(tb, futurebase, future_index,
-							 futurecaptures[true_capturing_piece][true_captured_piece],
-							 position);
-
-
+		denormalize_position(tb, position);
 		position->board_vector &= ~BITVECTOR(movementptr->square);
 	    }
 	}
@@ -6968,43 +7153,16 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 	    if ((tb->semilegal_squares[captured_piece]
 		 & BITVECTOR(position->piece_position[captured_piece]))) {
 
-		/* I update board_vector here because I want to check for en passant legality before
-		 * I call local_position_to_index().  It just makes the code a little more robust at
-		 * this point, because then there should be no reason for local_position_to_index()
-		 * to return -1.
-		 *
-		 * By the way, the piece didn't "come from" anywhere other than the capture square,
-		 * which will have the captured piece on it (this is back prop), so we don't need to
-		 * clear anything in board_vector.
-		 */
+		normalize_position(tb, position);
 
-		position->board_vector |= BITVECTOR(movementptr->square);
+		true_capturing_piece = position->permuted_piece[capturing_piece];
+		true_captured_piece = position->permuted_piece[captured_piece];
 
-		/* Again, when we convert the position to an index (in local_position_to_index()),
-		 * we'll make a copy of the position and normalize it by sorting the identical
-		 * pieces so that they are in ascending order.  Now we have to figure out the "true"
-		 * capturing piece, which could either be forwards or backwards in the piece list.
-		 */
+		propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+							      futurecaptures[true_capturing_piece][true_captured_piece],
+							      position);
 
-		true_capturing_piece = capturing_piece;
-		while ((tb->last_identical_piece[true_capturing_piece] != -1)
-		       && (movementptr->square
-			   < position->piece_position[tb->last_identical_piece[true_capturing_piece]])) {
-		    true_capturing_piece = tb->last_identical_piece[true_capturing_piece];
-		}
-		while ((tb->next_identical_piece[true_capturing_piece] != -1)
-		       && (movementptr->square
-			   > position->piece_position[tb->next_identical_piece[true_capturing_piece]])) {
-		    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
-		}
-
-		/* This function also back props any similar positions with one of the pawns from
-		 * the side that didn't capture in an en passant state.
-		 */
-
-		propagate_local_position_from_futurebase(tb, futurebase, future_index,
-							 futurecaptures[true_capturing_piece][true_captured_piece],
-							 position);
+		denormalize_position(tb, position);
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
 
@@ -7040,37 +7198,16 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
 			position->board_vector |= BITVECTOR(movementptr->square);
 
-			/* Since the captured piece is on a different square, we do this again. */
+			normalize_position(tb, position);
 
-			true_captured_piece = captured_piece;
-			while ((tb->last_identical_piece[true_captured_piece] != -1)
-			       && (position->piece_position[captured_piece]
-				   < position->piece_position[tb->last_identical_piece[true_captured_piece]])) {
-			    true_captured_piece = tb->last_identical_piece[true_captured_piece];
-			}
+			true_capturing_piece = position->permuted_piece[capturing_piece];
+			true_captured_piece = position->permuted_piece[captured_piece];
 
-			/* Again, when we convert the position to an index (in
-			 * local_position_to_index()), we'll make a copy of the position and
-			 * normalize it by sorting the identical pieces so that they are in
-			 * ascending order.  Now we have to figure out the "true" capturing piece,
-			 * which could either be forwards or backwards in the piece list.
-			 */
+			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+								      futurecaptures[true_capturing_piece][true_captured_piece],
+								      position);
 
-			true_capturing_piece = capturing_piece;
-			while ((tb->last_identical_piece[true_capturing_piece] != -1)
-			       && (movementptr->square
-				   < position->piece_position[tb->last_identical_piece[true_capturing_piece]])) {
-			    true_capturing_piece = tb->last_identical_piece[true_capturing_piece];
-			}
-			while ((tb->next_identical_piece[true_capturing_piece] != -1)
-			       && (movementptr->square
-				   > position->piece_position[tb->next_identical_piece[true_capturing_piece]])) {
-			    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
-			}
-
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
-								 futurecaptures[true_capturing_piece][true_captured_piece],
-								 position);
+			denormalize_position(tb, position);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
 			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
@@ -7102,37 +7239,16 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
 			position->board_vector |= BITVECTOR(movementptr->square);
 
-			/* Since the captured piece is on a different square, we do this again. */
+			normalize_position(tb, position);
 
-			true_captured_piece = captured_piece;
-			while ((tb->last_identical_piece[true_captured_piece] != -1)
-			       && (position->piece_position[captured_piece]
-				   < position->piece_position[tb->last_identical_piece[true_captured_piece]])) {
-			    true_captured_piece = tb->last_identical_piece[true_captured_piece];
-			}
+			true_capturing_piece = position->permuted_piece[capturing_piece];
+			true_captured_piece = position->permuted_piece[captured_piece];
 
-			/* Again, when we convert the position to an index (in
-			 * local_position_to_index()), we'll make a copy of the position and
-			 * normalize it by sorting the identical pieces so that they are in
-			 * ascending order.  Now we have to figure out the "true" capturing piece,
-			 * which could either be forwards or backwards in the piece list.
-			 */
-
-			true_capturing_piece = capturing_piece;
-			while ((tb->last_identical_piece[true_capturing_piece] != -1)
-			       && (movementptr->square
-				   < position->piece_position[tb->last_identical_piece[true_capturing_piece]])) {
-			    true_capturing_piece = tb->last_identical_piece[true_capturing_piece];
-			}
-			while ((tb->next_identical_piece[true_capturing_piece] != -1)
-			       && (movementptr->square
-				   > position->piece_position[tb->next_identical_piece[true_capturing_piece]])) {
-			    true_capturing_piece = tb->next_identical_piece[true_capturing_piece];
-			}
-
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
 								 futurecaptures[true_capturing_piece][true_captured_piece],
 								 position);
+
+			denormalize_position(tb, position);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
 			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
@@ -7794,7 +7910,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	index_to_global_position(tb, index, &global);
 	if (all_futuremoves_handled)
 	    fprintf(stderr, "ERROR: Some futuremoves not handled under move restrictions!\n");
-	fprintf(stderr, "%s", global_position_to_FEN(&global));
+	fprintf(stderr, "%d %s", index, global_position_to_FEN(&global));
 	for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
 	    if (futurevector & unpruned_futuremoves & FUTUREVECTOR(futuremove)) {
 		fprintf(stderr, " %s", movestr[futuremove]);
