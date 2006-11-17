@@ -557,7 +557,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 379329 */
+/* #define DEBUG_MOVE 2487633 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2368,6 +2368,9 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
 		position->piece_position[piece] = horizontal_reflection(position->piece_position[piece]);
 	    }
+	    if (position->en_passant_square != -1) {
+		position->en_passant_square = horizontal_reflection(position->en_passant_square);
+	    }
 	    position->reflection |= 4;
 	}
     }
@@ -2377,6 +2380,9 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
 		position->piece_position[piece] = vertical_reflection(position->piece_position[piece]);
 	    }
+	    if (position->en_passant_square != -1) {
+		position->en_passant_square = vertical_reflection(position->en_passant_square);
+	    }
 	    position->reflection |= 2;
 	}
     }
@@ -2385,6 +2391,9 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 	if (ROW(position->piece_position[WHITE_KING]) > COL(position->piece_position[WHITE_KING])) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
 		position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
+	    }
+	    if (position->en_passant_square != -1) {
+		position->en_passant_square = diagonal_reflection(position->en_passant_square);
 	    }
 	    position->reflection |= 1;
 	}
@@ -3454,7 +3463,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.262 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.263 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4640,6 +4649,13 @@ inline boolean is_position_valid(tablebase_t *tb, index_t index)
 
 void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm, int in_check_flag)
 {
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE) {
+	fprintf(stderr, "initialize index %d %s movecnt %d; dtm %d; in-check %d\n",
+		index, index_to_FEN(tb, index), movecnt, dtm, in_check_flag);
+    }
+#endif
+
     set_entry_movecnt(tb, index, movecnt);
     set_entry_raw_DTM(tb, index, dtm);
     set_entry_in_check_flag(tb, index, in_check_flag);
@@ -4650,6 +4666,13 @@ void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
     /* XXX need to look more closely at this (again) */
     initialize_entry(tb, index, 0, 0, 0);
     /* initialize_entry(tb, entry, 0, 1); */
+}
+
+void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
+{
+    initialize_entry(tb, index, 0, -1, 0);
+    total_legal_positions ++;
+    /* total_PNTM_mated_positions ++; */
 }
 
 void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
@@ -6325,7 +6348,7 @@ void insert_or_commit_trivial_propentry(index_t index, short dtm, short movecnt,
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("insert_or_commit_trivial_proptable; index=%d; dtm=%d; movecnt=%d; futurevector=%lld\n",
+	printf("insert_or_commit_trivial_proptable; index=%d; dtm=%d; movecnt=%d; futurevector=0x%llx\n",
 	       index, dtm, movecnt, futurevector);
 #endif
 
@@ -8996,7 +9019,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
  *
  */
 
-int in_check(tablebase_t *tb, local_position_t *position)
+int PTM_in_check(tablebase_t *tb, local_position_t *position)
 {
     int piece;
     int dir;
@@ -9311,7 +9334,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	 */
 
 	if (movecnt == 0) {
-	    initialize_entry_with_stalemate(tb, index);
+	    if (PTM_in_check(tb, &position)) {
+		initialize_entry_with_PTM_mated(tb, index);
+	    } else {
+		initialize_entry_with_stalemate(tb, index);
+	    }
 	    return 0;
 	} else {
 
@@ -9336,14 +9363,14 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	    movecnt *= position.multiplicity;
 
+	    initialize_entry_with_movecnt(tb, index, movecnt, PTM_in_check(tb, &position));
+
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE) {
-		fprintf(stderr, "initialize index %d %s: %d movecnt; futurevector %llx\n",
-			index, index_to_FEN(tb, index), movecnt, futurevector);
+		/* other fields were printed by DEBUG_MOVE statement in initialize_entry() */
+		fprintf(stderr, "   futurevector 0x%llx\n", futurevector);
 	    }
 #endif
-
-	    initialize_entry_with_movecnt(tb, index, movecnt, in_check(tb, &position));
 
 	    return futurevector;
 	}
