@@ -2552,10 +2552,10 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
     return index;
 }
 
-boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, local_position_t *p)
+boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, local_position_t *position)
 {
     int ret;
-    int piece;
+    int piece, piece2;
 
     if ((index != 0) && (tb->modulus != 0)) {
 #if FINITE_FIELD_INVERSION
@@ -2567,19 +2567,19 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
 
     switch (tb->index_type) {
     case NAIVE_INDEX:
-	ret = naive_index_to_local_position(tb, index, p);
+	ret = naive_index_to_local_position(tb, index, position);
 	break;
     case NAIVE2_INDEX:
-	ret = naive2_index_to_local_position(tb, index, p);
+	ret = naive2_index_to_local_position(tb, index, position);
 	break;
     case XOR_INDEX:
-	ret = xor_index_to_local_position(tb, index, p);
+	ret = xor_index_to_local_position(tb, index, position);
 	break;
     case SIMPLE_INDEX:
-	ret = simple_index_to_local_position(tb, index, p);
+	ret = simple_index_to_local_position(tb, index, position);
 	break;
     case COMPACT_INDEX:
-	ret = compact_index_to_local_position(tb, index, p);
+	ret = compact_index_to_local_position(tb, index, position);
 	break;
     default:
 	fprintf(stderr, "Unknown index type in index_to_local_position()\n");  /* BREAKPOINT */
@@ -2589,68 +2589,108 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
     if (!ret) return 0;
 
 #if CHECK_KING_LEGALITY_EARLY
-    if (! check_king_legality(p->piece_position[WHITE_KING], p->piece_position[BLACK_KING])) return 0;
+    if (! check_king_legality(position->piece_position[WHITE_KING], position->piece_position[BLACK_KING]))
+	return 0;
 #endif
 
     if ((tb->symmetry == 8)
-	&& (ROW(p->piece_position[WHITE_KING]) == COL(p->piece_position[WHITE_KING]))
-	&& (ROW(p->piece_position[BLACK_KING]) > COL(p->piece_position[BLACK_KING]))) return 0;
+	&& (ROW(position->piece_position[WHITE_KING]) == COL(position->piece_position[WHITE_KING]))
+	&& (ROW(position->piece_position[BLACK_KING]) > COL(position->piece_position[BLACK_KING])))
+	return 0;
 
     /* Multiplicity - number of non-identical positions that this index corresponds to */
 
     if ((tb->symmetry == 8)
-	&& ((ROW(p->piece_position[WHITE_KING]) != COL(p->piece_position[WHITE_KING]))
-	    || (ROW(p->piece_position[BLACK_KING]) != COL(p->piece_position[BLACK_KING])))) {
-	p->multiplicity = 2;
+	&& ((ROW(position->piece_position[WHITE_KING]) != COL(position->piece_position[WHITE_KING]))
+	    || (ROW(position->piece_position[BLACK_KING]) != COL(position->piece_position[BLACK_KING])))) {
+	position->multiplicity = 2;
     } else {
-	p->multiplicity = 1;
+	position->multiplicity = 1;
     }
 
     if ((symmetry & 1) == 1) {
-	if (p->multiplicity == 1) return 0;
+	if (position->multiplicity == 1) return 0;
 
 	/* diagonal reflection */
-	p->board_vector = 0;
-	p->PTM_vector = 0;
+	position->board_vector = 0;
+	position->PTM_vector = 0;
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    p->piece_position[piece] = diagonal_reflection(p->piece_position[piece]);
-	    p->board_vector |= BITVECTOR(p->piece_position[piece]);
-	    if (tb->piece_color[piece] == p->side_to_move)
-		p->PTM_vector |= BITVECTOR(p->piece_position[piece]);
+	    position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
+	    position->board_vector |= BITVECTOR(position->piece_position[piece]);
+	    if (tb->piece_color[piece] == position->side_to_move)
+		position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
 	}
-	if (p->en_passant_square > 0) p->en_passant_square = diagonal_reflection(p->en_passant_square);
+	if (position->en_passant_square > 0)
+	    position->en_passant_square = diagonal_reflection(position->en_passant_square);
     }
 
     if ((symmetry & 2) == 2) {
 	/* vertical reflection */
-	p->board_vector = 0;
-	p->PTM_vector = 0;
+	position->board_vector = 0;
+	position->PTM_vector = 0;
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    p->piece_position[piece] = vertical_reflection(p->piece_position[piece]);
-	    p->board_vector |= BITVECTOR(p->piece_position[piece]);
-	    if (tb->piece_color[piece] == p->side_to_move)
-		p->PTM_vector |= BITVECTOR(p->piece_position[piece]);
+	    position->piece_position[piece] = vertical_reflection(position->piece_position[piece]);
+	    position->board_vector |= BITVECTOR(position->piece_position[piece]);
+	    if (tb->piece_color[piece] == position->side_to_move)
+		position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
 	}
-	if (p->en_passant_square > 0) p->en_passant_square = vertical_reflection(p->en_passant_square);
+	if (position->en_passant_square > 0)
+	    position->en_passant_square = vertical_reflection(position->en_passant_square);
     }
 
     if ((symmetry & 4) == 4) {
 	/* horizontal reflection */
-	p->board_vector = 0;
-	p->PTM_vector = 0;
+	position->board_vector = 0;
+	position->PTM_vector = 0;
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    p->piece_position[piece] = horizontal_reflection(p->piece_position[piece]);
-	    p->board_vector |= BITVECTOR(p->piece_position[piece]);
-	    if (tb->piece_color[piece] == p->side_to_move)
-		p->PTM_vector |= BITVECTOR(p->piece_position[piece]);
+	    position->piece_position[piece] = horizontal_reflection(position->piece_position[piece]);
+	    position->board_vector |= BITVECTOR(position->piece_position[piece]);
+	    if (tb->piece_color[piece] == position->side_to_move)
+		position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
 	}
-	if (p->en_passant_square > 0) p->en_passant_square = horizontal_reflection(p->en_passant_square);
+	if (position->en_passant_square > 0)
+	    position->en_passant_square = horizontal_reflection(position->en_passant_square);
     }
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	p->permuted_piece[piece] = piece;
+	position->permuted_piece[piece] = piece;
     }
-    p->reflection = 0;
+    position->reflection = 0;
+
+    /* Sort any identical pieces so that the lowest square number always comes first.
+     *
+     * The various index-to-position routines returned sorted piece arrays, but the various symmetry
+     * reflections might have upset this.  Some places, particularly the translate_... routines in
+     * futurebase back propagation, depend on the pieces being sorted.
+     *
+     * Note that we DON'T changed the permuted_piece array here.  That's because permuted_piece is
+     * used to track the changes that happen after index-to-position and before position-to-index,
+     * NOT the changes that happen internally in index-to-position.
+     */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	piece2 = piece;
+	while ((tb->last_identical_piece[piece2] != -1)
+	       && (position->piece_position[piece2]
+		   < position->piece_position[tb->last_identical_piece[piece2]])) {
+	    int square = position->piece_position[piece2];
+
+	    position->piece_position[piece2] = position->piece_position[tb->last_identical_piece[piece2]];
+	    position->piece_position[tb->last_identical_piece[piece2]] = square;
+
+	    piece2 = tb->last_identical_piece[piece2];
+	}
+    }
+
+#if 0
+    /* Maybe should do this here, instead of in the various reflection code above. */
+
+    position->board_vector = 0;
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	position->board_vector |= BITVECTOR(position->piece_position[piece]);
+    }
+#endif
 
     return 1;
 }
@@ -3463,7 +3503,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.263 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.264 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
