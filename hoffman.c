@@ -557,7 +557,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 53919 */
+#define DEBUG_MOVE 379329
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -3454,7 +3454,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.260 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.261 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4175,6 +4175,13 @@ char * global_position_to_FEN(global_position_t *position)
     *(ptr++) = '\0';
 
     return buffer;
+}
+
+char * index_to_FEN(tablebase_t *tb, index_t index)
+{
+    global_position_t global;
+    index_to_global_position(tb, index, &global);
+    return global_position_to_FEN(&global);
 }
 
 /* This routine looks at "movestr" to try and figure out if it is a valid move from this global
@@ -8922,8 +8929,8 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
 		 * position we are in now (en passant got taken care of in the special case above).
 		 */
 
-		if (((movementptr->square - position.piece_position[piece]) == 16)
-		    || ((movementptr->square - position.piece_position[piece]) == -16)) {
+		if (((movementptr->square - origin_square) == 16)
+		    || ((movementptr->square - origin_square) == -16)) {
 		    continue;
 		}
 
@@ -9330,8 +9337,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	    movecnt *= position.multiplicity;
 
 #ifdef DEBUG_MOVE
-	    if (index == DEBUG_MOVE)
-		fprintf(stderr, "initialize index %d: %d movecnt; futurevector %llx\n", index, movecnt, futurevector);
+	    if (index == DEBUG_MOVE) {
+		fprintf(stderr, "initialize index %d %s: %d movecnt; futurevector %llx\n",
+			index, index_to_FEN(tb, index), movecnt, futurevector);
+	    }
 #endif
 
 	    initialize_entry_with_movecnt(tb, index, movecnt, in_check(tb, &position));
