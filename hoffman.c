@@ -354,6 +354,7 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
  */
 
 struct format {
+    uint8 bits;
     uint8 bytes;
     uint32 dtm_mask;
     uint8 dtm_offset;
@@ -389,15 +390,15 @@ char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index", "futurevec
  * </format>
  */
 
-struct format entries_format = {2, 0xff,0,8, 0x7f,8,7, 15};
+struct format entries_format = {4,2, 0xff,0,8, 0x7f,8,7, 15};
 
 /* This is the "one-byte-dtm" format */
 
-struct format one_byte_dtm_format = {1, 0xff,0,8};
+struct format one_byte_dtm_format = {3,1, 0xff,0,8};
 
 /* And this is the sixteen byte format we use by default for proptable entries */
 
-struct format proptable_format = {16, 0xffff,32,16, 0xff,56,8, 0,
+struct format proptable_format = {7,16, 0xffff,32,16, 0xff,56,8, 0,
 				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64};
 
 
@@ -2798,6 +2799,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 {
     xmlNodePtr child;
     int auto_offset = 0;
+    int power_of_two;
 
     memset(format, 0, sizeof(struct format));
 
@@ -2848,9 +2850,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		return 0;
 	    }
 
-	    if ((offset + bits + 7)/8 > format->bytes) {
-		format->bytes = (offset + bits + 7)/8;
-	    }
+	    if (offset + bits > format->bits) format->bits = offset + bits;
 
 	    switch (format_field) {
 	    case FORMAT_FIELD_DTM:
@@ -2884,9 +2884,18 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
      * less dependant on the assumption that MAX_FORMAT_BYTES is no more than 16.
      */
 
-    if (format->bytes == 3) format->bytes = 4;
-    if ((format->bytes > 4) && (format->bytes < 8)) format->bytes = 8;
-    if ((format->bytes > 8) && (format->bytes < 16)) format->bytes = 16;
+    for (power_of_two = 0; (1 << power_of_two) < format->bits; power_of_two ++);
+
+    if ((1 << power_of_two) != format->bits) {
+	fprintf(stderr, "Total bits in format must be a power of two\n");
+	return 0;
+    }
+
+    if (format->bits <= 8) {
+	format->bytes = 1;
+    } else {
+	format->bytes = format->bits/8;
+    }
 
     if (format->bytes > MAX_FORMAT_BYTES) {
 	fprintf(stderr, "Maximum number of bytes in format exceeded\n");
@@ -3503,7 +3512,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.264 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.265 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4332,9 +4341,11 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  * internal request size.  So, 128 KB / 4 byte entries = 32 K entries = 1<<15
  */
 
+#define LEFTSHIFT(val,bits) (((bits) > 0) ? ((val) << (bits)) : ((val) >> (-(bits))))
+
 #define NUM_ENTRY_BUFFERS 4
 #define ENTRY_BUFFER_ENTRIES (1<<12)
-#define ENTRY_BUFFER_BYTES (ENTRY_BUFFER_ENTRIES * entries_format.bytes)
+#define ENTRY_BUFFER_BYTES LEFTSHIFT(ENTRY_BUFFER_ENTRIES, entries_format.bits - 3)
 
 struct entry_buffer {
     entry_t *buffer;
@@ -4360,7 +4371,7 @@ void turn_entry_buffer_blue(int fd, int buffernum)
     entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
     entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
     entry_buffers[buffernum].aiocb.aio_offset
-	= entry_buffers[buffernum].start * entries_format.bytes;
+	= LEFTSHIFT(entry_buffers[buffernum].start, entries_format.bits - 3);
 
     if (aio_read(& entry_buffers[buffernum].aiocb) != 0) {
 	fprintf(stderr, "Can't enqueue aio_read for entry buffer\n");
@@ -4393,8 +4404,8 @@ void wait_for_entry_buffer_green(int buffernum)
 	/* zero byte read - this is OK the first time through */
 	memset(entry_buffers[buffernum].buffer, 0, ENTRY_BUFFER_BYTES);
     } else if ((retval != ENTRY_BUFFER_BYTES)
-	       && (retval != entries_format.bytes
-		   * ((proptable_tb->max_index - 1) % ENTRY_BUFFER_ENTRIES)))  {
+	       && (retval != LEFTSHIFT(proptable_tb->max_index % ENTRY_BUFFER_ENTRIES,
+				       entries_format.bits - 3)))  {
 	fprintf(stderr, "entry buffer aio_read didn't return ENTRY_BUFFER_BYTES\n");
 	kill(getpid(), SIGSTOP);
     }
@@ -4412,7 +4423,7 @@ void turn_entry_buffer_red(int fd, int buffernum)
     entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
     entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
     entry_buffers[buffernum].aiocb.aio_offset
-	= entry_buffers[buffernum].start * entries_format.bytes;
+	= LEFTSHIFT(entry_buffers[buffernum].start, entries_format.bits - 3);
 
     if (aio_write(& entry_buffers[buffernum].aiocb) != 0) {
 	fprintf(stderr, "Can't enqueue aio_write for entry buffer\n");
@@ -4466,7 +4477,7 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     if (tb->entries != NULL) {
 
 	/* entries array exists in memory - so just return a pointer into it */
-	return (void *)(tb->entries) + index * entries_format.bytes;
+	return (void *)(tb->entries) + LEFTSHIFT(index, entries_format.bits - 3);
 
     } else if (tb->file != NULL) {
 
@@ -4591,7 +4602,7 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     }
 
     return (void *) (entry_buffers[yellow_entry_buffer].buffer)
-	+ (index - entry_buffers[yellow_entry_buffer].start) * entries_format.bytes;
+	+ LEFTSHIFT(index - entry_buffers[yellow_entry_buffer].start, entries_format.bits - 3);
 }
 
 
@@ -4614,37 +4625,46 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_signed_field(fetch_entry_pointer(tb, index),
-			    entries_format.dtm_mask, entries_format.dtm_offset);
+			    entries_format.dtm_mask,
+			    entries_format.dtm_offset + ((index << (entries_format.bits - 1)) % 8));
 }
 
 inline void set_entry_raw_DTM(tablebase_t *tb, index_t index, int dtm)
 {
     set_signed_field(fetch_entry_pointer(tb, index),
-		     entries_format.dtm_mask, entries_format.dtm_offset, dtm);
+		     entries_format.dtm_mask,
+		     entries_format.dtm_offset + ((index << (entries_format.bits - 1)) % 8),
+		     dtm);
 }
 
 inline int get_entry_movecnt(tablebase_t *tb, index_t index)
 {
     return get_unsigned_field(fetch_entry_pointer(tb, index),
-			      entries_format.movecnt_mask, entries_format.movecnt_offset);
+			      entries_format.movecnt_mask,
+			      entries_format.movecnt_offset + ((index << (entries_format.bits - 1)) % 8));
 }
 
 inline void set_entry_movecnt(tablebase_t *tb, index_t index, int movecnt)
 {
     set_unsigned_field(fetch_entry_pointer(tb, index),
-		       entries_format.movecnt_mask, entries_format.movecnt_offset, movecnt);
+		       entries_format.movecnt_mask,
+		       entries_format.movecnt_offset + ((index << (entries_format.bits - 1)) % 8),
+		       movecnt);
 }
 
 inline int get_entry_in_check_flag(tablebase_t *tb, index_t index)
 {
     return get_unsigned_field(fetch_entry_pointer(tb, index),
-			      1, entries_format.in_check_flag_offset);
+			      1,
+			      entries_format.in_check_flag_offset + ((index << (entries_format.bits - 1)) % 8));
 }
 
 inline void set_entry_in_check_flag(tablebase_t *tb, index_t index, int in_check_flag)
 {
     set_unsigned_field(fetch_entry_pointer(tb, index),
-		       1, entries_format.in_check_flag_offset, in_check_flag);
+		       1,
+		       entries_format.in_check_flag_offset + ((index << (entries_format.bits - 1)) % 8),
+		       in_check_flag);
 }
 
 inline short does_PTM_win(tablebase_t *tb, index_t index)
@@ -9561,10 +9581,11 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	}
 	init_entry_buffers(tb);
     } else {
-	tb->entries = (entry_t *) calloc(tb->max_index + 1, entries_format.bytes);
+	tb->entries = (entry_t *) malloc(LEFTSHIFT(tb->max_index + 1, entries_format.bits - 3));
 	if (tb->entries == NULL) {
 	    fprintf(stderr, "Can't malloc tablebase entries\n");
 	}
+	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, entries_format.bits - 3));
     }
 
     if (num_propentries != 0) {
