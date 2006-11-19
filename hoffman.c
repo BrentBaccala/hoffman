@@ -186,7 +186,6 @@ uint64 total_stalemate_positions = 0;
 uint64 total_moves = 0;
 uint64 total_futuremoves = 0;
 uint64 total_backproped_moves = 0;
-uint64 total_passes = 0;
 uint64 player_wins[2];
 int max_dtm = 0;
 int min_dtm = 0;
@@ -195,8 +194,11 @@ struct timeval program_start_time;
 struct timeval program_end_time;
 
 #define MAX_PASSES 100
+
+int total_passes = 0;
 struct timeval pass_start_times[MAX_PASSES];
 struct timeval pass_end_times[MAX_PASSES];
+char * pass_type[MAX_PASSES];
 int pass_target_dtms[MAX_PASSES];
 int positions_finalized[MAX_PASSES];
 uint64 backproped_moves[MAX_PASSES];
@@ -3512,7 +3514,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.265 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.266 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -3575,18 +3577,19 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	passNode = xmlNewChild(node, NULL, BAD_CAST "pass", NULL);
 
-	sprintf(strbuf, "%d", pass_target_dtms[passnum]);
-	xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
+	xmlNewProp(passNode, BAD_CAST "type", BAD_CAST pass_type[passnum]);
 
 	subtract_timeval(&pass_end_times[passnum], &pass_start_times[passnum]);
 	sprint_timeval(strbuf, &pass_end_times[passnum]);
 	xmlNewProp(passNode, BAD_CAST "real-time", BAD_CAST strbuf);
 
-	if (pass_target_dtms[passnum] != 0) {
+	if (! strcmp(pass_type[passnum], "intratable")) {
+	    sprintf(strbuf, "%d", pass_target_dtms[passnum]);
+	    xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
 	    sprintf(strbuf, "%d", positions_finalized[passnum]);
 	    xmlNewProp(passNode, BAD_CAST "positions-finalized", BAD_CAST strbuf);
 	    sprintf(strbuf, "%lld", backproped_moves[passnum]);
-	    xmlNewProp(passNode, BAD_CAST "backprop-moves-generated", BAD_CAST strbuf);
+	    xmlNewProp(passNode, BAD_CAST "moves-generated", BAD_CAST strbuf);
 	}
     }
 
@@ -6147,6 +6150,23 @@ int proptable_finalize(int target_dtm)
 	    finalize_futuremove(proptable_tb, index, possible_futuremoves ^ futurevector);
 	}
 
+	/* Symmetry.
+	 *
+	 * The only case we really have to worry about here is diagonal symmetry, because in both
+	 * horizontal and vertical symmetry all of the positions neatly double up, so anytime we'd
+	 * have a move backprop into our symmetry restriction from outside it, a matching move will
+	 * backprop from inside out.
+	 *
+	 * For diagnoal symmetry however, things aren't so neat, because squares along the diagonal
+	 * map to themselves.  So positions where both kings are on the diagonal don't have a
+	 * matching double, while the other positions do.  We deal with this here by backproping
+	 * both the position itself and its matching pair (if one exists).  If one doesn't exist,
+	 * then back_propagate_index_within_table() will quickly detect this case (when
+	 * index_to_position returns false).  We also doubled the movecnt of "paired" positions
+	 * during initialization, because moves will be backproped twice from doubled positions to
+	 * doubled positions, not just assumed like the horizontal or vertical cases.
+	 */
+
 	if ((target_dtm != 0) && (get_entry_DTM(proptable_tb, index) == target_dtm)) {
 	    back_propagate_index_within_table(proptable_tb, index, 0);
 	    if (proptable_tb->symmetry == 8) {
@@ -6198,10 +6218,8 @@ int propagation_pass(int target_dtm)
 {
     index_t index;
 
-    if (target_dtm != 0) {
-	gettimeofday(&pass_start_times[total_passes], NULL);
-    }
-
+    gettimeofday(&pass_start_times[total_passes], NULL);
+    if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
     pass_target_dtms[total_passes] = target_dtm;
 
     if (num_propentries != 0) {
@@ -6210,28 +6228,29 @@ int propagation_pass(int target_dtm)
 
 	for (index = 0; index <= proptable_tb->max_index; index ++) {
 
-	    /* The symmetry code needs a bit more work here.  It really depends on the relative
-	     * multiplicity of the position we prop'ing from and the position we prop'ing to
-	     * to decide what should be done here.
+	    /* Symmetry.
 	     *
-	     * For now, I've just commented out the code in propagate_one_minimove_within_table()
-	     * that would insert into the proptable with multiplicity higher than one, so here we
-	     * just want to double up on calls to back_propagate_index_within_table() almost no
-	     * matter what.  A tighter version of this code would only back prop more than once here
-	     * if there was an increase of multiplicity going from the future position backwards.
+	     * The only case we really have to worry about here is diagonal symmetry, because in
+	     * both horizontal and vertical symmetry all of the positions neatly double up, so
+	     * anytime we'd have a move backprop into our symmetry restriction from outside it, a
+	     * matching move will backprop from inside out.
 	     *
-	     * Considering that we merge multiple identical entries in the proptable, I don't think
-	     * there's any loss here if we're disk bound... this inefficiency only costs us CPU
-	     * time.
+	     * For diagnoal symmetry however, things aren't so neat, because squares along the
+	     * diagonal map to themselves.  So positions where both kings are on the diagonal don't
+	     * have a matching double, while the other positions do.  We deal with this here by
+	     * backproping both the position itself and its matching pair (if one exists).  If one
+	     * doesn't exist, then back_propagate_index_within_table() will quickly detect this case
+	     * (when index_to_position returns false).  We also doubled the movecnt of "paired"
+	     * positions during initialization, because moves will be backproped twice from doubled
+	     * positions to doubled positions, not just assumed like the horizontal or vertical
+	     * cases.
 	     */
 
 	    if ((target_dtm != 0) && (get_entry_DTM(proptable_tb, index) == target_dtm)) {
 		back_propagate_index_within_table(proptable_tb, index, 0);
-#if 1
 		if (proptable_tb->symmetry == 8) {
 		    back_propagate_index_within_table(proptable_tb, index, 1);
 		}
-#endif
 		positions_finalized[total_passes] ++;
 	    }
 	}
@@ -9642,8 +9661,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     check_1000_indices(tb);
     /* check_1000_positions(tb); */  /* This becomes a problem with symmetry, among other things */
 
-    gettimeofday(&pass_start_times[0], NULL);
-
     if (num_propentries == 0) {
 
 	/* No proptables.  Allocate a futurevectors array, initialize the tablebase, back propagate
@@ -9657,18 +9674,36 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    return 0;
 	}
 
+	gettimeofday(&pass_start_times[total_passes], NULL);
+	pass_type[total_passes] = "initialization";
+
 	fprintf(stderr, "Initializing tablebase\n");
 	initialize_tablebase(tb);
+
+	gettimeofday(&pass_end_times[total_passes], NULL);
+	total_passes ++;
 
 	fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions);
 	fprintf(stderr, "Total moves: %lld\n", total_moves);
 
+	gettimeofday(&pass_start_times[total_passes], NULL);
+	pass_type[total_passes] = "futurebase backprop";
+
 	if (! back_propagate_all_futurebases(tb)) return 0;
 
+	gettimeofday(&pass_end_times[total_passes], NULL);
+	total_passes ++;
+
+	gettimeofday(&pass_start_times[total_passes], NULL);
+	pass_type[total_passes] = "futuremove check";
+
 	fprintf(stderr, "Checking futuremoves...\n");
-	propagation_pass(0);
+	/* propagation_pass(0); */
 	if (! have_all_futuremoves_been_handled(tb)) return 0;
 	fprintf(stderr, "All futuremoves handled under move restrictions\n");
+
+	gettimeofday(&pass_end_times[total_passes], NULL);
+	total_passes ++;
 
 	free(tb->futurevectors);
 	tb->futurevectors=NULL;
@@ -9680,11 +9715,18 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * into it, checking each position move as we go to make sure its futuremoves are handled.
 	 */
 
+	gettimeofday(&pass_start_times[total_passes], NULL);
+	pass_type[total_passes] = "futurebase backprop";
+
 	if (! back_propagate_all_futurebases(tb)) return 0;
 	proptable_full();  /* flush moves out to disk */
 	finalize_proptable_write();
 
+	gettimeofday(&pass_end_times[total_passes], NULL);
+	total_passes ++;
+
 	fprintf(stderr, "Initializing tablebase...\n");
+	pass_type[total_passes] = "initialization";
 	propagation_pass(0);
 	proptable_full();  /* flush moves out to disk */
 	finalize_proptable_write();
