@@ -371,15 +371,24 @@ struct format {
     uint64 futurevector_mask;
     uint8 futurevector_offset;
     uint8 futurevector_bits;
+    uint8 flag_offset;
+    int flag_type;
 };
 
-char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index", "futurevector", NULL};
+char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index", "futurevector", "flag", NULL};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_MOVECNT 1
 #define FORMAT_FIELD_IN_CHECK_FLAG 2
 #define FORMAT_FIELD_INDEX 3
 #define FORMAT_FIELD_FUTUREVECTOR 4
+#define FORMAT_FIELD_FLAG 5
+
+char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
+
+#define FORMAT_FLAG_NONE 0
+#define FORMAT_FLAG_WHITE_WINS 1
+#define FORMAT_FLAG_WHITE_DRAWS 2
 
 #define MAX_FORMAT_BYTES 16
 
@@ -572,6 +581,8 @@ int num_propentries = 0;
 int find_name_in_array(char * name, char * array[])
 {
     int i=0;
+
+    if (name == NULL) return -1;
 
     while (*array != NULL) {
 	if (!strcasecmp(name, *array)) return i;
@@ -2801,6 +2812,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 {
     xmlNodePtr child;
     int auto_offset = 0;
+    int total_bits = 0;
     int power_of_two;
 
     memset(format, 0, sizeof(struct format));
@@ -2817,16 +2829,18 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		fprintf(stderr, "Unknown field in format: %s\n", (char *) child->name);
 		return 0;
 	    }
-	    if ((bits == 0) && (format_field != FORMAT_FIELD_IN_CHECK_FLAG)) {
+	    if ((bits == 0)
+		&& (format_field != FORMAT_FIELD_IN_CHECK_FLAG) && (format_field != FORMAT_FIELD_FLAG)) {
 		fprintf(stderr, "Non-zero 'bits' value must be specified in format field '%s'\n",
 			(char *) child->name);
 		return 0;
 	    }
-	    if ((bitstr != NULL) && (bits != 1) && (format_field == FORMAT_FIELD_IN_CHECK_FLAG)) {
-		fprintf(stderr, "Format field 'in-check-flag' only accepts bits=\"1\"\n");
+	    if ((bitstr != NULL) && (bits != 1)
+		&& ((format_field == FORMAT_FIELD_IN_CHECK_FLAG) || (format_field == FORMAT_FIELD_FLAG))) {
+		fprintf(stderr, "Format fields 'flag' and 'in-check-flag' only accept bits=\"1\"\n");
 		return 0;
 	    }
-	    if (format_field == FORMAT_FIELD_IN_CHECK_FLAG) {
+	    if ((format_field == FORMAT_FIELD_IN_CHECK_FLAG) || (format_field == FORMAT_FIELD_FLAG)) {
 		bits = 1;
 	    }
 
@@ -2852,7 +2866,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		return 0;
 	    }
 
-	    if (offset + bits > format->bits) format->bits = offset + bits;
+	    if (offset + bits > total_bits) total_bits = offset + bits;
 
 	    switch (format_field) {
 	    case FORMAT_FIELD_DTM:
@@ -2878,6 +2892,18 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		format->futurevector_offset = offset;
 		format->futurevector_mask = (1LL << bits) - 1;
 		break;
+	    case FORMAT_FIELD_FLAG:
+		format->flag_offset = offset;
+		format->flag_type = find_name_in_array((char *) xmlGetProp(child, BAD_CAST "type"),
+						       format_flag_types);
+		if (format->flag_type == -1) {
+		    fprintf(stderr, "'type' is a required property in format field 'flag'\n");
+		    return 0;
+		}
+		break;
+	    default:
+		fprintf(stderr, "Unknown field in format\n");
+		return 0;
 	    }
 	}
     }
@@ -2886,17 +2912,19 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
      * less dependant on the assumption that MAX_FORMAT_BYTES is no more than 16.
      */
 
-    for (power_of_two = 0; (1 << power_of_two) < format->bits; power_of_two ++);
+    for (power_of_two = 0; (1 << power_of_two) < total_bits; power_of_two ++);
 
-    if ((1 << power_of_two) != format->bits) {
+    if ((1 << power_of_two) != total_bits) {
 	fprintf(stderr, "Total bits in format must be a power of two\n");
 	return 0;
     }
 
-    if (format->bits <= 8) {
+    format->bits = power_of_two;
+
+    if (total_bits <= 8) {
 	format->bytes = 1;
     } else {
-	format->bytes = format->bits/8;
+	format->bytes = total_bits/8;
     }
 
     if (format->bytes > MAX_FORMAT_BYTES) {
@@ -3062,7 +3090,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	context = xmlXPathNewContext(tb->xml);
 	result = xmlXPathEvalExpression(BAD_CAST "//format", context);
 	if (result->nodesetval->nodeNr == 1) {
-	    parse_format(result->nodesetval->nodeTab[0], &tb->format);
+	    if (! parse_format(result->nodesetval->nodeTab[0], &tb->format)) return NULL;
 	} else {
 	    xmlNewProp(tablebase, BAD_CAST "format", BAD_CAST "one-byte-dtm");
 	    tb->format = one_byte_dtm_format;
@@ -3514,7 +3542,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.266 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.267 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4495,9 +4523,7 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	if ((cached_tb == tb) && (cached_index == index)) return entry;
 
-	if ((cached_tb != tb) || (cached_index + 1 != index)) {
-	    gzseek(tb->file, tb->offset + tb->format.bytes * index, SEEK_SET);
-	}
+	gzseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET);
 	retval = gzread(tb->file, entry, tb->format.bytes);
 	if (retval == EOF) {
 	    fprintf(stderr, "fetch_entry_pointer() hit EOF reading from disk\n");
@@ -4629,14 +4655,14 @@ inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_signed_field(fetch_entry_pointer(tb, index),
 			    entries_format.dtm_mask,
-			    entries_format.dtm_offset + ((index << (entries_format.bits - 1)) % 8));
+			    entries_format.dtm_offset + ((index << entries_format.bits) % 8));
 }
 
 inline void set_entry_raw_DTM(tablebase_t *tb, index_t index, int dtm)
 {
     set_signed_field(fetch_entry_pointer(tb, index),
 		     entries_format.dtm_mask,
-		     entries_format.dtm_offset + ((index << (entries_format.bits - 1)) % 8),
+		     entries_format.dtm_offset + ((index << entries_format.bits) % 8),
 		     dtm);
 }
 
@@ -4644,14 +4670,14 @@ inline int get_entry_movecnt(tablebase_t *tb, index_t index)
 {
     return get_unsigned_field(fetch_entry_pointer(tb, index),
 			      entries_format.movecnt_mask,
-			      entries_format.movecnt_offset + ((index << (entries_format.bits - 1)) % 8));
+			      entries_format.movecnt_offset + ((index << entries_format.bits) % 8));
 }
 
 inline void set_entry_movecnt(tablebase_t *tb, index_t index, int movecnt)
 {
     set_unsigned_field(fetch_entry_pointer(tb, index),
 		       entries_format.movecnt_mask,
-		       entries_format.movecnt_offset + ((index << (entries_format.bits - 1)) % 8),
+		       entries_format.movecnt_offset + ((index << entries_format.bits) % 8),
 		       movecnt);
 }
 
@@ -4659,15 +4685,22 @@ inline int get_entry_in_check_flag(tablebase_t *tb, index_t index)
 {
     return get_unsigned_field(fetch_entry_pointer(tb, index),
 			      1,
-			      entries_format.in_check_flag_offset + ((index << (entries_format.bits - 1)) % 8));
+			      entries_format.in_check_flag_offset + ((index << entries_format.bits) % 8));
 }
 
 inline void set_entry_in_check_flag(tablebase_t *tb, index_t index, int in_check_flag)
 {
     set_unsigned_field(fetch_entry_pointer(tb, index),
 		       1,
-		       entries_format.in_check_flag_offset + ((index << (entries_format.bits - 1)) % 8),
+		       entries_format.in_check_flag_offset + ((index << entries_format.bits) % 8),
 		       in_check_flag);
+}
+
+inline int get_entry_flag(tablebase_t *tb, index_t index)
+{
+    return get_unsigned_field(fetch_entry_pointer(tb, index),
+			      1,
+			      entries_format.flag_offset + ((index << entries_format.bits) % 8));
 }
 
 inline short does_PTM_win(tablebase_t *tb, index_t index)
@@ -9148,6 +9181,56 @@ int PTM_in_check(tablebase_t *tb, local_position_t *position)
     return 0;
 }
 
+int PNTM_in_check(tablebase_t *tb, local_position_t *position)
+{
+    int piece;
+    int dir;
+    struct movement *movementptr;
+
+    for (piece = 0; piece < tb->num_pieces; piece++) {
+
+	/* We only want to consider pieces of the side which is to move... */
+
+	if (tb->piece_color[piece] != position->side_to_move) continue;
+
+	if (tb->piece_type[piece] != PAWN) {
+
+	    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+
+		for (movementptr = movements[tb->piece_type[piece]][position->piece_position[piece]][dir];
+		     (movementptr->vector & position->board_vector) == 0;
+		     movementptr++) {
+		}
+
+		/* Now check to see if the movement ended because we hit against the king
+		 * of the opposite color.  If so, we're in check.
+		 */
+
+		if ((position->side_to_move == WHITE)
+		    && (movementptr->square == position->piece_position[BLACK_KING])) return 1;
+
+		if ((position->side_to_move == BLACK)
+		    && (movementptr->square == position->piece_position[WHITE_KING])) return 1;
+
+	    }
+	} else {
+	    for (movementptr = capture_pawn_movements[position->piece_position[piece]][tb->piece_color[piece]];
+		 movementptr->square != -1;
+		 movementptr++) {
+
+		if ((position->side_to_move == WHITE)
+		    && (movementptr->square == position->piece_position[BLACK_KING])) return 1;
+
+		if ((position->side_to_move == BLACK)
+		    && (movementptr->square == position->piece_position[WHITE_KING])) return 1;
+
+	    }
+	}
+    }
+
+    return 0;
+}
+
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 {
     local_position_t position;
@@ -9511,6 +9594,8 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     char str[16];
     char entrybuf[MAX_FORMAT_BYTES];
     void *entry = entrybuf;
+    int dtm;
+    int raw_dtm;
 
     fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
     if (fd == -1) {
@@ -9553,23 +9638,40 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	    fputc(0, file);
 	}
 	for (index = 0; index <= tb->max_index; index ++) {
-	    memset(entry, 0, tb->format.bytes);
+
+	    dtm = get_entry_DTM(tb, index);
+	    raw_dtm = get_entry_raw_DTM(tb, index);
+
 	    if (tb->format.dtm_bits > 0) {
-		int dtm;
 		/* If we're saving movecnt, then use the raw DTM, else "cook" it. */
-		if (tb->format.movecnt_bits > 0) {
-		    dtm = get_entry_raw_DTM(tb, index);
-		} else {
-		    dtm = get_entry_DTM(tb, index);
-		}
-		set_signed_field(entry, tb->format.dtm_mask, tb->format.dtm_offset, dtm);
+		set_signed_field(entry, tb->format.dtm_mask,
+				 tb->format.dtm_offset + ((index << tb->format.bits) % 8),
+				 (tb->format.movecnt_bits > 0) ? raw_dtm : dtm);
 	    }
+
 	    if (tb->format.movecnt_bits > 0) {
 		int movecnt = get_entry_movecnt(tb, index);
-		set_unsigned_field(entry, tb->format.movecnt_mask, tb->format.movecnt_offset,
+		set_unsigned_field(entry, tb->format.movecnt_mask,
+				   tb->format.movecnt_offset + ((index << tb->format.bits) % 8),
 				   movecnt);
 	    }
-	    fwrite(entry, tb->format.bytes, 1, file);
+
+	    switch (tb->format.flag_type) {
+	    case FORMAT_FLAG_WHITE_WINS:
+		set_unsigned_field(entry, 1,
+				   tb->format.flag_offset + ((index << tb->format.bits) % 8),
+				   ((index_to_side_to_move(tb, index) == WHITE ? dtm : -dtm) > 0) ? 1 : 0);
+		break;
+	    case FORMAT_FLAG_WHITE_DRAWS:
+		set_unsigned_field(entry, 1,
+				   tb->format.flag_offset + ((index << tb->format.bits) % 8),
+				   ((index_to_side_to_move(tb, index) == WHITE ? dtm : -dtm) >= 0) ? 1 : 0);
+		break;
+	    }
+
+	    if ((((index + 1) << tb->format.bits) % 8) == 0) {
+		fwrite(entry, tb->format.bytes, 1, file);
+	    }
 	}
     }
 
@@ -9801,17 +9903,19 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 {
     index_t index;
     global_position_t global;
+    local_position_t local;
     int score;
 
     fprintf(stderr, "Verifying tablebase against Nalimov\n");
 
+    entries_format = tb->format;
+
     for (index = 0; index <= tb->max_index; index++) {
 	if (index_to_global_position(tb, index, &global)) {
 
-	    /* int dtm = fetch_DTM_from_disk(tb, index); */
-	    int dtm = get_entry_DTM(tb, index);
+	    index_to_local_position(tb, index, 0, &local);
 
-	    if (dtm == 1) {
+	    if (PNTM_in_check(tb, &local)) {
 
 		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
 
@@ -9835,35 +9939,53 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 	    } else if (EGTBProbe(global.side_to_move == WHITE, global.board, global.en_passant_square, &score) == 1) {
 
-		/* Make sure dtm is greater than one here, since the Nalimov tablebase doesn't
-		 * appear to handle illegal positions.  PTM wins in 0 (dtm 1) would mean that PNTM
-		 * is in check, so the king can just be captured.
-		 */
+		if (tb->format.dtm_bits > 0) {
 
-		if (dtm > 1) {
-		    if ((dtm-1) != ((65536-4)/2)-score+1) {
-			printf("%s (%d): Nalimov says %s (%d), but we say mate in %d\n",
-			       global_position_to_FEN(&global), index,
-			       nalimov_to_english(score), score, dtm-1);
+		    int dtm = get_entry_DTM(tb, index);
+
+		    if (dtm > 1) {
+			if ((dtm-1) != ((65536-4)/2)-score+1) {
+			    printf("%s (%d): Nalimov says %s (%d), but we say mate in %d\n",
+				   global_position_to_FEN(&global), index,
+				   nalimov_to_english(score), score, dtm-1);
+			}
+		    } else if (dtm < 0) {
+			if ((-dtm-1) != ((65536-4)/2)+score) {
+			    printf("%s (%d): Nalimov says %s (%d), but we say mated in %d\n",
+				   global_position_to_FEN(&global), index,
+				   nalimov_to_english(score), score, -dtm-1);
+			}
+		    } else if (dtm == 0) {
+			if (score != 0) {
+			    printf("%s (%d): Nalimov says %s (%d), but we say draw\n",
+				   global_position_to_FEN(&global), index,
+				   nalimov_to_english(score), ((65536-4)/2)+score);
+			}
 		    }
-		} else if (dtm < 0) {
-		    if ((-dtm-1) != ((65536-4)/2)+score) {
-			printf("%s (%d): Nalimov says %s (%d), but we say mated in %d\n",
-			       global_position_to_FEN(&global), index,
-			       nalimov_to_english(score), score, -dtm-1);
-		    }
-		} else if (dtm == 0) {
-		    if (score != 0) {
-			printf("%s (%d): Nalimov says %s (%d), but we say draw\n",
-			       global_position_to_FEN(&global), index,
-			       nalimov_to_english(score), ((65536-4)/2)+score);
+		}
+
+		if (tb->format.flag_type != FORMAT_FLAG_NONE) {
+		    boolean flag = get_entry_flag(tb, index);
+
+		    if (global.side_to_move == BLACK) score *= -1;
+
+		    if (flag && (score < 0)) {
+			fprintf(stderr, "%s (%d): Nalimov says black wins, but we say white wins or draws\n",
+				global_position_to_FEN(&global), index);
+		    } else if (flag && (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) && (score == 0)) {
+			fprintf(stderr, "%s (%d): Nalimov says draw, but we say white wins\n",
+				global_position_to_FEN(&global), index);
+		    } else if ((!flag) && (score > 0)) {
+			fprintf(stderr, "%s (%d): Nalimov says white wins, but we say black wins or draws\n",
+				global_position_to_FEN(&global), index);
+		    } else if ((!flag) && (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) && (score == 0)) {
+			fprintf(stderr, "%s (%d): Nalimov says draw, but we say black wins\n",
+				global_position_to_FEN(&global), index);
 		    }
 		}
 	    } else {
-		if (dtm == 1) {
-		    fprintf(stderr, "%s (%d): Nalimov says illegal, but we say %d\n",
-			    global_position_to_FEN(&global), index, dtm);
-		}
+		fprintf(stderr, "%s (%d): Nalimov says illegal, but we don't\n",
+			global_position_to_FEN(&global), index);
 	    }
 	}
     }
