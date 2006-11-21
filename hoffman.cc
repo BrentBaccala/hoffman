@@ -394,11 +394,11 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 /* This is the format that we use for in-memory tablebase arrays.  The default is equivalent to:
  *
- * <format>
+ * <entries-format>
  *    <dtm bits="8" offset="0"/>
  *    <movecnt bits="7" offset="8"/>
  *    <in-check-flag bits="1" offset="15"/>
- * </format>
+ * </entries-format>
  */
 
 struct format entries_format = {4,2, 0xff,0,8, 0x7f,8,7, 15};
@@ -3100,6 +3100,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	xmlXPathFreeContext(context);
     }
 
+    /* If a custom entries format has been specified, get it too */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//entries-format", context);
+    if (result->nodesetval->nodeNr == 1) {
+	if (! parse_format(result->nodesetval->nodeTab[0], &entries_format)) return NULL;
+	if (entries_format.movecnt_bits == 0) {
+	    fprintf(stderr, "Entries format must contain a movecnt field\n");
+	}
+    }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
     /* Fetch the index type */
 
     index = xmlGetProp(tablebase, BAD_CAST "index");
@@ -3542,7 +3555,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.268 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.269 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
