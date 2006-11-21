@@ -3555,7 +3555,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.270 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.271 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4664,6 +4664,12 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
  *
  */
 
+#define MOVECNT_PTM_WINS_PROPED (entries_format.movecnt_mask)
+#define MOVECNT_PNTM_WINS_PROPED (entries_format.movecnt_mask - 1)
+#define MOVECNT_PTM_WINS_UNPROPED (entries_format.movecnt_mask - 2)
+#define MOVECNT_MAX (entries_format.movecnt_mask - 3)
+#define MOVECNT_PNTM_WINS_UNPROPED (0)
+
 inline int get_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_signed_field(fetch_entry_pointer(tb, index),
@@ -4732,12 +4738,14 @@ inline int get_entry_flag(tablebase_t *tb, index_t index)
 
 inline short does_PTM_win(tablebase_t *tb, index_t index)
 {
-    return (get_entry_raw_DTM(tb, index) > 0);
+    return (get_entry_movecnt(tb, index) == MOVECNT_PTM_WINS_PROPED)
+	|| (get_entry_movecnt(tb, index) == MOVECNT_PTM_WINS_UNPROPED);
 }
 
 inline short does_PNTM_win(tablebase_t *tb, index_t index)
 {
-    return (get_entry_movecnt(tb, index) == 0) && (get_entry_raw_DTM(tb, index) < 0);
+    return (get_entry_movecnt(tb, index) == MOVECNT_PNTM_WINS_PROPED)
+	|| (get_entry_movecnt(tb, index) == MOVECNT_PNTM_WINS_UNPROPED);
 }
 
 /* Get the result in a format suitable for a one-byte DTM tablebase
@@ -4805,7 +4813,7 @@ void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
      * add_one_to_PNTM_wins().  DTM is -1 here - PNTM wins.
      */
 
-    initialize_entry(tb, index, 0, -1, 0);
+    initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, -1, 0);
     total_legal_positions ++;
 }
 
@@ -4817,7 +4825,7 @@ void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
      * avoid this kind of illegal position.  DTM is one here - PTM wins.
      */
 
-    initialize_entry(tb, index, 0, 1, 0);
+    initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, 1, 0);
     total_PNTM_mated_positions ++;
 }
 
@@ -4840,7 +4848,7 @@ void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
 
 void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt, int in_check)
 {
-    if (movecnt > entries_format.movecnt_mask) {
+    if (movecnt > MOVECNT_MAX) {
 	fprintf(stderr, "Attempting to initialize position with a movecnt that won't fit in field!\n");
     }
 
@@ -4857,8 +4865,14 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
 
     if (dtm < 0) {
 	fprintf(stderr, "Negative distance to mate in PTM_wins!?\n"); /* BREAKPOINT */
-    } else if ((dtm < get_entry_raw_DTM(tb, index)) || (get_entry_raw_DTM(tb, index) <= 0)) {
+    } else if ((get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_PROPED)
+	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)) {
+	set_entry_movecnt(tb, index, MOVECNT_PTM_WINS_UNPROPED);
 	set_entry_raw_DTM(tb, index, dtm);
+    } else if (dtm < get_entry_raw_DTM(tb, index)) {
+	set_entry_raw_DTM(tb, index, dtm);
+    } else if (get_entry_raw_DTM(tb, index) <= 0) {
+	fprintf(stderr, "raw DTM less than zero but PTM wins already?!\n");
     }
 }
 
@@ -4871,8 +4885,15 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 
     if (dtm > 0) {
 	fprintf(stderr, "Positive distance to mate in PNTM_wins!?\n"); /* BREAKPOINT */
-    } else {
+    } else if ((get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_PROPED)
+	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)) {
+
+	/* We should never get here with MOVECNT_PNTM_WINS_UNPROPED (or PROPED) because we have to
+	 * have decremented the movecnt already to zero to have gotten either of those flags.
+	 */
+
 	set_entry_movecnt(tb, index, get_entry_movecnt(tb, index) - 1);
+
 	if ((dtm < get_entry_raw_DTM(tb, index)) && (get_entry_raw_DTM(tb, index) <= 0)) {
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
 	    set_entry_raw_DTM(tb, index, dtm);
@@ -6340,7 +6361,22 @@ int propagation_pass(int target_dtm)
 		    back_propagate_index_within_table(proptable_tb, index, 1);
 		}
 		positions_finalized[total_passes] ++;
+
+		/* Track "player wins" statistics.  We want to count each finalized position once,
+		 * so we only increment if 'symmetry' is zero.  Also, we don't want to count illegal
+		 * (PNTM mated) positions, so we don't increment anything if DTM is 1.
+		 */
+
+		if (target_dtm > 0) {
+		    set_entry_movecnt(proptable_tb, index, MOVECNT_PTM_WINS_PROPED);
+		    if (target_dtm > 1) player_wins[index_to_side_to_move(proptable_tb, index)] ++;
+		} else {
+		    set_entry_movecnt(proptable_tb, index, MOVECNT_PNTM_WINS_PROPED);
+		    player_wins[1 - index_to_side_to_move(proptable_tb, index)] ++;
+		}
+
 	    }
+
 	}
 
     }
@@ -8971,19 +9007,6 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
     if (index == DEBUG_MOVE)
 	fprintf(stderr, "back_propagate_index_within_table; index=%d\n", index);
 #endif
-
-    /* Track "player wins" statistics.  We want to count each finalized position once, so we only
-     * increment if 'symmetry' is zero.  Also, we don't want to count illegal (PNTM mated)
-     * positions, so we don't increment anything if DTM is 1.
-     */
-
-    if (symmetry == 0) {
-	if (get_entry_DTM(tb, index) > 1) {
-	    player_wins[position.side_to_move] ++;
-	} else if (get_entry_DTM(tb, index) < 0) {
-	    player_wins[1 - position.side_to_move] ++;
-	}
-    }
 
     flip_side_to_move_local(&position);
 
