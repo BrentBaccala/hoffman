@@ -193,7 +193,7 @@ int min_dtm = 0;
 struct timeval program_start_time;
 struct timeval program_end_time;
 
-#define MAX_PASSES 100
+#define MAX_PASSES 200
 
 int total_passes = 0;
 struct timeval pass_start_times[MAX_PASSES];
@@ -569,7 +569,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 2487633 */
+/* #define DEBUG_MOVE 181 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -3542,7 +3542,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.267 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.268 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4651,6 +4651,13 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
  *
  */
 
+inline int get_raw_DTM(tablebase_t *tb, index_t index)
+{
+    return get_signed_field(fetch_entry_pointer(tb, index),
+			    tb->format.dtm_mask,
+			    tb->format.dtm_offset + ((index << tb->format.bits) % 8));
+}
+
 inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_signed_field(fetch_entry_pointer(tb, index),
@@ -4694,6 +4701,13 @@ inline void set_entry_in_check_flag(tablebase_t *tb, index_t index, int in_check
 		       1,
 		       entries_format.in_check_flag_offset + ((index << entries_format.bits) % 8),
 		       in_check_flag);
+}
+
+inline int get_flag(tablebase_t *tb, index_t index)
+{
+    return get_unsigned_field(fetch_entry_pointer(tb, index),
+			      1,
+			      tb->format.flag_offset + ((index << tb->format.bits) % 8));
 }
 
 inline int get_entry_flag(tablebase_t *tb, index_t index)
@@ -6511,8 +6525,6 @@ void insert_or_commit_trivial_propentry(index_t index, short dtm, short movecnt,
 void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
 				     short movecnt, int futuremove, index_t current_index)
 {
-    int dtm = get_entry_DTM(futurebase, future_index);
-
     if (futuremove == -1) {
 	static int errors = 0;
 	global_position_t global;
@@ -6527,24 +6539,42 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
     /* We insert even if dtm is zero because we have to track futuremoves */
 
-    if (dtm > 0) {
-	insert_or_commit_trivial_propentry(current_index, -dtm, movecnt, FUTUREVECTOR(futuremove));
-    } else if (dtm < 0) {
-	insert_or_commit_trivial_propentry(current_index, -dtm+1, movecnt, FUTUREVECTOR(futuremove));
+    if (futurebase->format.dtm_bits > 0) {
+
+	int dtm = get_raw_DTM(futurebase, future_index);
+
+	if (dtm > 0) {
+	    insert_or_commit_trivial_propentry(current_index, -dtm, movecnt, FUTUREVECTOR(futuremove));
+	} else if (dtm < 0) {
+	    insert_or_commit_trivial_propentry(current_index, -dtm+1, movecnt, FUTUREVECTOR(futuremove));
+	} else {
+	    insert_or_commit_trivial_propentry(current_index, 0, movecnt, FUTUREVECTOR(futuremove));
+	}
+
     } else {
-	insert_or_commit_trivial_propentry(current_index, 0, movecnt, FUTUREVECTOR(futuremove));
+
+	boolean flag = get_flag(futurebase, future_index);
+	int stm = index_to_side_to_move(futurebase, future_index);
+
+	/* What happens if we're back propagating a flag from a color-inverted futurebase?
+	 *
+	 * Well, first of all, a "white-wins" flag in an inverted futurebase becomes a "black-wins"
+	 * flag here, which is basically a "NOT white-draws" flag, so we have to be careful to
+	 * backprop from draw flags to win flags and from win flags to draw flags if the colors have
+	 * been inverted.  Other than that, since the side to move we just fetched is in the
+	 * futurebase, the white/black sense of the flag matches with it, so we don't need to invert
+	 * anything to figure out if this is a PTM win or a PNTM win.
+	 */
+
+	/* I use twos here because there's a lot of stuff that gets cut out for the special case of 1 */
+
+	if ((flag && (stm == WHITE)) || (!flag && (stm == BLACK))) {
+	    insert_or_commit_trivial_propentry(current_index, -2, movecnt, FUTUREVECTOR(futuremove));
+	} else {
+	    insert_or_commit_trivial_propentry(current_index, 2, movecnt, FUTUREVECTOR(futuremove));
+	}
+
     }
-
-#if 0
-    /* This is pretty primitive, but we need to track the deepest mates during futurebase back prop
-     * in order to know how deep we have to look during intra-table propagation.  We could improve
-     * on this by only bumping dtm_limit if we called PTM_wins(), or if we called
-     * add_one_to_PNTM_wins() and the move count went to zero.
-     */
-
-    if ((dtm > 0) && (*dtm_limit < dtm)) *dtm_limit = dtm;
-    if ((dtm < 0) && (*dtm_limit < -dtm)) *dtm_limit = -dtm;
-#endif
 }
 
 void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
@@ -9908,8 +9938,6 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
     fprintf(stderr, "Verifying tablebase against Nalimov\n");
 
-    entries_format = tb->format;
-
     for (index = 0; index <= tb->max_index; index++) {
 	if (index_to_global_position(tb, index, &global)) {
 
@@ -9941,7 +9969,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		if (tb->format.dtm_bits > 0) {
 
-		    int dtm = get_entry_DTM(tb, index);
+		    int dtm = get_raw_DTM(tb, index);
 
 		    if (dtm > 1) {
 			if ((dtm-1) != ((65536-4)/2)-score+1) {
@@ -9965,7 +9993,8 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		}
 
 		if (tb->format.flag_type != FORMAT_FLAG_NONE) {
-		    boolean flag = get_entry_flag(tb, index);
+
+		    boolean flag = get_flag(tb, index);
 
 		    if (global.side_to_move == BLACK) score *= -1;
 
