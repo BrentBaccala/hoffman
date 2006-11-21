@@ -1,4 +1,4 @@
-<!ELEMENT tablebase (move-restriction*, index?, format?, piece+, futurebase*, prune*, generated-by?, generation-info?, statistics?)>
+<!ELEMENT tablebase (move-restriction*, index?, format?, piece+, futurebase*, prune*, generation-controls?, generated-by?, generation-info?, statistics?)>
 <!ELEMENT move-restriction EMPTY>
 <!ELEMENT piece EMPTY>
 <!ELEMENT futurebase EMPTY>
@@ -10,13 +10,28 @@
 	symmetry (1|2|4|8|8-way)			#IMPLIED
 	modulus CDATA				#IMPLIED>
 
-<!ELEMENT format (dtm?, flag?)>
+<!ELEMENT format (dtm | flag) >
+<!ELEMENT entries-format (dtm | flag | movecnt | in-check-flag)+ >
+
 <!ELEMENT dtm EMPTY>
 <!ATTLIST dtm
+	offset CDATA				#IMPLIED
 	bits (8)				#REQUIRED>
 <!ELEMENT flag EMPTY>
 <!ATTLIST flag
+	offset CDATA				#IMPLIED
+	bits (1)				#IMPLIED
 	type (white-wins|white-draws)		#REQUIRED>
+<!ELEMENT movecnt EMPTY>
+<!ATTLIST movecnt
+	offset CDATA				#IMPLIED
+	bits CDATA				#REQUIRED>
+<!ELEMENT in-check-flag EMPTY>
+<!ATTLIST in-check-flag
+	offset CDATA				#IMPLIED
+	bits (1)				#IMPLIED>
+
+<!ELEMENT generation-controls (entries-format)>
 
 <!ELEMENT generated-by (program, args, time, user-time, system-time, real-time, host)>
 <!ELEMENT generation-info (program, args, completion-time, user-time, system-time, real-time, page-faults, page-reclaims, host)>
