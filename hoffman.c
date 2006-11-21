@@ -3555,7 +3555,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.269 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.270 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4786,36 +4786,64 @@ void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm, int 
 
 void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
 {
-    /* XXX need to look more closely at this (again) */
+    /* An "illegal" position is something like one with two pieces both on the same square.  An
+     * illegal position in the chess sense, of PNTM being in check, is handled below.  So this
+     * function needs to flag the position in such a way that nothing will ever get done with it; in
+     * particular, no attempt will ever be made to back propagate it.  Setting everything to zero
+     * does the trick.  The zero movecnt doesn't matter, since we'll never back propagate into this
+     * position, and the zero DTM ensures that it will always be treated like a draw during
+     * a back prop pass - i.e, no attempt will ever be made to finalize it.
+     */
+
     initialize_entry(tb, index, 0, 0, 0);
-    /* initialize_entry(tb, entry, 0, 1); */
 }
 
 void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
 {
+    /* This is a classic checkmate - PTM is in check and has no semi-legal moves, let along legal
+     * ones.  The case where PTM has semi-legal but no legal moves is handled below, in
+     * add_one_to_PNTM_wins().  DTM is -1 here - PNTM wins.
+     */
+
     initialize_entry(tb, index, 0, -1, 0);
     total_legal_positions ++;
-    /* total_PNTM_mated_positions ++; */
 }
 
 void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
 {
+    /* This kind of position is "illegal" in the chess sense - PNTM's king can be captured.  The
+     * design of Hoffman is simplified somewhat by treating this as a legal position, and then back
+     * propagating from it to determine the true checkmate positions, one ply earlier, that can't
+     * avoid this kind of illegal position.  DTM is one here - PTM wins.
+     */
+
     initialize_entry(tb, index, 0, 1, 0);
-    /* total_legal_positions ++; */
     total_PNTM_mated_positions ++;
 }
 
 void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
 {
-    /* use movecnt 127 as stalemate for now */
-    /* XXX this should at least be (movecnt_mask - 1) */
-    initialize_entry(tb, index, 127, 0, 0);
+    /* The only way this function gets called is if the number of semi-legal moves out of the
+     * position is zero and we're not in check.  A "semi-legal" move is one that might not actually
+     * be legal (because it would move into check), but will be back-propagated in the tablebase.  A
+     * stalemate that arises from a position with semi-legal moves but no legal moves will get
+     * handled in add_one_to_PNTM_wins() once all of the semi-legal moves have been eliminated.  In
+     * short, because there are no semi-legal moves out of this position, we'll never back propagate
+     * into this position, so setting movecnt = 1 is an acceptable way of flagging this as a
+     * stalemate, since this position's movecnt should never get decremented.
+     */
+
+    initialize_entry(tb, index, 1, 0, 0);
     total_legal_positions ++;
     total_stalemate_positions ++;
 }
 
 void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt, int in_check)
 {
+    if (movecnt > entries_format.movecnt_mask) {
+	fprintf(stderr, "Attempting to initialize position with a movecnt that won't fit in field!\n");
+    }
+
     initialize_entry(tb, index, movecnt, 0, in_check);
     total_legal_positions ++;
 }
