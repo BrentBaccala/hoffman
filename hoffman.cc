@@ -464,9 +464,11 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 char * index_types[] = {"naive", "naive2", "simple", "xor", "compact"};
 
 typedef struct tablebase {
+    int index_type;
+    int index_offset;
     index_t max_index;
     index_t modulus;
-    int index_type;
+
     int symmetry;
     int total_legal_piece_positions[MAX_PIECES];
     int simple_piece_positions[MAX_PIECES][64];
@@ -2526,6 +2528,8 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	return -1;
     }
 
+    index += tb->index_offset;
+
     if ((index != -1) && (index != 0) && (tb->modulus != 0)) {
 #if FINITE_FIELD_INVERSION
 	index = invert_in_finite_field(index, tb->modulus);
@@ -2580,6 +2584,9 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
 	decode_index(index);
 #endif
     }
+
+    if (index < tb->index_offset) return 0;
+    index -= tb->index_offset;
 
     switch (tb->index_type) {
     case NAIVE_INDEX:
@@ -3125,6 +3132,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	if (result->nodesetval->nodeNr == 1) {
 	    index_node = result->nodesetval->nodeTab[0];
 	    index = xmlGetProp(index_node, BAD_CAST "type");
+	    if (xmlGetProp(index_node, BAD_CAST "offset") != NULL) {
+		tb->index_offset = atoi((char *) xmlGetProp(index_node, BAD_CAST "offset"));
+	    }
 	}
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
@@ -3340,6 +3350,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	tb->max_index --;
 	break;
     }
+
+    tb->max_index += tb->index_offset;
 
     /* See if an index modulus was specified for inversion in a finite field */
 
@@ -3557,7 +3569,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.273 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.274 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6036,7 +6048,52 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
 
-int proptable_finalize(int target_dtm)
+void back_propagate_index(index_t index, int target_dtm)
+{
+    /* Symmetry.
+     *
+     * The only case we really have to worry about here is diagonal symmetry, because in both
+     * horizontal and vertical symmetry all of the positions neatly double up, so anytime we'd have
+     * a move backprop into our symmetry restriction from outside it, a matching move will backprop
+     * from inside out.
+     *
+     * For diagonal symmetry however, things aren't so neat, because squares along the diagonal map
+     * to themselves.  So positions where both kings are on the diagonal don't have a matching
+     * double, while the other positions do.  We deal with this here by backproping both the
+     * position itself and its matching pair (if one exists).  If one doesn't exist, then
+     * back_propagate_index_within_table() will quickly detect this case (when index_to_position
+     * returns false).  We also doubled the movecnt of "paired" positions during initialization,
+     * because moves will be backproped twice from doubled positions to doubled positions, not just
+     * assumed like the horizontal or vertical cases.
+     */
+
+    if (((get_entry_movecnt(proptable_tb, index) == MOVECNT_PTM_WINS_UNPROPED)
+	 || (get_entry_movecnt(proptable_tb, index) == MOVECNT_PNTM_WINS_UNPROPED))
+	&& ((entries_format.dtm_bits == 0) || (get_entry_DTM(proptable_tb, index) == target_dtm))) {
+
+	back_propagate_index_within_table(proptable_tb, index, 0);
+	if (proptable_tb->symmetry == 8) {
+	    back_propagate_index_within_table(proptable_tb, index, 1);
+	}
+	positions_finalized[total_passes] ++;
+
+	/* Track "player wins" statistics.  We don't want to count illegal (PNTM mated)
+	 * positions, so we don't increment anything if DTM is 1.
+	 */
+
+	if (get_entry_movecnt(proptable_tb, index) == MOVECNT_PTM_WINS_UNPROPED) {
+	    set_entry_movecnt(proptable_tb, index, MOVECNT_PTM_WINS_PROPED);
+	    if (target_dtm > 1) player_wins[index_to_side_to_move(proptable_tb, index)] ++;
+	} else {
+	    set_entry_movecnt(proptable_tb, index, MOVECNT_PNTM_WINS_PROPED);
+	    player_wins[1 - index_to_side_to_move(proptable_tb, index)] ++;
+	}
+
+    }
+
+}
+
+void proptable_finalize(int target_dtm)
 {
     int i;
     int tablenum, bufnum;
@@ -6058,7 +6115,6 @@ int proptable_finalize(int target_dtm)
 #define SORTING_NETWORK_ELEM(n)  (sorting_network + proptable_format.bytes * (n))
 
     index_t index;
-    int positions_finalized = 0;
 
     /* Flush out anything in the last proptable, and wait for its write to complete */
     proptable_full();
@@ -6086,7 +6142,7 @@ int proptable_finalize(int target_dtm)
     if ((proptable_buffer == NULL) || (proptable_input_fds == NULL)
 	|| (proptable_buffer_index == NULL)) {
 	fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
-	return 0;
+	return;
     }
 
 #if !SEPERATE_PROPTABLE_FILES
@@ -6095,7 +6151,7 @@ int proptable_finalize(int target_dtm)
 	proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE | O_DIRECT);
 	if (proptable_input_fd == -1) {
 	    fprintf(stderr, "Can't open 'propfile_in' for reading propfile\n"); /* BREAKPOINT */
-	    return 0;
+	    return;
 	}
     }
 #endif
@@ -6108,7 +6164,7 @@ int proptable_finalize(int target_dtm)
 	proptable_input_fds[tablenum] = open(infilename, O_RDONLY | O_LARGEFILE | O_DIRECT);
 	if (proptable_input_fds[tablenum] == -1) {
 	    fprintf(stderr, "Can't open '%s' for reading propfile\n", infilename);
-	    return 0;
+	    return;
 	}
 #else
 	proptable_input_fds[tablenum] = proptable_input_fd;
@@ -6122,7 +6178,7 @@ int proptable_finalize(int target_dtm)
 	    if (posix_memalign((void **) &proptable_buffer[propbuf(tablenum, bufnum)],
 			       alignment, PROPTABLE_BUFFER_BYTES) != 0) {
 		fprintf(stderr, "Can't posix_memalign proptable buffer\n");
-		return 0;
+		return;
 	    }
 	}
     }
@@ -6170,7 +6226,7 @@ int proptable_finalize(int target_dtm)
 
     if ((sorting_network == NULL) || (proptable_num == NULL)) {
 	fprintf(stderr, "Can't malloc sorting network in proptable_finalize()\n");
-	return 0;
+	return;
     }
 
     /* Initialize the sorting network.
@@ -6261,38 +6317,18 @@ int proptable_finalize(int target_dtm)
 	if ((target_dtm == 0) && (get_entry_DTM(proptable_tb, index) != 1)) {
 
 	    if ((futurevector & possible_futuremoves) != futurevector) {
+		/* Commented out because if we're not using DTM this code will run for illegal positions */
+#if 0
 		global_position_t global;
 		index_to_global_position(proptable_tb, index, &global);
 		fprintf(stderr, "Futuremove discrepancy: %d %s\n", index, global_position_to_FEN(&global)); /* BREAKPOINT */
+#endif
+	    } else {
+		finalize_futuremove(proptable_tb, index, possible_futuremoves ^ futurevector);
 	    }
-
-	    finalize_futuremove(proptable_tb, index, possible_futuremoves ^ futurevector);
 	}
 
-	/* Symmetry.
-	 *
-	 * The only case we really have to worry about here is diagonal symmetry, because in both
-	 * horizontal and vertical symmetry all of the positions neatly double up, so anytime we'd
-	 * have a move backprop into our symmetry restriction from outside it, a matching move will
-	 * backprop from inside out.
-	 *
-	 * For diagnoal symmetry however, things aren't so neat, because squares along the diagonal
-	 * map to themselves.  So positions where both kings are on the diagonal don't have a
-	 * matching double, while the other positions do.  We deal with this here by backproping
-	 * both the position itself and its matching pair (if one exists).  If one doesn't exist,
-	 * then back_propagate_index_within_table() will quickly detect this case (when
-	 * index_to_position returns false).  We also doubled the movecnt of "paired" positions
-	 * during initialization, because moves will be backproped twice from doubled positions to
-	 * doubled positions, not just assumed like the horizontal or vertical cases.
-	 */
-
-	if ((target_dtm != 0) && (get_entry_DTM(proptable_tb, index) == target_dtm)) {
-	    back_propagate_index_within_table(proptable_tb, index, 0);
-	    if (proptable_tb->symmetry == 8) {
-		back_propagate_index_within_table(proptable_tb, index, 1);
-	    }
-	    positions_finalized ++;
-	}
+	if (target_dtm != 0) back_propagate_index(index, target_dtm);
 
     }
 
@@ -6323,8 +6359,6 @@ int proptable_finalize(int target_dtm)
     /* Flush out anything in the last proptable, and wait for its write to complete */
     proptable_full();
     finalize_proptable_write();
-
-    return positions_finalized;
 }
 
 /* target_dtm == 0 is special because the initialization / futurebase back prop pass
@@ -6340,53 +6374,11 @@ int propagation_pass(int target_dtm)
     pass_target_dtms[total_passes] = target_dtm;
 
     if (num_propentries != 0) {
-	positions_finalized[total_passes] = proptable_finalize(target_dtm);
+	proptable_finalize(target_dtm);
     } else {
 
 	for (index = 0; index <= proptable_tb->max_index; index ++) {
-
-	    /* Symmetry.
-	     *
-	     * The only case we really have to worry about here is diagonal symmetry, because in
-	     * both horizontal and vertical symmetry all of the positions neatly double up, so
-	     * anytime we'd have a move backprop into our symmetry restriction from outside it, a
-	     * matching move will backprop from inside out.
-	     *
-	     * For diagnoal symmetry however, things aren't so neat, because squares along the
-	     * diagonal map to themselves.  So positions where both kings are on the diagonal don't
-	     * have a matching double, while the other positions do.  We deal with this here by
-	     * backproping both the position itself and its matching pair (if one exists).  If one
-	     * doesn't exist, then back_propagate_index_within_table() will quickly detect this case
-	     * (when index_to_position returns false).  We also doubled the movecnt of "paired"
-	     * positions during initialization, because moves will be backproped twice from doubled
-	     * positions to doubled positions, not just assumed like the horizontal or vertical
-	     * cases.
-	     */
-
-	    if (((get_entry_movecnt(proptable_tb, index) == MOVECNT_PTM_WINS_UNPROPED)
-		 || (get_entry_movecnt(proptable_tb, index) == MOVECNT_PNTM_WINS_UNPROPED))
-		&& ((entries_format.dtm_bits == 0) || (get_entry_DTM(proptable_tb, index) == target_dtm))) {
-
-		back_propagate_index_within_table(proptable_tb, index, 0);
-		if (proptable_tb->symmetry == 8) {
-		    back_propagate_index_within_table(proptable_tb, index, 1);
-		}
-		positions_finalized[total_passes] ++;
-
-		/* Track "player wins" statistics.  We don't want to count illegal (PNTM mated)
-		 * positions, so we don't increment anything if DTM is 1.
-		 */
-
-		if (get_entry_movecnt(proptable_tb, index) == MOVECNT_PTM_WINS_UNPROPED) {
-		    set_entry_movecnt(proptable_tb, index, MOVECNT_PTM_WINS_PROPED);
-		    if (target_dtm > 1) player_wins[index_to_side_to_move(proptable_tb, index)] ++;
-		} else {
-		    set_entry_movecnt(proptable_tb, index, MOVECNT_PNTM_WINS_PROPED);
-		    player_wins[1 - index_to_side_to_move(proptable_tb, index)] ++;
-		}
-
-	    }
-
+	    back_propagate_index(index, target_dtm);
 	}
 
     }
@@ -9840,10 +9832,19 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 		break;
 	    }
 
+	    /* If the next index will be aligned on a byte boundary, write out what we've buffered */
+
 	    if ((((index + 1) << tb->format.bits) % 8) == 0) {
 		fwrite(entry, tb->format.bytes, 1, file);
 	    }
 	}
+
+	/* If the last index plus one wasn't on a byte boundary, write out what we've buffered */
+
+	if (((index << tb->format.bits) % 8) != 0) {
+	    fwrite(entry, tb->format.bytes, 1, file);
+	}
+
     }
 
     fclose(file);
