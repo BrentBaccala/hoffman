@@ -564,12 +564,14 @@ int num_propentries = 0;
 
 #define CHECK_KING_LEGALITY_EARLY 1
 
+const int early_checkmate_test = 1;
+
 
 /* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 181 */
+/* #define DEBUG_MOVE 138083 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -3555,7 +3557,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.271 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.272 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4667,7 +4669,8 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 #define MOVECNT_PTM_WINS_PROPED (entries_format.movecnt_mask)
 #define MOVECNT_PNTM_WINS_PROPED (entries_format.movecnt_mask - 1)
 #define MOVECNT_PTM_WINS_UNPROPED (entries_format.movecnt_mask - 2)
-#define MOVECNT_MAX (entries_format.movecnt_mask - 3)
+#define MOVECNT_STALEMATE (entries_format.movecnt_mask - 3)
+#define MOVECNT_MAX (entries_format.movecnt_mask - 4)
 #define MOVECNT_PNTM_WINS_UNPROPED (0)
 
 inline int get_raw_DTM(tablebase_t *tb, index_t index)
@@ -4841,7 +4844,7 @@ void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
      * stalemate, since this position's movecnt should never get decremented.
      */
 
-    initialize_entry(tb, index, 1, 0, 0);
+    initialize_entry(tb, index, MOVECNT_STALEMATE, 0, 0);
     total_legal_positions ++;
     total_stalemate_positions ++;
 }
@@ -4886,7 +4889,10 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
     if (dtm > 0) {
 	fprintf(stderr, "Positive distance to mate in PNTM_wins!?\n"); /* BREAKPOINT */
     } else if ((get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_PROPED)
-	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)) {
+	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)
+	       && (get_entry_movecnt(tb, index) != MOVECNT_PNTM_WINS_UNPROPED)
+	       && (get_entry_movecnt(tb, index) != MOVECNT_PNTM_WINS_UNPROPED)
+	       && (get_entry_movecnt(tb, index) != MOVECNT_STALEMATE)) {
 
 	/* We should never get here with MOVECNT_PNTM_WINS_UNPROPED (or PROPED) because we have to
 	 * have decremented the movecnt already to zero to have gotten either of those flags.
@@ -4899,6 +4905,8 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 	    set_entry_raw_DTM(tb, index, dtm);
 	}
 
+	/* We deal with checkmates and stalemates during initialization now */
+#if 0
 	if ((get_entry_movecnt(tb, index) == 0) && (!get_entry_in_check_flag(tb, index))
 	    && (get_entry_raw_DTM(tb, index) == -1)) {
 
@@ -4911,6 +4919,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 
 	    set_entry_raw_DTM(tb, index, 0);
 	}
+#endif
     }
 }
 
@@ -9237,6 +9246,10 @@ int PTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	if (tb->piece_color[piece] == position->side_to_move) continue;
 
+	/* We might have removed the piece from the position... */
+
+	if (position->piece_position[piece] == -1) continue;
+
 	if (tb->piece_type[piece] != PAWN) {
 
 	    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
@@ -9279,6 +9292,7 @@ int PNTM_in_check(tablebase_t *tb, local_position_t *position)
 {
     int piece;
     int dir;
+    int origin_square;
     struct movement *movementptr;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
@@ -9287,11 +9301,13 @@ int PNTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	if (tb->piece_color[piece] != position->side_to_move) continue;
 
+	origin_square = position->piece_position[piece];
+
 	if (tb->piece_type[piece] != PAWN) {
 
 	    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
 
-		for (movementptr = movements[tb->piece_type[piece]][position->piece_position[piece]][dir];
+		for (movementptr = movements[tb->piece_type[piece]][origin_square][dir];
 		     (movementptr->vector & position->board_vector) == 0;
 		     movementptr++) {
 		}
@@ -9308,7 +9324,7 @@ int PNTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	    }
 	} else {
-	    for (movementptr = capture_pawn_movements[position->piece_position[piece]][tb->piece_color[piece]];
+	    for (movementptr = capture_pawn_movements[origin_square][tb->piece_color[piece]];
 		 movementptr->square != -1;
 		 movementptr++) {
 
@@ -9330,6 +9346,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
     local_position_t position;
     int piece;
     int dir;
+    int origin_square;
     struct movement *movementptr;
     int i;
 
@@ -9343,6 +9360,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	/* Now we need to count moves.  FORWARD moves. */
 	int movecnt = 0;
 	int futuremovecnt = 0;
+	int checkmate_is_possible = 1;
 	futurevector_t futurevector = 0;
 
 	/* En passant:
@@ -9359,14 +9377,16 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	    /* We only want to consider pieces of the side which is to move... */
 
-	    if (tb->piece_color[piece] != position.side_to_move)
-		continue;
+	    if (tb->piece_color[piece] != position.side_to_move) continue;
+
+	    origin_square = position.piece_position[piece];
+	    position.board_vector &= ~BITVECTOR(origin_square);
 
 	    if (tb->piece_type[piece] != PAWN) {
 
 		for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
 
-		    for (movementptr = movements[tb->piece_type[piece]][position.piece_position[piece]][dir];
+		    for (movementptr = movements[tb->piece_type[piece]][origin_square][dir];
 			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
 
@@ -9389,6 +9409,15 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    }
 			    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
 			    futuremovecnt ++;
+			}
+
+			if (checkmate_is_possible) {
+			    position.board_vector |= BITVECTOR(movementptr->square);
+			    position.piece_position[piece] = movementptr->square;
+
+			    checkmate_is_possible = PTM_in_check(tb, &position);
+
+			    position.board_vector &= ~BITVECTOR(movementptr->square);
 			}
 
 			movecnt ++;
@@ -9427,8 +9456,19 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 				}
+
 				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 				futuremovecnt ++;
+
+				if (checkmate_is_possible) {
+				    position.piece_position[i] = -1;
+				    position.piece_position[piece] = movementptr->square;
+
+				    checkmate_is_possible = PTM_in_check(tb, &position);
+
+				    position.piece_position[i] = movementptr->square;
+				}
+
 				break;
 			    }
 			}
@@ -9442,7 +9482,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		/* Pawns, as always, are special */
 
-		for (movementptr = normal_pawn_movements[position.piece_position[piece]][tb->piece_color[piece]];
+		for (movementptr = normal_pawn_movements[origin_square][tb->piece_color[piece]];
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
@@ -9481,6 +9521,22 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		    }
 
+		    /* What about pawn promotions here?  Well, we're looking to see if the moving
+		     * side is in check after the pawn move, and the only way the pawn could affect
+		     * this is by blocking the check.  It still blocks no matter what it promotes
+		     * into, so we don't have to distinguish between promotion and non-promotion
+		     * moves here.
+		     */
+
+		    if (checkmate_is_possible) {
+			position.board_vector |= BITVECTOR(movementptr->square);
+			position.piece_position[piece] = movementptr->square;
+
+			checkmate_is_possible = PTM_in_check(tb, &position);
+
+			position.board_vector &= ~BITVECTOR(movementptr->square);
+		    }
+
 		}
 
 
@@ -9491,7 +9547,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		 * promotion move or not is how many futuremoves get recorded.
 		 */
 
-		for (movementptr = capture_pawn_movements[position.piece_position[piece]][tb->piece_color[piece]];
+		for (movementptr = capture_pawn_movements[origin_square][tb->piece_color[piece]];
 		     movementptr->square != -1;
 		     movementptr++) {
 
@@ -9507,6 +9563,22 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				}
 				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 				futuremovecnt ++;
+
+				if (checkmate_is_possible) {
+				    position.board_vector &= ~BITVECTOR(position.piece_position[i]);
+				    position.board_vector |= BITVECTOR(position.en_passant_square);
+				    position.piece_position[piece] = position.en_passant_square;
+				    position.piece_position[i] = -1;
+
+				    checkmate_is_possible = PTM_in_check(tb, &position);
+
+				    position.piece_position[i] = position.en_passant_square
+					+ (tb->piece_color[piece] == WHITE ? -8 : 8);
+				    position.board_vector |= BITVECTOR(position.piece_position[i]);
+				    position.board_vector &= ~BITVECTOR(position.en_passant_square);
+				}
+
+
 				break;
 			    }
 			}
@@ -9515,20 +9587,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		    if (((movementptr->vector & position.board_vector) == 0)
 			|| ((movementptr->vector & position.PTM_vector) != 0)) continue;
-
-		    /* Same check as above for a mated situation */
-
-		    if (position.side_to_move == WHITE) {
-			if (movementptr->square == position.piece_position[BLACK_KING]) {
-			    initialize_entry_with_PNTM_mated(tb, index);
-			    return 0;
-			}
-		    } else {
-			if (movementptr->square == position.piece_position[WHITE_KING]) {
-			    initialize_entry_with_PNTM_mated(tb, index);
-			    return 0;
-			}
-		    }
 
 		    /* If the piece is a pawn and we're moving to the last rank, then this has
 		     * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
@@ -9541,8 +9599,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			movecnt += PROMOTION_POSSIBILITIES;
 
-			for (i = 2; i < tb->num_pieces; i ++) {
+			for (i = 0; i < tb->num_pieces; i ++) {
 			    if (movementptr->square == position.piece_position[i]) {
+				if ((i == BLACK_KING) || (i == WHITE_KING)) {
+				    initialize_entry_with_PNTM_mated(tb, index);
+				    return 0;
+				}
 				if (futurevector & FUTUREVECTORS(futurecaptures[piece][i],
 								 PROMOTION_POSSIBILITIES)) {
 				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
@@ -9553,16 +9615,17 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				break;
 			    }
 			}
-			if (i == tb->num_pieces) {
-			    fprintf(stderr, "Couldn't match promotion capture!\n"); /* BREAKPOINT */
-			}
 
 		    } else {
 
 			movecnt ++;
 
-			for (i = 2; i < tb->num_pieces; i ++) {
+			for (i = 0; i < tb->num_pieces; i ++) {
 			    if (movementptr->square == position.piece_position[i]) {
+				if ((i == BLACK_KING) || (i == WHITE_KING)) {
+				    initialize_entry_with_PNTM_mated(tb, index);
+				    return 0;
+				}
 				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 				}
@@ -9571,15 +9634,27 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				break;
 			    }
 			}
-			if (i == tb->num_pieces) {
-			    fprintf(stderr, "Couldn't match pawn capture!\n"); /* BREAKPOINT */
-			}
+		    }
 
+		    if (i == tb->num_pieces) {
+			fprintf(stderr, "Couldn't match pawn capture!\n"); /* BREAKPOINT */
+		    }
+
+		    if (checkmate_is_possible) {
+			position.piece_position[i] = -1;
+			position.piece_position[piece] = movementptr->square;
+
+			checkmate_is_possible = PTM_in_check(tb, &position);
+
+			position.piece_position[i] = movementptr->square;
 		    }
 
 		}
 
 	    }
+
+	    position.board_vector |= BITVECTOR(origin_square);
+	    position.piece_position[piece] = origin_square;
 
 	}
 
@@ -9589,7 +9664,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	 * setting the high order bit in the unsigned char movecnt.
 	 */
 
-	if (movecnt == 0) {
+	if (checkmate_is_possible) {
 	    if (PTM_in_check(tb, &position)) {
 		initialize_entry_with_PTM_mated(tb, index);
 	    } else {
