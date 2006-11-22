@@ -3557,7 +3557,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.272 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.273 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4689,6 +4689,7 @@ inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
 
 inline void set_entry_raw_DTM(tablebase_t *tb, index_t index, int dtm)
 {
+    if (entries_format.dtm_bits == 0) return;
     set_signed_field(fetch_entry_pointer(tb, index),
 		     entries_format.dtm_mask,
 		     entries_format.dtm_offset + ((index << entries_format.bits) % 8),
@@ -4791,7 +4792,7 @@ void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm, int 
 #endif
 
     set_entry_movecnt(tb, index, movecnt);
-    set_entry_raw_DTM(tb, index, dtm);
+    if (entries_format.dtm_bits > 0) set_entry_raw_DTM(tb, index, dtm);
     set_entry_in_check_flag(tb, index, in_check_flag);
 }
 
@@ -4874,8 +4875,6 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
 	set_entry_raw_DTM(tb, index, dtm);
     } else if (dtm < get_entry_raw_DTM(tb, index)) {
 	set_entry_raw_DTM(tb, index, dtm);
-    } else if (get_entry_raw_DTM(tb, index) <= 0) {
-	fprintf(stderr, "raw DTM less than zero but PTM wins already?!\n");
     }
 }
 
@@ -5697,11 +5696,13 @@ void commit_proptable_entry(proptable_entry_t *propentry)
     futurevector_t futurevector = get_propentry_futurevector(ptr);
     int i;
 
+#if 0
     /* Skip everything if the position isn't valid.  In particular, we don't track futuremove
      * propagation for illegal positions.
      */
 
     if (get_entry_raw_DTM(proptable_tb, index) == 1) return;
+#endif
 
     /* Somewhat of a special case here.  First of all, futurevector is non-zero only on the first
      * back-propagation pass, when we back prop from the futurebases.  Also, if we're not using
@@ -6328,8 +6329,6 @@ int proptable_finalize(int target_dtm)
 
 /* target_dtm == 0 is special because the initialization / futurebase back prop pass
  *
- * Among other things, for pass 0 we've already set the start time when we began the futurebase back
- * prop.
  */
 
 int propagation_pass(int target_dtm)
@@ -6364,19 +6363,21 @@ int propagation_pass(int target_dtm)
 	     * cases.
 	     */
 
-	    if ((target_dtm != 0) && (get_entry_DTM(proptable_tb, index) == target_dtm)) {
+	    if (((get_entry_movecnt(proptable_tb, index) == MOVECNT_PTM_WINS_UNPROPED)
+		 || (get_entry_movecnt(proptable_tb, index) == MOVECNT_PNTM_WINS_UNPROPED))
+		&& ((entries_format.dtm_bits == 0) || (get_entry_DTM(proptable_tb, index) == target_dtm))) {
+
 		back_propagate_index_within_table(proptable_tb, index, 0);
 		if (proptable_tb->symmetry == 8) {
 		    back_propagate_index_within_table(proptable_tb, index, 1);
 		}
 		positions_finalized[total_passes] ++;
 
-		/* Track "player wins" statistics.  We want to count each finalized position once,
-		 * so we only increment if 'symmetry' is zero.  Also, we don't want to count illegal
-		 * (PNTM mated) positions, so we don't increment anything if DTM is 1.
+		/* Track "player wins" statistics.  We don't want to count illegal (PNTM mated)
+		 * positions, so we don't increment anything if DTM is 1.
 		 */
 
-		if (target_dtm > 0) {
+		if (get_entry_movecnt(proptable_tb, index) == MOVECNT_PTM_WINS_UNPROPED) {
 		    set_entry_movecnt(proptable_tb, index, MOVECNT_PTM_WINS_PROPED);
 		    if (target_dtm > 1) player_wins[index_to_side_to_move(proptable_tb, index)] ++;
 		} else {
@@ -6399,7 +6400,8 @@ int propagation_pass(int target_dtm)
 	if (target_dtm < min_dtm) min_dtm = target_dtm;
     }
 
-    fprintf(stderr, "Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized[total_passes]);
+    fprintf(stderr, "Pass %3d complete; %d positions finalized\n",
+	    target_dtm, positions_finalized[total_passes]);
 
     total_passes ++;
 
@@ -8931,19 +8933,17 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
      * has a winning move (the one we're considering).
      */
 
-#if 0
-    if (dtm > 0) {
-	insert_or_commit_trivial_propentry(current_index, -dtm, current_position->multiplicity, 0);
-    } else if ((dtm < 0) && (dtc < STALEMATE_COUNT)) {
-	insert_or_commit_trivial_propentry(current_index, -dtm+1, current_position->multiplicity, 0);
-    }
-#else
     if (dtm > 0) {
 	insert_or_commit_trivial_propentry(current_index, -dtm, 1, 0);
     } else if (dtm < 0) {
 	insert_or_commit_trivial_propentry(current_index, -dtm+1, 1, 0);
+    } else if (get_entry_movecnt(tb, future_index) == MOVECNT_PTM_WINS_UNPROPED) {
+	insert_or_commit_trivial_propentry(current_index, -2, 1, 0);
+    } else if (get_entry_movecnt(tb, future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
+	insert_or_commit_trivial_propentry(current_index, 2, 1, 0);
+    } else {
+	fprintf(stderr, "Intra-table back prop doesn't match dtm or movecnt\n");
     }
-#endif
 }
 
 void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, local_position_t *position)
@@ -9829,12 +9829,14 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	    case FORMAT_FLAG_WHITE_WINS:
 		set_unsigned_field(entry, 1,
 				   tb->format.flag_offset + ((index << tb->format.bits) % 8),
-				   ((index_to_side_to_move(tb, index) == WHITE ? dtm : -dtm) > 0) ? 1 : 0);
+				   (index_to_side_to_move(tb, index) == WHITE)
+				   ? does_PTM_win(tb, index) : does_PNTM_win(tb,index));
 		break;
 	    case FORMAT_FLAG_WHITE_DRAWS:
 		set_unsigned_field(entry, 1,
 				   tb->format.flag_offset + ((index << tb->format.bits) % 8),
-				   ((index_to_side_to_move(tb, index) == WHITE ? dtm : -dtm) >= 0) ? 1 : 0);
+				   (index_to_side_to_move(tb, index) == WHITE)
+				   ? !does_PNTM_win(tb, index) : !does_PTM_win(tb,index));
 		break;
 	    }
 
