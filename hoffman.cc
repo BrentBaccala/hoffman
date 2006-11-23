@@ -515,6 +515,7 @@ typedef struct tablebase {
     short piece_type[MAX_PIECES];
     short piece_color[MAX_PIECES];
     uint64 semilegal_squares[MAX_PIECES];
+    uint64 frozen_pieces_vector;
 
     int entries_fd;
     entry_t *entries;
@@ -3083,6 +3084,33 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+    /* Now, compute a bitvector for all the pieces that are frozen on single squares. */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (square = 0; square < 64; square ++) {
+	    if (BITVECTOR(square) == tb->semilegal_squares[piece]) {
+		if (tb->frozen_pieces_vector & BITVECTOR(square)) {
+		    fprintf(stderr, "More than one piece frozen on %c%c",
+			    'a' + COL(square), '1' + ROW(square));
+		    return NULL;
+		}
+		tb->frozen_pieces_vector |= BITVECTOR(square);
+		break;
+	    }
+	}
+    }
+
+    /* Strip the locations of frozen pieces off the legal squares bitvectors of all the other
+     * pieces.  This is a convenience, so we don't have to list all the free squares for pieces that
+     * are not frozen.
+     */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	if ((tb->semilegal_squares[piece] & tb->frozen_pieces_vector) != tb->semilegal_squares[piece]) {
+	    tb->semilegal_squares[piece] &= ~ tb->frozen_pieces_vector;
+	}
+    }
+
     /* get the format */
 
     format = xmlGetProp(tablebase, BAD_CAST "format");
@@ -3297,8 +3325,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	tb->max_index = 2;
 
 	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
+	    if (! (tb->semilegal_squares[WHITE_KING] & BITVECTOR(white_king_square))) continue;
 	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		/* if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue; */
+		if (! (tb->semilegal_squares[BLACK_KING] & BITVECTOR(black_king_square))) continue;
 		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
 		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
 		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
@@ -3569,7 +3598,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.274 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.275 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8163,7 +8192,6 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 
 void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
-    uint64 frozen_vector = 0LL;
     int piece;
     int captured_piece;
     int capturing_piece;
@@ -8172,18 +8200,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     struct movement *movementptr;
 
 
-    /* First, compute a bitvector for all the pieces that are frozen on single squares. */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	for (sq = 0; sq < 64; sq ++) {
-	    if (BITVECTOR(sq) == tb->semilegal_squares[piece]) {
-		frozen_vector |= tb->semilegal_squares[piece];
-		break;
-	    }
-	}
-    }
-
-    /* Next, consider all possible pairs of pieces that might capture, and assign a number (in the
+    /* First, consider all possible pairs of pieces that might capture, and assign a number (in the
      * futurecaptures array) to each pair.  We'll ultimately use this number as an index into a bit
      * vector to determine if this capture has been handled in any particular position.  However,
      * there's a common enough "special" case: the two pieces are frozen (or at least sufficiently
@@ -8219,7 +8236,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 				    goto next_pair_of_pieces;
 				}
 				/* If we hit a frozen piece, then this movement direction ends here */
-				if (movementptr->vector & frozen_vector) break;
+				if (movementptr->vector & tb->frozen_pieces_vector) break;
 			    }
 			}
 		    } else {
@@ -8315,7 +8332,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			 * captures here; they were handled above.
 			 */
 
-			if (movementptr->vector & frozen_vector) break;
+			if (movementptr->vector & tb->frozen_pieces_vector) break;
 
 			/* If the piece is moving outside its restricted squares, it's a futuremove */
 
@@ -8339,7 +8356,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		     * here; they were handled above.
 		     */
 
-		    if (movementptr->vector & frozen_vector) break;
+		    if (movementptr->vector & tb->frozen_pieces_vector) break;
 
 		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
