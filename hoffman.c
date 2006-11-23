@@ -375,7 +375,7 @@ struct format {
     int flag_type;
 };
 
-char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index", "futurevector", "flag", NULL};
+char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index-field", "futurevector", "flag", NULL};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_MOVECNT 1
@@ -407,7 +407,15 @@ struct format entries_format = {4,2, 0xff,0,8, 0x7f,8,7, 15};
 
 struct format one_byte_dtm_format = {3,1, 0xff,0,8};
 
-/* And this is the sixteen byte format we use by default for proptable entries */
+/* And this is the sixteen byte format we use by default for proptable entries.  Equivalent to:
+ *
+ * <proptable-format>
+ *    <index bits="32" offset="0"/>
+ *    <dtm bits="16" offset="32"/>
+ *    <movecnt bits="8" offset="56"/>
+ *    <futurevector bits="64" offset="64"/>
+ * </proptable-format>
+ */
 
 struct format proptable_format = {7,16, 0xffff,32,16, 0xff,56,8, 0,
 				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64};
@@ -546,7 +554,8 @@ int zeros_fd = -1;
 
 tablebase_t *proptable_tb = NULL;
 
-/* 0 indicates that we're not use proptables */
+/* 0 indicates that we're not using proptables */
+int proptable_MBs = 0;
 int num_propentries = 0;
 
 /* PROPTABLE_BITS for 16 byte entries:
@@ -2895,12 +2904,14 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	    case FORMAT_FIELD_INDEX:
 		format->index_bits = bits;
 		format->index_offset = offset;
-		format->index_mask = (1 << bits) - 1;
+		if (bits == 64) format->index_mask = 0xffffffffLL;
+		else format->index_mask = (1LL << bits) - 1;
 		break;
 	    case FORMAT_FIELD_FUTUREVECTOR:
 		format->futurevector_bits = bits;
 		format->futurevector_offset = offset;
-		format->futurevector_mask = (1LL << bits) - 1;
+		if (bits == 64) format->futurevector_mask = 0xffffffffLL;
+		else format->futurevector_mask = (1LL << bits) - 1;
 		break;
 	    case FORMAT_FIELD_FLAG:
 		format->flag_offset = offset;
@@ -3145,6 +3156,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	if (! parse_format(result->nodesetval->nodeTab[0], &entries_format)) return NULL;
 	if (entries_format.movecnt_bits == 0) {
 	    fprintf(stderr, "Entries format must contain a movecnt field\n");
+	}
+    }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
+    /* custom proptable format? */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//proptable-format", context);
+    if (result->nodesetval->nodeNr == 1) {
+	if (! parse_format(result->nodesetval->nodeTab[0], &proptable_format)) return NULL;
+	if (proptable_format.index_bits == 0) {
+	    fprintf(stderr, "Proptable format must contain an index field\n");
 	}
     }
     xmlXPathFreeObject(result);
@@ -3598,7 +3622,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.275 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.276 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9883,6 +9907,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
 
+    num_propentries = proptable_MBs * 1024 * 1024 / proptable_format.bytes;
+
     if (num_propentries != 0) {
 	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
 	if (tb->entries_fd == -1) {
@@ -10279,7 +10305,7 @@ int main(int argc, char *argv[])
 	    break;
 	case 'P':
 	    /* set size of proptable in megabytes */
-	    num_propentries = strtol(optarg, NULL, 0) * 1024 * 1024 / proptable_format.bytes;
+	    proptable_MBs = strtol(optarg, NULL, 0);
 	    break;
 	}
     }
