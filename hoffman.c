@@ -578,7 +578,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 11651 */
+/* #define DEBUG_MOVE 2420 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -3128,7 +3128,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.285 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.286 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6129,6 +6129,11 @@ void insert_or_commit_propentry(proptable_entry_t *propentry)
 {
     backproped_moves[total_passes] ++;
 
+#ifdef DEBUG_MOVE
+    if (get_propentry_index(propentry) == DEBUG_MOVE)
+	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) propentry), *(((uint64 *) propentry) + 1));
+#endif
+
     if (num_propentries == 0) {
 	commit_proptable_entry(propentry);
     } else {
@@ -6153,14 +6158,22 @@ void insert_or_commit_trivial_propentry(index_t index, short dtm, short movecnt,
     set_propentry_index(ptr, index);
     set_propentry_dtm(ptr, dtm);
     set_propentry_movecnt(ptr, movecnt);
-    /* XXX need to differentiate between a wins and a draws flag here */
+    set_propentry_futurevector(ptr, futurevector);
+
+    /* The only time it makes sense to use a PTM-wins-flag in the proptable is if we're generating a
+     * bitbase (because otherwise we need a DTM field in the proptable).  Positive or negative DTM
+     * values translate directly through to PTM wins or to its inverse, PNTM wins.  The oddball is
+     * zero DTM, a draw, which only happens here if we're back propagating from a DTM futurebase.
+     * In that case, we need to look at the sense of the bitbase (white-wins or white-draws), as
+     * well as which player is PTM to decide if we should set or clear the propentry's flag.
+     */
+
     if (dtm != 0) {
 	set_propentry_PTM_wins_flag(ptr, (dtm > 0) ? 1 : 0);
     } else {
-	int win_side = (entries_format.flag_type == FORMAT_FLAG_WHITE_WINS ? WHITE : BLACK);
+	int win_side = ((proptable_tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) ? WHITE : BLACK);
 	set_propentry_PTM_wins_flag(ptr, (index_to_side_to_move(proptable_tb, index) == win_side) ? 0 : 1);
     }
-    set_propentry_futurevector(ptr, futurevector);
 
 #if 0
     /* Don't track futuremoves for illegal (DTM 1) positions */
