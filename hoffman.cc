@@ -469,10 +469,9 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 #define NAIVE_INDEX 0
 #define NAIVE2_INDEX 1
 #define SIMPLE_INDEX 2
-#define XOR_INDEX 3
-#define COMPACT_INDEX 4
+#define COMPACT_INDEX 3
 
-char * index_types[] = {"naive", "naive2", "simple", "xor", "compact"};
+char * index_types[] = {"naive", "naive2", "simple", "compact"};
 
 typedef struct tablebase {
     int index_type;
@@ -867,164 +866,6 @@ boolean check_king_legality(int kingA, int kingB) {
     if ((COL(kingA) < COL(kingB) - 1) || (COL(kingA) > COL(kingB) + 1)) return 1;
     return 0;
 }
-
-unsigned char byte_transform[256];
-
-unsigned char multiply_in_GF2_8(unsigned char a, unsigned char b)
-{
-    unsigned char result = 0;
-
-    while (a != 0) {
-	if ((a&1) == 1) result ^= b;
-	a >>= 1;
-	if ((b&0x80) == 0x80) {
-	    b ^= 0x80;
-	    b <<= 1;
-	    b ^= 0x1b;
-	} else {
-	    b <<= 1;
-	}
-    }
-    return result;
-}
-
-unsigned char byte_transform_64[64];
-unsigned char byte_transform_64b[64];
-unsigned char byte_transform_64c[64];
-
-unsigned char multiply_in_GF2_6(unsigned char a, unsigned char b, unsigned char irreducible_polynomial)
-{
-    unsigned char result = 0;
-
-    while (a != 0) {
-	if ((a&1) == 1) result ^= b;
-	a >>= 1;
-	b <<= 1;
-	if ((b&0x40) == 0x40) {
-	    b ^= irreducible_polynomial;
-	}
-    }
-    return result;
-}
-
-void initialize_byte_transform(void)
-{
-    unsigned char a;
-    unsigned char b;
-
-    byte_transform[0] = 0;
-
-    for (a=1; a!=0; a++) {
-	for (b=1; b!=0; b++) {
-	    if (multiply_in_GF2_8(a,b) == 1) {
-		byte_transform[a] = b;
-		break;
-	    }
-	}
-	if (b == 0) {
-	    fprintf(stderr, "Couldn't invert in initialize_byte_transform\n");
-	}
-	/* fprintf(stderr, "0x%02x -> 0x%02x\n", a, b); */
-    }
-
-    byte_transform_64[0] = 0;
-    byte_transform_64b[0] = 0;
-    byte_transform_64c[0] = 0;
-
-    /* use first three irreducible polynomials from Marsh's table for GF(2^6) */
-
-    for (a=1; a<=63; a++) {
-	for (b=1; b<=63; b++) {
-	    if (multiply_in_GF2_6(a,b, 0103) == 1) {
-		byte_transform_64[a] = b;
-	    }
-	    if (multiply_in_GF2_6(a,b, 0111) == 1) {
-		byte_transform_64b[a] = b;
-	    }
-	    if (multiply_in_GF2_6(a,b, 0127) == 1) {
-		byte_transform_64c[a] = b;
-	    }
-	}
-    }
-}
-
-#define encode_index(INDEX)                                                                     \
-   asm("                                                                                        \
-                                                                                                \
-                xlatb;                                                                          \
-                xchg %%ah, %%al;                                                                \
-                xlatb;                                                                          \
-                                                                                                \
-                mov %%eax, %%ecx;                                                               \
-                shr $3, %%eax;                                                                  \
-                and $7, %%ecx;                                                                  \
-                shl $16, %%ecx;                                                                 \
-                xor %%ecx, %%eax;                                                               \
-                                                                                                \
-                xlatb;                                                                          \
-                xchg %%ah, %%al;                                                                \
-                xlatb;                                                                          \
-                                                                                                \
-                mov %%eax, %%ecx;                                                               \
-                shr $3, %%eax;                                                                  \
-                and $7, %%ecx;                                                                  \
-                shl $16, %%ecx;                                                                 \
-                xor %%ecx, %%eax;                                                               \
-                                                                                                \
-                xlatb;                                                                          \
-                xchg %%ah, %%al;                                                                \
-                xlatb;                                                                          \
-                                                                                                \
-                mov %%eax, %%ecx;                                                               \
-                shr $3, %%eax;                                                                  \
-                and $7, %%ecx;                                                                  \
-                shl $16, %%ecx;                                                                 \
-                xor %%ecx, %%eax;                                                               \
-                                                                                                \
-                xlatb;                                                                          \
-                xchg %%ah, %%al;                                                                \
-                xlatb;                                                                          \
-                                                                                                \
-                          " : "+a" (INDEX) : "b" (byte_transform) : "cx", "cc")
-
-#define decode_index(INDEX)                                                                     \
-   asm("                                                                                        \
-                                                                                                \
-                xlatb;                                                                          \
-                xchg %%ah, %%al;                                                                \
-                xlatb;                                                                          \
-                                                                                                \
-                mov %%eax, %%ecx;                                                               \
-                and $0x0000ffff, %%eax;                                                         \
-                shl $3, %%eax;                                                                  \
-                shr $16, %%ecx;                                                                 \
-                xor %%ecx, %%eax;                                                               \
-                                                                                                \
-                xlatb;                                                                          \
-                xchg %%ah, %%al;                                                                \
-                xlatb;                                                                          \
-                                                                                                \
-                mov %%eax, %%ecx;                                                               \
-                and $0x0000ffff, %%eax;                                                         \
-                shl $3, %%eax;                                                                  \
-                shr $16, %%ecx;                                                                 \
-                xor %%ecx, %%eax;                                                               \
-                                                                                                \
-                xlatb;                                                                          \
-                xchg %%ah, %%al;                                                                \
-                xlatb;                                                                          \
-                                                                                                \
-                mov %%eax, %%ecx;                                                               \
-                and $0x0000ffff, %%eax;                                                         \
-                shl $3, %%eax;                                                                  \
-                shr $16, %%ecx;                                                                 \
-                xor %%ecx, %%eax;                                                               \
-                                                                                                \
-                xlatb;                                                                          \
-                xchg %%ah, %%al;                                                                \
-                xlatb;                                                                          \
-                                                                                                \
-                          " : "+a" (INDEX) : "b" (byte_transform) : "cx", "cc")
 
 /* Later in the program, I'll use these indices as the keys in an address calculation insertion
  * sort.  This kind of sort performs well if the keys are evenly distributed, and performs horribly
@@ -1756,213 +1597,6 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
     return 1;
 }
 
-/* "XOR" index.  Assigns a number from 0 to 63 to each square on the board and xor's them together
- * for the various pieces.  Ensures that moving a single piece will result in large strides in the
- * index.
- */
-
-index_t local_position_to_xor_index(tablebase_t *tb, local_position_t *pos)
-{
-    int shift_count = 1;
-    index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-    int piece;
-    int val = 0;
-    int val1 = 0;
-    int val2 = 0;
-    int val3 = 0;
-
-    pos->board_vector = 0;
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-    /* for (piece = tb->num_pieces - 1; piece >= 0; piece--) { */
-
-	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
-	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
-	    /* This can happen if we're probing a restricted tablebase */
-#if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
-#endif
-	    return -1;
-	}
-
-	/* The way we encode en passant capturable pawns is use the column number of the
-	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
-	 * this is completely legit.
-	 */
-	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
-	    && (((tb->piece_color[piece] == WHITE)
-		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->piece_color[piece] == BLACK)
-		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    val = COL(pos->en_passant_square);
-	} else {
-	    val = pos->piece_position[piece];
-	}
-	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
-	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
-
-#if 0
-	index |= (val^val1^val2) << shift_count;
-	val2 = val1;
-	val1 = byte_transform_64[val];
-#else
-#if 1
-	if (piece == tb->num_pieces - 1) {
-	    index |= (val^val3) << shift_count;
-	} else if (piece == tb->num_pieces - 2) {
-	    index |= (val^val2) << shift_count;
-	} else if (piece == tb->num_pieces - 3) {
-	    index |= (val^val1) << shift_count;
-	} else {
-	    index |= val << shift_count;
-	}
-#else
-	if (piece == 0) {
-	    index |= (val^val3) << shift_count;
-	} else if (piece == 1) {
-	    index |= (val^val2) << shift_count;
-	} else if (piece == 2) {
-	    index |= (val^val1) << shift_count;
-	} else {
-	    index |= val << shift_count;
-	}
-#endif
-	val1 ^= byte_transform_64[val];
-	val2 ^= byte_transform_64b[val];
-	val3 ^= byte_transform_64c[val];
-#endif
-
-	shift_count += 6;  /* because 2^6=64 */
-    }
-
-    /* Check board_vector to make sure an en passant position is legal */
-
-    if (pos->en_passant_square != -1) {
-	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
-	if (pos->side_to_move == WHITE) {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
-	} else {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
-	}
-    }
-
-#if 0
-    /* Possibly a quicker check for position legality that all that en passant stuff */
-    /* The problem is that the entries array might not be valid */
-
-    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
-#endif
-
-    return index;
-}
-
-boolean xor_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
-{
-    int piece;
-    int val1 = 0;
-    int val2 = 0;
-    int val3 = 0;
-    int square;
-
-    memset(p, 0, sizeof(local_position_t));
-    p->en_passant_square = -1;
-
-    p->side_to_move = index & 1;
-    index >>= 1;
-
-    for (piece = 0; piece < tb->num_pieces; piece++) {
-    /* for (piece = tb->num_pieces - 1; piece >= 0; piece--) { */
-
-#if 0
-	square = (index & 63) ^ val1 ^ val2;
-	val2 = val1;
-	val1 = byte_transform_64[square];
-#else
-#if 1
-	if (piece == tb->num_pieces - 1) {
-	    square = (index & 63) ^ val3;
-	} else if (piece == tb->num_pieces - 2) {
-	    square = (index & 63) ^ val2;
-	} else if (piece == tb->num_pieces - 3) {
-	    square = (index & 63) ^ val1;
-	} else {
-	    square = (index & 63);
-	}
-#else
-	if (piece == 0) {
-	    square = (index & 63) ^ val3;
-	} else if (piece == 1) {
-	    square = (index & 63) ^ val2;
-	} else if (piece == 2) {
-	    square = (index & 63) ^ val1;
-	} else {
-	    square = (index & 63);
-	}
-#endif
-	val1 ^= byte_transform_64[square];
-	val2 ^= byte_transform_64b[square];
-	val3 ^= byte_transform_64c[square];
-#endif
-
-	/* En passant */
-	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
-	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
-	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 2*8;
-		square += 3*8;
-	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 5*8;
-		square += 4*8;
-	    }
-	}
-
-	/* The first place we handle restricted pieces, and one of most important, too, because this
-	 * function is used during initialization to decide which positions are legal and which are
-	 * not.
-	 */
-
-	if (!(tb->semilegal_squares[piece] & BITVECTOR(square))) {
-	    return 0;
-	}
-
-	p->piece_position[piece] = square;
-	if (p->board_vector & BITVECTOR(square)) {
-	    return 0;
-	}
-
-	/* Identical pieces have to appear in sorted order. */
-
-	if ((tb->last_identical_piece[piece] != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
-	    return 0;
-	}
-
-	p->board_vector |= BITVECTOR(square);
-	if (tb->piece_color[piece] == p->side_to_move) {
-	    p->PTM_vector |= BITVECTOR(square);
-	}
-	index >>= 6;
-    }
-
-    /* If there is an en passant capturable pawn in this position, then there can't be anything
-     * on the capture square or on the square right behind it (where the pawn just came from),
-     * or its an illegal position.
-     */
-
-    if (p->en_passant_square != -1) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
-	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
-	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
-	}
-    }
-
-    return 1;
-}
-
 /* "Simple" index.  Like naive, but only assigns numbers to squares that are legal for a particular
  * piece.  Slower to compute than naive, but more compact for tablebases with lots of movement
  * restrictions on the pieces.
@@ -2539,9 +2173,6 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
     case NAIVE2_INDEX:
 	index = local_position_to_naive2_index(tb, position);
 	break;
-    case XOR_INDEX:
-	index = local_position_to_xor_index(tb, position);
-	break;
     case SIMPLE_INDEX:
 	index = local_position_to_simple_index(tb, position);
 	break;
@@ -2619,9 +2250,6 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
 	break;
     case NAIVE2_INDEX:
 	ret = naive2_index_to_local_position(tb, index, position);
-	break;
-    case XOR_INDEX:
-	ret = xor_index_to_local_position(tb, index, position);
 	break;
     case SIMPLE_INDEX:
 	ret = simple_index_to_local_position(tb, index, position);
@@ -3252,11 +2880,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	return NULL;
     }
 
-    if ((tb->symmetry > 1) && (tb->index_type == XOR_INDEX)) {
-	fprintf(stderr, "Symmetry doesn't work with xor index type\n");
-	return NULL;
-    }
-
     if (tb->symmetry >= 4) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->piece_type[piece] == PAWN) {
@@ -3331,12 +2954,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
 	tb->max_index --;
 
-	break;
-
-    case XOR_INDEX:
-
-	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
-	tb->max_index = (2<<(6*tb->num_pieces)) - 1;
 	break;
 
     case SIMPLE_INDEX:
@@ -3648,7 +3265,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.279 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.280 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -10358,8 +9975,6 @@ int main(int argc, char *argv[])
 
     init_movements();
     verify_movements();
-
-    initialize_byte_transform();
 
     while (1) {
 	c = getopt(argc, argv, "gpvo:n:P:");
