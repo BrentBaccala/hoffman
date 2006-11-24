@@ -223,7 +223,7 @@ struct timeval proptable_preload_time = {0, 0};
  * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move.
  */
 
-typedef uint64 futurevector_t;
+typedef uint8 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 
@@ -373,9 +373,10 @@ struct format {
     uint8 futurevector_bits;
     uint8 flag_offset;
     int flag_type;
+    int PTM_wins_flag_offset;
 };
 
-char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index-field", "futurevector", "flag", NULL};
+char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index-field", "futurevector", "flag", "ptm-wins-flag", NULL};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_MOVECNT 1
@@ -383,6 +384,7 @@ char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index-field", "fut
 #define FORMAT_FIELD_INDEX 3
 #define FORMAT_FIELD_FUTUREVECTOR 4
 #define FORMAT_FIELD_FLAG 5
+#define FORMAT_FIELD_PTM_WINS_FLAG 6
 
 char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
@@ -714,6 +716,8 @@ inline int get_signed_field(uint32 *ptr, uint32 mask, int offset)
 {
     int val;
 
+    if (offset == -1) return 0;
+
     while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
@@ -729,6 +733,8 @@ inline int get_signed_field(uint32 *ptr, uint32 mask, int offset)
 
 inline void set_signed_field(uint32 *ptr, uint32 mask, int offset, int val)
 {
+    if (offset == -1) return;
+
     while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
@@ -746,6 +752,8 @@ inline void set_signed_field(uint32 *ptr, uint32 mask, int offset, int val)
 
 inline unsigned int get_unsigned_field(uint32 *ptr, uint32 mask, int offset)
 {
+    if (offset == -1) return 0;
+
     while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
@@ -756,6 +764,8 @@ inline unsigned int get_unsigned_field(uint32 *ptr, uint32 mask, int offset)
 
 inline void set_unsigned_field(uint32 *ptr, uint32 mask, int offset, unsigned int val)
 {
+    if (offset == -1) return;
+
     while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
@@ -772,6 +782,8 @@ inline uint64 get_unsigned64bit_field(void *fieldptr, uint64 mask, int offset)
 {
     uint64 *ptr = (uint64 *)fieldptr;
 
+    if (offset == -1) return 0;
+
     while (offset >= 64) {
 	offset -= 64;
 	ptr ++;
@@ -783,6 +795,8 @@ inline uint64 get_unsigned64bit_field(void *fieldptr, uint64 mask, int offset)
 inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uint64 val)
 {
     uint64 *ptr = (uint64 *)fieldptr;
+
+    if (offset == -1) return;
 
     while (offset >= 64) {
 	offset -= 64;
@@ -2835,6 +2849,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     int power_of_two;
 
     memset(format, 0, sizeof(struct format));
+    format->PTM_wins_flag_offset = -1;
 
     for (child = formatNode->children; child != NULL; child = child->next) {
 	if (child->type == XML_ELEMENT_NODE) {
@@ -2849,17 +2864,17 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		return 0;
 	    }
 	    if ((bits == 0)
-		&& (format_field != FORMAT_FIELD_IN_CHECK_FLAG) && (format_field != FORMAT_FIELD_FLAG)) {
+		&& (format_field != FORMAT_FIELD_IN_CHECK_FLAG) && (format_field != FORMAT_FIELD_FLAG) && (format_field != FORMAT_FIELD_PTM_WINS_FLAG)) {
 		fprintf(stderr, "Non-zero 'bits' value must be specified in format field '%s'\n",
 			(char *) child->name);
 		return 0;
 	    }
 	    if ((bitstr != NULL) && (bits != 1)
-		&& ((format_field == FORMAT_FIELD_IN_CHECK_FLAG) || (format_field == FORMAT_FIELD_FLAG))) {
-		fprintf(stderr, "Format fields 'flag' and 'in-check-flag' only accept bits=\"1\"\n");
+		&& ((format_field == FORMAT_FIELD_IN_CHECK_FLAG) || (format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG))) {
+		fprintf(stderr, "Format fields 'flag' 'in-check-flag' and 'PTM-wins-flag' only accept bits=\"1\"\n");
 		return 0;
 	    }
-	    if ((format_field == FORMAT_FIELD_IN_CHECK_FLAG) || (format_field == FORMAT_FIELD_FLAG)) {
+	    if ((format_field == FORMAT_FIELD_IN_CHECK_FLAG) || (format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG)) {
 		bits = 1;
 	    }
 
@@ -2921,6 +2936,9 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		    fprintf(stderr, "'type' is a required property in format field 'flag'\n");
 		    return 0;
 		}
+		break;
+	    case FORMAT_FIELD_PTM_WINS_FLAG:
+		format->PTM_wins_flag_offset = offset;
 		break;
 	    default:
 		fprintf(stderr, "Unknown field in format\n");
@@ -3622,7 +3640,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.276 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.277 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5688,6 +5706,28 @@ void set_propentry_movecnt(proptable_entry_t *propentry, int movecnt)
     set_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset, movecnt);
 }
 
+int get_propentry_PTM_wins_flag(proptable_entry_t *propentry)
+{
+    uint32 *ptr = (uint32 *) propentry;
+
+    /* This one is a little different.  A proptable can have either a PTM wins flag or a DTM field.
+     * If the caller requests the PTM wins flag and it doesn't exist in this format, then use the
+     * DTM field to "emulate" it.
+     */
+
+    if (proptable_format.PTM_wins_flag_offset != -1) {
+	return get_unsigned_field(ptr, 1, proptable_format.PTM_wins_flag_offset);
+    } else {
+	return (get_propentry_dtm(ptr) > 0) ? 1 : 0;
+    }
+}
+
+void set_propentry_PTM_wins_flag(proptable_entry_t *propentry, int PTM_wins_flag)
+{
+    uint32 *ptr = (uint32 *) propentry;
+    set_unsigned_field(ptr, 1, proptable_format.PTM_wins_flag_offset, PTM_wins_flag);
+}
+
 void insert_at_propentry(int propentry, proptable_entry_t * pentry)
 {
 #ifdef DEBUG_MOVE
@@ -5736,6 +5776,11 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 	if ((dest_dtm <= 0) && (src_dtm < dest_dtm)) {
 	    set_propentry_dtm(dest, src_dtm);
 	}
+    }
+
+    /* PTM wins flag is logical OR of the two flags being combined. */
+    if (get_propentry_PTM_wins_flag(src) && (! get_propentry_PTM_wins_flag(dest))) {
+	set_propentry_PTM_wins_flag(dest, 1);
     }
 
     set_propentry_movecnt(dest, get_propentry_movecnt(dest) + get_propentry_movecnt(src));
@@ -5793,12 +5838,24 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 	proptable_tb->futurevectors[index] ^= futurevector;
     }
 
-    if (dtm > 0) {
-	PTM_wins(proptable_tb, index, dtm);
-    } else if (dtm < 0) {
-	for (i=0; i<movecnt; i++) {
-	    add_one_to_PNTM_wins(proptable_tb, index, dtm);
+    if (proptable_format.dtm_bits > 0) {
+	if (dtm > 0) {
+	    PTM_wins(proptable_tb, index, dtm);
+	} else if (dtm < 0) {
+	    for (i=0; i<movecnt; i++) {
+		add_one_to_PNTM_wins(proptable_tb, index, dtm);
+	    }
 	}
+    } else if (proptable_format.PTM_wins_flag_offset != -1) {
+	if (get_propentry_PTM_wins_flag(ptr)) {
+	    PTM_wins(proptable_tb, index, dtm);
+	} else {
+	    for (i=0; i<movecnt; i++) {
+		add_one_to_PNTM_wins(proptable_tb, index, dtm);
+	    }
+	}
+    } else {
+	fprintf(stderr, "Can't handle proptable formats without either a DTM field or PTM wins flag\n");
     }
 }
 
@@ -6613,10 +6670,11 @@ void insert_or_commit_trivial_propentry(index_t index, short dtm, short movecnt,
 
     memset(ptr, 0, proptable_format.bytes);
 
-    set_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset, index);
-    set_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset, dtm);
-    set_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset, movecnt);
-    set_unsigned64bit_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset, futurevector);
+    set_propentry_index(ptr, index);
+    set_propentry_dtm(ptr, dtm);
+    set_propentry_movecnt(ptr, movecnt);
+    set_propentry_PTM_wins_flag(ptr, (dtm > 0) ? 1 : 0);
+    set_propentry_futurevector(ptr, futurevector);
 
 #if 0
     /* Don't track futuremoves for illegal (DTM 1) positions */
