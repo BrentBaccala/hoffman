@@ -359,19 +359,19 @@ struct format {
     uint8 bits;
     uint8 bytes;
     uint32 dtm_mask;
-    uint8 dtm_offset;
+    int dtm_offset;
     uint8 dtm_bits;
     uint32 movecnt_mask;
-    uint8 movecnt_offset;
+    int movecnt_offset;
     uint8 movecnt_bits;
-    uint8 in_check_flag_offset;
+    int in_check_flag_offset;
     uint32 index_mask;
-    uint8 index_offset;
+    int index_offset;
     uint8 index_bits;
     uint64 futurevector_mask;
-    uint8 futurevector_offset;
+    int futurevector_offset;
     uint8 futurevector_bits;
-    uint8 flag_offset;
+    int flag_offset;
     int flag_type;
     int PTM_wins_flag_offset;
 };
@@ -586,7 +586,7 @@ const int early_checkmate_test = 1;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 138083 */
+/* #define DEBUG_MOVE 11651 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2850,6 +2850,13 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     int power_of_two;
 
     memset(format, 0, sizeof(struct format));
+
+    format->dtm_offset = -1;
+    format->movecnt_offset = -1;
+    format->in_check_flag_offset = -1;
+    format->index_offset = -1;
+    format->futurevector_offset = -1;
+    format->flag_offset = -1;
     format->PTM_wins_flag_offset = -1;
 
     for (child = formatNode->children; child != NULL; child = child->next) {
@@ -3641,7 +3648,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.278 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.279 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4929,9 +4936,17 @@ void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
      * stalemate, since this position's movecnt should never get decremented.
      */
 
+#if 0
+    if (index_to_side_to_move(tb, index) == WHITE) {
+	initialize_entry_with_PNTM_mated(tb, index);
+    } else {
+	initialize_entry_with_PTM_mated(tb,index);
+    }
+#else
     initialize_entry(tb, index, MOVECNT_STALEMATE, 0, 0);
     total_legal_positions ++;
     total_stalemate_positions ++;
+#endif
 }
 
 void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt, int in_check)
@@ -4973,7 +4988,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 	fprintf(stderr, "Positive distance to mate in PNTM_wins!?\n"); /* BREAKPOINT */
     } else if ((get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_PROPED)
 	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)
-	       && (get_entry_movecnt(tb, index) != MOVECNT_PNTM_WINS_UNPROPED)
+	       && (get_entry_movecnt(tb, index) != MOVECNT_PNTM_WINS_PROPED)
 	       && (get_entry_movecnt(tb, index) != MOVECNT_PNTM_WINS_UNPROPED)
 	       && (get_entry_movecnt(tb, index) != MOVECNT_STALEMATE)) {
 
@@ -6674,7 +6689,13 @@ void insert_or_commit_trivial_propentry(index_t index, short dtm, short movecnt,
     set_propentry_index(ptr, index);
     set_propentry_dtm(ptr, dtm);
     set_propentry_movecnt(ptr, movecnt);
-    set_propentry_PTM_wins_flag(ptr, (dtm > 0) ? 1 : 0);
+    /* XXX need to differentiate between a wins and a draws flag here */
+    if (dtm != 0) {
+	set_propentry_PTM_wins_flag(ptr, (dtm > 0) ? 1 : 0);
+    } else {
+	int win_side = (entries_format.flag_type == FORMAT_FLAG_WHITE_WINS ? WHITE : BLACK);
+	set_propentry_PTM_wins_flag(ptr, (index_to_side_to_move(proptable_tb, index) == win_side) ? 0 : 1);
+    }
     set_propentry_futurevector(ptr, futurevector);
 
 #if 0
