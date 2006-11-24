@@ -2346,6 +2346,9 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     int auto_offset = 0;
     int total_bits = 0;
     int power_of_two;
+    int bitnum;
+    uint64 bitmask1 = 0;
+    uint64 bitmask2 = 0;
 
     memset(format, 0, sizeof(struct format));
 
@@ -2403,6 +2406,27 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	    if (offset/64 != (offset+bits-1) / 64) {
 		fprintf(stderr, "Format fields can't straddle a 64-bit boundary\n");
 		return 0;
+	    }
+
+	    if (offset >= 128) {
+		fprintf(stderr, "Formats can't exceed 128 bits\n");
+		return 0;
+	    }
+
+	    for (bitnum = offset; bitnum < offset + bits; bitnum ++) {
+		if (bitnum < 64) {
+		    if (bitmask1 & (1 << bitnum)) {
+			fprintf(stderr, "Overlapping format fields\n");
+			return 0;
+		    }
+		    bitmask1 |= (1 << bitnum);
+		} else {
+		    if (bitmask2 & (1 << (bitnum - 64))) {
+			fprintf(stderr, "Overlapping format fields\n");
+			return 0;
+		    }
+		    bitmask2 |= (1 << (bitnum - 64));
+		}
 	    }
 
 	    if (offset + bits > total_bits) total_bits = offset + bits;
@@ -3128,7 +3152,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.286 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.287 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
