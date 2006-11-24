@@ -1182,38 +1182,6 @@ int invert_in_finite_field(int b, int modulus)
 }
 #endif
 
-int eight_way_white_king_position_to_index(local_position_t *pos)
-{
-    int white_king = pos->piece_position[WHITE_KING];
-    static int index[4][4] = {{ 6, -1, -1, -1},
-			      { 0,  7, -1, -1},
-			      { 1,  3,  6, -1},
-			      { 2,  4,  5,  7}};
-
-    return index[COL(white_king)][ROW(white_king)];
-}
-
-int eight_way_white_king_index_to_position(int index)
-{
-    if (index <= 2) return index + 1;
-    else if (index <= 4) return index + 7;
-    else if (index == 5) return 19;
-    else if (index == 6) return 0;
-    else return 9;
-}
-
-int eight_way_black_king_position_to_index(local_position_t *pos)
-{
-    int white_king = pos->piece_position[WHITE_KING];
-    int black_king = pos->piece_position[BLACK_KING];
-
-    if ((ROW(white_king) == COL(white_king)) && (ROW(white_king) >= 2)) {
-	return diagonal_reflection(black_king);
-    } else {
-	return black_king;
-    }
-}
-
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and
  * multiplies them together for the various pieces.  Simple and fast.
  */
@@ -3250,7 +3218,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.282 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.283 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
