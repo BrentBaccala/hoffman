@@ -420,7 +420,8 @@ struct format one_byte_dtm_format = {3,1, 0xff,0,8};
  */
 
 struct format proptable_format = {7,16, 0xffff,32,16, 0xff,56,8, 0,
-				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64};
+				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
+				  -1,FORMAT_FLAG_NONE, -1};
 
 
 
@@ -3640,7 +3641,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.277 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.278 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
