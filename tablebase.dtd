@@ -13,7 +13,7 @@
 
 <!ELEMENT format (dtm | flag) >
 <!ELEMENT entries-format (dtm | flag | movecnt | in-check-flag)+ >
-<!ELEMENT proptable-format (dtm | movecnt | index-field | futurevector)+ >
+<!ELEMENT proptable-format (dtm | PTM-wins-flag | movecnt | index-field | futurevector)+ >
 
 <!ELEMENT dtm EMPTY>
 <!ATTLIST dtm
@@ -30,6 +30,10 @@
 	bits CDATA				#REQUIRED>
 <!ELEMENT in-check-flag EMPTY>
 <!ATTLIST in-check-flag
+	offset CDATA				#IMPLIED
+	bits (1)				#IMPLIED>
+<!ELEMENT PTM-wins-flag EMPTY>
+<!ATTLIST PTM-wins-flag
 	offset CDATA				#IMPLIED
 	bits (1)				#IMPLIED>
 <!ELEMENT index-field EMPTY>
