@@ -572,8 +572,6 @@ int num_propentries = 0;
 
 #define SEPERATE_PROPTABLE_FILES 0
 
-#define FINITE_FIELD_INVERSION 1
-
 #define USE_DUAL_PROPTABLES 1
 
 #define CHECK_KING_LEGALITY_EARLY 1
@@ -2185,11 +2183,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
     index += tb->index_offset;
 
     if ((index != -1) && (index != 0) && (tb->modulus != 0)) {
-#if FINITE_FIELD_INVERSION
 	index = invert_in_finite_field(index, tb->modulus);
-#else
-	encode_index(index);
-#endif
     }
 
     /* Multiplicity - number of non-identical positions that this index corresponds to.  We want to
@@ -2232,11 +2226,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
     int piece, piece2;
 
     if ((index != 0) && (tb->modulus != 0)) {
-#if FINITE_FIELD_INVERSION
 	index = invert_in_finite_field(index, tb->modulus);
-#else
-	decode_index(index);
-#endif
     }
 
     if (index < tb->index_offset) return 0;
@@ -3056,10 +3046,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    fprintf(stderr, "modulus %d less than max_index %d\n", tb->modulus, tb->max_index);
 	    return NULL;
 	}
-#if FINITE_FIELD_INVERSION
-	/* XXX took this out for encode/decode index */
 	tb->max_index = tb->modulus - 1;
-#endif
     }
 
     /* Fetch the move restrictions */
@@ -3263,7 +3250,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.281 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.282 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
