@@ -364,7 +364,6 @@ struct format {
     uint32 movecnt_mask;
     int movecnt_offset;
     uint8 movecnt_bits;
-    int in_check_flag_offset;
     uint32 index_mask;
     int index_offset;
     uint8 index_bits;
@@ -376,15 +375,14 @@ struct format {
     int PTM_wins_flag_offset;
 };
 
-char * format_fields[] = {"dtm", "movecnt", "in-check-flag", "index-field", "futurevector", "flag", "ptm-wins-flag", NULL};
+char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag", "ptm-wins-flag", NULL};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_MOVECNT 1
-#define FORMAT_FIELD_IN_CHECK_FLAG 2
-#define FORMAT_FIELD_INDEX 3
-#define FORMAT_FIELD_FUTUREVECTOR 4
-#define FORMAT_FIELD_FLAG 5
-#define FORMAT_FIELD_PTM_WINS_FLAG 6
+#define FORMAT_FIELD_INDEX 2
+#define FORMAT_FIELD_FUTUREVECTOR 3
+#define FORMAT_FIELD_FLAG 4
+#define FORMAT_FIELD_PTM_WINS_FLAG 5
 
 char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
@@ -398,12 +396,11 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
  *
  * <entries-format>
  *    <dtm bits="8" offset="0"/>
- *    <movecnt bits="7" offset="8"/>
- *    <in-check-flag bits="1" offset="15"/>
+ *    <movecnt bits="8" offset="8"/>
  * </entries-format>
  */
 
-struct format entries_format = {4,2, 0xff,0,8, 0x7f,8,7, 15};
+struct format entries_format = {4,2, 0xff,0,8, 0xff,8,8};
 
 /* This is the "one-byte-dtm" format */
 
@@ -419,7 +416,7 @@ struct format one_byte_dtm_format = {3,1, 0xff,0,8};
  * </proptable-format>
  */
 
-struct format proptable_format = {7,16, 0xffff,32,16, 0xff,56,8, 0,
+struct format proptable_format = {7,16, 0xffff,32,16, 0xff,56,8,
 				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
 				  -1,FORMAT_FLAG_NONE, -1};
 
@@ -2354,7 +2351,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 
     format->dtm_offset = -1;
     format->movecnt_offset = -1;
-    format->in_check_flag_offset = -1;
     format->index_offset = -1;
     format->futurevector_offset = -1;
     format->flag_offset = -1;
@@ -2373,17 +2369,17 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		return 0;
 	    }
 	    if ((bits == 0)
-		&& (format_field != FORMAT_FIELD_IN_CHECK_FLAG) && (format_field != FORMAT_FIELD_FLAG) && (format_field != FORMAT_FIELD_PTM_WINS_FLAG)) {
+		&& (format_field != FORMAT_FIELD_FLAG) && (format_field != FORMAT_FIELD_PTM_WINS_FLAG)) {
 		fprintf(stderr, "Non-zero 'bits' value must be specified in format field '%s'\n",
 			(char *) child->name);
 		return 0;
 	    }
 	    if ((bitstr != NULL) && (bits != 1)
-		&& ((format_field == FORMAT_FIELD_IN_CHECK_FLAG) || (format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG))) {
-		fprintf(stderr, "Format fields 'flag' 'in-check-flag' and 'PTM-wins-flag' only accept bits=\"1\"\n");
+		&& ((format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG))) {
+		fprintf(stderr, "Format fields 'flag' and 'PTM-wins-flag' only accept bits=\"1\"\n");
 		return 0;
 	    }
-	    if ((format_field == FORMAT_FIELD_IN_CHECK_FLAG) || (format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG)) {
+	    if ((format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG)) {
 		bits = 1;
 	    }
 
@@ -2421,9 +2417,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		format->movecnt_bits = bits;
 		format->movecnt_offset = offset;
 		format->movecnt_mask = (1 << bits) - 1;
-		break;
-	    case FORMAT_FIELD_IN_CHECK_FLAG:
-		format->in_check_flag_offset = offset;
 		break;
 	    case FORMAT_FIELD_INDEX:
 		format->index_bits = bits;
@@ -3135,7 +3128,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.284 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.285 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4289,21 +4282,6 @@ inline void set_entry_movecnt(tablebase_t *tb, index_t index, int movecnt)
 		       movecnt);
 }
 
-inline int get_entry_in_check_flag(tablebase_t *tb, index_t index)
-{
-    return get_unsigned_field(fetch_entry_pointer(tb, index),
-			      1,
-			      entries_format.in_check_flag_offset + ((index << entries_format.bits) % 8));
-}
-
-inline void set_entry_in_check_flag(tablebase_t *tb, index_t index, int in_check_flag)
-{
-    set_unsigned_field(fetch_entry_pointer(tb, index),
-		       1,
-		       entries_format.in_check_flag_offset + ((index << entries_format.bits) % 8),
-		       in_check_flag);
-}
-
 inline int get_flag(tablebase_t *tb, index_t index)
 {
     return get_unsigned_field(fetch_entry_pointer(tb, index),
@@ -4360,18 +4338,17 @@ inline boolean is_position_valid(tablebase_t *tb, index_t index)
  *  - any other position, with 'movecnt' possible moves out the position
  */
 
-void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm, int in_check_flag)
+void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE) {
-	fprintf(stderr, "initialize index %d %s movecnt %d; dtm %d; in-check %d\n",
-		index, index_to_FEN(tb, index), movecnt, dtm, in_check_flag);
+	fprintf(stderr, "initialize index %d %s movecnt %d; dtm %d\n",
+		index, index_to_FEN(tb, index), movecnt, dtm);
     }
 #endif
 
     set_entry_movecnt(tb, index, movecnt);
     if (entries_format.dtm_bits > 0) set_entry_raw_DTM(tb, index, dtm);
-    set_entry_in_check_flag(tb, index, in_check_flag);
 }
 
 void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
@@ -4385,7 +4362,7 @@ void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
      * a back prop pass - i.e, no attempt will ever be made to finalize it.
      */
 
-    initialize_entry(tb, index, 0, 0, 0);
+    initialize_entry(tb, index, 0, 0);
 }
 
 void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
@@ -4395,7 +4372,7 @@ void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
      * add_one_to_PNTM_wins().  DTM is -1 here - PNTM wins.
      */
 
-    initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, -1, 0);
+    initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, -1);
     total_legal_positions ++;
 }
 
@@ -4407,7 +4384,7 @@ void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
      * avoid this kind of illegal position.  DTM is one here - PTM wins.
      */
 
-    initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, 1, 0);
+    initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, 1);
     total_PNTM_mated_positions ++;
 }
 
@@ -4430,19 +4407,19 @@ void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
 	initialize_entry_with_PTM_mated(tb,index);
     }
 #else
-    initialize_entry(tb, index, MOVECNT_STALEMATE, 0, 0);
+    initialize_entry(tb, index, MOVECNT_STALEMATE, 0);
     total_legal_positions ++;
     total_stalemate_positions ++;
 #endif
 }
 
-void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt, int in_check)
+void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt)
 {
     if (movecnt > MOVECNT_MAX) {
 	fprintf(stderr, "Attempting to initialize position with a movecnt that won't fit in field!\n");
     }
 
-    initialize_entry(tb, index, movecnt, 0, in_check);
+    initialize_entry(tb, index, movecnt, 0);
     total_legal_positions ++;
 }
 
@@ -9294,7 +9271,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	    movecnt *= position.multiplicity;
 
-	    initialize_entry_with_movecnt(tb, index, movecnt, PTM_in_check(tb, &position));
+	    initialize_entry_with_movecnt(tb, index, movecnt);
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE) {
