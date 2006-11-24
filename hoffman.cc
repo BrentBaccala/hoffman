@@ -872,41 +872,28 @@ boolean check_king_legality(int kingA, int kingB) {
  * that do that.
  *
  * Originally, I used the HalfExtendedEuclidian algorithm from Manuel Bronstein's book "Symbolic
- * Integration I":
+ * Integration I".  In the hopes a speed improvement, I switched to using a binary extended GCD
+ * algorithm on the advice of Prof. Christof Paar.  The speed improvement wasn't there, but I've
+ * stuck with the newer algorithm because it avoids multiplications and divisions, using only right
+ * shifts and subtractions, and should therefore be easier to implement for 64-bit indices on a
+ * 32-bit architecture.  Also, I've since realized that because we only use this algorithm when the
+ * program becomes disk-bound, the speed issue is (mostly) negligible.
  *
- * Given a Euclidean domain D and a,b in D, return s,g in D such that g = gcd(a,b) and sa=g (mod b)
- *
- * But I had so much trouble implementing it that I wrote out the following explanation and then
- * coded it myself.
+ * The binary extended GCD algorithm is based on computing a GCD by repeatedly subtracting the
+ * smaller number from the larger one.  A consideration of the equation c = a - b shows that a
+ * common multiple of any two of the numbers must be a common multiple of the third (unless it is
+ * zero).  Therefore, subtracting preserves common multiples in the result and does not introduce
+ * any new common multiples.  Because we are working with a binary architecture, detecting multiples
+ * of two is easy, and we can eliminate them by right shifting.  Since subtracting two odd numbers
+ * gives an even number, we can right shift by at least one bit per iteration.  Combining the two
+ * operations of subtraction and right shifting, we get a GCD algorithm (14.61 in Menezes' Handbook
+ * of Applied Cryptography) that requires more iterations than the extended Euclidian algorithm, but
+ * still completes in a reasonable time and avoids both multiplication and division.
  *
  * Consider an array of number x[n].  To compute gcd(a,b), we set up x[0]=a and x[1]=b, then
- * repeatedly compute x[n+1] = x[n-1] % x[n].  So
- *
- *      x[n-1] = q[n] * x[n] + x[n+1],
- *
- * because x[n+1] is the remainder, and q[n] is the quotient of the n'th division.
- *
- *      x[n+1] = x[n-1] - q[n] * x[n],
- *
- * so all common factors of x[n] and x[n-1] are preserved in x[n+1] (if it is non-zero).
- * Eventually, x[n+1] will be zero, and x[n] will then be gcd(a,b).
- *
- * Now, each x[n] can be written in terms of a and b: x[n] = a[n] * a + b[n] * b.  Since
- *
- *      x[n+1]                  = x[n-1]                    - q[n] * x[n]
- *
- *      a[n+1] * a + b[n+1] * b = (a[n-1] * a + b[n-1] * b) - q[n] * (a[n] * a + b[n] * b)
- *
- *                              = (a[n-1] * a + b[n-1] * b) - q[n] * a[n] * a - q[n] * b[n] * b
- *
- *                              = (a[n-1] - q[n] * a[n]) * a + (b[n-1] - q[n] * b[n]) * b
- *
- *      a[n+1] = a[n-1] - q[n] * a[n]      and      b[n+1] = b[n-1] - q[n] * b[n]
- *
- * We started with x[0]=a and x[1]=b, so a[0]=1, b[0]=0, a[1]=0, and b[1]=1
- *
- * When we finally compute x[n] = gcd(a,b), we can decompose this into a[n] * a + b[n] * b,
- * and if a was the prime modulus of our finite field, then x[n] = gcd(a,b) = 1, so:
+ * repeatedly apply the algorithm below, which preserves the gcd at each step, i.e, each x[n] is a
+ * multiple of gcd(a,b).  Each x[n] can be written in terms of a and b: x[n] = a[n] * a + b[n] * b.
+ * If a was the prime modulus of our finite field, then finally x[n] = gcd(a,b) = 1, so:
  *
  *        1 = a[n] * a + b[n] * b
  *
@@ -914,19 +901,8 @@ boolean check_king_legality(int kingA, int kingB) {
  *
  * i.e, b[n] is the multiplicative inverse of b (mod a).
  *
- * Even a hand-coded assembly version of this algorithm was too slow, so on the advice of
- * Prof. Christof Paar I switched to using a binary extended GCD algorithm.  This is based on
- * computing a GCD by repeatedly subtracting the smaller number from the larger one.  A
- * consideration of the equation c = a - b shows that a common multiple of any two of the numbers
- * must be a common multiple of the third.  Therefore, subtracting preserves common multiples in the
- * result and does not introduce any new common multiples.  Because we are working with a binary
- * architecture, detecting multiples of two is easy, so we can eliminate them by right shifting.
- * Since subtracting two odd numbers gives an even number, we can right shift by at least one bit
- * per iteration.  Combining the two operations of subtraction and right shifting, we get a GCD
- * algorithm (14.61 in Menezes' Handbook of Applied Cryptography) that requires more iterations, but
- * still completes in a reasonable time and avoids the expensive multiplications and divisions.
+ * So we need to track the b[n] part of x[n] = a[n] * a + b[n] * b until we reach the GCD of 1.
  *
- * As above, we need to track the b[n] part of x[n] = a[n] * a + b[n] * b until we reach a GCD of 1.
  * Subtracting (x[n+1] = x[n] - x[n-1]) is easy:
  *
  *                a[n+1] = a[n] - a[n-1]    and    b[n+1] = b[n] - b[n-1]
@@ -945,9 +921,9 @@ boolean check_king_legality(int kingA, int kingB) {
  *
  * So our operations are:
  *
- *    subtract (x > y)    x = x - y             b[x] = (b[x] - b[y]) mod m
+ *    subtract (x > y)    x = x - y                            b[x] = (b[x] - b[y]) mod m
  *
- *    subtract (y > x)    y = y - x             b[y] = (b[y] - b[x]) mod m
+ *    subtract (y > x)    y = y - x                            b[y] = (b[y] - b[x]) mod m
  *
  *    right shift x (b[x] even)     x = x / 2                  b[x] = b[x] / 2
  *
@@ -1122,65 +1098,6 @@ uint32 invert_in_finite_field(uint32 b, uint32 m)
     return b;
 #endif
 }
-
-#if 0
-int invert_in_finite_field(int b, int modulus)
-{
-#if 1
-    /* We start with n=1 */
-
-    int xn_1 = modulus;  /* x_n-1 = x[0] = a */
-    int xn = b;          /* x_n = x[1] = b */
-    int bn_1 = 0;        /* b_n-1 = b[0] = 0 */
-    int bn = 1;          /* b_n = b[1] = 1 */
-    int bnn;
-
-#if 0
-    int test = b;
-    ASM_invert_in_finite_field(test, modulus);
-#else
-    int test = invert_in_finite_field_v2(b, modulus);
-#endif
-
-    while (xn != 0) {
-
-	int q = xn_1/xn;
-	int r = xn_1%xn;
-
-	bnn=bn_1-q*bn;   /* b[n+1] = b[n-1] - q_n * b[n] */
-
-	bn_1=bn;         /* b[n-1] = b[n] */
-	bn=bnn;          /* b[n] = b[n+1] */
-
-	xn_1=xn;         /* x[n-1] = x[n] */
-	xn=r;            /* x[n] = x[n+1] */
-    }
-
-    /* Since xn = x[n] is zero, that means x[n-1] is the gcd (1), and b[n-1] is our inverse.
-     *
-     * We may, however, have to adjust it to be within the range of our modulo field
-     */
-
-    bn_1 = bn_1 % modulus;
-    if (bn_1 < 0) bn_1 += modulus;
-
-    if (bn_1 != test) {
-	fprintf(stderr, "%d: assembly inversion (%d) didn't match C code (%d)\n", b, test, bn_1);
-    }
-
-    if (xn_1 != 1) {
-	fprintf(stderr, "GCD not 1 in invert_in_finite_field; was modulus prime?!\n");
-    }
-    if (bn_1 == 0) {
-	fprintf(stderr, "inverse 0 in invert_in_finite_field; was modulus prime?!\n");
-    }
-    return bn_1;
-#else
-    ASM_invert_in_finite_field(b, modulus);
-    return b;
-#endif
-}
-#endif
 
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and
  * multiplies them together for the various pieces.  Simple and fast.
@@ -3218,7 +3135,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.283 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.284 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
