@@ -2415,17 +2415,17 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 
 	    for (bitnum = offset; bitnum < offset + bits; bitnum ++) {
 		if (bitnum < 64) {
-		    if (bitmask1 & (1 << bitnum)) {
-			fprintf(stderr, "Overlapping format fields\n");
+		    if (bitmask1 & (1LL << bitnum)) {
+			fprintf(stderr, "Overlapping format fields (%s)\n", (char *) child->name);
 			return 0;
 		    }
-		    bitmask1 |= (1 << bitnum);
+		    bitmask1 |= (1LL << bitnum);
 		} else {
-		    if (bitmask2 & (1 << (bitnum - 64))) {
-			fprintf(stderr, "Overlapping format fields\n");
+		    if (bitmask2 & (1LL << (bitnum - 64))) {
+			fprintf(stderr, "Overlapping format fields (%s)\n", (char *) child->name);
 			return 0;
 		    }
-		    bitmask2 |= (1 << (bitnum - 64));
+		    bitmask2 |= (1LL << (bitnum - 64));
 		}
 	    }
 
@@ -3152,7 +3152,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.287 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.288 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
