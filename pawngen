@@ -1,0 +1,211 @@
+#! /usr/bin/perl
+#
+# PAWNGEN - generates a directory full of Hoffman XML control files to
+# analyze a particular pawn configuration
+#
+
+@white_pawns = ('a5', 'b2', 'd4', 'g2', 'h3');
+@black_pawns = ('a6', 'd5', 'd6', 'g6', 'h7');
+
+sub forward_move {
+    my ($color, $pawn) = @_;
+
+    if ($color eq "white") {
+	return "" if ($pawn !~ /[1-7]/);
+	$pawn =~ tr/[1-7]/[2-8]/;
+    } else {
+	return "" if ($pawn !~ /[2-8]/);
+	$pawn =~ tr/[2-8]/[1-7]/;
+    }
+
+    return $pawn;
+}
+
+sub forward_left_move {
+    my ($color, $pawn) = @_;
+
+    return "" if ($pawn !~ /^[b-h]/);
+
+    $pawn =~ tr/[b-h]/[a-g]/;
+
+    if ($color eq "white") {
+	return "" if ($pawn !~ /[1-7]/);
+	$pawn =~ tr/[1-7]/[2-8]/;
+    } else {
+	return "" if ($pawn !~ /[2-8]/);
+	$pawn =~ tr/[2-8]/[1-7]/;
+    }
+
+    return $pawn;
+}
+
+sub forward_right_move {
+    my ($color, $pawn) = @_;
+
+    return "" if ($pawn !~ /^[a-g]/);
+
+    $pawn =~ tr/[a-g]/[b-h]/;
+
+    if ($color eq "white") {
+	return "" if ($pawn !~ /[1-7]/);
+	$pawn =~ tr/[1-7]/[2-8]/;
+    } else {
+	return "" if ($pawn !~ /[2-8]/);
+	$pawn =~ tr/[2-8]/[1-7]/;
+    }
+
+    return $pawn;
+}
+
+sub lower_left_move {
+    my ($color, $pawn) = @_;
+
+    return "" if ($pawn !~ /^[b-h]/);
+
+    $pawn =~ tr/[b-h]/[a-g]/;
+
+    if ($color eq "white") {
+	$pawn =~ tr/[2-8]/[1-7]/;
+    } else {
+	$pawn =~ tr/[1-7]/[2-8]/;
+    }
+
+    return $pawn;
+}
+
+sub lower_right_move {
+    my ($color, $pawn) = @_;
+
+    return "" if ($pawn !~ /^[a-g]/);
+
+    $pawn =~ tr/[a-g]/[b-h]/;
+
+    if ($color eq "white") {
+	$pawn =~ tr/[2-8]/[1-7]/;
+    } else {
+	$pawn =~ tr/[1-7]/[2-8]/;
+    }
+
+    return $pawn;
+}
+
+sub consider_capture_by_enemy_king {
+    my ($pawn, $white_pawns, $black_pawns) = @_;
+    my $pawn_color = grep(/$pawn/, @$white_pawns) ? "white" : "black";
+    my $friendly_pawns = grep(/$pawn/, @$white_pawns) ? $white_pawns : $black_pawns;
+    my $enemy_pawns = grep(/$pawn/, @$white_pawns) ? $black_pawns : $white_pawns;
+    my $ll_move = &lower_left_move($pawn_color, $pawn);
+    my $lr_move = &lower_right_move($pawn_color, $pawn);
+
+    if (not grep(/$ll_move/, @$friendly_pawns) and not grep(/$lr_move/, @$friendly_pawns)) {
+	my @white_pawns = sort grep(!/$pawn/, @$white_pawns);
+	my @black_pawns = sort grep(!/$pawn/, @$black_pawns);
+	&consider_position(\@white_pawns, \@black_pawns);
+    }
+}
+
+sub consider_forward_move {
+    my ($pawn, $white_pawns, $black_pawns) = @_;
+    my $pawn_color = grep(/$pawn/, @$white_pawns) ? "white" : "black";
+    my $friendly_pawns = grep(/$pawn/, @$white_pawns) ? $white_pawns : $black_pawns;
+    my $enemy_pawns = grep(/$pawn/, @$white_pawns) ? $black_pawns : $white_pawns;
+    my $fwd_move = &forward_move($pawn_color, $pawn);
+
+    if (not grep(/$fwd_move/, @$friendly_pawns) and not grep(/$fwd_move/, @$enemy_pawns)) {
+	my @white_pawns = grep(!/$pawn/, @$white_pawns);
+	my @black_pawns = grep(!/$pawn/, @$black_pawns);
+
+	if ($pawn_color eq "white") {
+	    push @white_pawns, $fwd_move;
+	} else {
+	    push @black_pawns, $fwd_move;
+	}
+	@white_pawns = sort @white_pawns;
+	@black_pawns = sort @black_pawns;
+	&consider_position(\@white_pawns, \@black_pawns);
+    }
+}
+
+sub consider_capture_of_enemy_pawn_left {
+    my ($pawn, $white_pawns, $black_pawns) = @_;
+    my $pawn_color = grep(/$pawn/, @$white_pawns) ? "white" : "black";
+    my $friendly_pawns = grep(/$pawn/, @$white_pawns) ? $white_pawns : $black_pawns;
+    my $enemy_pawns = grep(/$pawn/, @$white_pawns) ? $black_pawns : $white_pawns;
+    my $capture_move = &forward_left_move($pawn_color, $pawn);
+
+    if (grep(/$capture_move/, @$enemy_pawns)) {
+	my @white_pawns = grep(!/$pawn/, @$white_pawns);
+	my @black_pawns = grep(!/$pawn/, @$black_pawns);
+	if ($pawn_color eq "white") {
+	    @black_pawns = grep(!/$capture_move/, @black_pawns);
+	    push @white_pawns, $capture_move;
+	} else {
+	    @white_pawns = grep(!/$capture_move/, @white_pawns);
+	    push @black_pawns, $capture_move;
+	}
+	@white_pawns = sort @white_pawns;
+	@black_pawns = sort @black_pawns;
+	&consider_position(\@white_pawns, \@black_pawns);
+    }
+}
+
+sub consider_capture_of_enemy_pawn_right {
+    my ($pawn, $white_pawns, $black_pawns) = @_;
+    my $pawn_color = grep(/$pawn/, @$white_pawns) ? "white" : "black";
+    my $friendly_pawns = grep(/$pawn/, @$white_pawns) ? $white_pawns : $black_pawns;
+    my $enemy_pawns = grep(/$pawn/, @$white_pawns) ? $black_pawns : $white_pawns;
+    my $capture_move = &forward_right_move($pawn_color, $pawn);
+
+    if (grep(/$capture_move/, @$enemy_pawns)) {
+	my @white_pawns = grep(!/$pawn/, @$white_pawns);
+	my @black_pawns = grep(!/$pawn/, @$black_pawns);
+	if ($pawn_color eq "white") {
+	    @black_pawns = grep(!/$capture_move/, @black_pawns);
+	    push @white_pawns, $capture_move;
+	} else {
+	    @white_pawns = grep(!/$capture_move/, @white_pawns);
+	    push @black_pawns, $capture_move;
+	}
+	@white_pawns = sort @white_pawns;
+	@black_pawns = sort @black_pawns;
+	&consider_position(\@white_pawns, \@black_pawns);
+    }
+}
+
+my %positions_considered;
+
+sub consider_position {
+    my ($white_pawns, $black_pawns) = @_;
+
+    my $filename = "K" . join('', @$white_pawns) . "K" . join('', @$black_pawns);
+
+    return if exists $positions_considered{$filename};
+
+    $positions_considered{$filename} = $filename;
+
+    print "$filename\n";
+
+    foreach my $pawn (@$white_pawns) {
+	if (grep(/$pawn/, @$black_pawns)) {
+	    $DB::single = 1;
+	    die "duplicate pawns";
+	}
+    }
+
+    foreach my $pawn (@$black_pawns) {
+	if (grep(/$pawn/, @$white_pawns)) {
+	    $DB::single = 1;
+	    die "duplicate pawns";
+	}
+    }
+
+    foreach my $pawn (@$white_pawns, @$black_pawns) {
+	&consider_capture_by_enemy_king($pawn, $white_pawns, $black_pawns);
+	&consider_forward_move($pawn, $white_pawns, $black_pawns);
+#	&consider_double_forward_move($pawn, $white_pawns, $black_pawns);
+	&consider_capture_of_enemy_pawn_left($pawn, $white_pawns, $black_pawns);
+	&consider_capture_of_enemy_pawn_right($pawn, $white_pawns, $black_pawns);
+    }
+}
+
+&consider_position(\@white_pawns, \@black_pawns);
