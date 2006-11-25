@@ -3100,42 +3100,50 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(strbuf, "%d", tb->max_index + 1);
     xmlNewChild(node, NULL, BAD_CAST "indices", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", total_legal_positions);
-    xmlNewChild(node, NULL, BAD_CAST "legal-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_PNTM_mated_positions);
     xmlNewChild(node, NULL, BAD_CAST "PNTM-mated-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
+    sprintf(strbuf, "%lld", total_legal_positions);
+    xmlNewChild(node, NULL, BAD_CAST "legal-positions", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_stalemate_positions);
     xmlNewChild(node, NULL, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", player_wins[0]);
-    xmlNewChild(node, NULL, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", player_wins[1]);
-    xmlNewChild(node, NULL, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
+
+    /* If we generating a full tablebase, report both white-wins-positions and black-wins-positions.
+     * If we generating a bitbase, report only one or the other of white-wins-positions or
+     * white-wins-or-draws-positions.
+     */
+
+    if ((tb->format.dtm_bits > 0) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	sprintf(strbuf, "%lld", player_wins[0]);
+	xmlNewChild(node, NULL, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
+    }
+    if (tb->format.dtm_bits > 0) {
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	sprintf(strbuf, "%lld", player_wins[1]);
+	xmlNewChild(node, NULL, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
+    }
+    if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	sprintf(strbuf, "%lld", total_legal_positions - player_wins[1]);
+	xmlNewChild(node, NULL, BAD_CAST "white-wins-or-draws-positions", BAD_CAST strbuf);
+    }
+
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_moves);
     xmlNewChild(node, NULL, BAD_CAST "forward-moves", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     sprintf(strbuf, "%lld", total_futuremoves);
     xmlNewChild(node, NULL, BAD_CAST "futuremoves", BAD_CAST strbuf);
-#if 0
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", total_backproped_moves);
-    xmlNewChild(node, NULL, BAD_CAST "backproped-moves", BAD_CAST strbuf);
-#endif
-#if 0
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", total_passes);
-    xmlNewChild(node, NULL, BAD_CAST "passes", BAD_CAST strbuf);
-#endif
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%d", max_dtm);
-    xmlNewChild(node, NULL, BAD_CAST "max-dtm", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%d", min_dtm);
-    xmlNewChild(node, NULL, BAD_CAST "min-dtm", BAD_CAST strbuf);
+    if (tb->format.dtm_bits > 0) {
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	sprintf(strbuf, "%d", max_dtm);
+	xmlNewChild(node, NULL, BAD_CAST "max-dtm", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	sprintf(strbuf, "%d", min_dtm);
+	xmlNewChild(node, NULL, BAD_CAST "min-dtm", BAD_CAST strbuf);
+    }
     xmlNodeAddContent(node, BAD_CAST "\n   ");
 
     xmlNodeAddContent(tablebase, BAD_CAST "\n   ");
@@ -3152,7 +3160,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.289 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.290 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -3222,8 +3230,10 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 	xmlNewProp(passNode, BAD_CAST "real-time", BAD_CAST strbuf);
 
 	if (! strcmp(pass_type[passnum], "intratable")) {
-	    sprintf(strbuf, "%d", pass_target_dtms[passnum]);
-	    xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
+	    if (entries_format.dtm_bits > 0) {
+		sprintf(strbuf, "%d", pass_target_dtms[passnum]);
+		xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
+	    }
 	    sprintf(strbuf, "%d", positions_finalized[passnum]);
 	    xmlNewProp(passNode, BAD_CAST "positions-finalized", BAD_CAST strbuf);
 	    sprintf(strbuf, "%lld", backproped_moves[passnum]);
