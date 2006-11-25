@@ -3152,7 +3152,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.288 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.289 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7619,7 +7619,9 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 		propagate_moves_from_promotion_futurebase(tb, futurebase, futurebase->invert_colors,
 							  futurebase->missing_pawn);
 
-	    } else if ((type != NULL) && !strcasecmp((char *) type, "promotion-capture")) {
+	    } else if ((type != NULL)
+		       && (!strcasecmp((char *) type, "promotion-capture") ||
+			   !strcasecmp((char *) type, "capture-promotion"))) {
 
 		/* It's a promotion capture futurebase.  Futurebase should have exactly one less
 		 * piece than the current tablebase, and one of our pawns should have promoted into
