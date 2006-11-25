@@ -79,7 +79,7 @@
 	location CDATA		#IMPLIED>
 <!ATTLIST futurebase
 	filename CDATA		#REQUIRED
-	type	(normal|capture|promotion|promotion-capture)	#REQUIRED
+	type	(normal|capture|promotion|promotion-capture|capture-promotion)	#REQUIRED
 	colors	(invert)	#IMPLIED>
 <!ATTLIST prune
 	color	(white|black)	#REQUIRED
