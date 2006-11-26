@@ -480,8 +480,8 @@ typedef struct tablebase {
     int total_legal_piece_positions[MAX_PIECES];
     int simple_piece_positions[MAX_PIECES][64];
     int simple_piece_indices[MAX_PIECES][64];
-    int last_identical_piece[MAX_PIECES];
-    int next_identical_piece[MAX_PIECES];
+    int last_paired_piece[MAX_PIECES];
+    int next_paired_piece[MAX_PIECES];
 
     uint8 compact_white_king_positions[64*64];
     uint8 compact_black_king_positions[64*64];
@@ -525,6 +525,8 @@ typedef struct tablebase {
     uint64 frozen_pieces_vector;
     uint64 illegal_black_king_squares;
     uint64 illegal_white_king_squares;
+    int last_identical_piece[MAX_PIECES];
+    int next_identical_piece[MAX_PIECES];
 
     int entries_fd;
     entry_t *entries;
@@ -1887,17 +1889,17 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (tb->next_identical_piece[piece] != -1) {
+	if (tb->next_paired_piece[piece] != -1) {
 
-	    if (((vals[piece] < vals[tb->next_identical_piece[piece]])
-		 && (vals[piece] + 32 < vals[tb->next_identical_piece[piece]]))
-		|| ((vals[tb->next_identical_piece[piece]] < vals[piece])
-		    && (vals[tb->next_identical_piece[piece]] + 32 >= vals[piece]))) {
+	    if (((vals[piece] < vals[tb->next_paired_piece[piece]])
+		 && (vals[piece] + 32 < vals[tb->next_paired_piece[piece]]))
+		|| ((vals[tb->next_paired_piece[piece]] < vals[piece])
+		    && (vals[tb->next_paired_piece[piece]] + 32 >= vals[piece]))) {
 
 		unsigned char val;
 		val = vals[piece];
-		vals[piece] = vals[tb->next_identical_piece[piece]];
-		vals[tb->next_identical_piece[piece]] = val;
+		vals[piece] = vals[tb->next_paired_piece[piece]];
+		vals[tb->next_paired_piece[piece]] = val;
 	    }
 	}
 
@@ -1913,14 +1915,14 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 	    shift_count += 2;
 	    index |= COL(vals[piece]) << shift_count;
 	    shift_count += 2;
-	} else if (tb->last_identical_piece[piece] == -1) {
+	} else if (tb->last_paired_piece[piece] == -1) {
 	    index |= vals[piece] << shift_count;
 	    shift_count += 6;  /* because 2^6=64 */
 	} else {
-	    if (vals[piece] > vals[tb->last_identical_piece[piece]]) {
-		index |= (vals[piece] - vals[tb->last_identical_piece[piece]] - 1) << shift_count;
+	    if (vals[piece] > vals[tb->last_paired_piece[piece]]) {
+		index |= (vals[piece] - vals[tb->last_paired_piece[piece]] - 1) << shift_count;
 	    } else {
-		index |= (64 + vals[piece] - vals[tb->last_identical_piece[piece]] - 1) << shift_count;
+		index |= (64 + vals[piece] - vals[tb->last_paired_piece[piece]] - 1) << shift_count;
 	    }
 	    shift_count += 5; /* the whole point of "naive2" */
 	}
@@ -1948,29 +1950,29 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 	} else if ((tb->symmetry == 4) && (piece == WHITE_KING)) {
 	    vals[piece] = rowcol2square(index & 3, (index >> 2) & 3);
 	    index >>= 4;
-	} else if (tb->last_identical_piece[piece] == -1) {
+	} else if (tb->last_paired_piece[piece] == -1) {
 	    vals[piece] = index & 63;
 	    index >>= 6;
 	} else {
-	    vals[piece] = (vals[tb->last_identical_piece[piece]] + (index & 31) + 1) % 64;
+	    vals[piece] = (vals[tb->last_paired_piece[piece]] + (index & 31) + 1) % 64;
 	    index >>= 5;
 
-	    if (vals[piece] < vals[tb->last_identical_piece[piece]]) {
+	    if (vals[piece] < vals[tb->last_paired_piece[piece]]) {
 		unsigned char val;
 
 		/* One of the important tasks of any index_to_local_position() function is to return
 		 * false on all but one of the indices that correspond to identical positions.
-		 * Here, that can only happen when the two identical pieces are exactly 32 squares
-		 * apart, which can be encoded using either piece first.  In this case, we toss out
-		 * the index with the larger of the two squares encoded as the base value, and make
-		 * sure that the "<" and the ">=" match up just right in the previous function.
+		 * Here, that can only happen when two paired pieces are exactly 32 squares apart,
+		 * which can be encoded using either piece first.  In this case, we toss out the
+		 * index with the larger of the two squares encoded as the base value, and make sure
+		 * that the "<" and the ">=" match up just right in the previous function.
 		 */
 
-		if (vals[tb->last_identical_piece[piece]] - vals[piece] == 32) return 0;
+		if (vals[tb->last_paired_piece[piece]] - vals[piece] == 32) return 0;
 
 		val = vals[piece];
-		vals[piece] = vals[tb->last_identical_piece[piece]];
-		vals[tb->last_identical_piece[piece]] = val;
+		vals[piece] = vals[tb->last_paired_piece[piece]];
+		vals[tb->last_paired_piece[piece]] = val;
 	    }
 	}
 
@@ -2202,32 +2204,32 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 
     for (piece = 2; piece < tb->num_pieces; piece ++) {
 
-	if (tb->next_identical_piece[piece] != -1) {
+	if (tb->next_paired_piece[piece] != -1) {
 
-	    if (((vals[piece] < vals[tb->next_identical_piece[piece]])
+	    if (((vals[piece] < vals[tb->next_paired_piece[piece]])
 		 && (vals[piece] + tb->total_legal_piece_positions[piece]/2
-		     < vals[tb->next_identical_piece[piece]]))
-		|| ((vals[tb->next_identical_piece[piece]] < vals[piece])
-		    && (vals[tb->next_identical_piece[piece]] + tb->total_legal_piece_positions[piece]/2
+		     < vals[tb->next_paired_piece[piece]]))
+		|| ((vals[tb->next_paired_piece[piece]] < vals[piece])
+		    && (vals[tb->next_paired_piece[piece]] + tb->total_legal_piece_positions[piece]/2
 			>= vals[piece]))) {
 
 		unsigned char val;
 		val = vals[piece];
-		vals[piece] = vals[tb->next_identical_piece[piece]];
-		vals[tb->next_identical_piece[piece]] = val;
+		vals[piece] = vals[tb->next_paired_piece[piece]];
+		vals[tb->next_paired_piece[piece]] = val;
 	    }
 	}
 
-	if (tb->last_identical_piece[piece] == -1) {
+	if (tb->last_paired_piece[piece] == -1) {
 	    index *= tb->total_legal_piece_positions[piece];
 	    index += vals[piece];
 	} else {
 	    index *= tb->total_legal_piece_positions[piece] / 2;
 
-	    if (vals[piece] > vals[tb->last_identical_piece[piece]]) {
-		index += (vals[piece] - vals[tb->last_identical_piece[piece]] - 1);
+	    if (vals[piece] > vals[tb->last_paired_piece[piece]]) {
+		index += (vals[piece] - vals[tb->last_paired_piece[piece]] - 1);
 	    } else {
-		index += (tb->total_legal_piece_positions[piece] + vals[piece] - vals[tb->last_identical_piece[piece]] - 1);
+		index += (tb->total_legal_piece_positions[piece] + vals[piece] - vals[tb->last_paired_piece[piece]] - 1);
 	    }
 	}
     }
@@ -2256,7 +2258,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
     for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
 
-	if (tb->last_identical_piece[piece] == -1) {
+	if (tb->last_paired_piece[piece] == -1) {
 	    vals[piece] = index % tb->total_legal_piece_positions[piece];
 	    index /= tb->total_legal_piece_positions[piece];
 	} else {
@@ -2269,27 +2271,27 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
 	int square;
 
-	if (tb->last_identical_piece[piece] != -1) {
+	if (tb->last_paired_piece[piece] != -1) {
 
-	    vals[piece] += vals[tb->last_identical_piece[piece]] + 1;
+	    vals[piece] += vals[tb->last_paired_piece[piece]] + 1;
 	    vals[piece] %= tb->total_legal_piece_positions[piece];
 
 	    /* One of the important tasks of any index_to_local_position() function is to return
 	     * false on all but one of the indices that correspond to identical positions.  Here,
-	     * that can only happen when the two identical pieces are exactly half their total legal
-	     * piece positions squares apart, which can be encoded using either piece first.  In
-	     * this case, we toss out the index with the larger of the two squares encoded as the
-	     * base value, and make sure that the "<" and the ">=" match up just right in the
-	     * previous function.
+	     * that can only happen when two paired pieces are exactly half their total legal piece
+	     * positions squares apart, which can be encoded using either piece first.  In this
+	     * case, we toss out the index with the larger of the two squares encoded as the base
+	     * value, and make sure that the "<" and the ">=" match up just right in the previous
+	     * function.
 	     */
 
-	    if (vals[tb->last_identical_piece[piece]] - vals[piece]
+	    if (vals[tb->last_paired_piece[piece]] - vals[piece]
 		== tb->total_legal_piece_positions[piece]/2) return 0;
 
-	    if (vals[piece] < vals[tb->last_identical_piece[piece]]) {
+	    if (vals[piece] < vals[tb->last_paired_piece[piece]]) {
 		uint8 val = vals[piece];
-		vals[piece] = vals[tb->last_identical_piece[piece]];
-		vals[tb->last_identical_piece[piece]] = val;
+		vals[piece] = vals[tb->last_paired_piece[piece]];
+		vals[tb->last_paired_piece[piece]] = val;
 	    }
 	}
 
@@ -3132,7 +3134,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 	    /* Now we need to figure out if there are any other pieces identical to this one,
 	     * because if so, exchanging the two pieces would not change the position, and that has
-	     * to be taken into account in the index code.  Move restrictions on the pieces
+	     * to be taken into account in several places.  Move restrictions on the pieces
 	     * complicate this, unless they are either identical or completely non-overlapping.
 	     */
 
@@ -3171,8 +3173,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     /* Now, compute a bitvector for all the pieces that are frozen on single squares.
      *
      * We also use this opportunity to remove from the opposing king's legal squares list any
-     * squares that a frozen piece can always capture on.  Due to the possibility of the capture
-     * being blocked, this generally means only adjacent squares.
+     * squares that a frozen piece can always capture on.  Due to the possibility of interposition
+     * between the frozen piece and the king, this means only the first square in the movement.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -3349,15 +3351,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (((tb->piece_type[piece] != PAWN) && (tb->semilegal_squares[piece] != allones_bitvector))
 		|| ((tb->piece_type[piece] == PAWN) && (tb->semilegal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
-		fprintf(stderr, "Piece restrictions not allowed with symmetric indices\n");
+		fprintf(stderr, "Piece restrictions not allowed with symmetric indices (yet)\n");
 		return NULL;
 	    }
-#if 0
-	    if (tb->next_identical_piece[piece] != -1) {
-		fprintf(stderr, "Can't handle identical pieces with symmetric indices (yet)\n");
-		return NULL;
-	    }
-#endif
 	}
     }
 
@@ -3397,6 +3393,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    break;
 	}
 
+	tb->last_paired_piece[WHITE_KING] = -1;
+	tb->next_paired_piece[WHITE_KING] = -1;
+
 	/* now do everything else */
 	for (piece = 1; piece < tb->num_pieces; piece ++) {
 
@@ -3405,7 +3404,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		return NULL;
 	    }
 
-	    if (tb->last_identical_piece[piece] == -1) tb->max_index <<= 6;
+	    tb->last_paired_piece[piece] = tb->last_identical_piece[piece];
+	    tb->next_paired_piece[piece] = tb->next_identical_piece[piece];
+
+	    if (tb->last_paired_piece[piece] == -1) tb->max_index <<= 6;
 	    else tb->max_index <<=5;
 	}
 	tb->max_index --;
@@ -3467,12 +3469,20 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
 	tb->max_index *= tb->total_legal_compact_king_positions;
 
+	tb->last_paired_piece[WHITE_KING] = -1;
+	tb->next_paired_piece[WHITE_KING] = -1;
+	tb->last_paired_piece[BLACK_KING] = -1;
+	tb->next_paired_piece[BLACK_KING] = -1;
+
 	for (piece = 2; piece < tb->num_pieces; piece ++) {
 
 	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
 		fprintf(stderr, "Can't have more than two identical pieces with 'compact' index (yet)\n");
 		return NULL;
 	    }
+
+	    tb->last_paired_piece[piece] = tb->last_identical_piece[piece];
+	    tb->next_paired_piece[piece] = tb->next_identical_piece[piece];
 
 	    for (square = 0; square < 64; square ++) {
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
@@ -3726,7 +3736,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.294 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.295 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
