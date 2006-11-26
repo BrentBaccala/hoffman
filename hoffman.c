@@ -2312,7 +2312,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	/* This should never happen. */
 
 	if (!(tb->semilegal_squares[piece] & BITVECTOR(square))) {
-	    fprintf(stderr, "Illegal piece position in simple_index_to_local_position!\n");
+	    fprintf(stderr, "Illegal piece position in compact_index_to_local_position!\n");
 	    return 0;
 	}
 
@@ -2841,12 +2841,6 @@ void check_1000_indices(tablebase_t *tb)
 
 /***** XML TABLEBASE INTERACTION *****/
 
-/* Parses XML, creates a tablebase structure corresponding to it, and returns it.
- *
- * I use a DTD and validate the XML input, so there's very little error checking here.  The idea is
- * that the validation provides most of the error checks.
- */
-
 /* parse_format()
  *
  * Parse an XML format specification (for a dynamic structure) into a format structure.  A simple
@@ -3028,6 +3022,12 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 
     return 1;
 }
+
+/* Parses XML, creates a tablebase structure corresponding to it, and returns it.
+ *
+ * I use a DTD and validate the XML input, so there's very little error checking here.  The idea is
+ * that the validation provides most of the error checks.
+ */
 
 tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 {
@@ -3726,7 +3726,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.293 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.294 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
