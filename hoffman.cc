@@ -1096,8 +1096,9 @@ uint32 invert_in_finite_field(uint32 b, uint32 m)
 #endif
 }
 
-/* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and
- * multiplies them together for the various pieces.  Simple and fast.
+/* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and multiplies
+ * them together for the various pieces.  Simple and fast.  Actually is now a little more complex in
+ * its white king encoding, since it works with 2-way and 4-way symmetry.
  */
 
 index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
@@ -1106,18 +1107,7 @@ index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
     index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
     int piece;
 
-    pos->board_vector = 0;
-
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
-	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
-	    /* This can happen if we're probing a restricted tablebase */
-#if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
-#endif
-	    return -1;
-	}
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
@@ -1146,28 +1136,7 @@ index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 	    index |= pos->piece_position[piece] << shift_count;
 	    shift_count += 6;  /* because 2^6=64 */
 	}
-	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
-	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
-
     }
-
-    /* Check board_vector to make sure an en passant position is legal */
-
-    if (pos->en_passant_square != -1) {
-	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
-	if (pos->side_to_move == WHITE) {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
-	} else {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
-	}
-    }
-
-#if 0
-    /* Possibly a quicker check for position legality that all that en passant stuff */
-    /* The problem is that the entries array might not be valid */
-
-    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
-#endif
 
     return index;
 }
@@ -1212,7 +1181,7 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 	}
 
 	/* The first place we handle restricted pieces, and one of most important, too, because this
-	 * function is used during initialization to decide which positions are legal and which are
+	 * function is used during initialization to decide which indices are legal and which are
 	 * not.
 	 */
 
@@ -1268,18 +1237,7 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
     int piece;
     uint8 vals[MAX_PIECES];
 
-    pos->board_vector = 0;
-
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
-	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
-	    /* This can happen if we're probing a restricted tablebase */
-#if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
-#endif
-	    return -1;
-	}
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
@@ -1294,8 +1252,6 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 	} else {
 	    vals[piece] = pos->piece_position[piece];
 	}
-	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
-	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
     }
 
     /* What's all this?
@@ -1349,17 +1305,6 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 		index |= (64 + vals[piece] - vals[tb->last_identical_piece[piece]] - 1) << shift_count;
 	    }
 	    shift_count += 5; /* the whole point of "naive2" */
-	}
-    }
-
-    /* Check board_vector to make sure an en passant position is legal */
-
-    if (pos->en_passant_square != -1) {
-	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
-	if (pos->side_to_move == WHITE) {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
-	} else {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
 	}
     }
 
@@ -1432,7 +1377,7 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 	}
 
 	/* The first place we handle restricted pieces, and one of most important, too, because this
-	 * function is used during initialization to decide which positions are legal and which are
+	 * function is used during initialization to decide which indices are legal and which are
 	 * not.
 	 */
 
@@ -1486,20 +1431,10 @@ index_t local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
     int piece;
 
     index = 0;
-    pos->board_vector = 0;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	index *= tb->total_legal_piece_positions[piece];
-
-	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
-	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
-	    /* This can happen if we're probing a restricted tablebase */
-#if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
-#endif
-	    return -1;
-	}
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
@@ -1514,33 +1449,12 @@ index_t local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
 	} else {
 	    index += tb->simple_piece_indices[piece][pos->piece_position[piece]];
 	}
-
-	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
-	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
-    }
-
-    /* Check board_vector to make sure an en passant position is legal */
-
-    if (pos->en_passant_square != -1) {
-	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
-	if (pos->side_to_move == WHITE) {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
-	} else {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
-	}
     }
 
     /* We've still got code that assumes flipping the index's LSB flip side-to-move */
 
     index *= 2;
     index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-
-#if 0
-    /* Possibly a quicker check for position legality that all that en passant stuff */
-    /* The problem is that the entries array might not be valid */
-
-    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
-#endif
 
     return index;
 }
@@ -1634,18 +1548,8 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
     uint8 vals[MAX_PIECES];
 
     index = 0;
-    pos->board_vector = 0;
 
     for (piece = 2; piece < tb->num_pieces; piece ++) {
-
-	if ((pos->piece_position[piece] < 0) || (pos->piece_position[piece] > 63)
-	    || !(tb->semilegal_squares[piece] & BITVECTOR(pos->piece_position[piece]))) {
-	    /* This can happen if we're probing a restricted tablebase */
-#if 0
-	    fprintf(stderr, "Bad piece position in local_position_to_index()\n");
-#endif
-	    return -1;
-	}
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
@@ -1659,20 +1563,6 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 	    vals[piece] = tb->simple_piece_indices[piece][COL(pos->en_passant_square)];
 	} else {
 	    vals[piece] = tb->simple_piece_indices[piece][pos->piece_position[piece]];
-	}
-
-	if (pos->board_vector & BITVECTOR(pos->piece_position[piece])) return -1;
-	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
-    }
-
-    /* Check board_vector to make sure an en passant position is legal */
-
-    if (pos->en_passant_square != -1) {
-	if (pos->board_vector & BITVECTOR(pos->en_passant_square)) return -1;
-	if (pos->side_to_move == WHITE) {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square + 8)) return -1;
-	} else {
-	    if (pos->board_vector & BITVECTOR(pos->en_passant_square - 8)) return -1;
 	}
     }
 
@@ -1731,13 +1621,6 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 
     index *= 2;
     index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-
-#if 0
-    /* Possibly a quicker check for position legality that all that en passant stuff */
-    /* The problem is that the entries array might not be valid */
-
-    if (tb->entries[index].movecnt == ILLEGAL_POSITION) return -1;
-#endif
 
     return index;
 }
@@ -2038,11 +1921,39 @@ void denormalize_position(tablebase_t *tb, local_position_t *position)
 index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position)
 {
     index_t index;
+    int piece;
 
 #if CHECK_KING_LEGALITY_EARLY
     if (! check_king_legality(position->piece_position[WHITE_KING], position->piece_position[BLACK_KING]))
 	return -1;
 #endif
+
+    /* Recompute board_vector, and check for legality of piece positions */
+
+    position->board_vector = 0;
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if ((position->piece_position[piece] < 0) || (position->piece_position[piece] > 63)
+	    || !(tb->semilegal_squares[piece] & BITVECTOR(position->piece_position[piece]))) {
+	    /* This can happen if we're probing a restricted tablebase */
+	    return -1;
+	}
+
+	if (position->board_vector & BITVECTOR(position->piece_position[piece])) return -1;
+	position->board_vector |= BITVECTOR(position->piece_position[piece]);
+    }
+
+    /* Check board_vector to make sure an en passant position is legal */
+
+    if (position->en_passant_square != -1) {
+	if (position->board_vector & BITVECTOR(position->en_passant_square)) return -1;
+	if (position->side_to_move == WHITE) {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return -1;
+	} else {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return -1;
+	}
+    }
 
     switch (tb->index_type) {
     case NAIVE_INDEX:
@@ -3160,7 +3071,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.291 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.292 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
