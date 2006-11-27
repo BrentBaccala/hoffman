@@ -583,7 +583,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-#define DEBUG_MOVE 81
+/* #define DEBUG_MOVE 81 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2160,6 +2160,37 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 
 /* "compact" index
  *
+ * A combination of the delta encoding for identical pieces used in "naive2", the encoding of
+ * restricted pieces used in "simple", plus a paired encoding of the kings so they can never be
+ * adjacent.
+ *
+ * Pairs of identical pieces can be handled in at least three ways that I can think of:
+ *
+ * 1. Treat the pieces as paired and encode using the full semilegal range for each of them, using
+ * delta encoding to cut the total size in half, and then throw out as illegal those positions where
+ * the pieces can't be put onto legal squares.  Makes the most sense if the move restrictions are
+ * completely overlapping.
+ *
+ * 2. Treat the pieces as independent and encode each using its legal range, and then throw out as
+ * illegal half of those positions where both the pieces are on interchangable legal squares.  Makes
+ * the most sense if one of the move restrictions is significantly smaller than the other.
+ *
+ * 3. Build an array in memory like we do with the kings to encode only the legal possibilities.  No
+ * bogus illegal positions here, but doesn't really scale to more than two pieces.
+ *
+ * Right now, we use method (1) without option.
+ *
+ * Some additional things could be done to make an even more compact encoding:
+ *
+ * Take advantage of previous pieces occupying squares to cut encoding down from 64*64*64*...  to
+ * 64*63*62*...  Actually, since we've already got the kings encoded pretty compactly, it would be
+ * cutting down from 64*64*64*... to 62*61*60*...  Move restrictions would complicate this; maybe
+ * only do it for pieces whose move restriction can be fit entirely in the move restrictions of
+ * previous pieces.
+ *
+ * Encode en passant position-wide instead of adding an extra square for each pawn.  Would be a win
+ * in positions with lots of pawns.
+ *
  */
 
 index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
@@ -2257,6 +2288,8 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
     p->side_to_move = index % 2;
     index /= 2;
 
+    /* First, split index into an array of encoding values. */
+
     for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
 
 	if (tb->last_paired_piece[piece] == -1) {
@@ -2267,6 +2300,12 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	    index /= tb->total_legal_piece_positions[piece]/2;
 	}
     }
+
+    /* Next, back out any delta encoding and convert the encoding numbers to square numbers on the
+     * board.  This loop has to run in reverse order over the pieces, since the delta encodings are
+     * based on previous encoding numbers, and we're converting to square numbers as we go.  We run
+     * a seperate loop here because we might need previous encoding values to back out the deltas.
+     */
 
     for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
 
@@ -2286,16 +2325,26 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
 	    if (vals[tb->last_paired_piece[piece]] - vals[piece]
 		== tb->total_legal_piece_positions[piece]/2) return 0;
+	}
 
-	    /* Now we have to decide the actual ordering in the piece array.  Right now, since we
-	     * only use this code for pairs of identical pieces, we swap if the higher numbered
-	     * piece is first right, then swap (maybe again) if the pieces aren't on legal squares.
-	     * The net result is to put them both on legal squares, if possible, and to put the
-	     * lower numbered square first if both possibilities are legal.
-	     *
-	     * There's a serious bug here.  The vals have to be mapped through into squares before
-	     * we can check them against the legal squares bitvector.
-	     */
+	vals[piece] = tb->simple_piece_positions[piece][vals[piece]];
+    }
+
+    /* Now we have to decide the actual ordering in the piece array.  Right now, since we only use
+     * this code for pairs of identical pieces, we swap if the higher numbered piece is first, then
+     * swap (maybe again) if the pieces aren't on legal squares.  The net result is to put them both
+     * on legal squares, if possible, and to put the lower numbered square first if both
+     * possibilities are legal.
+     *
+     * This loop also has to run in reverse order for the swap code to work right.  We run a
+     * seperate loop here because the legality checks are based on square numbers and not encoding
+     * values, and we need for all the previous encoding values to have been converted into square
+     * numbers first.
+     */
+
+    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+
+	if (tb->last_paired_piece[piece] != -1) {
 
 	    if (vals[piece] < vals[tb->last_paired_piece[piece]]) {
 		uint8 val = vals[piece];
@@ -2316,7 +2365,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
     for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
 
-	int square = tb->simple_piece_positions[piece][vals[piece]];
+	int square = vals[piece];
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
@@ -3429,6 +3478,15 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
     }
 
+    if (tb->index_type != COMPACT_INDEX) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->legal_squares[piece] != tb->semilegal_squares[piece]) {
+		fprintf(stderr, "Non-identical overlapping piece restrictions only allowed with 'compact' index type\n");
+		return NULL;
+	    }
+	}
+    }
+
     /* Compute tb->max_index (but see next section of code where it might be modified) */
 
     switch (tb->index_type) {
@@ -3812,7 +3870,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.296 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.297 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7870,12 +7928,12 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		 tb->piece_color[capturing_piece] == WHITE ? (sq >= 0) : (sq <= 63);
 		 tb->piece_color[capturing_piece] == WHITE ? sq-- : sq++) {
 
-		if (tb->semilegal_squares[capturing_piece] & BITVECTOR(sq)) {
+		if (tb->legal_squares[capturing_piece] & BITVECTOR(sq)) {
 		    if (tb->piece_type[capturing_piece] != PAWN) {
 			for (dir = 0; dir < number_of_movement_directions[tb->piece_type[capturing_piece]]; dir++) {
 			    for (movementptr = movements[tb->piece_type[capturing_piece]][sq][dir];
 				 movementptr->square != -1; movementptr++) {
-				if (movementptr->vector & tb->semilegal_squares[captured_piece]) {
+				if (movementptr->vector & tb->legal_squares[captured_piece]) {
 				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
 				    num_futuremoves ++;
 				    goto next_pair_of_pieces;
@@ -7888,7 +7946,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			for (movementptr = capture_pawn_movements[sq][tb->piece_color[capturing_piece]];
 			     movementptr->square != -1; movementptr++) {
 
-			    if (movementptr->vector & tb->semilegal_squares[captured_piece]) {
+			    if (movementptr->vector & tb->legal_squares[captured_piece]) {
 
 				futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
 
@@ -7907,14 +7965,14 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			    if (tb->piece_type[captured_piece] == PAWN) {
 
 				if ((tb->piece_type[capturing_piece] == WHITE) && (ROW(sq) == 4)
-				    && (tb->semilegal_squares[captured_piece]
+				    && (tb->legal_squares[captured_piece]
 					& BITVECTOR(movementptr->square - 8))) {
 				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
 				    num_futuremoves ++;
 				    goto next_pair_of_pieces;
 				}
 				if ((tb->piece_type[capturing_piece] == BLACK) && (ROW(sq) == 3)
-				    && (tb->semilegal_squares[captured_piece]
+				    && (tb->legal_squares[captured_piece]
 					& BITVECTOR(movementptr->square + 8))) {
 				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
 				    num_futuremoves ++;
@@ -7945,7 +8003,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	if (tb->piece_type[piece] == PAWN) {
 	    for (sq = (tb->piece_color[piece] == WHITE ? 48 : 8);
 		 sq <= (tb->piece_color[piece] == WHITE ? 55 : 15); sq++) {
-		if (tb->semilegal_squares[piece] & BITVECTOR(sq)) {
+		if (tb->legal_squares[piece] & BITVECTOR(sq)) {
 		    promotions[piece] = num_futuremoves;
 		    num_futuremoves += PROMOTION_POSSIBILITIES;
 		    break;
@@ -7966,7 +8024,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	    /* Consider as _starting_ squares only those within the piece's movement restriction */
 
-	    if (! (tb->semilegal_squares[piece] & BITVECTOR(sq))) continue;
+	    if (! (tb->legal_squares[piece] & BITVECTOR(sq))) continue;
 
 	    if (tb->piece_type[piece] != PAWN) {
 
@@ -7992,7 +8050,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			/* If the piece is moving outside its restricted squares, it's a futuremove */
 
-			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
 				futuremoves[piece][movementptr->square] = num_futuremoves;
 				num_futuremoves ++;
@@ -8022,7 +8080,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			/* If the pawn is moving outside its restricted squares, it's a futuremove */
 
-			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
 				futuremoves[piece][movementptr->square] = num_futuremoves;
 				num_futuremoves ++;
@@ -8108,7 +8166,7 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
  * set for the various pruned moves.
  */
 
-void compute_pruned_futuremoves(tablebase_t *tb) {
+boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
@@ -8137,6 +8195,7 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 
 	if (type != tb->move_restrictions[color]) {
 	    fprintf(stderr, "Pruning restrictions don't match tablebase restrictions\n");
+	    return 0;
 	}
     }
 
@@ -8179,9 +8238,9 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->semilegal_squares[pawn] & 0x00ff000000000000LL)) break;
+		if (! (tb->legal_squares[pawn] & 0x00ff000000000000LL)) break;
 	    } else {
-		if (! (tb->semilegal_squares[pawn] & 0x000000000000ff00LL)) break;
+		if (! (tb->legal_squares[pawn] & 0x000000000000ff00LL)) break;
 	    }
 
 	    /* Check to see that the other piece can be on a square where it could be promotion
@@ -8193,9 +8252,9 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->semilegal_squares[captured_piece] & 0xff00000000000000LL)) continue;
+		if (! (tb->legal_squares[captured_piece] & 0xff00000000000000LL)) continue;
 	    } else {
-		if (! (tb->semilegal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
+		if (! (tb->legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
 	    }
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
@@ -8247,6 +8306,8 @@ void compute_pruned_futuremoves(tablebase_t *tb) {
     }
 
     unpruned_futuremoves = ~pruned_futuremoves;
+
+    return 1;
 }
 
 
@@ -8428,9 +8489,9 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->semilegal_squares[pawn] & 0x00ff000000000000LL)) break;
+		if (! (tb->legal_squares[pawn] & 0x00ff000000000000LL)) break;
 	    } else {
-		if (! (tb->semilegal_squares[pawn] & 0x000000000000ff00LL)) break;
+		if (! (tb->legal_squares[pawn] & 0x000000000000ff00LL)) break;
 	    }
 
 	    /* Check to see that the other piece can be on a square where it could be promotion
@@ -8442,9 +8503,9 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	     */
 
 	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->semilegal_squares[captured_piece] & 0xff00000000000000LL)) continue;
+		if (! (tb->legal_squares[captured_piece] & 0xff00000000000000LL)) continue;
 	    } else {
-		if (! (tb->semilegal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
+		if (! (tb->legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
 	    }
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
@@ -9077,7 +9138,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			 * as a futurebase (since it will require back prop from futurebases)
 			 */
 
-			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
@@ -9183,7 +9244,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			 * as a futurebase (since it will require back prop from futurebases)
 			 */
 
-			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
@@ -9608,7 +9669,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     proptable_tb = tb;
 
     assign_numbers_to_futuremoves(tb);
-    compute_pruned_futuremoves(tb);
+    if (! compute_pruned_futuremoves(tb)) return 0;
 #if 0
     for (i=0; i < num_futuremoves; i ++) {
 	fprintf(stderr, "Futuremove %i: %s\n", i, movestr[i]);
