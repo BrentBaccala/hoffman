@@ -3870,7 +3870,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.297 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.298 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9134,11 +9134,20 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			if ((piece == BLACK_KING)
 			    && (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
 
-			/* If a piece is moving outside its restricted squares, we regard this
-			 * as a futurebase (since it will require back prop from futurebases)
+			/* Move the piece, so we can make the following checks on the new position */
+
+			position.piece_position[piece] = movementptr->square;
+
+			/* If a piece is moving outside its legal squares AND we can't permute the
+			 * pieces into a position where everything is legal, we regard this as a
+			 * futuremove (since it will require back prop from futurebases).  We could
+			 * just check if local_position_to_index() returns a valid index, but
+			 * checking the legal_squares bitvector first makes this a little faster.
 			 */
 
-			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+			    && (local_position_to_index(tb, &position) == -1)) {
+
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
@@ -9148,7 +9157,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			if (checkmate_is_possible) {
 			    position.board_vector |= BITVECTOR(movementptr->square);
-			    position.piece_position[piece] = movementptr->square;
 
 			    checkmate_is_possible = PTM_in_check(tb, &position);
 
@@ -9221,6 +9229,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
+		    /* Move the piece.  Some of the checks below require this. */
+
+		    position.piece_position[piece] = movementptr->square;
+
 		    /* If the piece is a pawn and we're moving to the last rank, then this has
 		     * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
 		     * knight, maybe rook and bishop).  As such, they will require back
@@ -9240,11 +9252,14 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		    } else {
 
-			/* If a piece is moving outside its restricted squares, we regard this
-			 * as a futurebase (since it will require back prop from futurebases)
+			/* If a piece is moving outside its legal squares AND we can't permute the
+			 * pieces into a position where everything is legal, we regard this as a
+			 * futuremove (since it will require back prop from futurebases).
 			 */
 
-			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+			    && (local_position_to_index(tb, &position) == -1)) {
+
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
@@ -9265,7 +9280,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		    if (checkmate_is_possible) {
 			position.board_vector |= BITVECTOR(movementptr->square);
-			position.piece_position[piece] = movementptr->square;
 
 			checkmate_is_possible = PTM_in_check(tb, &position);
 
