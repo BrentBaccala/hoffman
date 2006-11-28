@@ -3870,7 +3870,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.298 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.299 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7569,16 +7569,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 		     (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
 		    || (futurebase->invert_colors &&
 			(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-		if ((tb->semilegal_squares[piece] & futurebase->semilegal_squares[future_piece])
-		    != tb->semilegal_squares[piece]) {
-		    /* This can be OK if we have piece and/or move restrictions in effect */
-		    /* fprintf(stderr, "WARNING: matched a piece but futurebase is more restrictive\n"); */
-		    piece_vector ^= (1 << piece);
-		    break;
-		} else {
-		    piece_vector ^= (1 << piece);
-		    break;
-		}
+		piece_vector ^= (1 << piece);
 	    }
 	}
 	if (piece == tb->num_pieces) {
@@ -7928,6 +7919,12 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		 tb->piece_color[capturing_piece] == WHITE ? (sq >= 0) : (sq <= 63);
 		 tb->piece_color[capturing_piece] == WHITE ? sq-- : sq++) {
 
+		/* We make the checks here using legal_squares and not semilegal_squares because
+		 * we're assigning futuremove numbers to individual pieces that can capture.  The
+		 * movements we consider here, being captures, would take us to a futurebase anyway,
+		 * so there's no question of whether the resulting position is fully legal or not.
+		 */
+
 		if (tb->legal_squares[capturing_piece] & BITVECTOR(sq)) {
 		    if (tb->piece_type[capturing_piece] != PAWN) {
 			for (dir = 0; dir < number_of_movement_directions[tb->piece_type[capturing_piece]]; dir++) {
@@ -8048,7 +8045,11 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			if ((piece == BLACK_KING)
 			    && (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
 
-			/* If the piece is moving outside its restricted squares, it's a futuremove */
+			/* If the piece is moving outside its legal squares, it's a futuremove.  Why
+			 * not semilegal squares here?  Because any legal position would (possibly
+			 * after permuting the pieces) have each piece on a legal square, after
+			 * which we would consider possible futuremoves outside the restriction.
+			 */
 
 			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
