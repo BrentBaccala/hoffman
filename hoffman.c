@@ -518,7 +518,6 @@ typedef struct tablebase {
      */
 
     int num_pieces;
-    int move_restrictions[2];		/* one for each color */
     short piece_type[MAX_PIECES];
     short piece_color[MAX_PIECES];
     uint64 legal_squares[MAX_PIECES];
@@ -528,6 +527,10 @@ typedef struct tablebase {
     uint64 illegal_white_king_squares;
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
+
+    int move_restrictions[2];		/* one for each color */
+    int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
+    int stalemate_prune_color;
 
     int entries_fd;
     entry_t *entries;
@@ -3870,7 +3873,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.299 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.300 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5075,9 +5078,10 @@ inline boolean is_position_valid(tablebase_t *tb, index_t index)
     return (get_entry_DTM(tb,index) != 1);
 }
 
-/* Four possible ways we can initialize a tablebase entry for a position:
+/* Five possible ways we can initialize a tablebase entry for a position:
  *  - it's illegal
  *  - PNTM's mated
+ *  - PTM's mated
  *  - stalemate
  *  - any other position, with 'movecnt' possible moves out the position
  */
@@ -5144,17 +5148,18 @@ void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
      * stalemate, since this position's movecnt should never get decremented.
      */
 
-#if 0
-    if (index_to_side_to_move(tb, index) == WHITE) {
-	initialize_entry_with_PNTM_mated(tb, index);
+    if (tb->stalemate_prune_type == RESTRICTION_CONCEDE) {
+	if (index_to_side_to_move(tb, index) == tb->stalemate_prune_color) {
+	    initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, 2);
+	} else {
+	    initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, -2);
+	}
     } else {
-	initialize_entry_with_PTM_mated(tb,index);
+	initialize_entry(tb, index, MOVECNT_STALEMATE, 0);
+	total_stalemate_positions ++;
     }
-#else
-    initialize_entry(tb, index, MOVECNT_STALEMATE, 0);
+
     total_legal_positions ++;
-    total_stalemate_positions ++;
-#endif
 }
 
 void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt)
@@ -7570,6 +7575,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 		    || (futurebase->invert_colors &&
 			(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
 		piece_vector ^= (1 << piece);
+		break;
 	    }
 	}
 	if (piece == tb->num_pieces) {
@@ -8165,6 +8171,9 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
 
 /* This is where we parse pruning statements.  Fill in the pruned_futuremoves bit vector with bits
  * set for the various pruned moves.
+ *
+ * XXX something else I'd like to do here is to flag all of the pruning statements to make
+ * sure we've used each one, and complain if any are left unused.
  */
 
 boolean compute_pruned_futuremoves(tablebase_t *tb) {
@@ -8181,7 +8190,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     char movestr2[16];
 
 
-    /* Check pruning statements for consistency */
+    /* Check pruning statements for consistency, and record stalemate pruning if specified */
 
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression(BAD_CAST "//prune", context);
@@ -8189,14 +8198,25 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
 	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
 					   BAD_CAST "color");
+	xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
+					  BAD_CAST "move");
 	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
 					  BAD_CAST "type");
 	int color = find_name_in_array((char *) prune_color, colors);
 	int type = find_name_in_array((char *) prune_type, restriction_types);
 
 	if (type != tb->move_restrictions[color]) {
-	    fprintf(stderr, "Pruning restrictions don't match tablebase restrictions\n");
+	    fprintf(stderr, "Prune statements don't match tablebase restrictions\n");
 	    return 0;
+	}
+
+	if (!strcasecmp((char *) prune_move, "stalemate")) {
+	    if (type != RESTRICTION_CONCEDE) {
+		fprintf(stderr, "Stalemates can only be pruned to 'concede'\n");
+		return 0;
+	    }
+	    tb->stalemate_prune_type = type;
+	    tb->stalemate_prune_color = color;
 	}
     }
 
@@ -9873,7 +9893,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		    int dtm = get_raw_DTM(tb, index);
 
-		    if (dtm > 1) {
+		    if (dtm > 0) {
 			if ((dtm-1) != ((65536-4)/2)-score+1) {
 			    printf("%s (%d): Nalimov says %s (%d), but we say mate in %d\n",
 				   global_position_to_FEN(&global), index,
