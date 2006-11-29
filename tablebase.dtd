@@ -6,7 +6,7 @@
 
 <!ELEMENT index EMPTY>
 <!ATTLIST index
-	type (naive|naive2|simple|xor|compact)		#REQUIRED
+	type (naive|naive2|simple|compact)		#REQUIRED
 	symmetry (1|2|4|8|8-way)			#IMPLIED
 	offset CDATA					#IMPLIED
 	modulus CDATA				#IMPLIED>
@@ -71,7 +71,7 @@
 	offset	CDATA		#IMPLIED
 	format	(fourbyte|one-byte-dtm)	#IMPLIED
 	modulus CDATA		#IMPLIED
-	index	(naive|naive2|simple)	#IMPLIED>
+	index	(naive|naive2|simple|compact)	#IMPLIED>
 
 <!ATTLIST piece
 	color	(white|black)	#REQUIRED
