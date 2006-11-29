@@ -523,6 +523,8 @@ typedef struct tablebase {
     uint64 legal_squares[MAX_PIECES];
     uint64 semilegal_squares[MAX_PIECES];
     uint64 frozen_pieces_vector;
+    uint64 blocked_squares;
+    int blocking_pawn[MAX_PIECES];
     uint64 illegal_black_king_squares;
     uint64 illegal_white_king_squares;
     int last_identical_piece[MAX_PIECES];
@@ -586,7 +588,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 81 */
+/* #define DEBUG_MOVE 2195510 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2656,6 +2658,22 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	    return -1;
 	}
 
+	/* Blocking pawns.  Reject any position where a pawn has "hopped" over the enemy pawn
+	 * blocking it.
+	 */
+
+	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_pawn[piece] != -1)) {
+	    if (tb->piece_color[piece] == WHITE) {
+		if (position->piece_position[piece] > position->piece_position[tb->blocking_pawn[piece]]) {
+		    return 0;
+		}
+	    } else {
+		if (position->piece_position[piece] < position->piece_position[tb->blocking_pawn[piece]]) {
+		    return 0;
+		}
+	    }
+	}
+
 	if (position->board_vector & BITVECTOR(position->piece_position[piece])) return -1;
 	position->board_vector |= BITVECTOR(position->piece_position[piece]);
     }
@@ -2760,6 +2778,24 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
     }
 
     if (!ret) return 0;
+
+    /* Blocking pawns.  Reject any position where a pawn has "hopped" over the enemy pawn blocking
+     * it.
+     */
+
+    for (piece = 0; piece < tb->num_pieces; piece++) {
+	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_pawn[piece] != -1)) {
+	    if (tb->piece_color[piece] == WHITE) {
+		if (position->piece_position[piece] > position->piece_position[tb->blocking_pawn[piece]]) {
+		    return 0;
+		}
+	    } else {
+		if (position->piece_position[piece] < position->piece_position[tb->blocking_pawn[piece]]) {
+		    return 0;
+		}
+	    }
+	}
+    }
 
 #if CHECK_KING_LEGALITY_EARLY
     if (! check_king_legality(position->piece_position[WHITE_KING], position->piece_position[BLACK_KING]))
@@ -3188,93 +3224,166 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     } else if (result->nodesetval->nodeNr > MAX_PIECES) {
 	fprintf(stderr, "Too many pieces!\n");
 	return NULL;
-    } else {
+    }
 
-	tb->num_pieces = result->nodesetval->nodeNr;
+    tb->num_pieces = result->nodesetval->nodeNr;
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    xmlChar * color;
-	    xmlChar * type;
-	    xmlChar * location;
-	    color = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "color");
-	    type = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "type");
-	    location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
-	    tb->piece_color[piece] = find_name_in_array((char *) color, colors);
-	    tb->piece_type[piece] = find_name_in_array((char *) type, piece_name);
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if (location == NULL) {
-		if (tb->piece_type[piece] == PAWN) {
-		    tb->legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
-		} else {
-		    tb->legal_squares[piece] = allones_bitvector;
-		}
+	xmlChar * color = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "color");
+	xmlChar * type = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "type");
+	xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
+
+	tb->piece_color[piece] = find_name_in_array((char *) color, colors);
+	tb->piece_type[piece] = find_name_in_array((char *) type, piece_name);
+
+	if (location == NULL) {
+	    if (tb->piece_type[piece] == PAWN) {
+		tb->legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
 	    } else {
-		int j = 0;
-		tb->legal_squares[piece] = 0;
-		while ((location[j] >= 'a') && (location[j] <= 'h')
-		       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
-		    tb->legal_squares[piece]
-			|= BITVECTOR(rowcol2square(location[j+1] - '1', location[j] - 'a'));
-		    j += 2;
-		    while (location[j] == ' ') j ++;
-		}
-		if (location[j] != '\0') {
-		    fprintf(stderr, "Illegal piece location (%s)\n", location);
-		    return NULL;
-		}
+		tb->legal_squares[piece] = allones_bitvector;
 	    }
-
-	    if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
-		fprintf(stderr, "Illegal piece color (%s) or type (%s)\n", color, type);
+	} else {
+	    int j = 0;
+	    tb->legal_squares[piece] = 0;
+	    while ((location[j] >= 'a') && (location[j] <= 'h')
+		   && (location[j+1] >= '1') && (location[j+1] <= '8')) {
+		tb->legal_squares[piece]
+		    |= BITVECTOR(rowcol2square(location[j+1] - '1', location[j] - 'a'));
+		j += 2;
+		if ((tb->piece_type[piece] == PAWN) && (j == 2)
+		    && (location[j] == '+') && (location[j+1] == '\0')) j ++;
+		while (location[j] == ' ') j ++;
+	    }
+	    if (location[j] != '\0') {
+		fprintf(stderr, "Illegal piece location (%s)\n", location);
 		return NULL;
 	    }
+	}
 
-	    /* Now we need to figure out if there are any other pieces identical to this one,
-	     * because if so, exchanging the two pieces would not change the position, and that has
-	     * to be taken into account in several places.  Move restrictions on the pieces
-	     * complicate this, unless they are completely non-overlapping, in which case we don't
-	     * treat the pieces as identical because they are then distinguishable (kinda like
-	     * electrons).  The whole point of this code is to group together identical pieces with
-	     * overlapping move restrictions, and to compute for each group the logical union of
-	     * their move restrictions, which become the "semilegal" squares for all the pieces in
-	     * that group.  See the earlier discussion on semilegal squares.
-	     */
+	if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
+	    fprintf(stderr, "Illegal piece color (%s) or type (%s)\n", color, type);
+	    return NULL;
+	}
 
-	    tb->last_identical_piece[piece] = -1;
-	    tb->next_identical_piece[piece] = -1;
+	if (color != NULL) xmlFree(color);
+	if (type != NULL) xmlFree(type);
+	if (location != NULL) xmlFree(location);
+    }
 
-	    tb->semilegal_squares[piece] = tb->legal_squares[piece];
+    /* We quietly skipped over any plus signs after pawn locations, which mean that the pawn should
+     * be advanced as far as possible along its file.  We couldn't process them immediately because
+     * without having parsed all the pieces we didn't know if anything was blocking the file.
+     * Having now parsed all of the pieces, go back and expand the legal squares of any "plus pawns"
+     * by first running through the pieces and looking for any frozen on a single square (the
+     * blocked squares).  We regard a plus pawn as blocking its starting square, so long as it has
+     * only one starting square.  For example, if there is a white pawn at "h2+" and a black pawn at
+     * "h7+", we want the white pawn's legal squares expanded all the way to h6, and the black
+     * pawn's legal squares expanded all the way to h3.
+     *
+     * XXX There's an exceptional case that I don't handle correctly right now - doubled pawns.
+     *
+     * XXX What if we specified a black pawn as "a7+ b4+" and a white pawn as "b2+"?  Then the black
+     * pawn would be blocked by at b3 by the white pawn, even though the white pawn could move on
+     * past (it wouldn't be blocked by the multiple-file black pawn).  I handle this case right now
+     * by not allowing plus pawns to start on more than one square (in the loop above).
+     *
+     * Perhaps this seems like an absurd amount of complexity to introduce for a special case.  In
+     * fact, pawns partially blocking each other are a not-so-special case and I don't see how they
+     * can be handled as efficiently as we'd like without all of this.  In particular, we needn't
+     * regard pawn moves onto blocked squares as futuremoves, and by pairing opposing pawns in
+     * indices we can cut tablebase sizes by a factor of two for each pair.
+     */
 
-	    for (piece2 = 0; piece2 < piece; piece2 ++) {
-		if ((tb->piece_color[piece2] == tb->piece_color[piece])
-		    && (tb->piece_type[piece2] == tb->piece_type[piece])) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (square = 0; square < 64; square ++) {
+	    if (tb->legal_squares[piece] == BITVECTOR(square)) {
+		tb->blocked_squares |= BITVECTOR(square);
+	    }
+	}
+    }
 
-		    if (tb->semilegal_squares[piece] & tb->semilegal_squares[piece2]) {
-			tb->last_identical_piece[piece] = piece2;
-			tb->semilegal_squares[piece2] |= tb->semilegal_squares[piece];
-			tb->semilegal_squares[piece] |= tb->semilegal_squares[piece2];
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if (tb->piece_type[piece] == PAWN) {
+
+	    xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
+
+	    tb->blocking_pawn[piece] = -1;
+
+	    if (location != NULL) {
+		int j = 0;
+		while ((location[j] >= 'a') && (location[j] <= 'h')
+		       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
+		    int square = rowcol2square(location[j+1] - '1', location[j] - 'a');
+		    j += 2;
+		    if (location[j] == '+') {
+			int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
+			square += dir;
+			while ((square < 56) && (square > 7)) {
+			    if (BITVECTOR(square) & tb->blocked_squares) {
+				for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
+				    if ((tb->legal_squares[piece2] == BITVECTOR(square))
+					&& (tb->piece_type[piece2] == PAWN)) {
+					tb->blocking_pawn[piece] = piece2;
+				    }
+				}
+				break;
+			    } else {
+				tb->legal_squares[piece] |= BITVECTOR(square);
+			    }
+			    square += dir;
+			}
+			j ++;
 		    }
+		    while (location[j] == ' ') j ++;
 		}
 	    }
+	}
+    }
 
-	    /* Later, if we're trying to process a position with two identical pieces that aren't on
-	     * legal squares, we swap them and see if we can get them onto legal squares that way.
-	     * If there were more than two identical pieces, we'd have to try more combinations,
-	     * probably a full set of possible permutations, and the simplest way to do that is to
-	     * prohibit it here - at least for now.
-	     */
+    /* Now we need to figure out if there are any other pieces identical to this one, because if so,
+     * exchanging the two pieces would not change the position, and that has to be taken into
+     * account in several places.  Move restrictions on the pieces complicate this, unless they are
+     * completely non-overlapping, in which case we don't treat the pieces as identical because they
+     * are then distinguishable (kinda like electrons).  The whole point of this code is to group
+     * together identical pieces with overlapping move restrictions, and to compute for each group
+     * the logical union of their move restrictions, which become the "semilegal" squares for all
+     * the pieces in that group.  See the earlier discussion on semilegal squares.
+     */
 
-	    if (tb->last_identical_piece[piece] != -1) {
-		if (tb->last_identical_piece[tb->last_identical_piece[piece]] != -1) {
-		    fprintf(stderr, "More than two identical pieces with overlapping move restrictions\n");
-		    return NULL;
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	tb->last_identical_piece[piece] = -1;
+	tb->next_identical_piece[piece] = -1;
+
+	tb->semilegal_squares[piece] = tb->legal_squares[piece];
+
+	for (piece2 = 0; piece2 < piece; piece2 ++) {
+	    if ((tb->piece_color[piece2] == tb->piece_color[piece])
+		&& (tb->piece_type[piece2] == tb->piece_type[piece])) {
+
+		if (tb->semilegal_squares[piece] & tb->semilegal_squares[piece2]) {
+		    tb->last_identical_piece[piece] = piece2;
+		    tb->semilegal_squares[piece2] |= tb->semilegal_squares[piece];
+		    tb->semilegal_squares[piece] |= tb->semilegal_squares[piece2];
 		}
-		tb->next_identical_piece[tb->last_identical_piece[piece]] = piece;
 	    }
+	}
 
-	    if (color != NULL) xmlFree(color);
-	    if (type != NULL) xmlFree(type);
-	    if (location != NULL) xmlFree(location);
+	/* Later, if we're trying to process a position with two identical pieces that aren't on
+	 * legal squares, we swap them and see if we can get them onto legal squares that way.  If
+	 * there were more than two identical pieces, we'd have to try more combinations, probably a
+	 * full set of possible permutations, and the simplest way to do that is to prohibit it here
+	 * - at least for now.
+	 */
+
+	if (tb->last_identical_piece[piece] != -1) {
+	    if (tb->last_identical_piece[tb->last_identical_piece[piece]] != -1) {
+		fprintf(stderr, "More than two identical pieces with overlapping move restrictions\n");
+		return NULL;
+	    }
+	    tb->next_identical_piece[tb->last_identical_piece[piece]] = piece;
 	}
     }
 
@@ -3873,7 +3982,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.300 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.301 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8085,9 +8194,13 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		    } else {
 
-			/* If the pawn is moving outside its restricted squares, it's a futuremove */
+			/* If the pawn is moving outside its restricted squares, it's a futuremove,
+			 * unless it's a blocked square (blocked by a frozen piece), in which case
+			 * the pawn will never be able to move there anyway.
+			 */
 
-			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+			    && !(tb->blocked_squares & BITVECTOR(movementptr->square))) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
 				futuremoves[piece][movementptr->square] = num_futuremoves;
 				num_futuremoves ++;
@@ -9169,6 +9282,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
 			    && (local_position_to_index(tb, &position) == -1)) {
 
+			    if (futuremoves[piece][movementptr->square] == -1) {
+				fprintf(stderr, "No futuremove!\n");
+			    }
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
@@ -9281,6 +9397,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
 			    && (local_position_to_index(tb, &position) == -1)) {
 
+			    if (futuremoves[piece][movementptr->square] == -1) {
+				fprintf(stderr, "No futuremove!\n");
+			    }
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
 			    }
