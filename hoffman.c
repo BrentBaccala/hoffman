@@ -3396,7 +3396,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    /* Now, compute a bitvector for all the pieces that are frozen on single squares.
+    /* Now, compute a bitvector for all the pieces that are frozen on single squares.  This
+     * 'frozen_pieces_vector' differs from 'blocked_squares' because a square can be blocked by a
+     * pawn that is at least partially mobile on a single file.  Frozen pieces, on the other hand,
+     * are completely immobile on a single square.
      *
      * We also use this opportunity to remove from the opposing king's legal squares list any
      * squares that a frozen piece can always capture on.  Due to the possibility of interposition
@@ -3982,7 +3985,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.301 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.302 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
