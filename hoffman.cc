@@ -320,6 +320,12 @@ uint64 allones_bitvector = 0xffffffffffffffffLL;
 /* #define BITVECTOR(square) bitvector[square] */
 #define BITVECTOR(square) (1ULL << (square))
 
+
+#define REFLECTION_NONE 0
+#define REFLECTION_HORIZONTAL 1
+#define REFLECTION_VERTICAL 2
+#define REFLECTION_DIAGONAL 4
+
 /* tablebase - the data structure used to hold tablebases
  *
  * WHITE and BLACK are also used for the side_to_move variable in the position type above
@@ -2747,7 +2753,7 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
     return index;
 }
 
-boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, local_position_t *position)
+boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, local_position_t *position)
 {
     int ret;
     int piece, piece2;
@@ -2817,7 +2823,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
 	position->multiplicity = 1;
     }
 
-    if ((symmetry & 1) == 1) {
+    if (reflection & REFLECTION_DIAGONAL) {
 	if (position->multiplicity == 1) return 0;
 
 	/* diagonal reflection */
@@ -2833,7 +2839,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
 	    position->en_passant_square = diagonal_reflection(position->en_passant_square);
     }
 
-    if ((symmetry & 2) == 2) {
+    if (reflection & REFLECTION_VERTICAL) {
 	/* vertical reflection */
 	position->board_vector = 0;
 	position->PTM_vector = 0;
@@ -2847,7 +2853,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int symmetry, lo
 	    position->en_passant_square = vertical_reflection(position->en_passant_square);
     }
 
-    if ((symmetry & 4) == 4) {
+    if (reflection & REFLECTION_HORIZONTAL) {
 	/* horizontal reflection */
 	position->board_vector = 0;
 	position->PTM_vector = 0;
@@ -3985,7 +3991,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.302 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.303 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4279,12 +4285,12 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
 }
 
-int translate_foreign_index_to_local_position(tablebase_t *tb1, index_t index1, int symmetry,
+int translate_foreign_index_to_local_position(tablebase_t *tb1, index_t index1, int reflection,
 					      tablebase_t *tb2, local_position_t *local, int invert_colors)
 {
     local_position_t foreign_position;
 
-    if (! index_to_local_position(tb1, index1, symmetry, &foreign_position)) return -1;
+    if (! index_to_local_position(tb1, index1, reflection, &foreign_position)) return -1;
 
     return translate_foreign_position_to_local_position(tb1, &foreign_position, tb2, local, invert_colors);
 }
@@ -5721,7 +5727,7 @@ void proptable_full(void)
  * Start a new set of proptables and commit the old set into the entries array.
  */
 
-void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symmetry);
+void back_propagate_index_within_table(tablebase_t *tb, index_t index, int reflection);
 
 /* fetch_next_propentry()
  *
@@ -6672,6 +6678,52 @@ void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t 
     }
 }
 
+/* Reflections.
+ *
+ * If the futurebase has greater symmetry than the tablebase under construction, then we have to
+ * apply a series of reflections to each futurebase position in order to get all the corresponding
+ * positions in the current tablebase.  This utility function computes them.
+ *
+ * If we're back propagating from a futurebase with greater symmetry, then a single futurebase index
+ * will correspond to several positions in the current tablebase.  We'll need to apply some
+ * reflections to get those additional positions, so compute here how many of them we'll need.  It's
+ * a fairly easy calculation, since our symmetry options are currently limited to 1/2/4/8, so a
+ * simple ratio suffices, except if both tablebases have symmetry 8, in which case the more complex
+ * effects of diagonal symmetry require a double conversion no matter what.
+ */
+
+
+int compute_reflections(tablebase_t *tb, tablebase_t *futurebase, int *reflections)
+{
+    int max_reflection;
+
+    max_reflection = futurebase->symmetry / tb->symmetry;
+    if ((futurebase->symmetry == 8) && (tb->symmetry == 8)) max_reflection = 2;
+    reflections[0] = REFLECTION_NONE;
+    if (futurebase->symmetry == 8) reflections[1] = REFLECTION_DIAGONAL;
+    if (futurebase->symmetry == 4) reflections[1] = REFLECTION_VERTICAL;
+    if (futurebase->symmetry == 2) reflections[1] = REFLECTION_HORIZONTAL;
+    if (max_reflection == 4) {
+	if (futurebase->symmetry == 8) {
+	    reflections[2] = reflections[0] | REFLECTION_VERTICAL;
+	    reflections[3] = reflections[1] | REFLECTION_VERTICAL;
+	} else {
+	    reflections[2] = reflections[0] | REFLECTION_HORIZONTAL;
+	    reflections[3] = reflections[1] | REFLECTION_HORIZONTAL;
+	}
+    }
+    if (max_reflection == 8) {
+	reflections[4] = reflections[0] | REFLECTION_HORIZONTAL;
+	reflections[5] = reflections[1] | REFLECTION_HORIZONTAL;
+	reflections[6] = reflections[2] | REFLECTION_HORIZONTAL;
+	reflections[7] = reflections[3] | REFLECTION_HORIZONTAL;
+    }
+
+    return max_reflection;
+}
+
+
+
 /* Back propagate promotion moves
  *
  * Passed a piece (a global position character) that the pawn is promoting into.  Searches
@@ -6688,24 +6740,16 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
     uint32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
     int true_pawn;
-    int symmetry;
-    int max_symmetry;
+    int reflection;
+    int max_reflection;
+    int reflections[8];
 
     int promotion_color = tb->piece_color[pawn];
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
     int last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
     int promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
-    /* If we're back propagating from a futurebase with greater symmetry, then a single futurebase
-     * index will correspond to several positions in the current tablebase.  We'll need to apply
-     * some reflections to get those additional positions, so compute here how many of them we'll
-     * need.  It's a fairly easy calculation, since our symmetry options are currently limited to
-     * 1/2/4/8, so a simple ratio suffices, except if both tablebases have symmetry 8, in which case
-     * the more complex effects of diagonal symmetry require a double conversion no matter what.
-     */
-
-    max_symmetry = futurebase->symmetry / tb->symmetry;
-    if ((futurebase->symmetry == 8) && (tb->symmetry == 8)) max_symmetry = 2;
+    max_reflection = compute_reflections(tb, futurebase, reflections);
 
     /* We could limit the range of future_index here */
 
@@ -6716,7 +6760,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	for (symmetry = 0; symmetry < max_symmetry; symmetry ++) {
+	for (reflection = 0; reflection < max_reflection; reflection ++) {
 
 	    /* Take the position from the futurebase and translate it into a local position for the
 	     * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -6725,7 +6769,8 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 	     * restricted squares.
 	     */
 
-	    if (! index_to_local_position(futurebase, future_index, symmetry, &foreign_position)) continue;
+	    if (! index_to_local_position(futurebase, future_index, reflection[reflections],
+					  &foreign_position)) continue;
 
 	    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
 									     tb, &position,
@@ -6866,20 +6911,20 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
     index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
-    int symmetry;
-    int max_symmetry;
     uint32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
     int true_captured_piece;
     int true_pawn;
+    int reflection;
+    int max_reflection;
+    int reflections[8];
 
     int promotion_color = tb->piece_color[pawn];
     int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
     int last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
     int promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
-    max_symmetry = futurebase->symmetry / tb->symmetry;
-    if ((futurebase->symmetry == 8) && (tb->symmetry == 8)) max_symmetry = 2;
+    max_reflection = compute_reflections(tb, futurebase, reflections);
 
     /* We could limit the range of future_index here */
 
@@ -6890,7 +6935,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	for (symmetry = 0; symmetry < max_symmetry; symmetry ++) {
+	for (reflection = 0; reflection < max_reflection; reflection ++) {
 
 	    /* Take the position from the futurebase and translate it into a local position for the
 	     * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -6899,7 +6944,8 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 	     * There can be no pieces on restricted squares.
 	     */
 
-	    if (! index_to_local_position(futurebase, future_index, symmetry, &foreign_position)) continue;
+	    if (! index_to_local_position(futurebase, future_index, reflections[reflection],
+					  &foreign_position)) continue;
 
 	    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
 									     tb, &position,
@@ -7328,13 +7374,13 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
     index_t future_index;
     local_position_t current_position;
     int piece;
-    int symmetry;
-    int max_symmetry;
     uint32 conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
+    int reflection;
+    int max_reflection;
+    int reflections[8];
 
-    max_symmetry = futurebase->symmetry / tb->symmetry;
-    if ((futurebase->symmetry == 8) && (tb->symmetry == 8)) max_symmetry = 2;
+    max_reflection = compute_reflections(tb, futurebase, reflections);
 
     for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
 
@@ -7343,7 +7389,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 	 * the simplest way to do that is to run this loop even for draws.
 	 */
 
-	for (symmetry = 0; symmetry < max_symmetry; symmetry ++) {
+	for (reflection = 0; reflection < max_reflection; reflection ++) {
 
 	    /* Take the position from the futurebase and translate it into a local position for the
 	     * current tablebase.  If the futurebase index was illegal, the function will return -1.
@@ -7357,7 +7403,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 	     */
 
 	    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
-									  symmetry,
+									  reflections[reflection],
 									  tb, &current_position,
 									  invert_colors_of_futurebase);
 
@@ -8863,7 +8909,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
  * (within the tablebase) from the corresponding position.
  */
 
-void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symmetry)
+void back_propagate_index_within_table(tablebase_t *tb, index_t index, int reflection)
 {
     local_position_t position;
     int piece;
@@ -8871,9 +8917,9 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int symme
     int origin_square;
     struct movement *movementptr;
 
-    /* This can fail if the symmetry isn't valid for this index */
+    /* This can fail if the reflection isn't valid for this index */
 
-    if (! index_to_local_position(tb, index, symmetry, &position)) return;
+    if (! index_to_local_position(tb, index, reflection, &position)) return;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
