@@ -208,4 +208,157 @@ sub consider_position {
     }
 }
 
-&consider_position(\@white_pawns, \@black_pawns);
+# &consider_position(\@white_pawns, \@black_pawns);
+
+sub filename {
+    my ($white_pawn_bitvector, $black_pawn_bitvector, $white_queen, $black_queen) = @_;
+    my $filename = "k";
+
+    $filename .= "q" if $white_queen;
+    for (my $white_pawn = 0; $white_pawn < 5; $white_pawn ++) {
+	$filename .= $white_pawns[$white_pawn] if $white_pawn_bitvector & (1 << $white_pawn);
+    }
+    $filename .= "k";
+    $filename .= "q" if $black_queen == 1;
+    $filename .= "n" if $black_queen == 2;
+    for (my $black_pawn = 0; $black_pawn < 5; $black_pawn ++) {
+	$filename .= $black_pawns[$black_pawn] if $black_pawn_bitvector & (1 << $black_pawn);
+    }
+    return $filename . ".htb";
+}
+
+sub generate_one_control_file {
+    my ($white_pawns, $black_pawns, $white_queen, $black_queen) = @_;
+
+    return if (($black_pawns & 6) == 2);
+
+    my $queenable_white_pawns = 0;
+    my $queenable_black_pawns = 0;
+
+    $queenable_black_pawns |= 1 if (($white_pawns & 3) != 3);
+    $queenable_black_pawns |= 2 if (!($white_pawns & 4));
+    $queenable_black_pawns |= 8 if (($white_pawns & 24) != 24);
+    $queenable_black_pawns |= 16 if (($white_pawns & 24) != 24);
+    $queenable_black_pawns &= $black_pawns;
+
+    $queenable_white_pawns |= 1 if (!($black_pawns & 1) or !($white_pawns & 2));
+    $queenable_white_pawns |= 2;
+    $queenable_white_pawns |= 4 if (($black_pawns & 6) == 0);
+    $queenable_white_pawns |= 8 if (($black_pawns & 24) != 24);
+    $queenable_white_pawns |= 16 if (($black_pawns & 24) != 24);
+    $queenable_white_pawns &= $white_pawns;
+
+    open (OUT, ">&STDOUT") || die "open";
+    print OUT "<tablebase>\n";
+    print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
+    print OUT "   <move-restriction color=\"black\" type=\"concede\"/>\n";
+    print OUT "   <piece color=\"white\" type=\"king\"/>\n";
+    print OUT "   <piece color=\"black\" type=\"king\"/>\n";
+    print OUT "   <piece color=\"white\" type=\"queen\"/>\n" if $white_queen;
+    print OUT "   <piece color=\"black\" type=\"queen\"/>\n" if $black_queen == 1;
+    print OUT "   <piece color=\"black\" type=\"knight\"/>\n" if $black_queen == 2;
+    for (my $white_pawn = 0; $white_pawn < 5; $white_pawn ++) {
+	if ($white_pawns & (1 << $white_pawn)) {
+	    my $location = "$white_pawns[$white_pawn]+";
+	    if (($white_pawn == 1) && ($white_pawns & 1) && !($black_pawns & 1)) {
+		$location .= " a6+";
+	    }
+	    if (($white_pawn == 3) && ($white_pawns & 16) && !($black_pawns & 16)) {
+		$location .= " h4+";
+	    }
+	    if (($white_pawn == 4) && ($white_pawns & 8) && !($black_pawns & 8)) {
+		$location .= " g4+";
+	    }
+	    print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$location\"/>\n";
+	}
+    }
+    for (my $black_pawn = 0; $black_pawn < 5; $black_pawn ++) {
+	if ($black_pawns & (1 << $black_pawn)) {
+	    my $location = "$black_pawns[$black_pawn]+";
+	    if (($black_pawn == 0) && !($white_pawns & 2)) {
+		$location .= " b5+";
+	    }
+	    if (($black_pawn == 3) && ($black_pawns & 16) && !($white_pawns & 16)) {
+		$location .= " h5+";
+	    }
+	    if (($black_pawn == 4) && ($black_pawns & 8) && !($white_pawns & 8)) {
+		$location .= " g5+";
+	    }
+	    print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$location\"/>\n";
+	}
+    }
+
+    if (not $white_queen) {
+	for (my $white_pawn = 0; $white_pawn < 5; $white_pawn ++) {
+	    if ($queenable_white_pawns & (1 << $white_pawn)) {
+		print OUT "   <futurebase filename=\"", &filename($white_pawns & ~(1 << $white_pawn), $black_pawns, 1, $black_queen), "\" type=\"promotion\"/>\n";
+		print OUT "   <futurebase filename=\"", &filename($white_pawns & ~(1 << $white_pawn), $black_pawns, 1, 0), "\" type=\"capture-promotion\"/>\n" if $black_queen;
+	    }
+	}
+    } else {
+	print OUT "   <futurebase filename=\"", &filename($white_pawns, $black_pawns, 0, $black_queen), "\" type=\"capture\"/>\n";
+    }
+    for (my $white_pawn = 0; $white_pawn < 5; $white_pawn ++) {
+	if ($white_pawns & (1 << $white_pawn)) {
+	    print OUT "   <futurebase filename=\"", &filename($white_pawns & ~(1 << $white_pawn), $black_pawns, $white_queen, $black_queen), "\" type=\"capture\"/>\n";
+	}
+    }
+
+    if (not $black_queen) {
+	for (my $black_pawn = 0; $black_pawn < 5; $black_pawn ++) {
+	    if ($queenable_black_pawns & (1 << $black_pawn)) {
+		print OUT "   <futurebase filename=\"", &filename($white_pawns, $black_pawns & ~(1 << $black_pawn), $white_queen, 1), "\" type=\"promotion\"/>\n";
+		print OUT "   <futurebase filename=\"", &filename($white_pawns, $black_pawns & ~(1 << $black_pawn), $white_queen, 2), "\" type=\"promotion\"/>\n";
+		print OUT "   <futurebase filename=\"", &filename($white_pawns, $black_pawns & ~(1 << $black_pawn), 0, 1), "\" type=\"capture-promotion\"/>\n" if $white_queen;
+		print OUT "   <futurebase filename=\"", &filename($white_pawns, $black_pawns & ~(1 << $black_pawn), 0, 2), "\" type=\"capture-promotion\"/>\n" if $white_queen;
+	    }
+	}
+    } else {
+	print OUT "   <futurebase filename=\"", &filename($white_pawns, $black_pawns, $white_queen, 0), "\" type=\"capture\"/>\n";
+    }
+    for (my $black_pawn = 0; $black_pawn < 5; $black_pawn ++) {
+	if ($black_pawns & (1 << $black_pawn)) {
+	    print OUT "   <futurebase filename=\"", &filename($white_pawns, $black_pawns & ~(1 << $black_pawn), $white_queen, $black_queen), "\" type=\"capture\"/>\n";
+	}
+    }
+
+    if ($queenable_white_pawns) {
+	print OUT "   <prune color=\"white\" move=\"P=Q\" type=\"discard\"/>\n" if $white_queen;
+	print OUT "   <prune color=\"white\" move=\"P=R\" type=\"discard\"/>\n";
+	print OUT "   <prune color=\"white\" move=\"P=B\" type=\"discard\"/>\n";
+	print OUT "   <prune color=\"white\" move=\"P=N\" type=\"discard\"/>\n";
+    }
+    if ($queenable_black_pawns) {
+	print OUT "   <prune color=\"black\" move=\"P=Q\" type=\"concede\"/>\n" if $black_queen;
+	print OUT "   <prune color=\"black\" move=\"P=R\" type=\"discard\"/>\n";
+	print OUT "   <prune color=\"black\" move=\"P=B\" type=\"discard\"/>\n";
+	print OUT "   <prune color=\"black\" move=\"P=N\" type=\"concede\"/>\n" if $black_queen;
+    }
+    print OUT "   <prune color=\"white\" move=\"PxQ\" type=\"discard\"/>\n"
+	if ($black_queen == 1) and $white_pawns;
+    print OUT "   <prune color=\"white\" move=\"PxN\" type=\"discard\"/>\n"
+	if ($black_queen == 2) and $white_pawns;
+    print OUT "   <prune color=\"black\" move=\"PxQ\" type=\"concede\"/>\n" if $white_queen and $black_pawns;
+
+    print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n";
+    print OUT "   <generation-controls>\n";
+    print OUT "      <output filename=\"", &filename($white_pawns, $black_pawns, $white_queen, $black_queen), "\"/>\n";
+    print OUT "   </generation-controls>\n";
+    print OUT "</tablebase>\n";
+}
+
+sub generate_control_files {
+
+    for (my $white_pawns = 0; $white_pawns <= 31; $white_pawns ++) {
+	for (my $black_pawns = 0; $black_pawns <= 31; $black_pawns ++) {
+	    &generate_one_control_file($white_pawns, $black_pawns, 0, 0);
+	    &generate_one_control_file($white_pawns, $black_pawns, 1, 0);
+	    &generate_one_control_file($white_pawns, $black_pawns, 0, 1);
+	    &generate_one_control_file($white_pawns, $black_pawns, 1, 1);
+	    &generate_one_control_file($white_pawns, $black_pawns, 0, 2);
+	    &generate_one_control_file($white_pawns, $black_pawns, 1, 2);
+	}
+    }
+}
+
+&generate_control_files;
