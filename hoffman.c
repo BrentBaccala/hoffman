@@ -594,7 +594,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 2195510 */
+/* #define DEBUG_MOVE 649 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -2339,6 +2339,21 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	}
 
 	vals[piece] = tb->simple_piece_positions[piece][vals[piece]];
+
+	/* En passant */
+	if ((tb->piece_type[piece] == PAWN) && (vals[piece] < 8)) {
+	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
+	    if (tb->piece_color[piece] == WHITE) {
+		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = vals[piece] + 2*8;
+		vals[piece] += 3*8;
+	    } else {
+		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = vals[piece] + 5*8;
+		vals[piece] += 4*8;
+	    }
+	}
+
     }
 
     /* Now we have to decide the actual ordering in the piece array.  Right now, since we only use
@@ -2377,20 +2392,6 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
     for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
 
 	int square = vals[piece];
-
-	/* En passant */
-	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
-	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
-	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 2*8;
-		square += 3*8;
-	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 5*8;
-		square += 4*8;
-	    }
-	}
 
 	/* This can happen if we have multiple identical pieces because we counted semilegal
 	 * positions to encode them with.
@@ -3287,7 +3288,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
      * "h7+", we want the white pawn's legal squares expanded all the way to h6, and the black
      * pawn's legal squares expanded all the way to h3.
      *
-     * XXX There's an exceptional case that I don't handle correctly right now - doubled pawns.
+     * To handle doubled pawns, we make sure that blocked pawns are of the opposite color, otherwise
+     * we ignore them completely.  This doesn't correctly handle completely frozen pawns, like a
+     * white pawn on "e2+" and another on "e5", nor does it take advantage of the simple fact that
+     * the trailing pawn has one less legal square at the end of the file because it's blocked there
+     * by the leading pawn, but I don't think any of these limitations are serious right now.
      *
      * XXX What if we specified a black pawn as "a7+ b4+" and a white pawn as "b2+"?  Then the black
      * pawn would be blocked by at b3 by the white pawn, even though the white pawn could move on
@@ -3331,13 +3336,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 				for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
 				    if ((tb->legal_squares[piece2] == BITVECTOR(square))
 					&& (tb->piece_type[piece2] == PAWN)) {
+					if (tb->piece_color[piece] == tb->piece_color[piece2]) break;
 					tb->blocking_pawn[piece] = piece2;
 				    }
 				}
-				break;
-			    } else {
-				tb->legal_squares[piece] |= BITVECTOR(square);
+				if (piece2 == tb->num_pieces) break;
 			    }
+			    tb->legal_squares[piece] |= BITVECTOR(square);
 			    square += dir;
 			}
 			j ++;
@@ -3991,7 +3996,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.303 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.304 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
