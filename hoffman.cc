@@ -473,8 +473,9 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 #define NAIVE2_INDEX 1
 #define SIMPLE_INDEX 2
 #define COMPACT_INDEX 3
+#define STANDARD_INDEX 4
 
-char * index_types[] = {"naive", "naive2", "simple", "compact"};
+char * index_types[] = {"naive", "naive2", "simple", "compact", "standard"};
 
 typedef struct tablebase {
     int index_type;
@@ -3556,6 +3557,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	fprintf(stderr, "Index type not expressly specified; assuming NAIVE\n");
     } else {
 	tb->index_type = find_name_in_array((char *) index, index_types);
+	if (tb->index_type == STANDARD_INDEX) tb->index_type = COMPACT_INDEX;
 	if (tb->index_type == -1) {
 	    fprintf(stderr, "Unknown tablebase index type '%s'\n", index);
 	    return NULL;
@@ -3996,7 +3998,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.304 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.305 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8468,9 +8470,11 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 	for (i = 0; promoted_pieces[i] != 0; i ++) {
 
 	    sprintf(movestr[promotions[pawn] + i], "P=%c", piece_char[promoted_pieces[i]]);
+	    sprintf(movestr2, "P=any");
 
 	    assign_pruning_statement(tb, tb->piece_color[pawn], movestr[promotions[pawn] + i],
 				     promotions[pawn] + i);
+	    assign_pruning_statement(tb, tb->piece_color[pawn], movestr2, promotions[pawn] + i);
 	}
     }
 
