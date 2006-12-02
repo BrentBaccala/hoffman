@@ -141,6 +141,12 @@
 
 FILE *url_fopen(char *url,const char *operation);
 
+/* Our DTD.  We compile it into the program because we want to validate our input against the
+ * version of the DTD that the program was compiled with, not some newer version from the network.
+ */
+
+#include "tablebase_dtd.h"
+
 
 /* According the GCC documentation, "long long" ints are supported by the C99 standard as well as
  * the GCC compiler.  In any event, since chess boards have 64 squares, being able to use 64 bit
@@ -3835,36 +3841,45 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 tablebase_t * parse_XML_control_file(char *filename)
 {
-    xmlParserCtxtPtr ctxt; /* the parser context */
+    xmlParserInputBufferPtr dtd_input_buffer;
+    xmlDtdPtr dtd;
     xmlDocPtr doc;
     tablebase_t *tb;
 
-    /* create a parser context */
-    ctxt = xmlNewParserCtxt();
-    if (ctxt == NULL) {
-        fprintf(stderr, "Failed to allocate parser context\n");
-	return NULL;
-    }
-    /* parse the file, activating the DTD validation option */
-    doc = xmlCtxtReadFile(ctxt, filename, NULL, XML_PARSE_DTDVALID);
+    /* load the DTD from memory */
+
+    dtd_input_buffer = xmlParserInputBufferCreateMem(tablebase_dtd, strlen(tablebase_dtd),
+						     XML_CHAR_ENCODING_ASCII);
+    dtd = xmlIOParseDTD(NULL, dtd_input_buffer, XML_CHAR_ENCODING_ASCII);
+
+    /* load the control file from the specified filename or URL */
+
+    doc = xmlReadFile(filename, NULL, 0);
 
     /* check if parsing suceeded */
     if (doc == NULL) {
 	fprintf(stderr, "'%s' failed XML read\n", filename);
 	return NULL;
-    } else {
-	/* check if validation suceeded */
-        if (ctxt->valid == 0) {
-	    fprintf(stderr, "WARNING: '%s' failed XML validatation\n", filename);
-	}
     }
-    /* free up the parser context */
-    xmlFreeParserCtxt(ctxt);
+
+    /* check if validation suceeded */
+    if (! xmlValidateDtd(xmlNewValidCtxt(), doc, dtd)) {
+	fprintf(stderr, "'%s' failed XML validatation\n", filename);
+	return NULL;
+    }
 
     tb = parse_XML_into_tablebase(doc);
     if (tb == NULL) return NULL;
 
     /* We don't free the XML doc because the tablebase struct contains a pointer to it */
+
+    xmlFreeDtd(dtd);
+
+    /* dtd_input_buffer appears to have been freed by freeing the dtd; at least, malloc complains if
+     * we try to free it here.
+     */
+
+    /* xmlFreeParserInputBuffer(dtd_input_buffer); */
 
     return tb;
 }
@@ -4003,7 +4018,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.306 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.307 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
