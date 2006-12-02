@@ -14,7 +14,7 @@ CFLAGS=-g -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -
 CPPFLAGS=$(CFLAGS)
 
 hoffman: hoffman.o probe.o egtb.o
-	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++ -lrt
+	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++ -lposix-aio
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
@@ -28,7 +28,7 @@ hoffman: hoffman.o probe.o egtb.o
 #	gzip $*.htb
 
 %.gz: %
-	gzip $<
+	gzip -f $<
 
 kpk.htb.gz: kqk.htb.gz krk.htb.gz knk.htb.gz kbk.htb.gz
 
