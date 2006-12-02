@@ -12,33 +12,32 @@ my @next_black_pawns = (0,0,0,5,0,0,5,5);
 my @earliest_white_pawns = (5,2,0,4,0,0,2,3);
 my @next_white_pawns = (6,6,0,0,0,0,4,4);
 
+my $max_free_pieces = 4;
+
 sub filename {
     my ($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen) = @_;
 
     my $total_white_pawns = eval(join('+',@$white_pawns_by_rows));
     my $total_black_pawns = eval(join('+',@$black_pawns_by_rows));
 
-    return "kkp.htb" if (($total_white_pawns == 0) and ($total_black_pawns == 1) and ($white_queen == 0) and ($black_queen == 0));
-    return "kpk.htb" if (($total_white_pawns == 1) and ($total_black_pawns == 0) and ($white_queen == 0) and ($black_queen == 0));
-    return "kpkp.htb" if (($total_white_pawns == 1) and ($total_black_pawns == 1) and ($white_queen == 0) and ($black_queen == 0));
-    return "kppk.htb" if (($total_white_pawns == 2) and ($total_black_pawns == 0) and ($white_queen == 0) and ($black_queen == 0));
-    return "kkpp.htb" if (($total_white_pawns == 0) and ($total_black_pawns == 2) and ($white_queen == 0) and ($black_queen == 0));
-    return "kpkq.htb" if (($total_white_pawns == 1) and ($total_black_pawns == 0) and ($white_queen == 0) and ($black_queen == 1));
-    return "kpkn.htb" if (($total_white_pawns == 1) and ($total_black_pawns == 0) and ($white_queen == 0) and ($black_queen == 2));
-    return "kqkp.htb" if (($total_white_pawns == 0) and ($total_black_pawns == 1) and ($white_queen == 1) and ($black_queen == 0));
-    return "kqpk.htb" if (($total_white_pawns == 1) and ($total_black_pawns == 0) and ($white_queen == 1) and ($black_queen == 0));
-    return "kkqp.htb" if (($total_white_pawns == 0) and ($total_black_pawns == 1) and ($white_queen == 0) and ($black_queen == 1));
-    return "kknp.htb" if (($total_white_pawns == 0) and ($total_black_pawns == 1) and ($white_queen == 0) and ($black_queen == 2));
+    my $total_pieces = 2 + $total_white_pawns + $total_black_pawns
+	+ ($white_queen ? 1 : 0) + ($black_queen ? 1 : 0);
 
     my $filename = "k";
 
     $filename .= "q" if $white_queen;
-    for (my $row = 0; $row < 8; $row ++) {
-	if ($$white_pawns_by_rows[$row] >= 1) {
-	    $filename .= chr(97 + $row) . chr(48 + $earliest_white_pawns[$row]);
-	}
-	if ($$white_pawns_by_rows[$row] >= 2) {
-	    $filename .= chr(97 + $row) . chr(48 + $next_white_pawns[$row]);
+
+    if ($total_pieces <= $max_free_pieces) {
+	$filename .= "p" if ($total_white_pawns == 1);
+	$filename .= "pp" if ($total_white_pawns == 2);
+    } else {
+	for (my $row = 0; $row < 8; $row ++) {
+	    if ($$white_pawns_by_rows[$row] >= 1) {
+		$filename .= chr(97 + $row) . chr(48 + $earliest_white_pawns[$row]);
+	    }
+	    if ($$white_pawns_by_rows[$row] >= 2) {
+		$filename .= chr(97 + $row) . chr(48 + $next_white_pawns[$row]);
+	    }
 	}
     }
 
@@ -46,12 +45,17 @@ sub filename {
     $filename .= "q" if $black_queen == 1;
     $filename .= "n" if $black_queen == 2;
 
-    for (my $row = 0; $row < 8; $row ++) {
-	if ($$black_pawns_by_rows[$row] >= 2) {
-	    $filename .= chr(97 + $row) . chr(48 + $next_black_pawns[$row]);
-	}
-	if ($$black_pawns_by_rows[$row] >= 1) {
-	    $filename .= chr(97 + $row) . chr(48 + $earliest_black_pawns[$row]);
+    if ($total_pieces <= $max_free_pieces) {
+	$filename .= "p" if ($total_black_pawns == 1);
+	$filename .= "pp" if ($total_black_pawns == 2);
+    } else {
+	for (my $row = 0; $row < 8; $row ++) {
+	    if ($$black_pawns_by_rows[$row] >= 2) {
+		$filename .= chr(97 + $row) . chr(48 + $next_black_pawns[$row]);
+	    }
+	    if ($$black_pawns_by_rows[$row] >= 1) {
+		$filename .= chr(97 + $row) . chr(48 + $earliest_black_pawns[$row]);
+	    }
 	}
     }
 
@@ -70,8 +74,12 @@ sub add_futurebase {
 sub generate_control_file_rows {
     my ($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen) = @_;
 
-    my $white_pawns = 0;
-    my $black_pawns = 0;
+    my $total_white_pawns = eval(join('+',@$white_pawns_by_rows));
+    my $total_black_pawns = eval(join('+',@$black_pawns_by_rows));
+
+    my $total_pieces = 2 + $total_white_pawns + $total_black_pawns
+	+ ($white_queen ? 1 : 0) + ($black_queen ? 1 : 0);
+
     my $queenable_white_pawns = 0;
     my $queenable_black_pawns = 0;
 
@@ -94,13 +102,20 @@ sub generate_control_file_rows {
 
     for (my $row = 0; $row < 8; $row ++) {
 	if ($$white_pawns_by_rows[$row] >= 1) {
-	    $white_pawns ++;
 	    my $location = chr(97 + $row) . chr(48 + $earliest_white_pawns[$row]) . "+";
-	    print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$location\"/>\n";
+	    if ($total_pieces > $max_free_pieces) {
+		print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$location\"/>\n";
+	    } else {
+		print OUT "   <piece color=\"white\" type=\"pawn\"/>\n";
+	    }
 	}
 	if ($$white_pawns_by_rows[$row] >= 2) {
 	    my $location = chr(97 + $row) . chr(48 + $next_white_pawns[$row]) . "+";
-	    print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$location\"/>\n";
+	    if ($total_pieces > $max_free_pieces) {
+		print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$location\"/>\n";
+	    } else {
+		print OUT "   <piece color=\"white\" type=\"pawn\"/>\n";
+	    }
 	}
 	if ($$white_pawns_by_rows[$row] and not $$black_pawns_by_rows[$row]) {
 	    $queenable_white_pawns ++;
@@ -112,13 +127,20 @@ sub generate_control_file_rows {
 
     for (my $row = 0; $row < 8; $row ++) {
 	if ($$black_pawns_by_rows[$row] >= 1) {
-	    $black_pawns ++;
 	    my $location = chr(97 + $row) . chr(48 + $earliest_black_pawns[$row]) . "+";
-	    print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$location\"/>\n";
+	    if ($total_pieces > $max_free_pieces) {
+		print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$location\"/>\n";
+	    } else {
+		print OUT "   <piece color=\"black\" type=\"pawn\"/>\n";
+	    }
 	}
 	if ($$black_pawns_by_rows[$row] >= 2) {
 	    my $location = chr(97 + $row) . chr(48 + $next_black_pawns[$row]) . "+";
-	    print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$location\"/>\n";
+	    if ($total_pieces > $max_free_pieces) {
+		print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$location\"/>\n";
+	    } else {
+		print OUT "   <piece color=\"black\" type=\"pawn\"/>\n";
+	    }
 	}
     }
 
@@ -179,10 +201,11 @@ sub generate_control_file_rows {
 	}
     }
     print OUT "   <prune color=\"white\" move=\"PxQ\" type=\"discard\"/>\n"
-	if ($black_queen == 1) and $white_pawns;
+	if ($black_queen == 1) and $total_white_pawns;
     print OUT "   <prune color=\"white\" move=\"PxN\" type=\"discard\"/>\n"
-	if ($black_queen == 2) and $white_pawns;
-    print OUT "   <prune color=\"black\" move=\"PxQ\" type=\"concede\"/>\n" if $white_queen and $black_pawns;
+	if ($black_queen == 2) and $total_white_pawns;
+    print OUT "   <prune color=\"black\" move=\"PxQ\" type=\"concede\"/>\n"
+	if $white_queen and $total_black_pawns;
 
     print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n";
     print OUT "   <generation-controls>\n";
