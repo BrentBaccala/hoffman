@@ -14,7 +14,7 @@
  * reference to original curl example code
  *
  * Enhanced by Brent Baccala <cosine@freesoft.org> (2006) to implement
- * writes as well as reads and to work with GNU C library's custom
+ * writes as well as reads and to work with the GNU C library's custom
  * FILE cookies.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -55,8 +55,6 @@
 struct curl_cookie
 {
     CURL *curl;
-
-    enum {read_mode, write_mode} mode;
 
     char *buffer;               /* buffer to store cached data*/
     int buffer_len;             /* currently allocated buffers length */
@@ -121,6 +119,8 @@ read_callback(char *buffer,
                void *userp)
 {
     struct curl_cookie *cookie = (struct curl_cookie *) userp;
+
+    size *= nitems;
 
     if (size > cookie->buffer_len) size = cookie->buffer_len;
 
@@ -343,6 +343,8 @@ static ssize_t writer(void *ptr, const char *buffer, size_t size)
         FD_ZERO(&fdwrite);
         FD_ZERO(&fdexcep);
 
+	/* fprintf(stderr, "Blocking in writer\n"); */
+
         /* get file descriptors from the transfers */
         curl_multi_fdset(multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
 
@@ -398,7 +400,7 @@ url_fopen(char *url,const char *operation)
     }
 #endif
 
-    if ((operation[0] != 'r') && (operation[0] != 'w')) {
+    if ((operation[0] != 'r') && (operation[0] != 'w') && (operation[0] != 'a')) {
 	errno = EINVAL;
 	return NULL;
     }
@@ -413,19 +415,20 @@ url_fopen(char *url,const char *operation)
     cookie->curl = curl_easy_init();
 
     curl_easy_setopt(cookie->curl, CURLOPT_URL, url);
-    /* curl_easy_setopt(cookie->curl, CURLOPT_VERBOSE, 10); */
+    curl_easy_setopt(cookie->curl, CURLOPT_VERBOSE, 0);
 
     /* Curl's sense of 'read' and 'write' is backwards from ours */
 
     if (operation[0] == 'r') {
-	cookie->mode = read_mode;
 	curl_easy_setopt(cookie->curl, CURLOPT_WRITEDATA, cookie);
 	curl_easy_setopt(cookie->curl, CURLOPT_WRITEFUNCTION, write_callback);
     } else {
-	cookie->mode = write_mode;
 	curl_easy_setopt(cookie->curl, CURLOPT_READDATA, cookie);
 	curl_easy_setopt(cookie->curl, CURLOPT_READFUNCTION, read_callback);
 	curl_easy_setopt(cookie->curl, CURLOPT_UPLOAD, 1);
+	if (operation[0] == 'a') {
+	  curl_easy_setopt(cookie->curl, CURLOPT_FTPAPPEND, 1);
+	}
     }
 
     if(!multi_handle)
@@ -451,7 +454,8 @@ url_fopen(char *url,const char *operation)
 
 	    free(cookie);
 
-	    /* XXX what should errno be here? */
+	    /* it was probably a bad URL */
+	    errno = EINVAL;
 	    return NULL;
 	}
     }
