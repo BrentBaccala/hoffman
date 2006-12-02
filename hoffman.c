@@ -137,6 +137,11 @@
 
 #include <zlib.h>
 
+/* The public face of libcurl */
+
+FILE *url_fopen(char *url,const char *operation);
+
+
 /* According the GCC documentation, "long long" ints are supported by the C99 standard as well as
  * the GCC compiler.  In any event, since chess boards have 64 squares, being able to use 64 bit
  * integers makes a bunch of stuff a lot easier.  Might have to be careful with this if porting.
@@ -3998,7 +4003,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.305 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.306 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9700,7 +9705,6 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, 
 void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 {
     xmlDocPtr doc;
-    int fd;
     int index;
     FILE *file;
     xmlNodePtr tablebase;
@@ -9713,10 +9717,15 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     int dtm;
     int raw_dtm;
 
-    fd = open(filename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-    if (fd == -1) {
-	fprintf(stderr, "Can't open '%s' for writing tablebase\n", filename);
-	return;
+    if (rindex(filename, ':') == NULL) {
+	file = fopen(filename, "w");
+    } else {
+	file = url_fopen(filename, "w");
+    }
+
+    if (file == NULL) {
+	fprintf(stderr, "Can't open output tablebase\n");
+	exit(EXIT_FAILURE);
     }
 
     doc = finalize_XML_header(tb, options);
@@ -9740,66 +9749,67 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
     if (padded_size != ((size+5)&(~3))) {
 	fprintf(stderr, "sizes don't match in write_tablebase_to_file\n");
+	exit(EXIT_FAILURE);
     }
 
-    do_write(fd, buf, size);
+    if (fwrite(buf, padded_size, 1, file) != 1) {
+	fprintf(stderr, "Tablebase write failed\n");
+	exit(EXIT_FAILURE);
+    }
+
     xmlFree(buf);
-    close(fd);
 
-    file = fopen(filename, "a");
-    if (file == NULL) {
-	fprintf(stderr, "Can't fopen output file\n");
-    } else {
-	while (ftell(file) < padded_size) {
-	    fputc(0, file);
-	}
-	for (index = 0; index <= tb->max_index; index ++) {
+    for (index = 0; index <= tb->max_index; index ++) {
 
-	    dtm = get_entry_DTM(tb, index);
-	    raw_dtm = get_entry_raw_DTM(tb, index);
+	dtm = get_entry_DTM(tb, index);
+	raw_dtm = get_entry_raw_DTM(tb, index);
 
-	    if (tb->format.dtm_bits > 0) {
-		/* If we're saving movecnt, then use the raw DTM, else "cook" it. */
-		set_signed_field(entry, tb->format.dtm_mask,
-				 tb->format.dtm_offset + ((index << tb->format.bits) % 8),
-				 (tb->format.movecnt_bits > 0) ? raw_dtm : dtm);
-	    }
-
-	    if (tb->format.movecnt_bits > 0) {
-		int movecnt = get_entry_movecnt(tb, index);
-		set_unsigned_field(entry, tb->format.movecnt_mask,
-				   tb->format.movecnt_offset + ((index << tb->format.bits) % 8),
-				   movecnt);
-	    }
-
-	    switch (tb->format.flag_type) {
-	    case FORMAT_FLAG_WHITE_WINS:
-		set_unsigned_field(entry, 1,
-				   tb->format.flag_offset + ((index << tb->format.bits) % 8),
-				   (index_to_side_to_move(tb, index) == WHITE)
-				   ? does_PTM_win(tb, index) : does_PNTM_win(tb,index));
-		break;
-	    case FORMAT_FLAG_WHITE_DRAWS:
-		set_unsigned_field(entry, 1,
-				   tb->format.flag_offset + ((index << tb->format.bits) % 8),
-				   (index_to_side_to_move(tb, index) == WHITE)
-				   ? !does_PNTM_win(tb, index) : !does_PTM_win(tb,index));
-		break;
-	    }
-
-	    /* If the next index will be aligned on a byte boundary, write out what we've buffered */
-
-	    if ((((index + 1) << tb->format.bits) % 8) == 0) {
-		fwrite(entry, tb->format.bytes, 1, file);
-	    }
+	if (tb->format.dtm_bits > 0) {
+	    /* If we're saving movecnt, then use the raw DTM, else "cook" it. */
+	    set_signed_field(entry, tb->format.dtm_mask,
+			     tb->format.dtm_offset + ((index << tb->format.bits) % 8),
+			     (tb->format.movecnt_bits > 0) ? raw_dtm : dtm);
 	}
 
-	/* If the last index plus one wasn't on a byte boundary, write out what we've buffered */
-
-	if (((index << tb->format.bits) % 8) != 0) {
-	    fwrite(entry, tb->format.bytes, 1, file);
+	if (tb->format.movecnt_bits > 0) {
+	    int movecnt = get_entry_movecnt(tb, index);
+	    set_unsigned_field(entry, tb->format.movecnt_mask,
+			       tb->format.movecnt_offset + ((index << tb->format.bits) % 8),
+			       movecnt);
 	}
 
+	switch (tb->format.flag_type) {
+	case FORMAT_FLAG_WHITE_WINS:
+	    set_unsigned_field(entry, 1,
+			       tb->format.flag_offset + ((index << tb->format.bits) % 8),
+			       (index_to_side_to_move(tb, index) == WHITE)
+			       ? does_PTM_win(tb, index) : does_PNTM_win(tb,index));
+	    break;
+	case FORMAT_FLAG_WHITE_DRAWS:
+	    set_unsigned_field(entry, 1,
+			       tb->format.flag_offset + ((index << tb->format.bits) % 8),
+			       (index_to_side_to_move(tb, index) == WHITE)
+			       ? !does_PNTM_win(tb, index) : !does_PTM_win(tb,index));
+	    break;
+	}
+
+	/* If the next index will be aligned on a byte boundary, write out what we've buffered */
+
+	if ((((index + 1) << tb->format.bits) % 8) == 0) {
+	    if (fwrite(entry, tb->format.bytes, 1, file) != 1) {
+		fprintf(stderr, "Tablebase write failed\n");
+		exit(EXIT_FAILURE);
+	    }
+	}
+    }
+
+    /* If the last index plus one wasn't on a byte boundary, write out what we've buffered */
+    
+    if (((index << tb->format.bits) % 8) != 0) {
+	if (fwrite(entry, tb->format.bytes, 1, file) != 1) {
+	    fprintf(stderr, "Tablebase write failed\n");
+	    exit(EXIT_FAILURE);
+	}
     }
 
     fclose(file);
