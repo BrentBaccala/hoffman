@@ -4018,7 +4018,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.309 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.310 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9727,7 +9727,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 {
     xmlDocPtr doc;
     int index;
-    FILE *file;
+    FILE *file = NULL;
     xmlNodePtr tablebase;
     xmlChar *buf;
     int size;
@@ -9738,10 +9738,29 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     int dtm;
     int raw_dtm;
 
-    if (rindex(filename, ':') == NULL) {
-	file = fopen(filename, "w");
+    if (filename != NULL) {
+	if (rindex(filename, ':') == NULL) {
+	    file = fopen(filename, "w");
+	} else {
+	    file = url_fopen(filename, "w");
+	}
     } else {
-	file = url_fopen(filename, "w");
+	xmlXPathContextPtr context;
+	xmlXPathObjectPtr result;
+
+	context = xmlXPathNewContext(tb->xml);
+	result = xmlXPathEvalExpression(BAD_CAST "//output", context);
+
+	if (result->nodesetval->nodeNr == 1) {
+	    if (xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) {
+		file = fopen((char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename"), "w");
+	    } else if (xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) {
+		file = url_fopen((char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url"), "w");
+	    }
+	}
+
+	xmlXPathFreeObject(result);
+	xmlXPathFreeContext(context);
     }
 
     if (file == NULL) {
@@ -9833,7 +9852,10 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	}
     }
 
-    fclose(file);
+    if (fclose(file) != 0) {
+	fprintf(stderr, "Tablebase write failed\n");
+	exit(EXIT_FAILURE);
+    }
 }
 
 /* The "master routine" for tablebase generation.
@@ -9848,9 +9870,23 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     int max_dtm = 0;
     int min_dtm = 0;
     int i;
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
 
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//output", context);
+    if ((result->nodesetval->nodeNr == 0) && (output_filename == NULL)) {
+	fprintf(stderr, "Output filename must be specified either on command line or with <output> tag\n");
+	return 0;
+    }
+    if ((result->nodesetval->nodeNr > 0) && (output_filename != NULL)) {
+	fprintf(stderr, "WARNING: Output filename specified on command line overrides <output> tag\n");
+    }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
     num_propentries = proptable_MBs * 1024 * 1024 / proptable_format.bytes;
 
@@ -10263,10 +10299,12 @@ int main(int argc, char *argv[])
 	exit(EXIT_FAILURE);
     }
 
+#if 0
     if (generating && (output_filename == NULL)) {
 	fprintf(stderr, "An output filename must be specified to generate\n");
 	exit(EXIT_FAILURE);
     }
+#endif
 
     if (!generating && (output_filename != NULL)) {
 	fprintf(stderr, "An output filename can not be specified when probing or verifying\n");
