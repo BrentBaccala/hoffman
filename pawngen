@@ -247,6 +247,51 @@ sub generate_control_file_rows {
 	}
     }
 
+    # Now check to see if any of our pawns can capture pawns on adjacent files
+
+    for (my $row = 0; $row < 8; $row ++) {
+	if ($$white_pawns_by_rows[$row]) {
+	    if ($row > 0 and $$black_pawns_by_rows[$row - 1]) {
+		$$white_pawns_by_rows[$row] --;
+		$$black_pawns_by_rows[$row - 1] --;
+		$$white_pawns_by_rows[$row - 1] ++;
+		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+		$$white_pawns_by_rows[$row] ++;
+		$$black_pawns_by_rows[$row - 1] ++;
+		$$white_pawns_by_rows[$row - 1] --;
+	    }
+	    if ($row < 7 and $$black_pawns_by_rows[$row + 1]) {
+		$$white_pawns_by_rows[$row] --;
+		$$black_pawns_by_rows[$row + 1] --;
+		$$white_pawns_by_rows[$row + 1] ++;
+		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+		$$white_pawns_by_rows[$row] ++;
+		$$black_pawns_by_rows[$row + 1] ++;
+		$$white_pawns_by_rows[$row + 1] --;
+	    }
+	}
+	if ($$black_pawns_by_rows[$row]) {
+	    if ($row > 0 and $$white_pawns_by_rows[$row - 1]) {
+		$$black_pawns_by_rows[$row] --;
+		$$white_pawns_by_rows[$row - 1] --;
+		$$black_pawns_by_rows[$row - 1] ++;
+		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+		$$black_pawns_by_rows[$row] ++;
+		$$white_pawns_by_rows[$row - 1] ++;
+		$$black_pawns_by_rows[$row - 1] --;
+	    }
+	    if ($row < 7 and $$white_pawns_by_rows[$row + 1]) {
+		$$black_pawns_by_rows[$row] --;
+		$$white_pawns_by_rows[$row + 1] --;
+		$$black_pawns_by_rows[$row + 1] ++;
+		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+		$$black_pawns_by_rows[$row] ++;
+		$$white_pawns_by_rows[$row + 1] ++;
+		$$black_pawns_by_rows[$row + 1] --;
+	    }
+	}
+    }
+
     if ($queenable_white_pawns) {
 	if ($white_queen) {
 	    print OUT "   <prune color=\"white\" move=\"P=any\" type=\"discard\"/>\n";
