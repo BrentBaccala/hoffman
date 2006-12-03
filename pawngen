@@ -16,6 +16,26 @@ my $max_free_pieces = 4;
 
 my $concede_stalemates = 0;
 
+my @white_queens = ('', 'q', 'r', 'b', 'n');
+my @black_queens = ('', 'q', 'r', 'b', 'n');
+
+#my @white_queens = ('', 'q');
+#my @black_queens = ('', 'q', 'n');
+
+my %queen_names;
+
+$queen_names{'q'} = "queen";
+$queen_names{'r'} = "rook";
+$queen_names{'b'} = "bishop";
+$queen_names{'n'} = "knight";
+
+my %queen_caps;
+
+$queen_caps{'q'} = 'Q';
+$queen_caps{'r'} = 'R';
+$queen_caps{'b'} = 'B';
+$queen_caps{'n'} = 'N';
+
 sub filename {
     my ($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen) = @_;
 
@@ -27,7 +47,7 @@ sub filename {
 
     my $filename = "k";
 
-    $filename .= "q" if $white_queen;
+    $filename .= $white_queens[$white_queen];
 
     if ($total_pieces <= $max_free_pieces) {
 	$filename .= "p" if ($total_white_pawns == 1);
@@ -44,8 +64,7 @@ sub filename {
     }
 
     $filename .= "k";
-    $filename .= "q" if $black_queen == 1;
-    $filename .= "n" if $black_queen == 2;
+    $filename .= $black_queens[$black_queen];
 
     if ($total_pieces <= $max_free_pieces) {
 	$filename .= "p" if ($total_black_pawns == 1);
@@ -107,6 +126,8 @@ sub generate_control_file_rows {
 
     my @futurebases;
 
+    return if defined &invert_filename(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen));
+
     return if (exists $generated_filenames{&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen)});
     $generated_filenames{&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen)} = &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
 
@@ -129,9 +150,8 @@ sub generate_control_file_rows {
     print OUT "   <format><dtm bits=\"8\"/></format>\n";
     print OUT "   <piece color=\"white\" type=\"king\"/>\n";
     print OUT "   <piece color=\"black\" type=\"king\"/>\n";
-    print OUT "   <piece color=\"white\" type=\"queen\"/>\n" if $white_queen;
-    print OUT "   <piece color=\"black\" type=\"queen\"/>\n" if $black_queen == 1;
-    print OUT "   <piece color=\"black\" type=\"knight\"/>\n" if $black_queen == 2;
+    print OUT "   <piece color=\"white\" type=\"$queen_names{$white_queens[$white_queen]}\"/>\n" if $white_queen;
+    print OUT "   <piece color=\"black\" type=\"$queen_names{$black_queens[$black_queen]}\"/>\n" if $black_queen;
 
     for (my $row = 0; $row < 8; $row ++) {
 	if ($$white_pawns_by_rows[$row] >= 1) {
@@ -181,8 +201,13 @@ sub generate_control_file_rows {
 	for (my $row = 0; $row < 8; $row ++) {
 	    if ($$white_pawns_by_rows[$row] and not $$black_pawns_by_rows[$row]) {
 		$$white_pawns_by_rows[$row] --;
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, 1, $black_queen), "promotion", \@futurebases);
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, 1, 0), "capture-promotion", \@futurebases) if $black_queen;
+		for (my $white_queen = 1; $white_queen <= $#white_queens; $white_queen ++) {
+		    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows,
+					      $white_queen, $black_queen), "promotion", \@futurebases);
+		    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows,
+					      $white_queen, 0), "capture-promotion", \@futurebases)
+			if $black_queen;
+		}
 		$$white_pawns_by_rows[$row] ++;
 	    }
 	}
@@ -201,10 +226,13 @@ sub generate_control_file_rows {
 	for (my $row = 0; $row < 8; $row ++) {
 	    if ($$black_pawns_by_rows[$row] and not $$white_pawns_by_rows[$row]) {
 		$$black_pawns_by_rows[$row] --;
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, 1), "promotion", \@futurebases);
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, 2), "promotion", \@futurebases);
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, 0, 1), "capture-promotion", \@futurebases) if $white_queen;
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, 0, 2), "capture-promotion", \@futurebases) if $white_queen;
+		for (my $black_queen = 1; $black_queen <= $#black_queens; $black_queen ++) {
+		    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows,
+					      $white_queen, $black_queen), "promotion", \@futurebases);
+		    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows,
+					      0, $black_queen), "capture-promotion", \@futurebases)
+			if $white_queen;
+		}
 		$$black_pawns_by_rows[$row] ++;
 	    }
 	}
@@ -223,21 +251,22 @@ sub generate_control_file_rows {
 	if ($white_queen) {
 	    print OUT "   <prune color=\"white\" move=\"P=any\" type=\"discard\"/>\n";
 	} else {
-	    print OUT "   <prune color=\"white\" move=\"P=R\" type=\"discard\"/>\n";
-	    print OUT "   <prune color=\"white\" move=\"P=B\" type=\"discard\"/>\n";
-	    print OUT "   <prune color=\"white\" move=\"P=N\" type=\"discard\"/>\n";
+	    # what here if we don't consider all white queening possibilities?
+	    #print OUT "   <prune color=\"white\" move=\"P=R\" type=\"discard\"/>\n";
+	    #print OUT "   <prune color=\"white\" move=\"P=B\" type=\"discard\"/>\n";
+	    #print OUT "   <prune color=\"white\" move=\"P=N\" type=\"discard\"/>\n";
 	}
     }
     if ($queenable_black_pawns) {
 	if ($black_queen) {
 	    print OUT "   <prune color=\"black\" move=\"P=any\" type=\"concede\"/>\n";
+	} else {
+	    # what here if we don't consider all black queening possibilities?
 	}
     }
-    print OUT "   <prune color=\"white\" move=\"PxQ\" type=\"discard\"/>\n"
-	if ($black_queen == 1) and $total_white_pawns;
-    print OUT "   <prune color=\"white\" move=\"PxN\" type=\"discard\"/>\n"
-	if ($black_queen == 2) and $total_white_pawns;
-    print OUT "   <prune color=\"black\" move=\"PxQ\" type=\"concede\"/>\n"
+    print OUT "   <prune color=\"white\" move=\"Px$queen_caps{$black_queens[$black_queen]}\" type=\"discard\"/>\n"
+	if $black_queen and $total_white_pawns;
+    print OUT "   <prune color=\"black\" move=\"Px$queen_caps{$white_queens[$white_queen]}\" type=\"concede\"/>\n"
 	if $white_queen and $total_black_pawns;
 
     print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n" if $concede_stalemates;
@@ -261,12 +290,11 @@ sub generate_control_file_set {
     #my $total_white_pawns = eval(join('+',@$white_pawns_by_row));
     #my $total_black_pawns = eval(join('+',@$black_pawns_by_row));
 
-    &generate_control_file_rows($white_pawns_by_row, $black_pawns_by_row, 0, 0);
-    &generate_control_file_rows($white_pawns_by_row, $black_pawns_by_row, 1, 0);
-    &generate_control_file_rows($white_pawns_by_row, $black_pawns_by_row, 0, 1);
-    &generate_control_file_rows($white_pawns_by_row, $black_pawns_by_row, 1, 1);
-    &generate_control_file_rows($white_pawns_by_row, $black_pawns_by_row, 0, 2);
-    &generate_control_file_rows($white_pawns_by_row, $black_pawns_by_row, 1, 2);
+    for (my $white_queen = 0; $white_queen <= $#white_queens; $white_queen ++) {
+	for (my $black_queen = 0; $black_queen <= $#black_queens; $black_queen ++) {
+	    &generate_control_file_rows($white_pawns_by_row, $black_pawns_by_row, $white_queen, $black_queen);
+	}
+    }
 }
 
 sub generate_control_files {
