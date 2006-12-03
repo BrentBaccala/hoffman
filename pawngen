@@ -304,17 +304,27 @@ sub generate_control_file_rows {
 	if ($white_queen) {
 	    print OUT "   <prune color=\"white\" move=\"P=any\" type=\"discard\"/>\n";
 	} else {
-	    # what here if we don't consider all white queening possibilities?
-	    #print OUT "   <prune color=\"white\" move=\"P=R\" type=\"discard\"/>\n";
-	    #print OUT "   <prune color=\"white\" move=\"P=B\" type=\"discard\"/>\n";
-	    #print OUT "   <prune color=\"white\" move=\"P=N\" type=\"discard\"/>\n";
+	    # if we don't consider all white queening possibilities...
+	    foreach my $queen ('q', 'r', 'b', 'n') {
+		if (not grep /$queen/, @white_queens) {
+		    print OUT "   <prune color=\"white\" move=\"P=$queen_caps{$queen}\" type=\"discard\"/>\n";
+		}
+	    }
 	}
     }
     if ($queenable_black_pawns) {
 	if ($black_queen) {
 	    print OUT "   <prune color=\"black\" move=\"P=any\" type=\"concede\"/>\n";
 	} else {
-	    # what here if we don't consider all black queening possibilities?
+	    # if we don't consider all black queening possibilities, then so long as we're discarding
+	    # stalemates, we can ignore rooks and bishops
+	    if ($concede_stalemates) {
+		foreach my $queen ('r', 'b') {
+		    if (not grep /$queen/, @black_queens) {
+			print OUT "   <prune color=\"black\" move=\"P=$queen_caps{$queen}\" type=\"discard\"/>\n";
+		    }
+		}
+	    }
 	}
     }
     print OUT "   <prune color=\"white\" move=\"Px$queen_caps{$black_queens[$black_queen]}\" type=\"discard\"/>\n"
