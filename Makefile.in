@@ -18,6 +18,13 @@ hoffman: hoffman.o probe.o egtb.o url_fopen.o
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
+hoffman.o: tablebase_dtd.h
+
+tablebase_dtd.h: tablebase.dtd
+	echo "char * tablebase_dtd = \"\\" > $@
+	sed -e 's/"/\\"/g' -e 's/$$/\\/' $< >> $@
+	echo "\";" >> $@
+
 %.htb: %.xml
 	./hoffman -g -o $@ $<
 #	./hoffman -v -n Nalimov $@
