@@ -16,6 +16,8 @@ my $max_free_pieces = 4;
 
 my $concede_stalemates = 0;
 
+my $url_prefix = "ftp://vger.freesoft.org/Hoffman/analysis1/";
+
 my @white_queens = ('', 'q', 'r', 'b', 'n');
 my @black_queens = ('', 'q', 'r', 'b', 'n');
 
@@ -105,9 +107,9 @@ sub add_futurebase {
 	push @$array, $filename;
 	if (defined &invert_filename($filename)) {
 	    $filename = &invert_filename($filename);
-	    print OUT "   <futurebase filename=\"$filename\" colors=\"invert\" type=\"$type\"/>\n";
+	    print OUT "   <futurebase url=\"$url_prefix$filename\" colors=\"invert\" type=\"$type\"/>\n";
 	} else {
-	    print OUT "   <futurebase filename=\"$filename\" type=\"$type\"/>\n";
+	    print OUT "   <futurebase url=\"$url_prefix$filename\" type=\"$type\"/>\n";
 	}
     }
 }
@@ -138,7 +140,13 @@ sub generate_control_file_rows {
 	$symmetry = "8-way" if ($total_white_pawns == 0 and $total_black_pawns == 0);
     }
 
-    open (OUT, ">&STDOUT") || die "open";
+    my $cntl_filename = &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
+    $cntl_filename =~ s/htb$/xml/;
+
+    #open (OUT, ">&STDOUT") || die "open";
+    #open (OUT, ">/dev/null") || die "open";
+    open (OUT, ">$cntl_filename") || die "open";
+
     print OUT "<tablebase>\n";
     print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
     print OUT "   <move-restriction color=\"black\" type=\"concede\"/>\n";
@@ -316,16 +324,20 @@ sub generate_control_file_rows {
 
     print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n" if $concede_stalemates;
     print OUT "   <generation-controls>\n";
-    print OUT "      <output filename=\"", &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "\"/>\n";
+    print OUT "      <output url=\"$url_prefix",
+    &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "\"/>\n";
     print OUT "   </generation-controls>\n";
     print OUT "</tablebase>\n";
 
-    print OUT &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), ":";
+    close OUT;
+
+    print MAKEFILE &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), ":";
     foreach my $futurebase (@futurebases) {
 	$futurebase = &invert_filename($futurebase) if defined &invert_filename($futurebase);
-	print OUT " $futurebase";
+	print MAKEFILE " $futurebase";
     }
-    print OUT "\n";
+    print MAKEFILE "\n";
+
 }
 
 
@@ -395,5 +407,8 @@ sub generate_control_files {
 	&generate_control_file_set($white_pawns_by_row, $black_pawns_by_row);
     }
 }
+
+#open (MAKEFILE, ">&STDOUT") || die "open";
+open (MAKEFILE, ">/dev/null") || die "open";
 
 &generate_control_files([1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1]);
