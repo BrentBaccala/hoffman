@@ -14,6 +14,8 @@ my @next_white_pawns = (6,6,0,0,0,0,4,4);
 
 my $max_free_pieces = 4;
 
+my $concede_stalemates = 0;
+
 sub filename {
     my ($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen) = @_;
 
@@ -88,11 +90,22 @@ sub generate_control_file_rows {
     return if (exists $generated_filenames{&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen)});
     $generated_filenames{&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen)} = &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
 
+    my $symmetry;
+
+    if ($total_pieces <= $max_free_pieces) {
+	$symmetry = "2-way";
+	$symmetry = "8-way" if ($total_white_pawns == 0 and $total_black_pawns == 0);
+    }
+
     open (OUT, ">&STDOUT") || die "open";
     print OUT "<tablebase>\n";
     print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
     print OUT "   <move-restriction color=\"black\" type=\"concede\"/>\n";
-    print OUT "   <index type=\"standard\"/>\n";
+    if (defined $symmetry) {
+	print OUT "   <index type=\"standard\" symmetry=\"$symmetry\"/>\n";
+    } else {
+	print OUT "   <index type=\"standard\"/>\n";
+    }
     print OUT "   <format><dtm bits=\"8\"/></format>\n";
     print OUT "   <piece color=\"white\" type=\"king\"/>\n";
     print OUT "   <piece color=\"black\" type=\"king\"/>\n";
@@ -207,7 +220,7 @@ sub generate_control_file_rows {
     print OUT "   <prune color=\"black\" move=\"PxQ\" type=\"concede\"/>\n"
 	if $white_queen and $total_black_pawns;
 
-    print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n";
+    print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n" if $concede_stalemates;
     print OUT "   <generation-controls>\n";
     print OUT "      <output filename=\"", &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "\"/>\n";
     print OUT "   </generation-controls>\n";
