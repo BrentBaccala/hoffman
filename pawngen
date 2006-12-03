@@ -66,11 +66,31 @@ sub filename {
 
 my %generated_filenames;
 
+sub invert_filename {
+    my ($filename) = @_;
+
+    if ($filename =~ s/^kk(..)\./k\1k./ or $filename =~ s/^kk(.)\./k\1k./) {
+	return $filename;
+    } elsif ($filename =~ m/^k(.)k(.)\./ and index("qrbnp", $1) > index("qrbnp", $2)) {
+	$filename =~ s/^k(.)k(.)\./k\2k\1./;
+	return $filename;
+    } else {
+	return undef;
+    }
+}
+
 sub add_futurebase {
     my ($filename, $type, $array) = @_;
 
-    print OUT "   <futurebase filename=\"$filename\" type=\"$type\"/>\n" unless grep(/$filename/, @$array);
-    push @$array, $filename;
+    if (not grep(/$filename/, @$array)) {
+	push @$array, $filename;
+	if (defined &invert_filename($filename)) {
+	    $filename = &invert_filename($filename);
+	    print OUT "   <futurebase filename=\"$filename\" colors=\"invert\" type=\"$type\"/>\n";
+	} else {
+	    print OUT "   <futurebase filename=\"$filename\" type=\"$type\"/>\n";
+	}
+    }
 }
 
 sub generate_control_file_rows {
@@ -189,7 +209,7 @@ sub generate_control_file_rows {
 	    }
 	}
     } else {
-	&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, 0, $white_queen), "capture", \@futurebases);
+	&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, 0), "capture", \@futurebases);
     }
     for (my $row = 0; $row < 8; $row ++) {
 	if ($$black_pawns_by_rows[$row]) {
@@ -225,6 +245,13 @@ sub generate_control_file_rows {
     print OUT "      <output filename=\"", &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "\"/>\n";
     print OUT "   </generation-controls>\n";
     print OUT "</tablebase>\n";
+
+    print OUT &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), ":";
+    foreach my $futurebase (@futurebases) {
+	$futurebase = &invert_filename($futurebase) if defined &invert_filename($futurebase);
+	print OUT " $futurebase";
+    }
+    print OUT "\n";
 }
 
 
