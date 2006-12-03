@@ -378,7 +378,7 @@ static ssize_t writer(void *ptr, const char *buffer, size_t size)
 
     cookie->buffer = NULL;
 
-    return size;
+    return (size - cookie->buffer_len);
 }
 
 static cookie_io_functions_t read_functions = {reader, NULL, NULL, cleaner};
