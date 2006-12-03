@@ -4018,7 +4018,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.308 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.309 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6237,8 +6237,8 @@ int propagation_pass(int target_dtm)
 {
     index_t index;
 
-    if (((dtm > 0) && (dtm > (entries_format.dtm_mask >> 1)))
-	|| ((dtm < 0) && (dtm < -(entries_format.dtm_mask >> 1)))) {
+    if (((target_dtm > 0) && (target_dtm > (entries_format.dtm_mask >> 1)))
+	|| ((target_dtm < 0) && (target_dtm < -(entries_format.dtm_mask >> 1)))) {
 	fprintf(stderr, "DTM entry field size exceeded\n");
 	exit(EXIT_FAILURE);
     }
