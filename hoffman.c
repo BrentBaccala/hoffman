@@ -4018,7 +4018,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.307 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.308 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6236,6 +6236,12 @@ void proptable_finalize(int target_dtm)
 int propagation_pass(int target_dtm)
 {
     index_t index;
+
+    if (((dtm > 0) && (dtm > (entries_format.dtm_mask >> 1)))
+	|| ((dtm < 0) && (dtm < -(entries_format.dtm_mask >> 1)))) {
+	fprintf(stderr, "DTM entry field size exceeded\n");
+	exit(EXIT_FAILURE);
+    }
 
     gettimeofday(&pass_start_times[total_passes], NULL);
     if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
