@@ -139,7 +139,12 @@
 
 /* The public face of libcurl */
 
-FILE *url_fopen(char *url,const char *operation);
+FILE * url_fopen(char *url,const char *operation);
+
+/* The public face of zlib */
+
+FILE * zlib_fopen(FILE *file, char *operation);
+
 
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
@@ -509,7 +514,8 @@ typedef struct tablebase {
     struct format format;
 
     /* for futurebases only */
-    gzFile file;
+    FILE * file;
+    index_t next_read_index;
     long offset;
     int max_dtm;
     int min_dtm;
@@ -606,7 +612,7 @@ int num_propentries = 0;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 649 */
+/* #define DEBUG_MOVE 3 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -3890,7 +3896,7 @@ tablebase_t * parse_XML_control_file(char *filename)
 
 tablebase_t * preload_futurebase_from_file(char *filename)
 {
-    gzFile file;
+    FILE * file;
     int xml_size;
     char fileptr[16384];	/* XXX hardwired max size of XML */
     xmlDocPtr doc;
@@ -3898,29 +3904,48 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     xmlNodePtr tablebase;
     xmlChar * offsetstr;
 
-    file = gzopen(filename, "r");
+    if (rindex(filename, ':') == NULL) {
+	file = fopen(filename, "r");
+    } else {
+	file = url_fopen(filename, "r");
+    }
 
     if (file == NULL) {
-
-	fprintf(stderr, "Can't gzopen file '%s'\n", filename);
-
-    } else {
-
-	for (xml_size = 0; (fileptr[xml_size] = gzgetc(file)) != '\0'; xml_size ++) ;
-
-	doc = xmlReadMemory(fileptr, xml_size, NULL, NULL, 0);
-
-	tb = parse_XML_into_tablebase(doc);
-
-	tb->file = file;
-
-	tablebase = xmlDocGetRootElement(doc);
-
-	offsetstr = xmlGetProp(tablebase, BAD_CAST "offset");
-	tb->offset = strtol((const char *) offsetstr, NULL, 0);
-
-	gzseek(file, tb->offset, SEEK_SET);
+	fprintf(stderr, "Can't fopen file '%s'\n", filename);
+	return NULL;
     }
+
+    file = zlib_fopen(file, "r");
+
+    if (file == NULL) {
+	fprintf(stderr, "Can't zlib_fopen file '%s'\n", filename);
+	return NULL;
+    }
+
+    for (xml_size = 0; (fileptr[xml_size] = fgetc(file)) != '\0'; xml_size ++) ;
+
+    doc = xmlReadMemory(fileptr, xml_size, NULL, NULL, 0);
+
+    tb = parse_XML_into_tablebase(doc);
+
+    tb->file = file;
+
+    tablebase = xmlDocGetRootElement(doc);
+
+    offsetstr = xmlGetProp(tablebase, BAD_CAST "offset");
+    tb->offset = strtol((const char *) offsetstr, NULL, 0);
+
+#if 0
+    if (fseek(file, tb->offset, SEEK_SET) != 0) {
+	fprintf(stderr, "Seek failed in preload_futurebase_from_file()\n");
+	exit(EXIT_FAILURE);
+    }
+#else
+    xml_size ++; /* we read one zero byte */
+    while (xml_size < tb->offset) {
+	fileptr[xml_size ++] = fgetc(file);
+    }
+#endif
 
     return tb;
 }
@@ -3929,7 +3954,7 @@ void unload_futurebase(tablebase_t *tb)
 {
     if (tb->xml != NULL) xmlFreeDoc(tb->xml);
     tb->xml = NULL;
-    if (tb->file != NULL) gzclose(tb->file);
+    if (tb->file != NULL) fclose(tb->file);
     tb->file = NULL;
 }
 
@@ -4018,7 +4043,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.310 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.311 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4999,13 +5024,65 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	static index_t cached_index = 0;
 	int retval;
 
-	if ((cached_tb == tb) && (cached_index == index)) return entry;
+	if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
+				  == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
 
-	gzseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET);
-	retval = gzread(tb->file, entry, tb->format.bytes);
-	if (retval == EOF) {
+#if 0
+	if (LEFTSHIFT(index, tb->format.bits - 3)
+	    != LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
+	    if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
+		fprintf(stderr, "Seek failed in fetch_entry_pointer()\n");
+	    }
+	}
+
+	retval = fread(entry, tb->format.bytes, 1, tb->file);
+	if (retval != 1) {
 	    fprintf(stderr, "fetch_entry_pointer() hit EOF reading from disk\n");
 	}
+
+	switch (tb->format.bits) {
+	case 0:
+	    tb->next_read_index = (index + 8) & ~7;
+	    break;
+	case 1:
+	    tb->next_read_index = (index + 4) & ~3;
+	    break;
+	case 2:
+	    tb->next_read_index = (index + 2) & ~1;
+	    break;
+	default:
+	    tb->next_read_index = index + 1;
+	    break;
+	}
+#else
+
+	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
+
+	do {
+
+	    retval = fread(entry, tb->format.bytes, 1, tb->file);
+	    if (retval != 1) {
+		fprintf(stderr, "fetch_entry_pointer() hit EOF reading from disk\n");
+	    }
+
+	    switch (tb->format.bits) {
+	    case 0:
+		tb->next_read_index = (tb->next_read_index + 8) & ~7;
+		break;
+	    case 1:
+		tb->next_read_index = (tb->next_read_index + 4) & ~3;
+		break;
+	    case 2:
+		tb->next_read_index = (tb->next_read_index + 2) & ~1;
+		break;
+	    default:
+		tb->next_read_index = tb->next_read_index + 1;
+		break;
+	    }
+	} while (LEFTSHIFT(index, tb->format.bits - 3)
+		 >= LEFTSHIFT(tb->next_read_index, tb->format.bits - 3));
+
+#endif
 
 	cached_tb = tb;
 	cached_index = index;
@@ -7832,6 +7909,9 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	int piece;
 
 	filename = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "filename");
+	if (filename == NULL) {
+	    filename = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "url");
+	}
 
 	futurebase = preload_futurebase_from_file((char *) filename);
 
@@ -8579,6 +8659,9 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	xmlChar * colors_property;
 
 	filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "filename");
+	if (filename == NULL) {
+	    filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "url");
+	}
 	futurebases[fbnum] = preload_futurebase_from_file((char *) filename);
 
 	/* load_futurebase_from_file() already printed some kind of error message */
@@ -9767,6 +9850,8 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	fprintf(stderr, "Can't open output tablebase\n");
 	exit(EXIT_FAILURE);
     }
+
+    file = zlib_fopen(file, "w");
 
     doc = finalize_XML_header(tb, options);
 
