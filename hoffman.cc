@@ -607,6 +607,7 @@ int num_propentries = 0;
 
 #define CHECK_KING_LEGALITY_EARLY 1
 
+int verbose = 1;
 
 /* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
  * doing to process a single move.
@@ -616,6 +617,35 @@ int num_propentries = 0;
 
 
 /***** UTILITY FUNCTIONS *****/
+
+void fatal (char * format, ...)
+{
+    va_list va;
+
+    /* BREAKPOINT */
+    va_start(va, format);
+    vfprintf(stderr, format, va);
+    va_end(va);
+}
+
+void warning (char * format, ...)
+{
+    va_list va;
+
+    va_start(va, format);
+    fputs("WARNING: ", stderr);
+    vfprintf(stderr, format, va);
+    va_end(va);
+}
+
+void info (char * format, ...)
+{
+    va_list va;
+
+    va_start(va, format);
+    if (verbose) vfprintf(stderr, format, va);
+    va_end(va);
+}
 
 /* Matches a string against a NULL-terminated array of strings using case insensitive match.
  * Returns index in array of matching string, or -1 if there was no match.
@@ -768,10 +798,10 @@ inline void set_signed_field(uint32 *ptr, uint32 mask, int offset, int val)
     }
 
     if ((val > 0) && (val > (mask >> 1))) {
-	fprintf(stderr, "value too large in set_signed_field\n");  /* BREAKPOINT */
+	fatal("value too large in set_signed_field\n");
     }
     if ((val < 0) && (val < ~(mask >> 1))) {
-	fprintf(stderr, "value too small in set_signed_field\n");  /* BREAKPOINT */
+	fatal("value too small in set_signed_field\n");
     }
     *ptr &= (~ (mask << offset));
     *ptr |= (val & mask) << offset;
@@ -799,7 +829,7 @@ inline void set_unsigned_field(uint32 *ptr, uint32 mask, int offset, unsigned in
     }
 
     if (val > mask) {
-	fprintf(stderr, "value too large in set_unsigned_field\n");  /* BREAKPOINT */
+	fatal("value too large in set_unsigned_field\n");
     }
     *ptr &= (~ (mask << offset));
     *ptr |= (val & mask) << offset;
@@ -831,7 +861,7 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
     }
 
     if (val > mask) {
-	fprintf(stderr, "value too large in set_unsigned_field\n");  /* BREAKPOINT */
+	fatal("value too large in set_unsigned_field\n");
     }
     *ptr &= (~ (mask << offset));
     *ptr |= (val & mask) << offset;
@@ -1283,8 +1313,8 @@ void verify_movements()
 			     (movementptr->vector & BITVECTOR(squareB)) == 0;
 			     movementptr++) ;
 			if ((movementptr->square != -1) || (movementptr->vector != allones_bitvector)) {
-			    fprintf(stderr, "Self movement possible!? %s %d %d\n",
-				    piece_name[piece], squareA, movementptr->square);
+			    fatal("Self movement possible!? %s %d %d\n",
+				  piece_name[piece], squareA, movementptr->square);
 			}
 		    }
 		    continue;
@@ -1298,32 +1328,31 @@ void verify_movements()
 			 (movementptr->vector & BITVECTOR(squareB)) == 0;
 			 movementptr++) {
 			if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
-			    fprintf(stderr, "Bad movement square: %s %d %d %d\n",
-				    piece_name[piece], squareA, squareB, movementptr->square);
+			    fatal("Bad movement square: %s %d %d %d\n",
+				  piece_name[piece], squareA, squareB, movementptr->square);
 			}
 		    }
 
 		    if (movementptr->square == -1) {
 			if (movementptr->vector != allones_bitvector) {
-			    fprintf(stderr, "-1 movement lacks allones_bitvector: %s %d %d\n",
-				    piece_name[piece], squareA, squareB);
+			    fatal("-1 movement lacks allones_bitvector: %s %d %d\n",
+				  piece_name[piece], squareA, squareB);
 			}
 		    } else if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
-			fprintf(stderr, "Bad movement square: %s %d %d\n",
-				piece_name[piece], squareA, squareB);
+			fatal("Bad movement square: %s %d %d\n", piece_name[piece], squareA, squareB);
 		    } else {
 			if (movementptr->square != squareB) {
-			    fprintf(stderr, "bitvector does not match destination square: %s %d %d\n",
-				    piece_name[piece], squareA, squareB);
+			    fatal("bitvector does not match destination square: %s %d %d\n",
+				  piece_name[piece], squareA, squareB);
 			}
 			if (movement_possible) {
-			    fprintf(stderr, "multiple idential destinations from same origin: %s %d %d\n",
-				    piece_name[piece], squareA, squareB);
+			    fatal("multiple idential destinations from same origin: %s %d %d\n",
+				  piece_name[piece], squareA, squareB);
 			}
 			movement_possible = 1;
 			if (movementptr->vector == allones_bitvector) {
-			    fprintf(stderr, "allones_bitvector on a legal movement: %s %d %d\n",
-				    piece_name[piece], squareA, squareB);
+			    fatal("allones_bitvector on a legal movement: %s %d %d\n",
+				  piece_name[piece], squareA, squareB);
 			}
 		    }
 		}
@@ -1340,8 +1369,7 @@ void verify_movements()
 
 
 		if (movement_possible && !reverse_movement_possible) {
-		    fprintf(stderr, "reverse movement impossible: %s %d %d\n",
-			    piece_name[piece], squareA, squareB);
+		    fatal("reverse movement impossible: %s %d %d\n", piece_name[piece], squareA, squareB);
 		}
 
 	    }
@@ -1394,8 +1422,7 @@ void verify_movements()
 			     (movementptr->vector & BITVECTOR(squareB)) == 0;
 			     movementptr++) ;
 			if ((movementptr->square != -1) || (movementptr->vector != allones_bitvector)) {
-			    fprintf(stderr, "Self movement possible!? PAWN %d %d\n",
-				    squareA, movementptr->square);
+			    fatal("Self movement possible!? PAWN %d %d\n", squareA, movementptr->square);
 			}
 		    }
 
@@ -1405,32 +1432,31 @@ void verify_movements()
 			 (movementptr->vector & BITVECTOR(squareB)) == 0;
 			 movementptr++) {
 			if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
-			    fprintf(stderr, "Bad movement square: %s %d %d %d\n",
-				    piece_name[piece], squareA, squareB, movementptr->square);
+			    fatal("Bad movement square: %s %d %d %d\n",
+				  piece_name[piece], squareA, squareB, movementptr->square);
 			}
 		    }
 
 		    if (movementptr->square == -1) {
 			if (movementptr->vector != allones_bitvector) {
-			    fprintf(stderr, "-1 movement lacks allones_bitvector: %s %d %d\n",
-				    piece_name[piece], squareA, squareB);
+			    fatal("-1 movement lacks allones_bitvector: %s %d %d\n",
+				  piece_name[piece], squareA, squareB);
 			}
 		    } else if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
-			fprintf(stderr, "Bad movement square: %s %d %d\n",
-				piece_name[piece], squareA, squareB);
+			fatal("Bad movement square: %s %d %d\n", piece_name[piece], squareA, squareB);
 		    } else {
 			if (movementptr->square != squareB) {
-			    fprintf(stderr, "bitvector does not match destination square: %s %d %d\n",
-				    piece_name[piece], squareA, squareB);
+			    fatal("bitvector does not match destination square: %s %d %d\n",
+				  piece_name[piece], squareA, squareB);
 			}
 			if (movement_possible) {
-			    fprintf(stderr, "multiple idential destinations from same origin: %s %d %d\n",
-				    piece_name[piece], squareA, squareB);
+			    fatal("multiple idential destinations from same origin: %s %d %d\n",
+				  piece_name[piece], squareA, squareB);
 			}
 			movement_possible = 1;
 			if (movementptr->vector == allones_bitvector) {
-			    fprintf(stderr, "allones_bitvector on a legal movement: %s %d %d\n",
-				    piece_name[piece], squareA, squareB);
+			    fatal("allones_bitvector on a legal movement: %s %d %d\n",
+				  piece_name[piece], squareA, squareB);
 			}
 		    }
 
@@ -1444,8 +1470,8 @@ void verify_movements()
 		    if (movementptr->square != -1) reverse_movement_possible=1;
 
 		    if (movement_possible && !reverse_movement_possible) {
-			fprintf(stderr, "reverse movement impossible: %s %d %d\n",
-				piece_name[piece], squareA, squareB);
+			fatal("reverse movement impossible: %s %d %d\n",
+			      piece_name[piece], squareA, squareB);
 		    }
 		}
 	    }
@@ -1733,10 +1759,10 @@ uint32 invert_in_finite_field(uint32 b, uint32 m)
 	    }
 	}
     }
-    if (x != 1) fprintf(stderr, "x != 1 in invert_finite_field v2\n");
+    if (x != 1) fatal("x != 1 in invert_finite_field v2\n");
 
     if (by != test) {
-	fprintf(stderr, "%d: assembly inversion (%d) didn't match C code (%d)\n", b, test, by);
+	fatal("%d: assembly inversion (%d) didn't match C code (%d)\n", b, test, by);
     }
 
     return by;
@@ -2141,7 +2167,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 	/* This should never happen. */
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
-	    fprintf(stderr, "Illegal piece position in simple_index_to_local_position!\n");
+	    fatal("Illegal piece position in simple_index_to_local_position!\n");
 	    return 0;
 	}
 
@@ -2166,7 +2192,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
     }
 
     if (index != 0) {
-	fprintf (stderr, "index != 0 at end of simple_index_to_local_position!\n");  /* BREAKPOINT */
+	fatal("index != 0 at end of simple_index_to_local_position!\n");
 	return 0;
     }
 
@@ -2455,7 +2481,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 #endif
 
     if (index != 0) {
-	fprintf (stderr, "index != 0 at end of compact_index_to_local_position!\n");  /* BREAKPOINT */
+	fatal("index != 0 at end of compact_index_to_local_position!\n");
 	return 0;
     }
 
@@ -2728,7 +2754,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	index = local_position_to_compact_index(tb, position);
 	break;
     default:
-	fprintf(stderr, "Unknown index type in local_position_to_index()\n");  /* BREAKPOINT */
+	fatal("Unknown index type in local_position_to_index()\n");
 	return -1;
     }
 
@@ -2798,7 +2824,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 	ret = compact_index_to_local_position(tb, index, position);
 	break;
     default:
-	fprintf(stderr, "Unknown index type in index_to_local_position()\n");  /* BREAKPOINT */
+	fatal("Unknown index type in index_to_local_position()\n");
 	return 0;
     }
 
@@ -2973,7 +2999,7 @@ void check_1000_positions(tablebase_t *tb)
 	    if (!index_to_local_position(tb, index, REFLECTION_NONE, &position2)
 		|| (position2.PTM_vector = 0, position2.board_vector = 0,
 		    memcmp(&position1, &position2, sizeof(position1)))) {
-		fprintf(stderr, "Mismatch in check_1000_positions()\n");  /* BREAKPOINT */
+		fatal("Mismatch in check_1000_positions()\n");
 	    }
 	}
     }
@@ -2993,7 +3019,7 @@ void check_1000_indices(tablebase_t *tb)
 	if (index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 	    index2 = local_position_to_index(tb, &position);
 	    if (index != index2) {
-		fprintf(stderr, "Mismatch in check_1000_indices()\n");  /* BREAKPOINT */
+		fatal("Mismatch in check_1000_indices()\n");
 	    }
 	}
     }
@@ -3051,18 +3077,18 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	    int format_field = find_name_in_array((char *) child->name, format_fields);
 
 	    if (format_field == -1) {
-		fprintf(stderr, "Unknown field in format: %s\n", (char *) child->name);
+		fatal("Unknown field in format: %s\n", (char *) child->name);
 		return 0;
 	    }
 	    if ((bits == 0)
 		&& (format_field != FORMAT_FIELD_FLAG) && (format_field != FORMAT_FIELD_PTM_WINS_FLAG)) {
-		fprintf(stderr, "Non-zero 'bits' value must be specified in format field '%s'\n",
-			(char *) child->name);
+		fatal("Non-zero 'bits' value must be specified in format field '%s'\n",
+		      (char *) child->name);
 		return 0;
 	    }
 	    if ((bitstr != NULL) && (bits != 1)
 		&& ((format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG))) {
-		fprintf(stderr, "Format fields 'flag' and 'PTM-wins-flag' only accept bits=\"1\"\n");
+		fatal("Format fields 'flag' and 'PTM-wins-flag' only accept bits=\"1\"\n");
 		return 0;
 	    }
 	    if ((format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG)) {
@@ -3070,7 +3096,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	    }
 
 	    if ((offset == -1) && (auto_offset == -1)) {
-		fprintf(stderr, "Can't mix explicit and implicit offsets in format\n");
+		fatal("Can't mix explicit and implicit offsets in format\n");
 		return 0;
 	    }
 
@@ -3082,30 +3108,30 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	    }
 
 	    if ((format_field != FORMAT_FIELD_FUTUREVECTOR) && (offset/32 != (offset+bits-1) / 32)) {
-		fprintf(stderr, "Most format fields can't straddle a 32-bit boundary\n");
+		fatal("Most format fields can't straddle a 32-bit boundary\n");
 		return 0;
 	    }
 
 	    if (offset/64 != (offset+bits-1) / 64) {
-		fprintf(stderr, "Format fields can't straddle a 64-bit boundary\n");
+		fatal("Format fields can't straddle a 64-bit boundary\n");
 		return 0;
 	    }
 
 	    if (offset >= 128) {
-		fprintf(stderr, "Formats can't exceed 128 bits\n");
+		fatal("Formats can't exceed 128 bits\n");
 		return 0;
 	    }
 
 	    for (bitnum = offset; bitnum < offset + bits; bitnum ++) {
 		if (bitnum < 64) {
 		    if (bitmask1 & (1LL << bitnum)) {
-			fprintf(stderr, "Overlapping format fields (%s)\n", (char *) child->name);
+			fatal("Overlapping format fields (%s)\n", (char *) child->name);
 			return 0;
 		    }
 		    bitmask1 |= (1LL << bitnum);
 		} else {
 		    if (bitmask2 & (1LL << (bitnum - 64))) {
-			fprintf(stderr, "Overlapping format fields (%s)\n", (char *) child->name);
+			fatal("Overlapping format fields (%s)\n", (char *) child->name);
 			return 0;
 		    }
 		    bitmask2 |= (1LL << (bitnum - 64));
@@ -3142,7 +3168,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		format->flag_type = find_name_in_array((char *) xmlGetProp(child, BAD_CAST "type"),
 						       format_flag_types);
 		if (format->flag_type == -1) {
-		    fprintf(stderr, "'type' is a required property in format field 'flag'\n");
+		    fatal("'type' is a required property in format field 'flag'\n");
 		    return 0;
 		}
 		break;
@@ -3150,7 +3176,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		format->PTM_wins_flag_offset = offset;
 		break;
 	    default:
-		fprintf(stderr, "Unknown field in format\n");
+		fatal("Unknown field in format\n");
 		return 0;
 	    }
 	}
@@ -3163,7 +3189,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     for (power_of_two = 0; (1 << power_of_two) < total_bits; power_of_two ++);
 
     if ((1 << power_of_two) != total_bits) {
-	fprintf(stderr, "Total bits in format must be a power of two\n");
+	fatal("Total bits in format must be a power of two\n");
 	return 0;
     }
 
@@ -3176,7 +3202,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     }
 
     if (format->bytes > MAX_FORMAT_BYTES) {
-	fprintf(stderr, "Maximum number of bytes in format exceeded\n");
+	fatal("Maximum number of bytes in format exceeded\n");
 	return 0;
     }
 
@@ -3203,7 +3229,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     tb = malloc(sizeof(tablebase_t));
     if (tb == NULL) {
-	fprintf(stderr, "Can't malloc tablebase\n");
+	fatal("Can't malloc tablebase\n");
 	return NULL;
     }
     memset(tb, 0, sizeof(tablebase_t));
@@ -3241,13 +3267,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     context = xmlXPathNewContext(doc);
     result = xmlXPathEvalExpression(BAD_CAST "//piece", context);
     if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	fprintf(stderr, "No pieces!\n");
+	fatal("No pieces!\n");
 	return NULL;
     } else if (result->nodesetval->nodeNr < 2) {
-	fprintf(stderr, "Too few pieces!\n");
+	fatal("Too few pieces!\n");
 	return NULL;
     } else if (result->nodesetval->nodeNr > MAX_PIECES) {
-	fprintf(stderr, "Too many pieces!\n");
+	fatal("Too many pieces!\n");
 	return NULL;
     }
 
@@ -3281,13 +3307,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		while (location[j] == ' ') j ++;
 	    }
 	    if (location[j] != '\0') {
-		fprintf(stderr, "Illegal piece location (%s)\n", location);
+		fatal("Illegal piece location (%s)\n", location);
 		return NULL;
 	    }
 	}
 
 	if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
-	    fprintf(stderr, "Illegal piece color (%s) or type (%s)\n", color, type);
+	    fatal("Illegal piece color (%s) or type (%s)\n", color, type);
 	    return NULL;
 	}
 
@@ -3409,7 +3435,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 	if (tb->last_identical_piece[piece] != -1) {
 	    if (tb->last_identical_piece[tb->last_identical_piece[piece]] != -1) {
-		fprintf(stderr, "More than two identical pieces with overlapping move restrictions\n");
+		fatal("More than two identical pieces with overlapping move restrictions\n");
 		return NULL;
 	    }
 	    tb->next_identical_piece[tb->last_identical_piece[piece]] = piece;
@@ -3418,7 +3444,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     if ((tb->piece_color[WHITE_KING] != WHITE) || (tb->piece_type[WHITE_KING] != KING)
 	|| (tb->piece_color[BLACK_KING] != BLACK) || (tb->piece_type[BLACK_KING] != KING)) {
-	fprintf(stderr, "Kings aren't where they need to be in piece list!\n");
+	fatal("Kings aren't where they need to be in piece list!\n");
 	return NULL;
     }
 
@@ -3443,8 +3469,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	for (square = 0; square < 64; square ++) {
 	    if (BITVECTOR(square) == tb->semilegal_squares[piece]) {
 		if (tb->frozen_pieces_vector & BITVECTOR(square)) {
-		    fprintf(stderr, "More than one piece frozen on %c%c",
-			    'a' + COL(square), '1' + ROW(square));
+		    fatal("More than one piece frozen on %c%c", 'a' + COL(square), '1' + ROW(square));
 		    return NULL;
 		}
 		tb->frozen_pieces_vector |= BITVECTOR(square);
@@ -3508,7 +3533,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    tb->format = one_byte_dtm_format;
 	    break;
 	default:
-	    fprintf(stderr, "Unknown tablebase format '%s'\n", format);
+	    fatal("Unknown tablebase format '%s'\n", format);
 	    return NULL;
 	}
     } else {
@@ -3519,7 +3544,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	} else {
 	    xmlNewProp(tablebase, BAD_CAST "format", BAD_CAST "one-byte-dtm");
 	    tb->format = one_byte_dtm_format;
-	    fprintf(stderr, "Format not expressly specified; assuming ONE-BYTE-DTM\n");
+	    warning("Format not expressly specified; assuming ONE-BYTE-DTM\n");
 	}
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
@@ -3532,7 +3557,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     if (result->nodesetval->nodeNr == 1) {
 	if (! parse_format(result->nodesetval->nodeTab[0], &entries_format)) return NULL;
 	if (entries_format.movecnt_bits == 0) {
-	    fprintf(stderr, "Entries format must contain a movecnt field\n");
+	    fatal("Entries format must contain a movecnt field\n");
 	}
     }
     xmlXPathFreeObject(result);
@@ -3545,7 +3570,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     if (result->nodesetval->nodeNr == 1) {
 	if (! parse_format(result->nodesetval->nodeTab[0], &proptable_format)) return NULL;
 	if (proptable_format.index_bits == 0) {
-	    fprintf(stderr, "Proptable format must contain an index field\n");
+	    fatal("Proptable format must contain an index field\n");
 	}
     }
     xmlXPathFreeObject(result);
@@ -3571,12 +3596,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     if (index == NULL) {
 	tb->index_type = NAIVE_INDEX;
 	xmlNewProp(tablebase, BAD_CAST "index", BAD_CAST "naive");
-	fprintf(stderr, "Index type not expressly specified; assuming NAIVE\n");
+	warning("Index type not expressly specified; assuming NAIVE\n");
     } else {
 	tb->index_type = find_name_in_array((char *) index, index_types);
 	if (tb->index_type == STANDARD_INDEX) tb->index_type = COMPACT_INDEX;
 	if (tb->index_type == -1) {
-	    fprintf(stderr, "Unknown tablebase index type '%s'\n", index);
+	    fatal("Unknown tablebase index type '%s'\n", index);
 	    return NULL;
 	}
     }
@@ -3586,7 +3611,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     if (xmlGetProp(index_node, BAD_CAST "symmetry") != NULL) {
 	tb->symmetry = atoi((char *) xmlGetProp(index_node, BAD_CAST "symmetry"));
 	if ((tb->symmetry != 1) && (tb->symmetry != 2) && (tb->symmetry != 4) && (tb->symmetry != 8)) {
-	    fprintf(stderr, "Bad index symmetry %d\n", tb->symmetry);
+	    fatal("Bad index symmetry %d\n", tb->symmetry);
 	    return NULL;
 	}
     } else {
@@ -3600,14 +3625,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
      */
 
     if ((tb->symmetry == 8) && ((tb->index_type == NAIVE_INDEX) || (tb->index_type == NAIVE2_INDEX))) {
-	fprintf(stderr, "8-way symmetry incompatible with naive/naive2 index types\n");
+	fatal("8-way symmetry incompatible with naive/naive2 index types\n");
 	return NULL;
     }
 
     if (tb->symmetry >= 4) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->piece_type[piece] == PAWN) {
-		fprintf(stderr, "Pawns not allowed with 4/8-way symmetric indices\n");
+		fatal("Pawns not allowed with 4/8-way symmetric indices\n");
 		return NULL;
 	    }
 	}
@@ -3617,7 +3642,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (((tb->piece_type[piece] != PAWN) && (tb->legal_squares[piece] != allones_bitvector))
 		|| ((tb->piece_type[piece] == PAWN) && (tb->legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
-		fprintf(stderr, "Piece restrictions not allowed with symmetric indices (yet)\n");
+		fatal("Piece restrictions not allowed with symmetric indices (yet)\n");
 		return NULL;
 	    }
 	}
@@ -3626,7 +3651,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     if (tb->index_type != COMPACT_INDEX) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->legal_squares[piece] != tb->semilegal_squares[piece]) {
-		fprintf(stderr, "Non-identical overlapping piece restrictions only allowed with 'compact' index type\n");
+		fatal("Non-identical overlapping piece restrictions only allowed with 'compact' index type\n");
 		return NULL;
 	    }
 	}
@@ -3675,7 +3700,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	for (piece = 1; piece < tb->num_pieces; piece ++) {
 
 	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
-		fprintf(stderr, "Can't have more than two identical pieces with 'naive2' index (yet)\n");
+		fatal("Can't have more than two identical pieces with 'naive2' index (yet)\n");
 		return NULL;
 	    }
 
@@ -3752,7 +3777,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	for (piece = 2; piece < tb->num_pieces; piece ++) {
 
 	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
-		fprintf(stderr, "Can't have more than two identical pieces with 'compact' index (yet)\n");
+		fatal("Can't have more than two identical pieces with 'compact' index (yet)\n");
 		return NULL;
 	    }
 
@@ -3800,7 +3825,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     if (modulus != NULL) {
 	tb->modulus = strtoll((const char *) modulus, NULL, 0);
 	if (tb->modulus <= tb->max_index) {
-	    fprintf(stderr, "modulus %d less than max_index %d\n", tb->modulus, tb->max_index);
+	    fatal("modulus %d less than max_index %d\n", tb->modulus, tb->max_index);
 	    return NULL;
 	}
 	tb->max_index = tb->modulus - 1;
@@ -3824,11 +3849,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    color = find_name_in_array((char *) color_str, colors);
 	    type = find_name_in_array((char *) type_str, restriction_types);
 	    if ((color == -1) || (type == -1)) {
-		fprintf(stderr, "Illegal move restriction\n");
+		fatal("Illegal move restriction\n");
 		return NULL;
 	    } else {
 		if ((tb->move_restrictions[color] > 0) && (tb->move_restrictions[color] != type)) {
-		    fprintf(stderr, "Incompatible move restrictions\n");
+		    fatal("Incompatible move restrictions\n");
 		    return NULL;
 		} else {
 		    tb->move_restrictions[color] = type;
@@ -3864,13 +3889,13 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     /* check if parsing suceeded */
     if (doc == NULL) {
-	fprintf(stderr, "'%s' failed XML read\n", filename);
+	fatal("'%s' failed XML read\n", filename);
 	return NULL;
     }
 
     /* check if validation suceeded */
     if (! xmlValidateDtd(xmlNewValidCtxt(), doc, dtd)) {
-	fprintf(stderr, "'%s' failed XML validatation\n", filename);
+	fatal("'%s' failed XML validatation\n", filename);
 	return NULL;
     }
 
@@ -3911,14 +3936,14 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     }
 
     if (file == NULL) {
-	fprintf(stderr, "Can't fopen file '%s'\n", filename);
+	fatal("Can't fopen file '%s'\n", filename);
 	return NULL;
     }
 
     file = zlib_fopen(file, "r");
 
     if (file == NULL) {
-	fprintf(stderr, "Can't zlib_fopen file '%s'\n", filename);
+	fatal("Can't zlib_fopen file '%s'\n", filename);
 	return NULL;
     }
 
@@ -3937,7 +3962,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
 #if 0
     if (fseek(file, tb->offset, SEEK_SET) != 0) {
-	fprintf(stderr, "Seek failed in preload_futurebase_from_file()\n");
+	fatal("Seek failed in preload_futurebase_from_file()\n");
 	exit(EXIT_FAILURE);
     }
 #else
@@ -4043,7 +4068,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.312 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.313 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4295,7 +4320,7 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
 	if (piece == tb2->num_pieces) {
 	    if (extra_piece != NONE) {
-		fprintf(stderr, "More than one extra piece in translation\n");
+		fatal("More than one extra piece in translation\n");
 		return -1;
 	    }
 	    extra_piece = foreign_piece;
@@ -4320,7 +4345,7 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 		    missing_piece2 = piece;
 		}
 	    } else {
-		fprintf(stderr, "More than one missing piece in translation\n");
+		fatal("More than one missing piece in translation\n");
 		return -1;
 	    }
 	} else if (!(tb2->semilegal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
@@ -4996,7 +5021,7 @@ void init_entry_buffers(tablebase_t *tb)
 
     for (buffernum = 0; buffernum < NUM_ENTRY_BUFFERS; buffernum ++) {
 	if (posix_memalign((void **) &entry_buffers[buffernum], alignment, ENTRY_BUFFER_BYTES) != 0) {
-	    fprintf(stderr, "Can't posix_memalign entries buffer\n");
+	    fatal("Can't posix_memalign entries buffer\n");
 	    exit(EXIT_FAILURE);
 	}
 	entry_buffers[buffernum].start = buffernum * ENTRY_BUFFER_ENTRIES;
@@ -5031,13 +5056,13 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	if (LEFTSHIFT(index, tb->format.bits - 3)
 	    != LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
 	    if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
-		fprintf(stderr, "Seek failed in fetch_entry_pointer()\n");
+		fatal("Seek failed in fetch_entry_pointer()\n");
 	    }
 	}
 
 	retval = fread(entry, tb->format.bytes, 1, tb->file);
 	if (retval != 1) {
-	    fprintf(stderr, "fetch_entry_pointer() hit EOF reading from disk\n");
+	    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	}
 
 	switch (tb->format.bits) {
@@ -5062,7 +5087,7 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	    retval = fread(entry, tb->format.bytes, 1, tb->file);
 	    if (retval != 1) {
-		fprintf(stderr, "fetch_entry_pointer() hit EOF reading from disk\n");
+		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	    }
 
 	    switch (tb->format.bits) {
@@ -5387,7 +5412,7 @@ void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
 void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt)
 {
     if (movecnt > MOVECNT_MAX) {
-	fprintf(stderr, "Attempting to initialize position with a movecnt that won't fit in field!\n");
+	fatal("Attempting to initialize position with a movecnt that won't fit in field!\n");
     }
 
     initialize_entry(tb, index, movecnt, 0);
@@ -5402,7 +5427,7 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
 #endif
 
     if (dtm < 0) {
-	fprintf(stderr, "Negative distance to mate in PTM_wins!?\n"); /* BREAKPOINT */
+	fatal("Negative distance to mate in PTM_wins!?\n");
     } else if ((get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_PROPED)
 	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)) {
 	set_entry_movecnt(tb, index, MOVECNT_PTM_WINS_UNPROPED);
@@ -5420,7 +5445,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 #endif
 
     if (dtm > 0) {
-	fprintf(stderr, "Positive distance to mate in PNTM_wins!?\n"); /* BREAKPOINT */
+	fatal("Positive distance to mate in PNTM_wins!?\n");
     } else if ((get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_PROPED)
 	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)
 	       && (get_entry_movecnt(tb, index) != MOVECNT_PNTM_WINS_PROPED)
@@ -5690,7 +5715,7 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 	    }
 	}
     } else {
-	fprintf(stderr, "Can't handle proptable formats without either a DTM field or PTM wins flag\n");
+	fatal("Can't handle proptable formats without either a DTM field or PTM wins flag\n");
     }
 }
 
@@ -5751,7 +5776,7 @@ void proptable_full(void)
 	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
     }
     if (proptable_output_fd == -1) {
-	fprintf(stderr, "Can't open '%s' for writing propfile\n", outfilename);
+	fatal("Can't open '%s' for writing propfile\n", outfilename);
 	return;
     }
 
@@ -6095,7 +6120,7 @@ void proptable_finalize(int target_dtm)
 	rename("propfile_out", "propfile_in");
 	proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE | O_DIRECT);
 	if (proptable_input_fd == -1) {
-	    fprintf(stderr, "Can't open 'propfile_in' for reading propfile\n"); /* BREAKPOINT */
+	    fatal("Can't open 'propfile_in' for reading propfile\n");
 	    return;
 	}
     }
@@ -6108,7 +6133,7 @@ void proptable_finalize(int target_dtm)
 	rename(outfilename, infilename);
 	proptable_input_fds[tablenum] = open(infilename, O_RDONLY | O_LARGEFILE | O_DIRECT);
 	if (proptable_input_fds[tablenum] == -1) {
-	    fprintf(stderr, "Can't open '%s' for reading propfile\n", infilename);
+	    fatal("Can't open '%s' for reading propfile\n", infilename);
 	    return;
 	}
 #else
@@ -6122,7 +6147,7 @@ void proptable_finalize(int target_dtm)
 	for (bufnum = 0; bufnum < BUFFERS_PER_PROPTABLE; bufnum ++) {
 	    if (posix_memalign((void **) &proptable_buffer[propbuf(tablenum, bufnum)],
 			       alignment, PROPTABLE_BUFFER_BYTES) != 0) {
-		fprintf(stderr, "Can't posix_memalign proptable buffer\n");
+		fatal("Can't posix_memalign proptable buffer\n");
 		return;
 	    }
 	}
@@ -6170,7 +6195,7 @@ void proptable_finalize(int target_dtm)
     proptable_num = malloc(2*highbit * sizeof(int));
 
     if ((sorting_network == NULL) || (proptable_num == NULL)) {
-	fprintf(stderr, "Can't malloc sorting network in proptable_finalize()\n");
+	fatal("Can't malloc sorting network in proptable_finalize()\n");
 	return;
     }
 
@@ -6213,7 +6238,7 @@ void proptable_finalize(int target_dtm)
 	futurevector_t possible_futuremoves;
 
 	if (get_propentry_index(SORTING_NETWORK_ELEM(1)) < index) {
-	    fprintf(stderr, "Out-of-order entries in sorting network\n");   /* BREAKPOINT */
+	    fatal("Out-of-order entries in sorting network\n");
 	}
 
 	if (target_dtm == 0) {
@@ -6233,7 +6258,7 @@ void proptable_finalize(int target_dtm)
 	    if (get_propentry_futurevector(SORTING_NETWORK_ELEM(1)) & futurevector) {
 		global_position_t global;
 		index_to_global_position(proptable_tb, get_propentry_index(SORTING_NETWORK_ELEM(1)), &global);
-		fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
+		fatal("Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
 	    }
 
 	    futurevector |= get_propentry_futurevector(SORTING_NETWORK_ELEM(1));
@@ -6316,7 +6341,7 @@ int propagation_pass(int target_dtm)
 
     if (((target_dtm > 0) && (target_dtm > (entries_format.dtm_mask >> 1)))
 	|| ((target_dtm < 0) && (target_dtm < -(entries_format.dtm_mask >> 1)))) {
-	fprintf(stderr, "DTM entry field size exceeded\n");
+	fatal("DTM entry field size exceeded\n");
 	exit(EXIT_FAILURE);
     }
 
@@ -6343,8 +6368,7 @@ int propagation_pass(int target_dtm)
 	if (target_dtm < min_dtm) min_dtm = target_dtm;
     }
 
-    fprintf(stderr, "Pass %3d complete; %d positions finalized\n",
-	    target_dtm, positions_finalized[total_passes]);
+    info("Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized[total_passes]);
 
     total_passes ++;
 
@@ -6363,7 +6387,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
     if (scaling_factor == 0) {
 	scaling_factor = proptable_tb->max_index / num_propentries;
 	scaling_factor ++;
-	fprintf(stderr, "Scaling factor %d\n", scaling_factor);
+	info("Scaling factor %d\n", scaling_factor);
     }
 
  retry:
@@ -6577,14 +6601,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 				     short movecnt, int futuremove, index_t current_index)
 {
     if (futuremove == -1) {
-	static int errors = 0;
 	global_position_t global;
 
 	index_to_global_position(tb, current_index, &global);
-	fprintf(stderr, "Futuremove never assigned: %s %s\n",
-		global_position_to_FEN(&global), movestr[futuremove]);
+	fatal("Futuremove never assigned: %s %s\n", global_position_to_FEN(&global), movestr[futuremove]);
 
-	if (errors++ == 10) exit(EXIT_FAILURE);
 	return;
     }
 
@@ -6894,7 +6915,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
 		if ((extra_piece == NONE) || missing_piece1 != pawn) {
-		    fprintf(stderr, "Conversion error during promotion back-prop\n");  /* BREAKPOINT */
+		    fatal("Conversion error during promotion back-prop\n");
 		    continue;
 		}
 
@@ -7001,7 +7022,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 			}
 
 			if (piece == tb->num_pieces) {
-			    fprintf(stderr, "Couldn't back up to an identical piece in promotion back prop\n");
+			    fatal("Couldn't back up to an identical piece in promotion back prop\n");
 			    break;
 			}
 		    }
@@ -7069,7 +7090,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
 		if ((extra_piece == NONE) || (missing_piece1 != pawn) || (missing_piece2 == NONE)) {
-		    fprintf(stderr, "Conversion error during promotion capture back-prop\n");  /* BREAKPOINT */
+		    fatal("Conversion error during promotion capture back-prop\n");
 		    continue;
 		}
 
@@ -7223,7 +7244,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			}
 
 			if (piece == tb->num_pieces) {
-			    fprintf(stderr, "Couldn't back up to an identical piece in promotion back prop\n");
+			    fatal("Couldn't back up to an identical piece in promotion back prop\n");
 			    break;
 			}
 		    }
@@ -7525,7 +7546,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
 		if ((extra_piece != NONE) || (missing_piece1 != captured_piece) || (missing_piece2 != NONE)) {
-		    fprintf(stderr, "Conversion error during capture back-prop\n");  /* BREAKPOINT */
+		    fatal("Conversion error during capture back-prop\n");
 		    continue;
 		}
 
@@ -7616,7 +7637,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	    missing_piece2 = (conversion_result >> 24) & 0xff;
 
 	    if ((missing_piece1 != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
-		fprintf(stderr, "Conversion error during normal back-prop\n"); /* BREAKPOINT */
+		fatal("Conversion error during normal back-prop\n");
 		continue;
 	    }
 
@@ -7823,7 +7844,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 	if ((futurebase->move_restrictions[color] != RESTRICTION_NONE)
 	    && (futurebase->move_restrictions[color]
 		!= tb->move_restrictions[futurebase->invert_colors ? 1 - color : color])) {
-	    fprintf(stderr, "'%s': Futurebase doesn't match move restrictions!\n", filename);
+	    fatal("'%s': Futurebase doesn't match move restrictions!\n", filename);
 	    return 0;
 	}
     }
@@ -7851,7 +7872,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 	    if ((futurebase->extra_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
 		futurebase->extra_piece = future_piece;
 	    } else {
-		fprintf(stderr, "'%s': Couldn't find future piece in tablebase\n", filename);
+		fatal("'%s': Couldn't find future piece in tablebase\n", filename);
 		return 0;
 	    }
 	}
@@ -7874,7 +7895,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
     }
 
     if (piece_vector != 0) {
-	fprintf(stderr, "'%s': Too many missing pieces in futurebase\n", filename);
+	fatal("'%s': Too many missing pieces in futurebase\n", filename);
 	return 0;
     }
 
@@ -7940,22 +7961,24 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	     */
 
 	    if (futurebase->extra_piece != -1) {
-		fprintf(stderr, "'%s': Extra piece in capture futurebase\n", filename);
+		fatal("'%s': Extra piece in capture futurebase\n", filename);
 		return 0;
 	    }
 
 	    if ((futurebase->missing_pawn != -1) && (futurebase->missing_non_pawn != -1)) {
-		fprintf(stderr, "'%s': Too many missing pieces in capture futurebase\n", filename);
+		fatal("'%s': Too many missing pieces in capture futurebase\n", filename);
+		return 0;
 	    }
 
 	    if ((futurebase->missing_pawn == -1) && (futurebase->missing_non_pawn == -1)) {
-		fprintf(stderr, "'%s': No missing pieces in capture futurebase\n", filename);
+		fatal("'%s': No missing pieces in capture futurebase\n", filename);
+		return 0;
 	    }
 
 	    piece = (futurebase->missing_pawn != -1)
 		? futurebase->missing_pawn : futurebase->missing_non_pawn;
 
-	    fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
+	    info("Back propagating from '%s'\n", (char *) filename);
 
 	    propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors, piece);
 
@@ -7967,21 +7990,23 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	     */
 
 	    if (futurebase->extra_piece == -1) {
-		fprintf(stderr, "'%s': No extra piece in promotion futurebase\n", filename);
+		fatal("'%s': No extra piece in promotion futurebase\n", filename);
 		return 0;
 	    }
 
 	    if (futurebase->missing_non_pawn != -1) {
-		fprintf(stderr, "'%s': Missing non-pawn in promotion futurebase\n", filename);
+		fatal("'%s': Missing non-pawn in promotion futurebase\n", filename);
+		return 0;
 	    }
 
 	    if (futurebase->missing_pawn == -1) {
-		fprintf(stderr, "'%s': No missing pawn in promotion futurebase\n", filename);
+		fatal("'%s': No missing pawn in promotion futurebase\n", filename);
+		return 0;
 	    }
 
 	    /* Ready to go. */
 
-	    fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
+	    info("Back propagating from '%s'\n", (char *) filename);
 
 	    propagate_moves_from_promotion_futurebase(tb, futurebase, futurebase->invert_colors,
 						      futurebase->missing_pawn);
@@ -7996,21 +8021,23 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	     */
 
 	    if (futurebase->extra_piece == -1) {
-		fprintf(stderr, "'%s': No extra piece in promotion capture futurebase\n", filename);
+		fatal("'%s': No extra piece in promotion capture futurebase\n", filename);
 		return 0;
 	    }
 
 	    if (futurebase->missing_non_pawn == -1) {
-		fprintf(stderr, "'%s': No missing non-pawn in promotion capture futurebase\n", filename);
+		fatal("'%s': No missing non-pawn in promotion capture futurebase\n", filename);
+		return 0;
 	    }
 
 	    if (futurebase->missing_pawn == -1) {
-		fprintf(stderr, "'%s': No missing pawn in promotion capture futurebase\n", filename);
+		fatal("'%s': No missing pawn in promotion capture futurebase\n", filename);
+		return 0;
 	    }
 
 	    /* Ready to go. */
 
-	    fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
+	    info("Back propagating from '%s'\n", (char *) filename);
 
 	    propagate_moves_from_promotion_capture_futurebase(tb, futurebase, futurebase->invert_colors,
 							      futurebase->missing_pawn);
@@ -8018,22 +8045,21 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	} else if ((type != NULL) && !strcasecmp((char *) type, "normal")) {
 
 	    if (futurebase->extra_piece != -1) {
-		fprintf(stderr, "'%s': Extra piece in normal futurebase\n", filename);
+		fatal("'%s': Extra piece in normal futurebase\n", filename);
 		return 0;
 	    }
 
 	    if ((futurebase->missing_pawn != -1) || (futurebase->missing_non_pawn != -1)) {
-		fprintf(stderr, "'%s': Missing pieces in normal futurebase\n", filename);
+		fatal("'%s': Missing pieces in normal futurebase\n", filename);
 	    }
 
-	    fprintf(stderr, "Back propagating from '%s'\n", (char *) filename);
+	    info("Back propagating from '%s'\n", (char *) filename);
 
 	    propagate_moves_from_normal_futurebase(tb, futurebase, futurebase->invert_colors);
 
 	} else {
 
-	    fprintf(stderr, "'%s': Unknown back propagation type (%s)\n",
-		    (char *) filename, (char *) type);
+	    fatal("'%s': Unknown back propagation type (%s)\n", (char *) filename, (char *) type);
 	    return 0;
 
 	}
@@ -8090,7 +8116,6 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
  */
 
 int all_futuremoves_handled = 1;
-int max_complaints = 10;
 futurevector_t unpruned_futuremoves;
 
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
@@ -8100,17 +8125,15 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
     if (futurevector & unpruned_futuremoves) {
 	global_position_t global;
 	index_to_global_position(tb, index, &global);
-	if (all_futuremoves_handled)
-	    fprintf(stderr, "ERROR: Some futuremoves not handled under move restrictions!\n");
-	fprintf(stderr, "%d %s", index, global_position_to_FEN(&global));
+	fatal("Futuremoves not handled under move restrictions: %d %s",
+	      index, global_position_to_FEN(&global));
 	for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
 	    if (futurevector & unpruned_futuremoves & FUTUREVECTOR(futuremove)) {
-		fprintf(stderr, " %s", movestr[futuremove]);
+		fatal(" %s", movestr[futuremove]);
 	    }
 	}
-	fprintf(stderr, "\n");
-	if ((-- max_complaints) == 0) exit(EXIT_FAILURE);
-	all_futuremoves_handled = 0;		/* BREAKPOINT */
+	fatal("\n");
+	all_futuremoves_handled = 0;
     }
 
     /* concede - we treat these unhandled futuremoves as forced wins for PTM */
@@ -8375,18 +8398,18 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	}
     }
 
-    fprintf(stderr, "%d possible futuremoves\n", num_futuremoves);
+    info("%d possible futuremoves\n", num_futuremoves);
 
     if (num_propentries == 0) {
 	if (num_futuremoves > sizeof(futurevector_t)*8) {
-	    fprintf(stderr, "Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-		    num_futuremoves, sizeof(futurevector_t)*8);
+	    fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
+		  num_futuremoves, sizeof(futurevector_t)*8);
 	    exit(EXIT_FAILURE);
 	}
     } else {
 	if (num_futuremoves > proptable_format.futurevector_bits) {
-	    fprintf(stderr, "Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
-		    num_futuremoves, proptable_format.futurevector_bits);
+	    fatal("Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
+		  num_futuremoves, proptable_format.futurevector_bits);
 	    exit(EXIT_FAILURE);
 	}
     }
@@ -8429,8 +8452,7 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
 
     if (prune != result->nodesetval->nodeNr) {
 	if (pruned_futuremoves & FUTUREVECTOR(futuremove)) {
-	    fprintf(stderr, "WARNING: Multiple pruning statements ('%s') match a futuremove\n",
-		    pruning_statement);
+	    warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
 	}
 	pruned_futuremoves |= FUTUREVECTOR(futuremove);
 	if (type == RESTRICTION_CONCEDE) {
@@ -8482,13 +8504,13 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 	int type = find_name_in_array((char *) prune_type, restriction_types);
 
 	if (type != tb->move_restrictions[color]) {
-	    fprintf(stderr, "Prune statements don't match tablebase restrictions\n");
+	    fatal("Prune statements don't match tablebase restrictions\n");
 	    return 0;
 	}
 
 	if (!strcasecmp((char *) prune_move, "stalemate")) {
 	    if (type != RESTRICTION_CONCEDE) {
-		fprintf(stderr, "Stalemates can only be pruned to 'concede'\n");
+		fatal("Stalemates can only be pruned to 'concede'\n");
 		return 0;
 	    }
 	    tb->stalemate_prune_type = type;
@@ -8651,7 +8673,7 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
     num_futurebases = result->nodesetval->nodeNr;
     futurebases = malloc(sizeof(tablebase_t *) * num_futurebases);
     if (futurebases == NULL) {
-	fprintf(stderr, "Can't malloc futurebases array\n");
+	fatal("Can't malloc futurebases array\n");
 	return 0;
     }
 
@@ -8669,7 +8691,7 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	if (futurebases[fbnum] == NULL) return 0;
 
 	if (futurebases[fbnum]->symmetry < tb->symmetry) {
-	    fprintf(stderr, "Futurebases can't be less symmetric than the tablebase under construction\n");
+	    fatal("Futurebases can't be less symmetric than the tablebase under construction\n");
 	    return 0;
 	}
 
@@ -8733,9 +8755,9 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
 		    if (! (pruned_futuremoves & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
-			fprintf(stderr, "No futurebase or pruning for %s move %s\n",
-				colors[tb->piece_color[capturing_piece]],
-				movestr[futurecaptures[capturing_piece][captured_piece]]);
+			fatal("No futurebase or pruning for %s move %s\n",
+			      colors[tb->piece_color[capturing_piece]],
+			      movestr[futurecaptures[capturing_piece][captured_piece]]);
 			return 0;
 		    }
 		}
@@ -8753,9 +8775,9 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	     * move back propagation and won't need this code anymore.
 	     */
 
-	    fprintf(stderr, "Multiple futurebases for capturing %s's %s\n",
-		    colors[tb->piece_color[captured_piece]],
-		    piece_name[tb->piece_type[captured_piece]]);
+	    fatal("Multiple futurebases for capturing %s's %s\n",
+		  colors[tb->piece_color[captured_piece]],
+		  piece_name[tb->piece_type[captured_piece]]);
 	    return 0;
 
 	}
@@ -8822,10 +8844,10 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		    && (futurebases[fbnum]->missing_pawn == pawn)) {
 		    if (promoted_pieces_handled
 			& (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece])) {
-			fprintf(stderr, "Multiple promotion capture futurebases for %s's Px%c=%c\n",
-				colors[tb->piece_color[pawn]],
-				piece_char[tb->piece_type[futurebases[fbnum]->missing_non_pawn]],
-				piece_char[futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]]);
+			fatal("Multiple promotion capture futurebases for %s's Px%c=%c\n",
+			      colors[tb->piece_color[pawn]],
+			      piece_char[tb->piece_type[futurebases[fbnum]->missing_non_pawn]],
+			      piece_char[futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]]);
 			return 0;
 		    }
 		    promoted_pieces_handled
@@ -8843,9 +8865,9 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
 
 		if (! (pruned_futuremoves & FUTUREVECTOR(futurecaptures[pawn][captured_piece] + i))) {
-		    fprintf(stderr, "No futurebase or pruning for %s move %s\n",
-			    colors[tb->piece_color[pawn]],
-			    movestr[futurecaptures[pawn][captured_piece] + i]);
+		    fatal("No futurebase or pruning for %s move %s\n",
+			  colors[tb->piece_color[pawn]],
+			  movestr[futurecaptures[pawn][captured_piece] + i]);
 		    return 0;
 		}
 	    }
@@ -8863,9 +8885,9 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		&& (futurebases[fbnum]->missing_pawn == pawn)) {
 		if (promoted_pieces_handled
 		    & (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece])) {
-		    fprintf(stderr, "Multiple promotion futurebases for %s's P=%c\n",
-			    colors[tb->piece_color[pawn]],
-			    piece_char[futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]]);
+		    fatal("Multiple promotion futurebases for %s's P=%c\n",
+			  colors[tb->piece_color[pawn]],
+			  piece_char[futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]]);
 		    return 0;
 		}
 		promoted_pieces_handled
@@ -8879,8 +8901,8 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 	    if (! (pruned_futuremoves & FUTUREVECTOR(promotions[pawn] + i))) {
 
-		fprintf(stderr, "No futurebase or pruning for %s move %s\n",
-			colors[tb->piece_color[pawn]], movestr[promotions[pawn] + i]);
+		fatal("No futurebase or pruning for %s move %s\n",
+		      colors[tb->piece_color[pawn]], movestr[promotions[pawn] + i]);
 		return 0;
 	    }
 	}
@@ -8904,15 +8926,15 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		if (futuremoves[piece][sq] != -1) {
 
 		    if (! (pruned_futuremoves & FUTUREVECTOR(futuremoves[piece][sq]))) {
-			fprintf(stderr, "No futurebase or pruning for %s move %s\n",
-				colors[tb->piece_color[piece]], movestr[futuremoves[piece][sq]]);
+			fatal("No futurebase or pruning for %s move %s\n",
+			      colors[tb->piece_color[piece]], movestr[futuremoves[piece][sq]]);
 			return 0;
 		    }
 		}
 	    }
 	}
     } else if (futurebase_cnt > 1) {
-	fprintf(stderr, "Multiple futurebases for restricted moves\n");
+	fatal("Multiple futurebases for restricted moves\n");
 	return 0;
     }
 
@@ -8970,7 +8992,7 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
     } else if (get_entry_movecnt(tb, future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
 	insert_or_commit_trivial_propentry(current_index, 2, 1, 0);
     } else {
-	fprintf(stderr, "Intra-table back prop doesn't match dtm or movecnt\n");
+	fatal("Intra-table back prop doesn't match dtm or movecnt\n");
     }
 }
 
@@ -9042,7 +9064,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	fprintf(stderr, "back_propagate_index_within_table; index=%d\n", index);
+	info("back_propagate_index_within_table; index=%d\n", index);
 #endif
 
     flip_side_to_move_local(&position);
@@ -9065,12 +9087,12 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 		 && (position.piece_position[piece] - 8 == position.en_passant_square))
 		|| ((tb->piece_color[piece] == BLACK)
 		    && (position.piece_position[piece] + 8 == position.en_passant_square))) {
-		if (en_passant_pawn != -1) fprintf(stderr, "Two en passant pawns in back prop?!\n");
+		if (en_passant_pawn != -1) fatal("Two en passant pawns in back prop?!\n");
 		en_passant_pawn = piece;
 	    }
 	}
 	if (en_passant_pawn == -1) {
-	    fprintf(stderr, "No en passant pawn in back prop!?\n");
+	    fatal("No en passant pawn in back prop!?\n");
 	} else {
 
 	    position.en_passant_square = -1;
@@ -9451,10 +9473,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    && (local_position_to_index(tb, &position) == -1)) {
 
 			    if (futuremoves[piece][movementptr->square] == -1) {
-				fprintf(stderr, "No futuremove!\n");
+				fatal("No futuremove!\n");
 			    }
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				fatal("Duplicate futuremove!\n");
 			    }
 			    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
 			    futuremovecnt ++;
@@ -9502,7 +9524,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    return 0;
 				}
 				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				    fatal("Duplicate futuremove!\n");
 				}
 
 				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
@@ -9521,7 +9543,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    }
 			}
 			if (i == tb->num_pieces) {
-			    fprintf(stderr, "Couldn't match capture!\n"); /* BREAKPOINT */
+			    fatal("Couldn't match capture!\n");
 			}
 		    }
 		}
@@ -9548,7 +9570,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
 			if (futurevector & FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES)) {
-			    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+			    fatal("Duplicate futuremove!\n");
 			}
 			futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
 			futuremovecnt += PROMOTION_POSSIBILITIES;
@@ -9566,10 +9588,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    && (local_position_to_index(tb, &position) == -1)) {
 
 			    if (futuremoves[piece][movementptr->square] == -1) {
-				fprintf(stderr, "No futuremove!\n");
+				fatal("No futuremove!\n");
 			    }
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				fatal("Duplicate futuremove!\n");
 			    }
 			    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
 			    futuremovecnt ++;
@@ -9616,7 +9638,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    if (movementptr->square + (tb->piece_color[piece] == WHITE ? -8 : 8)
 				== position.piece_position[i]) {
 				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				    fatal("Duplicate futuremove!\n");
 				}
 				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 				futuremovecnt ++;
@@ -9664,7 +9686,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				}
 				if (futurevector & FUTUREVECTORS(futurecaptures[piece][i],
 								 PROMOTION_POSSIBILITIES)) {
-				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				    fatal("Duplicate futuremove!\n");
 				}
 				futurevector |= FUTUREVECTORS(futurecaptures[piece][i],
 							      PROMOTION_POSSIBILITIES);
@@ -9684,7 +9706,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    return 0;
 				}
 				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-				    fprintf(stderr, "Duplicate futuremove!\n"); /* BREAKPOINT */
+				    fatal("Duplicate futuremove!\n");
 				}
 				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 				futuremovecnt ++;
@@ -9694,7 +9716,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		    }
 
 		    if (i == tb->num_pieces) {
-			fprintf(stderr, "Couldn't match pawn capture!\n"); /* BREAKPOINT */
+			fatal("Couldn't match pawn capture!\n");
 		    }
 
 		    if (checkmate_is_possible) {
@@ -9756,7 +9778,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE) {
 		/* other fields were printed by DEBUG_MOVE statement in initialize_entry() */
-		fprintf(stderr, "   futurevector 0x%llx\n", futurevector);
+		info("   futurevector 0x%llx\n", futurevector);
 	    }
 #endif
 
@@ -9850,18 +9872,18 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     }
 
     if (file == NULL) {
-	fprintf(stderr, "Can't open output tablebase\n");
+	fatal("Can't open output tablebase\n");
 	exit(EXIT_FAILURE);
     }
 
     file = zlib_fopen(file, "w");
 
     if (file == NULL) {
-	fprintf(stderr, "Can't zlib_fopen output tablebase\n");
+	fatal("Can't zlib_fopen output tablebase\n");
 	exit(EXIT_FAILURE);
     }
 
-    fprintf(stderr, "Writing '%s'\n", filename);
+    info("Writing '%s'\n", filename);
 
     doc = finalize_XML_header(tb, options);
 
@@ -9883,12 +9905,12 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     xmlDocDumpMemory(doc, &buf, &size);
 
     if (padded_size != ((size+5)&(~3))) {
-	fprintf(stderr, "sizes don't match in write_tablebase_to_file\n");
+	fatal("sizes don't match in write_tablebase_to_file\n");
 	exit(EXIT_FAILURE);
     }
 
     if (fwrite(buf, padded_size, 1, file) != 1) {
-	fprintf(stderr, "Tablebase write failed\n");
+	fatal("Tablebase write failed\n");
 	exit(EXIT_FAILURE);
     }
 
@@ -9932,7 +9954,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
 	if ((((index + 1) << tb->format.bits) % 8) == 0) {
 	    if (fwrite(entry, tb->format.bytes, 1, file) != 1) {
-		fprintf(stderr, "Tablebase write failed\n");
+		fatal("Tablebase write failed\n");
 		exit(EXIT_FAILURE);
 	    }
 	}
@@ -9942,13 +9964,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     
     if (((index << tb->format.bits) % 8) != 0) {
 	if (fwrite(entry, tb->format.bytes, 1, file) != 1) {
-	    fprintf(stderr, "Tablebase write failed\n");
+	    fatal("Tablebase write failed\n");
 	    exit(EXIT_FAILURE);
 	}
     }
 
     if (fclose(file) != 0) {
-	fprintf(stderr, "Tablebase write failed\n");
+	fatal("Tablebase write failed\n");
 	exit(EXIT_FAILURE);
     }
 }
@@ -9974,11 +9996,11 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression(BAD_CAST "//output", context);
     if ((result->nodesetval->nodeNr == 0) && (output_filename == NULL)) {
-	fprintf(stderr, "Output filename must be specified either on command line or with <output> tag\n");
+	fatal("Output filename must be specified either on command line or with <output> tag\n");
 	return 0;
     }
     if ((result->nodesetval->nodeNr > 0) && (output_filename != NULL)) {
-	fprintf(stderr, "WARNING: Output filename specified on command line overrides <output> tag\n");
+	warning("WARNING: Output filename specified on command line overrides <output> tag\n");
     }
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
@@ -9988,14 +10010,15 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (num_propentries != 0) {
 	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
 	if (tb->entries_fd == -1) {
-	    fprintf(stderr, "Can't open 'entries' for read-write\n");
+	    fatal("Can't open 'entries' for read-write\n");
 	    return 0;
 	}
 	init_entry_buffers(tb);
     } else {
 	tb->entries = (entry_t *) malloc(LEFTSHIFT(tb->max_index + 1, entries_format.bits - 3));
 	if (tb->entries == NULL) {
-	    fprintf(stderr, "Can't malloc tablebase entries\n");
+	    fatal("Can't malloc tablebase entries\n");
+	    return 0;
 	}
 	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, entries_format.bits - 3));
     }
@@ -10004,14 +10027,14 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #if USE_DUAL_PROPTABLES
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
 	if (posix_memalign((void **) &proptable1, 1024, num_propentries * proptable_format.bytes) != 0) {
-	    fprintf(stderr, "Can't posix_memalign proptable\n");
+	    fatal("Can't posix_memalign proptable\n");
 	    return 0;
 	}
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
 	memset(proptable1, 0, num_propentries * proptable_format.bytes);
 
 	if (posix_memalign((void **) &proptable2, 1024, num_propentries * proptable_format.bytes) != 0) {
-	    fprintf(stderr, "Can't posix_memalign proptable\n");
+	    fatal("Can't posix_memalign proptable\n");
 	    return 0;
 	}
 	memset(proptable2, 0, num_propentries * proptable_format.bytes);
@@ -10021,7 +10044,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #if ZERO_PROPTABLES_USING_DISK
 	zeros_fd = open("zeros", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
 	if (zeros_fd == -1) {
-	    fprintf(stderr, "Can't open 'zeros' for writing zero propfile\n");
+	    fatal("Can't open 'zeros' for writing zero propfile\n");
 	    return 0;
 	}
 	do_write(zeros_fd, proptable1, num_propentries * proptable_format.bytes);
@@ -10029,7 +10052,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #else
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
 	if (posix_memalign((void **) &proptable, 1024, num_propentries * proptable_format.bytes) != 0) {
-	    fprintf(stderr, "Can't posix_memalign proptable\n");
+	    fatal("Can't posix_memalign proptable\n");
 	    return 0;
 	}
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
@@ -10063,21 +10086,21 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
 	if (tb->futurevectors == NULL) {
-	    fprintf(stderr, "Can't malloc tablebase futurevectors\n");
+	    fatal("Can't malloc tablebase futurevectors\n");
 	    return 0;
 	}
 
 	gettimeofday(&pass_start_times[total_passes], NULL);
 	pass_type[total_passes] = "initialization";
 
-	fprintf(stderr, "Initializing tablebase\n");
+	info("Initializing tablebase\n");
 	initialize_tablebase(tb);
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
 	total_passes ++;
 
-	fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions);
-	fprintf(stderr, "Total moves: %lld\n", total_moves);
+	info("Total legal positions: %lld\n", total_legal_positions);
+	info("Total moves: %lld\n", total_moves);
 
 	gettimeofday(&pass_start_times[total_passes], NULL);
 	pass_type[total_passes] = "futurebase backprop";
@@ -10090,10 +10113,10 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	gettimeofday(&pass_start_times[total_passes], NULL);
 	pass_type[total_passes] = "futuremove check";
 
-	fprintf(stderr, "Checking futuremoves...\n");
+	info("Checking futuremoves...\n");
 	/* propagation_pass(0); */
 	if (! have_all_futuremoves_been_handled(tb)) return 0;
-	fprintf(stderr, "All futuremoves handled under move restrictions\n");
+	info("All futuremoves handled under move restrictions\n");
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
 	total_passes ++;
@@ -10118,17 +10141,16 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	gettimeofday(&pass_end_times[total_passes], NULL);
 	total_passes ++;
 
-	fprintf(stderr, "Initializing tablebase...\n");
+	info("Initializing tablebase...\n");
 	pass_type[total_passes] = "initialization";
 	propagation_pass(0);
 	proptable_full();  /* flush moves out to disk */
 	finalize_proptable_write();
 
-	/* fprintf(stderr, "Total legal positions: %lld\n", total_legal_positions); */
-	/* fprintf(stderr, "Total moves: %lld\n", total_moves); */
-	/* fprint_system_time(); */
+	info("Total legal positions: %lld\n", total_legal_positions);
+	info("Total moves: %lld\n", total_moves);
 
-	fprintf(stderr, "All futuremoves handled under move restrictions\n");
+	info("All futuremoves handled under move restrictions\n");
 
     }
 
@@ -10137,7 +10159,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
      * saw during futurebase back-prop.
      */
 
-    fprintf(stderr, "Intra-table propagating\n");
+    info("Intra-table propagating\n");
     propagate_all_moves_within_tablebase(tb, min_dtm-1, max_dtm+1);
 
     write_tablebase_to_file(tb, output_filename, options);
@@ -10197,7 +10219,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
     local_position_t local;
     int score;
 
-    fprintf(stderr, "Verifying tablebase against Nalimov\n");
+    info("Verifying tablebase against Nalimov\n");
 
     for (index = 0; index <= tb->max_index; index++) {
 	if (index_to_global_position(tb, index, &global)) {
@@ -10356,7 +10378,7 @@ int main(int argc, char *argv[])
     verify_movements();
 
     while (1) {
-	c = getopt(argc, argv, "gpvo:n:P:");
+	c = getopt(argc, argv, "qgpvo:n:P:");
 
 	if (c == -1) break;
 
@@ -10370,6 +10392,9 @@ int main(int argc, char *argv[])
 	    break;
 	case 'v':
 	    verify = 1;
+	    break;
+	case 'q':
+	    verbose = 0;
 	    break;
 	case 'n':
 	    nalimov_path = optarg;
@@ -10385,24 +10410,17 @@ int main(int argc, char *argv[])
     }
 
     if (generating && probing) {
-	fprintf(stderr, "Only one of the generating (-g) and probing (-p) options can be specified\n");
+	fatal("Only one of the generating (-g) and probing (-p) options can be specified\n");
 	exit(EXIT_FAILURE);
     }
 
     if (!generating && !probing && !verify) {
-	fprintf(stderr, "At least one of generating (-g), probing (-p), or verify (-v) must be specified\n");
+	fatal("At least one of generating (-g), probing (-p), or verify (-v) must be specified\n");
 	exit(EXIT_FAILURE);
     }
-
-#if 0
-    if (generating && (output_filename == NULL)) {
-	fprintf(stderr, "An output filename must be specified to generate\n");
-	exit(EXIT_FAILURE);
-    }
-#endif
 
     if (!generating && (output_filename != NULL)) {
-	fprintf(stderr, "An output filename can not be specified when probing or verifying\n");
+	fatal("An output filename can not be specified when probing or verifying\n");
 	exit(EXIT_FAILURE);
     }
 
@@ -10424,10 +10442,10 @@ int main(int argc, char *argv[])
     tbs = calloc(argc - optind + 1, sizeof(tablebase_t *));
 
     for (argi=optind; argi<argc; argi++) {
-	fprintf(stderr, "Loading '%s'\n", argv[argi]);
+	info("Loading '%s'\n", argv[argi]);
 	tbs[i] = preload_futurebase_from_file(argv[argi]);
 	if (tbs[i] == NULL) {
-	    fprintf(stderr, "Error loading '%s'\n", argv[argi]);
+	    fatal("Error loading '%s'\n", argv[argi]);
 	} else {
 #ifdef USE_NALIMOV
 	    if (verify) verify_tablebase_against_nalimov(tbs[i]);
