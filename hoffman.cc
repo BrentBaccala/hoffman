@@ -2970,7 +2970,7 @@ void check_1000_positions(tablebase_t *tb)
 
 	    /* PTM_vector wasn't set in position1, so don't check them now */
 
-	    if (!index_to_local_position(tb, index, 0, &position2)
+	    if (!index_to_local_position(tb, index, REFLECTION_NONE, &position2)
 		|| (position2.PTM_vector = 0, position2.board_vector = 0,
 		    memcmp(&position1, &position2, sizeof(position1)))) {
 		fprintf(stderr, "Mismatch in check_1000_positions()\n");  /* BREAKPOINT */
@@ -2990,7 +2990,7 @@ void check_1000_indices(tablebase_t *tb)
 
 	index = rand() % (tb->max_index + 1);
 
-	if (index_to_local_position(tb, index, 0, &position)) {
+	if (index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 	    index2 = local_position_to_index(tb, &position);
 	    if (index != index2) {
 		fprintf(stderr, "Mismatch in check_1000_indices()\n");  /* BREAKPOINT */
@@ -4043,7 +4043,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.311 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.312 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4140,7 +4140,7 @@ int index_to_side_to_move(tablebase_t *tb, index_t index)
 {
     local_position_t position;
 
-    if (! index_to_local_position(tb, index, 0, &position)) return -1;
+    if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) return -1;
     else return position.side_to_move;
 }
 
@@ -4467,7 +4467,7 @@ boolean index_to_global_position(tablebase_t *tb, index_t index, global_position
 
     memset(global, 0, sizeof(global_position_t));
 
-    if (! index_to_local_position(tb, index, 0, &local)) return 0;
+    if (! index_to_local_position(tb, index, REFLECTION_NONE, &local)) return 0;
 
     global->side_to_move = local.side_to_move;
     global->en_passant_square = local.en_passant_square;
@@ -6016,9 +6016,9 @@ void back_propagate_index(index_t index, int target_dtm)
 	 || (get_entry_movecnt(proptable_tb, index) == MOVECNT_PNTM_WINS_UNPROPED))
 	&& ((entries_format.dtm_bits == 0) || (get_entry_DTM(proptable_tb, index) == target_dtm))) {
 
-	back_propagate_index_within_table(proptable_tb, index, 0);
+	back_propagate_index_within_table(proptable_tb, index, REFLECTION_NONE);
 	if (proptable_tb->symmetry == 8) {
-	    back_propagate_index_within_table(proptable_tb, index, 1);
+	    back_propagate_index_within_table(proptable_tb, index, REFLECTION_DIAGONAL);
 	}
 	positions_finalized[total_passes] ++;
 
@@ -7603,7 +7603,8 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	 * with multiple restricted pieces that should be quietly ignored.
 	 */
 
-	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index, 0,
+	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
+								      REFLECTION_NONE,
 								      tb, &current_position,
 								      invert_colors_of_futurebase);
 
@@ -9377,7 +9378,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
     struct movement *movementptr;
     int i;
 
-    if (! index_to_local_position(tb, index, 0, &position)) {
+    if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 
 	initialize_entry_as_illegal(tb, index);
 	return 0;
@@ -9835,10 +9836,12 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	result = xmlXPathEvalExpression(BAD_CAST "//output", context);
 
 	if (result->nodesetval->nodeNr == 1) {
-	    if (xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) {
-		file = fopen((char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename"), "w");
-	    } else if (xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) {
-		file = url_fopen((char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url"), "w");
+	    if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename"))
+		!= NULL) {
+		file = fopen(filename, "w");
+	    } else if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url"))
+		       != NULL) {
+		file = url_fopen(filename, "w");
 	    }
 	}
 
@@ -9852,6 +9855,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     }
 
     file = zlib_fopen(file, "w");
+
+    if (file == NULL) {
+	fprintf(stderr, "Can't zlib_fopen output tablebase\n");
+	exit(EXIT_FAILURE);
+    }
+
+    fprintf(stderr, "Writing '%s'\n", filename);
 
     doc = finalize_XML_header(tb, options);
 
@@ -10192,7 +10202,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
     for (index = 0; index <= tb->max_index; index++) {
 	if (index_to_global_position(tb, index, &global)) {
 
-	    index_to_local_position(tb, index, 0, &local);
+	    index_to_local_position(tb, index, REFLECTION_NONE, &local);
 
 	    if (PNTM_in_check(tb, &local)) {
 
@@ -10503,8 +10513,8 @@ int main(int argc, char *argv[])
 
 		    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
 
-			if ((! index_to_local_position(tb, index, 0, &pos))
-			    && (! index_to_local_position(tb, index, 1, &pos))) continue;
+			if ((! index_to_local_position(tb, index, REFLECTION_NONE, &pos))
+			    && (! index_to_local_position(tb, index, REFLECTION_DIAGONAL, &pos))) continue;
 
 			nextpos = pos;
 
@@ -10583,8 +10593,8 @@ int main(int argc, char *argv[])
 
 		    /* PAWNs */
 
-		    if (! index_to_local_position(tb, index, 0, &pos))
-			index_to_local_position(tb, index, 1, &pos);
+		    if (! index_to_local_position(tb, index, REFLECTION_NONE, &pos))
+			index_to_local_position(tb, index, REFLECTION_DIAGONAL, &pos);
 		    nextpos = pos;
 		    flip_side_to_move_local(&nextpos);
 
