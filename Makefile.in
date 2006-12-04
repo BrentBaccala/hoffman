@@ -34,42 +34,42 @@ tablebase_dtd.h: tablebase.dtd
 #	./hoffman -v -n Nalimov $*.htb
 #	gzip $*.htb
 
-%.gz: %
-	gzip -f $<
+#%.gz: %
+#	gzip -f $<
 
-kpk.htb.gz: kqk.htb.gz krk.htb.gz knk.htb.gz kbk.htb.gz
+kpk.htb: kqk.htb krk.htb knk.htb kbk.htb
 
-kqkq.htb.gz: kqk.htb.gz
+kqkq.htb: kqk.htb
 
-kqkr.htb.gz: kqk.htb.gz krk.htb.gz
-kqkn.htb.gz: kqk.htb.gz knk.htb.gz
-kqkb.htb.gz: kqk.htb.gz kbk.htb.gz
+kqkr.htb: kqk.htb krk.htb
+kqkn.htb: kqk.htb knk.htb
+kqkb.htb: kqk.htb kbk.htb
 
-kqkp.htb.gz: kqkq.htb.gz kqkr.htb.gz kqkn.htb.gz kqkb.htb.gz
+kqkp.htb: kqkq.htb kqkr.htb kqkn.htb kqkb.htb
 
-krkr.htb.gz: krk.htb.gz
-krkn.htb.gz: krk.htb.gz knk.htb.gz
-krkb.htb.gz: krk.htb.gz kbk.htb.gz
+krkr.htb: krk.htb
+krkn.htb: krk.htb knk.htb
+krkb.htb: krk.htb kbk.htb
 
-krkp.htb.gz: kqkr.htb.gz krkr.htb.gz krkb.htb.gz krkn.htb.gz
+krkp.htb: kqkr.htb krkr.htb krkb.htb krkn.htb
 
-kbkb.htb.gz: kbk.htb.gz
-kbkn.htb.gz: kbk.htb.gz knk.htb.gz
+kbkb.htb: kbk.htb
+kbkn.htb: kbk.htb knk.htb
 
-kbkp.htb.gz: kqkb.htb.gz krkb.htb.gz kbkb.htb.gz kbkn.htb.gz
+kbkp.htb: kqkb.htb krkb.htb kbkb.htb kbkn.htb
 
-knkn.htb.gz: knk.htb.gz
+knkn.htb: knk.htb
 
-knkp.htb.gz: kqkn.htb.gz krkn.htb.gz kbkn.htb.gz knkn.htb.gz
+knkp.htb: kqkn.htb krkn.htb kbkn.htb knkn.htb
 
-kpkp.htb.gz: kqkp.htb.gz krkp.htb.gz kbkp.htb.gz knkp.htb.gz
+kpkp.htb: kqkp.htb krkp.htb kbkp.htb knkp.htb
 
-kqpk.htb.gz: kqk.htb.gz kpk.htb.gz kqqk.htb.gz kqrk.htb.gz kqbk.htb.gz kqnk.htb.gz
+kqpk.htb: kqk.htb kpk.htb kqqk.htb kqrk.htb kqbk.htb kqnk.htb
 
-krpk.htb.gz: krk.htb.gz kpk.htb.gz kqrk.htb.gz krrk.htb.gz krnk.htb.gz krbk.htb.gz
+krpk.htb: krk.htb kpk.htb kqrk.htb krrk.htb krnk.htb krbk.htb
 
-kbpk.htb.gz: kbk.htb.gz kpk.htb.gz kqbk.htb.gz krbk.htb.gz kbbk.htb.gz kbnk.htb.gz
+kbpk.htb: kbk.htb kpk.htb kqbk.htb krbk.htb kbbk.htb kbnk.htb
 
-knpk.htb.gz: knk.htb.gz kpk.htb.gz kqnk.htb.gz krnk.htb.gz kbnk.htb.gz knnk.htb.gz
+knpk.htb: knk.htb kpk.htb kqnk.htb krnk.htb kbnk.htb knnk.htb
 
-kppk.htb.gz: kpk.htb.gz kqpk.htb.gz krpk.htb.gz kbpk.htb.gz knpk.htb.gz
+kppk.htb: kpk.htb kqpk.htb krpk.htb kbpk.htb knpk.htb
