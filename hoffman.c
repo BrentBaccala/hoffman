@@ -618,14 +618,30 @@ int verbose = 1;
 
 /***** UTILITY FUNCTIONS *****/
 
+int fatal_errors = 0;
+
+#define MAX_FATAL_ERRORS 10
+
+void terminate (void)
+{
+    if (fatal_errors > 0) {
+	exit(EXIT_FAILURE);
+    } else {
+	exit(EXIT_SUCCESS);
+    }
+}
+
 void fatal (char * format, ...)
 {
     va_list va;
 
     /* BREAKPOINT */
+    if (index(format, '\n') != NULL) fatal_errors ++;
     va_start(va, format);
     vfprintf(stderr, format, va);
     va_end(va);
+
+    if (fatal_errors >= MAX_FATAL_ERRORS) terminate();
 }
 
 void warning (char * format, ...)
@@ -2962,13 +2978,14 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
  * position that come back sorted after being run through a position->index->position conversion.
  */
 
-void check_1000_positions(tablebase_t *tb)
+int check_1000_positions(tablebase_t *tb)
 {
     local_position_t position1;
     local_position_t position2;
     index_t index;
     int positions;
     int piece;
+    int ret = 1;
 
     for (positions=0; positions < 1000; positions ++) {
 
@@ -3000,17 +3017,21 @@ void check_1000_positions(tablebase_t *tb)
 		|| (position2.PTM_vector = 0, position2.board_vector = 0,
 		    memcmp(&position1, &position2, sizeof(position1)))) {
 		fatal("Mismatch in check_1000_positions()\n");
+		ret = 0;
 	    }
 	}
     }
+
+    return ret;
 }
 
-void check_1000_indices(tablebase_t *tb)
+int check_1000_indices(tablebase_t *tb)
 {
     local_position_t position;
     index_t index;
     index_t index2;
     int positions;
+    int ret = 1;
 
     for (positions=0; positions < 1000; positions ++) {
 
@@ -3020,9 +3041,12 @@ void check_1000_indices(tablebase_t *tb)
 	    index2 = local_position_to_index(tb, &position);
 	    if (index != index2) {
 		fatal("Mismatch in check_1000_indices()\n");
+		ret = 0;
 	    }
 	}
     }
+
+    return ret;
 }
 
 /***** XML TABLEBASE INTERACTION *****/
@@ -3558,6 +3582,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	if (! parse_format(result->nodesetval->nodeTab[0], &entries_format)) return NULL;
 	if (entries_format.movecnt_bits == 0) {
 	    fatal("Entries format must contain a movecnt field\n");
+	    return NULL;
 	}
     }
     xmlXPathFreeObject(result);
@@ -3571,6 +3596,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	if (! parse_format(result->nodesetval->nodeTab[0], &proptable_format)) return NULL;
 	if (proptable_format.index_bits == 0) {
 	    fatal("Proptable format must contain an index field\n");
+	    return NULL;
 	}
     }
     xmlXPathFreeObject(result);
@@ -3963,7 +3989,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 #if 0
     if (fseek(file, tb->offset, SEEK_SET) != 0) {
 	fatal("Seek failed in preload_futurebase_from_file()\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 #else
     xml_size ++; /* we read one zero byte */
@@ -4068,7 +4094,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.313 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.314 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5022,7 +5048,7 @@ void init_entry_buffers(tablebase_t *tb)
     for (buffernum = 0; buffernum < NUM_ENTRY_BUFFERS; buffernum ++) {
 	if (posix_memalign((void **) &entry_buffers[buffernum], alignment, ENTRY_BUFFER_BYTES) != 0) {
 	    fatal("Can't posix_memalign entries buffer\n");
-	    exit(EXIT_FAILURE);
+	    terminate();
 	}
 	entry_buffers[buffernum].start = buffernum * ENTRY_BUFFER_ENTRIES;
 	turn_entry_buffer_blue(tb->entries_fd, buffernum);
@@ -6342,7 +6368,7 @@ int propagation_pass(int target_dtm)
     if (((target_dtm > 0) && (target_dtm > (entries_format.dtm_mask >> 1)))
 	|| ((target_dtm < 0) && (target_dtm < -(entries_format.dtm_mask >> 1)))) {
 	fatal("DTM entry field size exceeded\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 
     gettimeofday(&pass_start_times[total_passes], NULL);
@@ -8404,13 +8430,13 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	if (num_futuremoves > sizeof(futurevector_t)*8) {
 	    fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
 		  num_futuremoves, sizeof(futurevector_t)*8);
-	    exit(EXIT_FAILURE);
+	    terminate();
 	}
     } else {
 	if (num_futuremoves > proptable_format.futurevector_bits) {
 	    fatal("Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
 		  num_futuremoves, proptable_format.futurevector_bits);
-	    exit(EXIT_FAILURE);
+	    terminate();
 	}
     }
 }
@@ -9873,14 +9899,14 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
     if (file == NULL) {
 	fatal("Can't open output tablebase\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 
     file = zlib_fopen(file, "w");
 
     if (file == NULL) {
 	fatal("Can't zlib_fopen output tablebase\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 
     info("Writing '%s'\n", filename);
@@ -9906,12 +9932,12 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
     if (padded_size != ((size+5)&(~3))) {
 	fatal("sizes don't match in write_tablebase_to_file\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 
     if (fwrite(buf, padded_size, 1, file) != 1) {
 	fatal("Tablebase write failed\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 
     xmlFree(buf);
@@ -9955,7 +9981,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	if ((((index + 1) << tb->format.bits) % 8) == 0) {
 	    if (fwrite(entry, tb->format.bytes, 1, file) != 1) {
 		fatal("Tablebase write failed\n");
-		exit(EXIT_FAILURE);
+		terminate();
 	    }
 	}
     }
@@ -9965,13 +9991,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     if (((index << tb->format.bits) % 8) != 0) {
 	if (fwrite(entry, tb->format.bytes, 1, file) != 1) {
 	    fatal("Tablebase write failed\n");
-	    exit(EXIT_FAILURE);
+	    terminate();
 	}
     }
 
     if (fclose(file) != 0) {
 	fatal("Tablebase write failed\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 }
 
@@ -10074,7 +10100,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #endif
     if (! check_pruning(tb, &max_dtm, &min_dtm)) return 0;
 
-    check_1000_indices(tb);
+    if (! check_1000_indices(tb)) return 0;
     /* check_1000_positions(tb); */  /* This becomes a problem with symmetry, among other things */
 
     if (num_propentries == 0) {
@@ -10411,24 +10437,24 @@ int main(int argc, char *argv[])
 
     if (generating && probing) {
 	fatal("Only one of the generating (-g) and probing (-p) options can be specified\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 
     if (!generating && !probing && !verify) {
 	fatal("At least one of generating (-g), probing (-p), or verify (-v) must be specified\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 
     if (!generating && (output_filename != NULL)) {
 	fatal("An output filename can not be specified when probing or verifying\n");
-	exit(EXIT_FAILURE);
+	terminate();
     }
 
     /* Generating */
 
     if (generating) {
-	exit(generate_tablebase_from_control_file(argv[optind], output_filename, options_string)
-	     ? EXIT_SUCCESS : EXIT_FAILURE);
+	generate_tablebase_from_control_file(argv[optind], output_filename, options_string);
+	terminate();
     }
 
     /* Probing / Verifying */
@@ -10454,7 +10480,7 @@ int main(int argc, char *argv[])
 	}
     }
 
-    if (!probing) exit(EXIT_SUCCESS);
+    if (!probing) terminate();
 
     /* Probing only */
 
