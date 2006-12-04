@@ -13,7 +13,7 @@ CFLAGS=-g -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -
 
 CPPFLAGS=$(CFLAGS)
 
-hoffman: hoffman.o probe.o egtb.o url_fopen.o
+hoffman: hoffman.o probe.o egtb.o url_fopen.o zlib_fopen.o
 	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++ -lposix-aio `curl-config --libs`
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
