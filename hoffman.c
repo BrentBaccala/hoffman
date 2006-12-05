@@ -624,9 +624,40 @@ int fatal_errors = 0;
 
 void terminate (void)
 {
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+    char * url;
+    FILE * file;
+
     if (fatal_errors > 0) {
+	if ((proptable_tb != NULL) && (proptable_tb->xml != NULL)) {
+	    context = xmlXPathNewContext(proptable_tb->xml);
+	    result = xmlXPathEvalExpression(BAD_CAST "//error-report", context);
+
+	    if (result->nodesetval->nodeNr > 0) {
+		url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
+		if (url != NULL) {
+		    file = url_fopen(url, "w");
+		    xmlDocDump(file, proptable_tb->xml);
+		    fclose(file);
+		}
+	    }
+	}
 	exit(EXIT_FAILURE);
     } else {
+	if ((proptable_tb != NULL) && (proptable_tb->xml != NULL)) {
+	    context = xmlXPathNewContext(proptable_tb->xml);
+	    result = xmlXPathEvalExpression(BAD_CAST "//completion-report", context);
+
+	    if (result->nodesetval->nodeNr > 0) {
+		url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
+		if (url != NULL) {
+		    file = url_fopen(url, "w");
+		    xmlDocDump(file, proptable_tb->xml);
+		    fclose(file);
+		}
+	    }
+	}
 	exit(EXIT_SUCCESS);
     }
 }
@@ -634,11 +665,24 @@ void terminate (void)
 void fatal (char * format, ...)
 {
     va_list va;
+    char strbuf[256];
 
     /* BREAKPOINT */
     if (index(format, '\n') != NULL) fatal_errors ++;
+
     va_start(va, format);
+
     vfprintf(stderr, format, va);
+
+    if ((proptable_tb != NULL) && (proptable_tb->xml != NULL)) {
+	xmlNodePtr tablebase = xmlDocGetRootElement(proptable_tb->xml);
+	vsnprintf(strbuf, sizeof(strbuf), format, va);
+	if (index(strbuf, '\n') != NULL) *index(strbuf, '\n') = '\0';
+	xmlNodeAddContent(tablebase, BAD_CAST "   ");
+	xmlNewChild(tablebase, NULL, BAD_CAST "error", BAD_CAST strbuf);
+	xmlNodeAddContent(tablebase, BAD_CAST "\n");
+    }
+
     va_end(va);
 
     if (fatal_errors >= MAX_FATAL_ERRORS) terminate();
@@ -4094,7 +4138,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.314 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.315 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -10019,6 +10063,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
 
+    /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
+    proptable_tb = tb;
+
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression(BAD_CAST "//output", context);
     if ((result->nodesetval->nodeNr == 0) && (output_filename == NULL)) {
@@ -10088,8 +10135,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	proptable2 = proptable;
 #endif
     }
-    /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
-    proptable_tb = tb;
 
     assign_numbers_to_futuremoves(tb);
     if (! compute_pruned_futuremoves(tb)) return 0;
