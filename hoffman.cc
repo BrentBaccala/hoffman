@@ -3593,6 +3593,23 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+    /* If there's a stalemate prune, fetch it */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//prune[attribute::move='stalemate']", context);
+    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "color");
+	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "type");
+	tb->stalemate_prune_type = find_name_in_array((char *) prune_type, restriction_types);
+	tb->stalemate_prune_color = find_name_in_array((char *) prune_color, colors);
+	if (tb->stalemate_prune_type != RESTRICTION_CONCEDE) {
+	    fatal("Stalemates can only be pruned to 'concede'\n");
+	    return NULL;
+	}
+    }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
     /* Fetch the pieces from the XML */
 
     context = xmlXPathNewContext(doc);
@@ -4555,7 +4572,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.318 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.319 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9063,15 +9080,6 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 	if (type != tb->move_restrictions[color]) {
 	    fatal("Prune statements don't match tablebase restrictions\n");
 	    return 0;
-	}
-
-	if (!strcasecmp((char *) prune_move, "stalemate")) {
-	    if (type != RESTRICTION_CONCEDE) {
-		fatal("Stalemates can only be pruned to 'concede'\n");
-		return 0;
-	    }
-	    tb->stalemate_prune_type = type;
-	    tb->stalemate_prune_color = color;
 	}
     }
 
