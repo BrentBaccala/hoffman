@@ -2693,8 +2693,10 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	     * function.
 	     */
 
-	    if (vals[tb->last_paired_piece[piece]] - vals[piece]
-		== tb->total_legal_piece_positions[piece]/2) return 0;
+	    if (tb->total_legal_piece_positions[piece] % 2 == 0) {
+		if (vals[tb->last_paired_piece[piece]] - vals[piece]
+		    == tb->total_legal_piece_positions[piece]/2) return 0;
+	    }
 	}
 
 	vals[piece] = tb->simple_piece_positions[piece][vals[piece]];
@@ -4025,6 +4027,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
     }
 
+    if (tb->index_type == STANDARD_INDEX) {
+	fatal("'standard' index doesn't work (yet)\n");
+	return NULL;
+    }
+
     if ((tb->index_type != COMPACT_INDEX) && (tb->index_type != STANDARD_INDEX)) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->legal_squares[piece] != tb->semilegal_squares[piece]) {
@@ -4254,11 +4261,24 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		} else {
 		    tb->last_paired_piece[piece] = tb->blocking_pawn[piece];
 		}
+		tb->semilegal_squares[piece] |= tb->semilegal_squares[tb->blocking_pawn[piece]];
 	    }
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
 	     * identical pieces assumes that both pieces occupy the same range of squares.
 	     */
+
+	    /* if the pawn is en-passant capturable, add an index for that */
+	    if (tb->piece_type[piece] == PAWN) {
+		for (square = 0; square < 7; square ++) {
+		    if (tb->semilegal_squares[piece]
+			& BITVECTOR(rowcol2square((tb->piece_color[piece] == WHITE) ? 3 : 4, square))) {
+			tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
+			tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
+			tb->total_legal_piece_positions[piece] ++;
+		    }
+		}
+	    }
 
 	    for (square = 0; square < 64; square ++) {
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
@@ -4268,16 +4288,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
 		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
-
-		/* if the pawn is en-passant capturable, add an index for that */
-		if ((tb->piece_type[piece] == PAWN)
-		    && (((tb->piece_color[piece] == WHITE) && (ROW(square) == 3))
-			|| ((tb->piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
-		    tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = COL(square);
-		    tb->simple_piece_indices[piece][COL(square)] = tb->total_legal_piece_positions[piece];
-		    tb->total_legal_piece_positions[piece] ++;
-		}
 	    }
+
 	    if (tb->last_paired_piece[piece] == -1) {
 		tb->max_index *= tb->total_legal_piece_positions[piece];
 	    } else if (tb->total_legal_piece_positions[piece]
@@ -4543,7 +4555,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.316 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.317 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5200,6 +5212,8 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
       return 0;
     }
 
+    FEN_string ++;
+
     while (*FEN_string == ' ') FEN_string ++;
 
     /* skip castling rights (if they exist) */
@@ -5215,6 +5229,8 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 	&& (FEN_string[1] >= '1') && (FEN_string[1] <= '8')) {
 	pos->en_passant_square = rowcol2square(FEN_string[1] - '1', FEN_string[0] - 'a');
     }
+
+    /* maybe we should return error here if there's still more to the string */
 
     return 1;
 }
@@ -5557,6 +5573,13 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 #else
 
 	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
+
+	if (LEFTSHIFT(index, tb->format.bits - 3)
+	    < LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
+	    if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
+		fatal("Seek failed in fetch_entry_pointer()\n");
+	    }
+	}
 
 	do {
 
@@ -10805,7 +10828,8 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
 void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm)
 {
     /* int dtm = fetch_DTM_from_disk(tb, index); */
-    int dtm = get_entry_DTM(tb, index);
+    /* int dtm = get_entry_DTM(tb, index); */
+    int dtm = get_raw_DTM(tb, index);
 
     if (dtm == 0) {
 	printf("Draw\n");
