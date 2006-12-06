@@ -4555,7 +4555,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.317 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.318 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7486,10 +7486,34 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 			true_pawn = position.permuted_piece[pawn];
 
-			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-								      promotions[true_pawn]
-								      + futurebase->piece_type[extra_piece] - 1,
-								      &position);
+			/* If the futurebase prunes stalemates to be victories for the queening
+			 * color, then a queen is as good as a rook or a bishop.
+			 */
+
+			if ((futurebase->stalemate_prune_type == RESTRICTION_CONCEDE)
+			    && (futurebase->stalemate_prune_color == tb->piece_color[pawn])
+			    && (! futurebase->invert_colors)
+			    && futurebase->piece_type[extra_piece] == QUEEN) {
+
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  promotions[true_pawn]
+									  + QUEEN - 1,
+									  &position);
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  promotions[true_pawn]
+									  + ROOK - 1,
+									  &position);
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  promotions[true_pawn]
+									  + BISHOP - 1,
+									  &position);
+
+			} else {
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  promotions[true_pawn]
+									  + futurebase->piece_type[extra_piece] - 1,
+									  &position);
+			}
 
 			/* We may be about to use this position again, so put the board_vector back... */
 
@@ -7672,9 +7696,26 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			 * from the side that didn't promote in an en passant state.
 			 */
 
-			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-								 futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
-								 &position);
+			if ((futurebase->stalemate_prune_type == RESTRICTION_CONCEDE)
+			    && (futurebase->stalemate_prune_color == tb->piece_color[pawn])
+			    && (! futurebase->invert_colors)
+			    && futurebase->piece_type[extra_piece] == QUEEN) {
+
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  futurecaptures[true_pawn][true_captured_piece] + QUEEN - 1,
+									  &position);
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  futurecaptures[true_pawn][true_captured_piece] + ROOK - 1,
+									  &position);
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  futurecaptures[true_pawn][true_captured_piece] + BISHOP - 1,
+									  &position);
+
+			} else {
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+									  &position);
+			}
 
 			/* We're about to use this position again, so put the board_vector back... */
 
@@ -7702,9 +7743,27 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			true_captured_piece = position.permuted_piece[missing_piece2];
 			true_pawn = position.permuted_piece[pawn];
 
-			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-								 futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
-								 &position);
+			if ((futurebase->stalemate_prune_type == RESTRICTION_CONCEDE)
+			    && (futurebase->stalemate_prune_color == tb->piece_color[pawn])
+			    && (! futurebase->invert_colors)
+			    && futurebase->piece_type[extra_piece] == QUEEN) {
+
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  futurecaptures[true_pawn][true_captured_piece] + QUEEN - 1,
+									  &position);
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  futurecaptures[true_pawn][true_captured_piece] + ROOK - 1,
+									  &position);
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  futurecaptures[true_pawn][true_captured_piece] + BISHOP - 1,
+									  &position);
+
+			} else {
+
+			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+									  futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+									  &position);
+			}
 
 			/* We're about to use this position again, so put the board_vector back... */
 
