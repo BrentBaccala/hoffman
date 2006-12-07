@@ -14,15 +14,23 @@ my @next_white_pawns = (6,6,0,0,0,0,4,4);
 
 my $max_free_pieces = 4;
 
-my $concede_stalemates = 0;
+my $concede_stalemates = 1;
 
-my $url_prefix = "ftp://vger.freesoft.org/Hoffman/analysis1/";
+my $url_prefix = "ftp://vger.freesoft.org/Hoffman/analysis2/";
+my $completion_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=complete&amp;tb=";
+my $error_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=error&amp;tb=";
 
-my @white_queens = ('', 'q', 'r', 'b', 'n');
-my @black_queens = ('', 'q', 'r', 'b', 'n');
+my @white_queens;
+my @black_queens;
 
-#my @white_queens = ('', 'q');
-#my @black_queens = ('', 'q', 'n');
+if ($concede_stalemates) {
+    @white_queens = ('', 'q');
+    @black_queens = ('', 'q', 'n');
+} else {
+    @white_queens = ('', 'q', 'r', 'b', 'n');
+    @black_queens = ('', 'q', 'r', 'b', 'n');
+}
+
 
 my %queen_names;
 
@@ -44,8 +52,9 @@ sub filename {
     my $total_white_pawns = eval(join('+',@$white_pawns_by_rows));
     my $total_black_pawns = eval(join('+',@$black_pawns_by_rows));
 
-    my $total_pieces = 2 + $total_white_pawns + $total_black_pawns
-	+ ($white_queen ? 1 : 0) + ($black_queen ? 1 : 0);
+    my $free_pieces =  2 + ($white_queen ? 1 : 0) + ($black_queen ? 1 : 0);
+
+    my $total_pieces = $free_pieces + $total_white_pawns + $total_black_pawns;
 
     my $filename = "k";
 
@@ -89,6 +98,8 @@ my %generated_filenames;
 
 sub invert_filename {
     my ($filename) = @_;
+
+    return undef if ($concede_stalemates);
 
     if ($filename =~ s/^kk(..)\./k\1k./ or $filename =~ s/^kk(.)\./k\1k./) {
 	return $filename;
@@ -151,9 +162,9 @@ sub generate_control_file_rows {
     print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
     print OUT "   <move-restriction color=\"black\" type=\"concede\"/>\n";
     if (defined $symmetry) {
-	print OUT "   <index type=\"standard\" symmetry=\"$symmetry\"/>\n";
+	print OUT "   <index type=\"compact\" symmetry=\"$symmetry\"/>\n";
     } else {
-	print OUT "   <index type=\"standard\"/>\n";
+	print OUT "   <index type=\"compact\"/>\n";
     }
     print OUT "   <format><dtm bits=\"8\"/></format>\n";
     print OUT "   <piece color=\"white\" type=\"king\"/>\n";
@@ -315,16 +326,6 @@ sub generate_control_file_rows {
     if ($queenable_black_pawns) {
 	if ($black_queen) {
 	    print OUT "   <prune color=\"black\" move=\"P=any\" type=\"concede\"/>\n";
-	} else {
-	    # if we don't consider all black queening possibilities, then so long as we're discarding
-	    # stalemates, we can ignore rooks and bishops
-	    if ($concede_stalemates) {
-		foreach my $queen ('r', 'b') {
-		    if (not grep /$queen/, @black_queens) {
-			print OUT "   <prune color=\"black\" move=\"P=$queen_caps{$queen}\" type=\"discard\"/>\n";
-		    }
-		}
-	    }
 	}
     }
     print OUT "   <prune color=\"white\" move=\"Px$queen_caps{$black_queens[$black_queen]}\" type=\"discard\"/>\n"
@@ -336,6 +337,8 @@ sub generate_control_file_rows {
     print OUT "   <generation-controls>\n";
     print OUT "      <output url=\"$url_prefix",
     &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "\"/>\n";
+    print OUT "      <completion-report url=\"$completion_url$cntl_filename\"/>\n";
+    print OUT "      <error-report url=\"$error_url$cntl_filename\"/>\n";
     print OUT "   </generation-controls>\n";
     print OUT "</tablebase>\n";
 
@@ -418,7 +421,7 @@ sub generate_control_files {
     }
 }
 
-#open (MAKEFILE, ">&STDOUT") || die "open";
-open (MAKEFILE, ">/dev/null") || die "open";
+open (MAKEFILE, ">makefile") || die "open";
+#open (MAKEFILE, ">/dev/null") || die "open";
 
 &generate_control_files([1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1]);
