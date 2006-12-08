@@ -347,6 +347,9 @@ sub generate_control_file_rows {
     if ($queenable_white_pawns) {
 	if ($white_queen) {
 	    print OUT "   <prune color=\"white\" move=\"P=any\" type=\"discard\"/>\n";
+	    if ($black_queen) {
+		print OUT "   <prune color=\"white\" move=\"Px$queen_caps{$black_queens[$black_queen]}=any\" type=\"discard\"/>\n";
+	    }
 	} else {
 	    # if we don't consider all white queening possibilities...
 	    foreach my $queen ('q', 'r', 'b', 'n') {
@@ -359,6 +362,9 @@ sub generate_control_file_rows {
     if ($queenable_black_pawns) {
 	if ($black_queen) {
 	    print OUT "   <prune color=\"black\" move=\"P=any\" type=\"concede\"/>\n";
+	    if ($white_queen) {
+		print OUT "   <prune color=\"black\" move=\"Px$queen_caps{$white_queens[$white_queen]}=any\" type=\"concede\"/>\n";
+	    }
 	}
     }
     print OUT "   <prune color=\"white\" move=\"Px$queen_caps{$black_queens[$black_queen]}\" type=\"discard\"/>\n"
