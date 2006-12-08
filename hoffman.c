@@ -4544,7 +4544,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.325 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.326 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9156,7 +9156,11 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 		if (! (tb->legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
 	    }
 
-	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
+	    /* check all futurebases for a 'promotion capture' with captured_piece missing
+	     *
+	     * XXX this can overlap with the captured piece check above and result in a multiple
+	     * pruning statement warning if we've got both PxX and PxX=Y statements
+	     */
 
 	    if (futurecaptures[pawn][captured_piece] == -1) continue;
 
@@ -9165,9 +9169,12 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 		sprintf(movestr[futurecaptures[pawn][captured_piece] + i], "Px%c=%c",
 			piece_char[tb->piece_type[captured_piece]],
 			piece_char[promoted_pieces[i]]);
+		sprintf(movestr2, "Px%c=any", piece_char[tb->piece_type[captured_piece]]);
 
 		assign_pruning_statement(tb, tb->piece_color[pawn],
 					 movestr[futurecaptures[pawn][captured_piece] + i],
+					 futurecaptures[pawn][captured_piece] + i);
+		assign_pruning_statement(tb, tb->piece_color[pawn], movestr2,
 					 futurecaptures[pawn][captured_piece] + i);
 	    }
 	}
