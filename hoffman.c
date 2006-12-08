@@ -613,9 +613,9 @@ int verbose = 1;
  * doing to process a single move.
  */
 
-#define DEBUG_MOVE 91
+/* #define DEBUG_MOVE 38431 */
 
-#define DEBUG_FUTUREMOVE 4386
+/* #define DEBUG_FUTUREMOVE 200860 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -4544,7 +4544,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.324 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.325 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4775,12 +4775,15 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
 	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
 
+	/* First, see if we can slot this piece into the tablebase on a semilegal square */
+
 	for (piece = 0; piece < tb2->num_pieces; piece ++) {
 
 	    if ((tb1->piece_type[foreign_piece] == tb2->piece_type[piece])
 		&& (invert_colors
 		    ? (tb1->piece_color[foreign_piece] != tb2->piece_color[piece])
 		    : (tb1->piece_color[foreign_piece] == tb2->piece_color[piece]))
+		&& (tb2->semilegal_squares[piece] & BITVECTOR(sq))
 		&& !(pieces_processed_bitvector & (1 << piece))) {
 
 		local->piece_position[piece] = sq;
@@ -4794,6 +4797,37 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 	    }
 	}
 
+	/* If that didn't work, see if we can slip it in on a non-semilegal square (a semiillegal
+	 * square?)  Now, you might wonder if a different ordering of pieces might result in a
+	 * successful assignment onto semilegal squares, where the current ordering would fail, but
+	 * that's not so, because different semilegal groups of identical pieces never overlap
+	 * (otherwise they would have been formed into a single group).
+	 */
+
+	if ((piece == tb2->num_pieces) && (restricted_piece == NONE)) {
+
+	    for (piece = 0; piece < tb2->num_pieces; piece ++) {
+
+		if ((tb1->piece_type[foreign_piece] == tb2->piece_type[piece])
+		    && (invert_colors
+			? (tb1->piece_color[foreign_piece] != tb2->piece_color[piece])
+			: (tb1->piece_color[foreign_piece] == tb2->piece_color[piece]))
+		    && !(pieces_processed_bitvector & (1 << piece))) {
+
+		    local->piece_position[piece] = sq;
+		    local->board_vector |= BITVECTOR(sq);
+		    if (tb2->piece_color[piece] == local->side_to_move)
+			local->PTM_vector |= BITVECTOR(sq);
+
+		    pieces_processed_bitvector |= (1 << piece);
+
+		    restricted_piece = piece;
+
+		    break;
+		}
+	    }
+	}
+
 	if (piece == tb2->num_pieces) {
 	    if (extra_piece != NONE) {
 		fatal("More than one extra piece in translation\n");
@@ -4804,10 +4838,7 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
     }
 
 
-    /* Make sure all the pieces but one have been accounted for.  We count a piece as "free" if
-     * either it hasn't been processed at all, or if it was processed but was outside its move
-     * restriction.
-     */
+    /* Make sure all the local pieces but one or two have been accounted for. */
 
     for (piece = 0; piece < tb2->num_pieces; piece ++) {
 	if (!(pieces_processed_bitvector & (1 << piece))) {
@@ -4822,13 +4853,6 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 		}
 	    } else {
 		fatal("More than one missing piece in translation\n");
-		return -1;
-	    }
-	} else if (!(tb2->semilegal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
-	    if (restricted_piece == NONE) restricted_piece = piece;
-	    else {
-		/* This can happen if the futurebase is more liberal */
-		/* fprintf(stderr, "More than one restricted piece in translation\n"); */
 		return -1;
 	    }
 	}
@@ -8063,13 +8087,13 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 }
 
 void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-					     int invert_colors_of_futurebase, int captured_piece)
+					     int invert_colors_of_futurebase)
 {
     index_t future_index;
     local_position_t current_position;
     int piece;
     uint32 conversion_result;
-    int extra_piece, restricted_piece, missing_piece1, missing_piece2;
+    int extra_piece, restricted_piece, captured_piece, missing_piece2;
     int reflection;
     int max_reflection;
     int reflections[8];
@@ -8102,20 +8126,22 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 									  invert_colors_of_futurebase);
 
 #ifdef DEBUG_FUTUREMOVE
-    if (future_index == DEBUG_FUTUREMOVE) {
-	info("capture backprop; reflection=%d; conversion_result=%x\n", reflection, conversion_result);
-    }
+	    if (future_index == DEBUG_FUTUREMOVE) {
+		info("capture backprop; reflection=%d; conversion_result=%x\n", reflection, conversion_result);
+	    }
 #endif
 
 	    if (conversion_result != -1) {
 
 		extra_piece = (conversion_result >> 16) & 0xff;
 		restricted_piece = (conversion_result >> 8) & 0xff;
-		missing_piece1 = conversion_result & 0xff;
+		captured_piece = conversion_result & 0xff;           /* missing_piece1 */
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece != NONE) || (missing_piece1 != captured_piece) || (missing_piece2 != NONE)) {
-		    fatal("Conversion error during capture back-prop\n");
+		if ((extra_piece != NONE) || (captured_piece == NONE) || (missing_piece2 != NONE)) {
+#if 0
+		    fatal("Conversion error during capture back-prop (extra piece %d; missing_piece1 %d, missing_piece2 %d\n", extra_piece, missing_piece1, missing_piece2);
+#endif
 		    continue;
 		}
 
@@ -8497,7 +8523,6 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	xmlChar * type;
 	xmlChar * colors_property;
 	tablebase_t * futurebase;
-	int piece;
 
 	filename = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "filename");
 	if (filename == NULL) {
@@ -8544,12 +8569,9 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 		return 0;
 	    }
 
-	    piece = (futurebase->missing_pawn != -1)
-		? futurebase->missing_pawn : futurebase->missing_non_pawn;
-
 	    info("Back propagating from '%s'\n", (char *) filename);
 
-	    propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors, piece);
+	    propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors);
 
 	} else if ((type != NULL) && !strcasecmp((char *) type, "promotion")) {
 
@@ -9065,8 +9087,6 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
 	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
 					   BAD_CAST "color");
-	xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-					  BAD_CAST "move");
 	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
 					  BAD_CAST "type");
 	int color = find_name_in_array((char *) prune_color, colors);
