@@ -33,6 +33,8 @@ if ($concede_stalemates) {
     @black_queens = ('', 'q', 'r', 'b', 'n');
 }
 
+my $allow_black_to_queen = 0;
+
 
 my %queen_names;
 
@@ -269,17 +271,19 @@ sub generate_control_file_rows {
     }
 
     if (not $black_queen) {
-	for (my $row = 0; $row < 8; $row ++) {
-	    if ($$black_pawns_by_rows[$row] and not $$white_pawns_by_rows[$row]) {
-		$$black_pawns_by_rows[$row] --;
-		for (my $black_queen = 1; $black_queen <= $#black_queens; $black_queen ++) {
-		    &add_futurebase("promotion", \@futurebases,
-				    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-		    &add_futurebase("capture-promotion", \@futurebases,
-				    $white_pawns_by_rows, $black_pawns_by_rows, 0, $black_queen)
-			if $white_queen;
+	if ($allow_black_to_queen) {
+	    for (my $row = 0; $row < 8; $row ++) {
+		if ($$black_pawns_by_rows[$row] and not $$white_pawns_by_rows[$row]) {
+		    $$black_pawns_by_rows[$row] --;
+		    for (my $black_queen = 1; $black_queen <= $#black_queens; $black_queen ++) {
+			&add_futurebase("promotion", \@futurebases,
+					$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
+			&add_futurebase("capture-promotion", \@futurebases,
+					$white_pawns_by_rows, $black_pawns_by_rows, 0, $black_queen)
+			    if $white_queen;
+		    }
+		    $$black_pawns_by_rows[$row] ++;
 		}
-		$$black_pawns_by_rows[$row] ++;
 	    }
 	}
     } else {
@@ -360,7 +364,7 @@ sub generate_control_file_rows {
 	}
     }
     if ($queenable_black_pawns) {
-	if ($black_queen) {
+	if ($black_queen or not $allow_black_to_queen) {
 	    print OUT "   <prune color=\"black\" move=\"P=any\" type=\"concede\"/>\n";
 	    if ($white_queen) {
 		print OUT "   <prune color=\"black\" move=\"Px$queen_caps{$white_queens[$white_queen]}=any\" type=\"concede\"/>\n";
