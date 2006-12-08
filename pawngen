@@ -4,6 +4,8 @@
 # analyze a particular pawn configuration
 #
 
+use Data::Dumper;
+
 @white_pawns = ('a5', 'b2', 'd4', 'g2', 'h3');
 @black_pawns = ('a6', 'd5', 'd6', 'g6', 'h7');
 
@@ -45,6 +47,8 @@ $queen_caps{'q'} = 'Q';
 $queen_caps{'r'} = 'R';
 $queen_caps{'b'} = 'B';
 $queen_caps{'n'} = 'N';
+
+my @todo_list;
 
 sub filename {
     my ($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen) = @_;
@@ -111,6 +115,21 @@ sub invert_filename {
     }
 }
 
+sub deepcopy {
+    my @retval;
+
+    foreach my $val (@_) {
+	if (ref $val) {
+	    my @copy = &deepcopy(@$val);
+	    push @retval, \@copy;
+	} else {
+	    push @retval, $val;
+	}
+    }
+
+    return @retval;
+}
+
 sub add_futurebase {
     my ($type, $array, @parameters) = @_;
     my $filename = &filename(@parameters);
@@ -122,6 +141,9 @@ sub add_futurebase {
 	    print OUT "   <futurebase url=\"$url_prefix$filename\" colors=\"invert\" type=\"$type\"/>\n";
 	} else {
 	    print OUT "   <futurebase url=\"$url_prefix$filename\" type=\"$type\"/>\n";
+	    if (not exists $generated_filenames{$filename}) {
+		push @todo_list, &deepcopy(\@parameters);
+	    }
 	}
     }
 }
@@ -141,6 +163,8 @@ sub generate_control_file_rows {
     my @futurebases;
 
     return if defined &invert_filename(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen));
+
+    # print $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen, "\n";
 
     return if (exists $generated_filenames{&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen)});
     $generated_filenames{&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen)} = &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
@@ -363,74 +387,15 @@ sub generate_control_file_rows {
 }
 
 
-sub generate_control_file_set {
-    my ($white_pawns_by_row, $black_pawns_by_row) = @_;
-
-    #my $total_white_pawns = eval(join('+',@$white_pawns_by_row));
-    #my $total_black_pawns = eval(join('+',@$black_pawns_by_row));
-
-    for (my $white_queen = 0; $white_queen <= $#white_queens; $white_queen ++) {
-	for (my $black_queen = 0; $black_queen <= $#black_queens; $black_queen ++) {
-	    &generate_control_file_rows($white_pawns_by_row, $black_pawns_by_row, $white_queen, $black_queen);
-	}
-    }
-}
-
-sub generate_control_files {
-    my ($white_pawns_by_row, $black_pawns_by_row, $next_pawn) = @_;
-
-    if ($next_pawn < 8) {
-	my $pawncnt_limit = $$white_pawns_by_row[$next_pawn];
-	for (my $pawncnt = 0; $pawncnt <= $pawncnt_limit; $pawncnt ++) {
-	    $$white_pawns_by_row[$next_pawn] = $pawncnt;
-	    &generate_control_files($white_pawns_by_row, $black_pawns_by_row, $next_pawn + 1);
-	    if (($pawncnt == 0) and ($pawncnt_limit > 0)) {
-		# could the pawn have been captured by an adjacent enemy pawn?
-		if (($next_pawn > 0) and ($$black_pawns_by_row[$next_pawn - 1] != 0)) {
-		    $$black_pawns_by_row[$next_pawn - 1] --;
-		    $$black_pawns_by_row[$next_pawn] ++;
-		    &generate_control_files($white_pawns_by_row, $black_pawns_by_row, $next_pawn + 1);
-		    $$black_pawns_by_row[$next_pawn] --;
-		    $$black_pawns_by_row[$next_pawn - 1] ++;
-		}
-		if (($next_pawn < 7) and ($$black_pawns_by_row[$next_pawn + 1] != 0)) {
-		    $$black_pawns_by_row[$next_pawn + 1] --;
-		    $$black_pawns_by_row[$next_pawn] ++;
-		    &generate_control_files($white_pawns_by_row, $black_pawns_by_row, $next_pawn + 1);
-		    $$black_pawns_by_row[$next_pawn] --;
-		    $$black_pawns_by_row[$next_pawn + 1] ++;
-		}
-	    }
-	}
-    } elsif ($next_pawn < 16) {
-	my $pawncnt_limit = $$black_pawns_by_row[$next_pawn - 8];
-	for (my $pawncnt = 0; $pawncnt <= $pawncnt_limit; $pawncnt ++) {
-	    $$black_pawns_by_row[$next_pawn - 8] = $pawncnt;
-	    &generate_control_files($white_pawns_by_row, $black_pawns_by_row, $next_pawn + 1);
-	    if (($pawncnt == 0) and ($pawncnt_limit > 0)) {
-		# could the pawn have been captured by an adjacent enemy pawn?
-		if (($next_pawn - 8 > 0) and ($$white_pawns_by_row[$next_pawn - 8 - 1] != 0)) {
-		    $$white_pawns_by_row[$next_pawn - 8 - 1] --;
-		    $$white_pawns_by_row[$next_pawn - 8] ++;
-		    &generate_control_files($white_pawns_by_row, $black_pawns_by_row, $next_pawn + 1);
-		    $$white_pawns_by_row[$next_pawn - 8] --;
-		    $$white_pawns_by_row[$next_pawn - 8 - 1] ++;
-		}
-		if (($next_pawn - 8 < 7) and ($$white_pawns_by_row[$next_pawn - 8 + 1] != 0)) {
-		    $$white_pawns_by_row[$next_pawn - 8 + 1] --;
-		    $$white_pawns_by_row[$next_pawn - 8] ++;
-		    &generate_control_files($white_pawns_by_row, $black_pawns_by_row, $next_pawn + 1);
-		    $$white_pawns_by_row[$next_pawn - 8] --;
-		    $$white_pawns_by_row[$next_pawn - 8 + 1] ++;
-		}
-	    }
-	}
-    } else {
-	&generate_control_file_set($white_pawns_by_row, $black_pawns_by_row);
+sub generate_todo_list {
+    while (my $parameters = pop @todo_list) {
+	&generate_control_file_rows(@$parameters);
     }
 }
 
 #open (MAKEFILE, ">makefile") || die "open";
 open (MAKEFILE, ">/dev/null") || die "open";
 
-&generate_control_files([1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1]);
+push @todo_list, [[1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1],0,0];
+
+&generate_todo_list;
