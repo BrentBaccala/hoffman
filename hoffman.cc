@@ -160,6 +160,7 @@ FILE * zlib_fopen(FILE *file, char *operation);
 
 typedef unsigned long long int uint64;
 typedef unsigned int uint32;
+typedef unsigned short uint16;
 typedef unsigned char uint8;
 typedef short boolean;
 
@@ -239,7 +240,7 @@ struct timeval proptable_preload_time = {0, 0};
  * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move.
  */
 
-typedef uint64 futurevector_t;
+typedef uint16 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 
@@ -4572,7 +4573,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.320 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.321 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9417,6 +9418,17 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		    }
 		    promoted_pieces_handled
 			|= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
+
+		    /* If the futurebase prunes stalemates, then a queen suffices for a rook or bishop. */
+
+		    if ((futurebases[fbnum]->stalemate_prune_type == RESTRICTION_CONCEDE)
+			&& (futurebases[fbnum]->stalemate_prune_color == tb->piece_color[pawn])
+			&& (! futurebases[fbnum]->invert_colors)
+			&& (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == QUEEN)) {
+
+			promoted_pieces_handled |= (1 << ROOK);
+			promoted_pieces_handled |= (1 << BISHOP);
+		    }
 		}
 	    }
 
@@ -9427,7 +9439,7 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 	    for (i = 0; promoted_pieces[i] != 0; i ++) {
 
-		if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
+		if (promoted_pieces_handled & (1 << promoted_pieces[i])) continue;
 
 		if (! (pruned_futuremoves & FUTUREVECTOR(futurecaptures[pawn][captured_piece] + i))) {
 		    fatal("No futurebase or pruning for %s move %s\n",
@@ -9457,12 +9469,23 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		}
 		promoted_pieces_handled
 		    |= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
+
+		/* If the futurebase prunes stalemates, then a queen suffices for a rook or bishop. */
+
+		if ((futurebases[fbnum]->stalemate_prune_type == RESTRICTION_CONCEDE)
+		    && (futurebases[fbnum]->stalemate_prune_color == tb->piece_color[pawn])
+		    && (! futurebases[fbnum]->invert_colors)
+		    && (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == QUEEN)) {
+
+		    promoted_pieces_handled |= (1 << ROOK);
+		    promoted_pieces_handled |= (1 << BISHOP);
+		}
 	    }
 	}
 
 	for (i = 0; promoted_pieces[i] != 0; i ++) {
 
-	    if (promoted_pieces_handled & (1 << promoted_pieces[i])) break;
+	    if (promoted_pieces_handled & (1 << promoted_pieces[i])) continue;
 
 	    if (! (pruned_futuremoves & FUTUREVECTOR(promotions[pawn] + i))) {
 
