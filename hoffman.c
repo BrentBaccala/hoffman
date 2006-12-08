@@ -613,7 +613,9 @@ int verbose = 1;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 3 */
+#define DEBUG_MOVE 91
+
+#define DEBUG_FUTUREMOVE 4386
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -4542,7 +4544,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.323 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.324 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4841,7 +4843,14 @@ int translate_foreign_index_to_local_position(tablebase_t *tb1, index_t index1, 
 {
     local_position_t foreign_position;
 
-    if (! index_to_local_position(tb1, index1, reflection, &foreign_position)) return -1;
+    if (! index_to_local_position(tb1, index1, reflection, &foreign_position)) {
+#ifdef DEBUG_FUTUREMOVE
+	if (index1 == DEBUG_FUTUREMOVE) {
+	    info("translate_foreign_index_to_local_position: index_to_local_position failed\n");
+	}
+#endif
+	return -1;
+    }
 
     return translate_foreign_position_to_local_position(tb1, &foreign_position, tb2, local, invert_colors);
 }
@@ -7094,6 +7103,12 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	return;
     }
 
+#ifdef DEBUG_FUTUREMOVE
+    if (future_index == DEBUG_FUTUREMOVE) {
+	info("futurebase backprop; current_index=%d\n", current_index);
+    }
+#endif
+
     /* We insert even if dtm is zero because we have to track futuremoves */
 
     if (futurebase->format.dtm_bits > 0) {
@@ -7315,20 +7330,24 @@ int compute_reflections(tablebase_t *tb, tablebase_t *futurebase, int *reflectio
 
     max_reflection = futurebase->symmetry / tb->symmetry;
     if ((futurebase->symmetry == 8) && (tb->symmetry == 8)) max_reflection = 2;
+
     reflections[0] = REFLECTION_NONE;
     if (futurebase->symmetry == 8) reflections[1] = REFLECTION_DIAGONAL;
     if (futurebase->symmetry == 4) reflections[1] = REFLECTION_VERTICAL;
     if (futurebase->symmetry == 2) reflections[1] = REFLECTION_HORIZONTAL;
-    if (max_reflection == 4) {
+    if (max_reflection >= 4) {
 	if (futurebase->symmetry == 8) {
+	    /* This is either the 8 -> 2 or 8 -> 1 cases */
 	    reflections[2] = reflections[0] | REFLECTION_VERTICAL;
 	    reflections[3] = reflections[1] | REFLECTION_VERTICAL;
 	} else {
+	    /* This is the 4 -> 1 case */
 	    reflections[2] = reflections[0] | REFLECTION_HORIZONTAL;
 	    reflections[3] = reflections[1] | REFLECTION_HORIZONTAL;
 	}
     }
     if (max_reflection == 8) {
+	/* The 8 -> 1 case */
 	reflections[4] = reflections[0] | REFLECTION_HORIZONTAL;
 	reflections[5] = reflections[1] | REFLECTION_HORIZONTAL;
 	reflections[6] = reflections[2] | REFLECTION_HORIZONTAL;
@@ -8081,6 +8100,12 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 									  reflections[reflection],
 									  tb, &current_position,
 									  invert_colors_of_futurebase);
+
+#ifdef DEBUG_FUTUREMOVE
+    if (future_index == DEBUG_FUTUREMOVE) {
+	info("capture backprop; reflection=%d; conversion_result=%x\n", reflection, conversion_result);
+    }
+#endif
 
 	    if (conversion_result != -1) {
 
