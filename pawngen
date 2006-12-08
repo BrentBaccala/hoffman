@@ -112,7 +112,8 @@ sub invert_filename {
 }
 
 sub add_futurebase {
-    my ($filename, $type, $array) = @_;
+    my ($type, $array, @parameters) = @_;
+    my $filename = &filename(@parameters);
 
     if (not grep(/$filename/, @$array)) {
 	push @$array, $filename;
@@ -154,9 +155,9 @@ sub generate_control_file_rows {
     my $cntl_filename = &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
     $cntl_filename =~ s/htb$/xml/;
 
-    #open (OUT, ">&STDOUT") || die "open";
+    open (OUT, ">&STDOUT") || die "open";
     #open (OUT, ">/dev/null") || die "open";
-    open (OUT, ">$cntl_filename") || die "open";
+    #open (OUT, ">$cntl_filename") || die "open";
 
     print OUT "<tablebase>\n";
     print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
@@ -221,22 +222,24 @@ sub generate_control_file_rows {
 	    if ($$white_pawns_by_rows[$row] and not $$black_pawns_by_rows[$row]) {
 		$$white_pawns_by_rows[$row] --;
 		for (my $white_queen = 1; $white_queen <= $#white_queens; $white_queen ++) {
-		    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows,
-					      $white_queen, $black_queen), "promotion", \@futurebases);
-		    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows,
-					      $white_queen, 0), "capture-promotion", \@futurebases)
+		    &add_futurebase("promotion", \@futurebases,
+				    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
+		    &add_futurebase("capture-promotion", \@futurebases,
+				    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, 0)
 			if $black_queen;
 		}
 		$$white_pawns_by_rows[$row] ++;
 	    }
 	}
     } else {
-	&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, 0, $black_queen), "capture", \@futurebases);
+	&add_futurebase("capture", \@futurebases,
+			$white_pawns_by_rows, $black_pawns_by_rows, 0, $black_queen);
     }
     for (my $row = 0; $row < 8; $row ++) {
 	if ($$white_pawns_by_rows[$row]) {
 	    $$white_pawns_by_rows[$row] --;
-	    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+	    &add_futurebase("capture", \@futurebases,
+			    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
 	    $$white_pawns_by_rows[$row] ++;
 	}
     }
@@ -246,22 +249,24 @@ sub generate_control_file_rows {
 	    if ($$black_pawns_by_rows[$row] and not $$white_pawns_by_rows[$row]) {
 		$$black_pawns_by_rows[$row] --;
 		for (my $black_queen = 1; $black_queen <= $#black_queens; $black_queen ++) {
-		    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows,
-					      $white_queen, $black_queen), "promotion", \@futurebases);
-		    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows,
-					      0, $black_queen), "capture-promotion", \@futurebases)
+		    &add_futurebase("promotion", \@futurebases,
+				    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
+		    &add_futurebase("capture-promotion", \@futurebases,
+				    $white_pawns_by_rows, $black_pawns_by_rows, 0, $black_queen)
 			if $white_queen;
 		}
 		$$black_pawns_by_rows[$row] ++;
 	    }
 	}
     } else {
-	&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, 0), "capture", \@futurebases);
+	&add_futurebase("capture", \@futurebases,
+			$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, 0);
     }
     for (my $row = 0; $row < 8; $row ++) {
 	if ($$black_pawns_by_rows[$row]) {
 	    $$black_pawns_by_rows[$row] --;
-	    &add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+	    &add_futurebase("capture", \@futurebases,
+			    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
 	    $$black_pawns_by_rows[$row] ++;
 	}
     }
@@ -274,7 +279,8 @@ sub generate_control_file_rows {
 		$$white_pawns_by_rows[$row] --;
 		$$black_pawns_by_rows[$row - 1] --;
 		$$white_pawns_by_rows[$row - 1] ++;
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+		&add_futurebase("capture", \@futurebases,
+				$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
 		$$white_pawns_by_rows[$row] ++;
 		$$black_pawns_by_rows[$row - 1] ++;
 		$$white_pawns_by_rows[$row - 1] --;
@@ -283,7 +289,8 @@ sub generate_control_file_rows {
 		$$white_pawns_by_rows[$row] --;
 		$$black_pawns_by_rows[$row + 1] --;
 		$$white_pawns_by_rows[$row + 1] ++;
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+		&add_futurebase("capture", \@futurebases,
+				$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
 		$$white_pawns_by_rows[$row] ++;
 		$$black_pawns_by_rows[$row + 1] ++;
 		$$white_pawns_by_rows[$row + 1] --;
@@ -294,7 +301,8 @@ sub generate_control_file_rows {
 		$$black_pawns_by_rows[$row] --;
 		$$white_pawns_by_rows[$row - 1] --;
 		$$black_pawns_by_rows[$row - 1] ++;
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+		&add_futurebase("capture", \@futurebases,
+				$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
 		$$black_pawns_by_rows[$row] ++;
 		$$white_pawns_by_rows[$row - 1] ++;
 		$$black_pawns_by_rows[$row - 1] --;
@@ -303,7 +311,8 @@ sub generate_control_file_rows {
 		$$black_pawns_by_rows[$row] --;
 		$$white_pawns_by_rows[$row + 1] --;
 		$$black_pawns_by_rows[$row + 1] ++;
-		&add_futurebase(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "capture", \@futurebases);
+		&add_futurebase("capture", \@futurebases,
+				$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
 		$$black_pawns_by_rows[$row] ++;
 		$$white_pawns_by_rows[$row + 1] ++;
 		$$black_pawns_by_rows[$row + 1] --;
@@ -421,7 +430,7 @@ sub generate_control_files {
     }
 }
 
-open (MAKEFILE, ">makefile") || die "open";
-#open (MAKEFILE, ">/dev/null") || die "open";
+#open (MAKEFILE, ">makefile") || die "open";
+open (MAKEFILE, ">/dev/null") || die "open";
 
 &generate_control_files([1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1]);
