@@ -4544,7 +4544,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.326 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.327 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7397,7 +7397,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
     local_position_t foreign_position;
     local_position_t position;
     uint32 conversion_result;
-    int extra_piece, restricted_piece, missing_piece1, missing_piece2;
+    int extra_piece, restricted_piece, missing_piece2;
     int true_pawn;
     int reflection;
     int max_reflection;
@@ -7439,10 +7439,10 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 		extra_piece = (conversion_result >> 16) & 0xff;
 		restricted_piece = (conversion_result >> 8) & 0xff;
-		missing_piece1 = conversion_result & 0xff;
+		pawn = conversion_result & 0xff;                      /* missing_piece1 */
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece == NONE) || missing_piece1 != pawn) {
+		if ((extra_piece == NONE) || (pawn == NONE) || (missing_piece2 != NONE)) {
 		    fatal("Conversion error during promotion back-prop\n");
 		    continue;
 		}
@@ -9306,16 +9306,11 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 	futurebase_cnt = 0;
 
-	/* If we've going to consider a captured piece identical to this one, skip it.  Remember
-	 * that compute_extra_and_missing_pieces() uses the LAST identical piece, so we want to skip
-	 * everything before it.
-	 *
-	 * I've made this a bit more liberal now, because if we're dealing with move restrictions,
+	/* I've made this a bit more liberal now, because if we're dealing with move restrictions,
 	 * then we might have a missing piece in the futurebase line up with one of our pieces that
 	 * is identical to captured_piece in the sense that it's the same color and type, but not
 	 * identical in the sense of next_identical_piece.
 	 */
-	if (tb->next_identical_piece[captured_piece] != -1) continue;
 
 	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 	    if (tb->piece_type[captured_piece] == PAWN) {
@@ -9340,12 +9335,6 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 	    for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
-		/* If we've going to consider a capturing piece identical to this one, skip it.
-		 * Again, compute_extra_and_missing_pieces() uses the LAST identical piece, so we
-		 * want to skip everything before it.
-		 */
-		if (tb->next_identical_piece[capturing_piece] != -1) continue;
-
 		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
 		    if (! (pruned_futuremoves & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
@@ -9356,24 +9345,6 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		    }
 		}
 	    }
-
-	} else if (futurebase_cnt > 1) {
-
-	    /* Otherwise, a futurebase matched the capture.  Did more than one?  This is an error
-	     * because then we might have two futurebases that would back prop into the same
-	     * position with the same move.  Since we determine PNTM mates by counting down moves,
-	     * this could result in the same move getting counted down twice.  We deal with this by
-	     * making sure that only one futurebase of any given piece combo can exist.
-	     *
-	     * Once we get the bitvector working, we'll be able to make this check during
-	     * move back propagation and won't need this code anymore.
-	     */
-
-	    fatal("Multiple futurebases for capturing %s's %s\n",
-		  colors[tb->piece_color[captured_piece]],
-		  piece_name[tb->piece_type[captured_piece]]);
-	    return 0;
-
 	}
     }
 
@@ -9385,22 +9356,9 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 	if (tb->piece_type[pawn] != PAWN) continue;
 
-	/* Again, compute_extra_and_missing_pieces() uses the LAST identical piece, so we want to
-	 * skip everything before it.
-	 */
-
-	if (tb->next_identical_piece[pawn] != -1) continue;
-
 	/* First, we're looking for promotion capture futurebases. */
 
 	for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
-
-	    /* If we've going to consider a captured piece identical to this one, skip it.  Again,
-	     * compute_extra_and_missing_pieces() uses the LAST identical piece, so we want to skip
-	     * everything before it.
-	     */
-
-	    if (tb->next_identical_piece[captured_piece] != -1) continue;
 
 	    /* Check to see if the pawn can even be on a square where a promotion capture is
 	     * possible.
@@ -9434,16 +9392,17 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		if ((futurebases[fbnum]->extra_piece != -1)
-		    && (futurebases[fbnum]->missing_non_pawn == captured_piece)
-		    && (futurebases[fbnum]->missing_pawn == pawn)) {
-		    if (promoted_pieces_handled
-			& (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece])) {
-			fatal("Multiple promotion capture futurebases for %s's Px%c=%c\n",
-			      colors[tb->piece_color[pawn]],
-			      piece_char[tb->piece_type[futurebases[fbnum]->missing_non_pawn]],
-			      piece_char[futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]]);
-			return 0;
-		    }
+		    && (futurebases[fbnum]->piece_color[futurebases[fbnum]->extra_piece]
+			== (futurebases[fbnum]->invert_colors ? 1 - tb->piece_color[pawn] : tb->piece_color[pawn]))
+		    && (futurebases[fbnum]->missing_non_pawn != -1)
+		    && (futurebases[fbnum]->piece_color[futurebases[fbnum]->missing_non_pawn]
+			== (futurebases[fbnum]->invert_colors ? 1 - tb->piece_color[captured_piece] : tb->piece_color[captured_piece]))
+		    && (futurebases[fbnum]->piece_type[futurebases[fbnum]->missing_non_pawn]
+			== tb->piece_type[captured_piece])
+		    && (futurebases[fbnum]->missing_pawn != -1)
+		    && (futurebases[fbnum]->piece_color[futurebases[fbnum]->missing_pawn]
+			== (futurebases[fbnum]->invert_colors ? 1 - tb->piece_color[pawn] : tb->piece_color[pawn]))) {
+
 		    promoted_pieces_handled
 			|= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
 
@@ -9487,14 +9446,8 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 	    if ((futurebases[fbnum]->extra_piece != -1)
 		&& (futurebases[fbnum]->missing_non_pawn == -1)
-		&& (futurebases[fbnum]->missing_pawn == pawn)) {
-		if (promoted_pieces_handled
-		    & (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece])) {
-		    fatal("Multiple promotion futurebases for %s's P=%c\n",
-			  colors[tb->piece_color[pawn]],
-			  piece_char[futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]]);
-		    return 0;
-		}
+		&& (futurebases[fbnum]->missing_pawn != -1)) {
+
 		promoted_pieces_handled
 		    |= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
 
