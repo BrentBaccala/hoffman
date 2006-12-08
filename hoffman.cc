@@ -4544,7 +4544,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.327 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.328 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4830,7 +4830,9 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
 	if (piece == tb2->num_pieces) {
 	    if (extra_piece != NONE) {
+#if 0
 		fatal("More than one extra piece in translation\n");
+#endif
 		return -1;
 	    }
 	    extra_piece = foreign_piece;
