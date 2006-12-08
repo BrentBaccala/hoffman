@@ -548,7 +548,7 @@ typedef struct tablebase {
     uint64 legal_squares[MAX_PIECES];
     uint64 semilegal_squares[MAX_PIECES];
     uint64 frozen_pieces_vector;
-    int blocking_pawn[MAX_PIECES];
+    int blocking_piece[MAX_PIECES];
     uint64 illegal_black_king_squares;
     uint64 illegal_white_king_squares;
     int last_identical_piece[MAX_PIECES];
@@ -3031,13 +3031,13 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	 * blocking it.
 	 */
 
-	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_pawn[piece] != -1)) {
+	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_piece[piece] != -1)) {
 	    if (tb->piece_color[piece] == WHITE) {
-		if (position->piece_position[piece] > position->piece_position[tb->blocking_pawn[piece]]) {
+		if (position->piece_position[piece] > position->piece_position[tb->blocking_piece[piece]]) {
 		    return 0;
 		}
 	    } else {
-		if (position->piece_position[piece] < position->piece_position[tb->blocking_pawn[piece]]) {
+		if (position->piece_position[piece] < position->piece_position[tb->blocking_piece[piece]]) {
 		    return 0;
 		}
 	    }
@@ -3154,18 +3154,18 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 
     if (!ret) return 0;
 
-    /* Blocking pawns.  Reject any position where a pawn has "hopped" over the enemy pawn blocking
+    /* Blocking pawns.  Reject any position where a pawn has "hopped" over the enemy piece blocking
      * it.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
-	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_pawn[piece] != -1)) {
+	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_piece[piece] != -1)) {
 	    if (tb->piece_color[piece] == WHITE) {
-		if (position->piece_position[piece] > position->piece_position[tb->blocking_pawn[piece]]) {
+		if (position->piece_position[piece] > position->piece_position[tb->blocking_piece[piece]]) {
 		    return 0;
 		}
 	    } else {
-		if (position->piece_position[piece] < position->piece_position[tb->blocking_pawn[piece]]) {
+		if (position->piece_position[piece] < position->piece_position[tb->blocking_piece[piece]]) {
 		    return 0;
 		}
 	    }
@@ -3558,6 +3558,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlChar * index;
     xmlChar * modulus;
     int piece, piece2, square, white_king_square, black_king_square, dir;
+    int pass;
 
     tb = malloc(sizeof(tablebase_t));
     if (tb == NULL) {
@@ -3681,8 +3682,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
      * by first running through the pieces and looking for any blocking the plus pawn.  Then expand
      * the plus-pawn's restrictions up its file until it hits the blocking piece.
      *
-     * To handle doubled pawns, we do this twice, first using only blocking pieces of the opposite
-     * color, then making sure that the movement restriction really does block the pawn.
+     * To handle doubled pawns, we do this twice, figuring that we'll expand the leading pawn first,
+     * then pick up the trailing pawn on the second pass.  To handle tripled pawns, we need three
+     * passes.  To handled quadrupled (!) pawns, we need four.  Simplest is to just run the loop
+     * once for however many pieces we've got.
      *
      * What if we specified a black pawn as "a7+ b4+" and a white pawn as "b2+"?  Then the black
      * pawn would be blocked by at b3 by the white pawn, even though the white pawn could move on
@@ -3696,13 +3699,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
      * can cut tablebase sizes by a factor of two for each pair.
      */
 
-    /* First, compute which piece, if any, is blocking each plus-pawn.  Also, make a copy of
-     * legal_squares into semilegal_squares for use in the next loop.
-     */
+    /* First, compute which piece, if any, is blocking each plus-pawn.  */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	tb->blocking_pawn[piece] = -1;
+	tb->blocking_piece[piece] = -1;
 
 	if (tb->piece_type[piece] == PAWN) {
 
@@ -3714,80 +3715,48 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
 
 		square += dir;
-		while ((square < 56) && (square > 7) && (tb->blocking_pawn[piece] == -1)) {
+		while ((square < 56) && (square > 7) && (tb->blocking_piece[piece] == -1)) {
 		    for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
 			if (tb->legal_squares[piece2] == BITVECTOR(square)) {
-			    tb->blocking_pawn[piece] = piece2;
+			    tb->blocking_piece[piece] = piece2;
 			}
 		    }
 		    square += dir;
 		}
 	    } else {
-		/* This is a pawn, but it isn't a plus-pawn.  It can be blocked if it is frozen. */
-	    }
-	}
-
-	tb->semilegal_squares[piece] = tb->legal_squares[piece];
-
-    }
-
-    /* Now consider blocking pieces of the opposite color of any plus-pawns, and advance those pawns
-     * as far as they can go without hitting the blocking piece.  The reason we only consider
-     * blocking pieces of the opposite color is to avoid doubled pawns of the same color, which
-     * don't mutually block (at least not in the same way).  We use semilegal_squares because we're
-     * modifying legal_squares as we go through the loop.
-     */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_pawn[piece] != -1)
-	    && (tb->piece_color[piece] != tb->piece_color[tb->blocking_pawn[piece]])) {
-
-	    xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
-
-	    if ((location != NULL) && (location[2] == '+')) {
-
-		int square = rowcol2square(location[1] - '1', location[0] - 'a');
-		int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
-
-		square += dir;
-		while ((square < 56) && (square > 7)) {
-		    if (BITVECTOR(square) == tb->semilegal_squares[tb->blocking_pawn[piece]]) break;
-		    tb->legal_squares[piece] |= BITVECTOR(square);
-		    square += dir;
-		}
+		/* XXX This is a pawn, but it isn't a plus-pawn.  It can be blocked if it is frozen.
+		 * This matters because if a pawn is blocked, then we shouldn't complain if there is
+		 * no futurebase or pruning statement for its forward move, but it isn't a big deal,
+		 * since we can always just add an extra pruning statement for the non-move.
+		 */
 	    }
 	}
     }
 
-    /* Again, now considering all blocking pieces of any color, and extending the plus-pawn's
-     * restriction only if the piece in front of it is completely stopped in its movement.
-     * We assume that that movement is restricted to the file the pawn is moving on, but
-     * this is a legitimate assumption because we only assigned blocking pieces which we
-     * either plus-pawns themselves, or completely frozen on single squares.
-     *
-     * This is also where we extend completely non-blocked plus-pawns all the way up to the seventh
-     * (or second) rank.
-     */
+    /* Now advance plus-pawns as far as they can go without hitting the blocking piece. */
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    for (pass = 0; pass < tb->num_pieces; pass ++) {
 
-	if (tb->piece_type[piece] == PAWN) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
+	    if (tb->piece_type[piece] == PAWN) {
 
-	    if ((location != NULL) && (location[2] == '+')) {
+		xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
 
-		int square = rowcol2square(location[1] - '1', location[0] - 'a');
-		int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
+		if ((location != NULL) && (location[2] == '+')) {
 
-		square += dir;
-		while ((square < 56) && (square > 7)) {
-		    if ((tb->blocking_pawn[piece] != -1)
-			&& (BITVECTOR(square) & tb->legal_squares[tb->blocking_pawn[piece]])
-			&& !(BITVECTOR(square + dir) & tb->legal_squares[tb->blocking_pawn[piece]])) break;
-		    tb->legal_squares[piece] |= BITVECTOR(square);
+		    int square = rowcol2square(location[1] - '1', location[0] - 'a');
+		    int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
+
 		    square += dir;
+		    while ((square < 56) && (square > 7)) {
+			if ((tb->blocking_piece[piece] != -1)
+			    && (BITVECTOR(square) & tb->legal_squares[tb->blocking_piece[piece]])
+			    && !(BITVECTOR(square + dir) & tb->legal_squares[tb->blocking_piece[piece]]))
+			    break;
+			tb->legal_squares[piece] |= BITVECTOR(square);
+			square += dir;
+		    }
 		}
 	    }
 	}
@@ -4261,25 +4230,25 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    tb->last_paired_piece[piece] = tb->last_identical_piece[piece];
 	    tb->next_paired_piece[piece] = tb->next_identical_piece[piece];
 
-	    /* Note that we only set blocking_pawn for plus-pawns, so if two pawns are mutually
+	    /* Note that we only set blocking_piece for plus-pawns, so if two pawns are mutually
 	     * blocking, they must be opposing plus-pawns.
 	     */
 
-	    if ((tb->blocking_pawn[piece] != -1) && (tb->blocking_pawn[tb->blocking_pawn[piece]] == piece)) {
+	    if ((tb->blocking_piece[piece] != -1) && (tb->blocking_piece[tb->blocking_piece[piece]] == piece)) {
 		if ((tb->last_paired_piece[piece] != -1) || (tb->next_paired_piece[piece] != -1)) {
 		    fatal("Can't have a doubled pawn opposed by enemy pawn (yet)\n");
 		    return NULL;
 		}
-		if ((tb->blocking_pawn[piece] > piece) && (tb->piece_color[piece] != WHITE)) {
+		if ((tb->blocking_piece[piece] > piece) && (tb->piece_color[piece] != WHITE)) {
 		    fatal("Mutually blocking pawns must currently be specified white pawn first\n");
 		    return NULL;
 		}
-		if (tb->blocking_pawn[piece] > piece) {
-		    tb->next_paired_piece[piece] = tb->blocking_pawn[piece];
+		if (tb->blocking_piece[piece] > piece) {
+		    tb->next_paired_piece[piece] = tb->blocking_piece[piece];
 		} else {
-		    tb->last_paired_piece[piece] = tb->blocking_pawn[piece];
+		    tb->last_paired_piece[piece] = tb->blocking_piece[piece];
 		}
-		tb->semilegal_squares[piece] |= tb->semilegal_squares[tb->blocking_pawn[piece]];
+		tb->semilegal_squares[piece] |= tb->semilegal_squares[tb->blocking_piece[piece]];
 	    }
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
@@ -4573,7 +4542,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.322 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.323 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8961,7 +8930,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			 */
 
 			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
-			    && (tb->blocking_pawn[piece] == -1)) {
+			    && (tb->blocking_piece[piece] == -1)) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
 				futuremoves[piece][movementptr->square] = num_futuremoves;
 				num_futuremoves ++;
