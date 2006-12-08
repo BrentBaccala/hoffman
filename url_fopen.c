@@ -412,6 +412,8 @@ url_fopen(char *url,const char *operation)
 	return NULL;
     }
 
+    memset(cookie, 0, sizeof(struct curl_cookie));
+
     cookie->curl = curl_easy_init();
 
     curl_easy_setopt(cookie->curl, CURLOPT_URL, url);
