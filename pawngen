@@ -16,9 +16,9 @@ my @next_white_pawns = (6,6,0,0,0,0,4,4);
 
 my $max_free_pieces = 4;
 
-my $concede_stalemates = 1;
+my $concede_stalemates = 0;
 
-my $url_prefix = "ftp://vger.freesoft.org/Hoffman/analysis2/";
+my $url_prefix = "ftp://vger.freesoft.org/Hoffman/analysis3/";
 my $completion_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=complete&amp;tb=";
 my $error_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=error&amp;tb=";
 
@@ -29,7 +29,8 @@ if ($concede_stalemates) {
     @white_queens = ('', 'q');
     @black_queens = ('', 'q', 'n');
 } else {
-    @white_queens = ('', 'q', 'r', 'b', 'n');
+    @white_queens = ('', 'q');
+    #@white_queens = ('', 'q', 'r', 'b', 'n');
     @black_queens = ('', 'q', 'r', 'b', 'n');
 }
 
@@ -104,6 +105,9 @@ my %generated_filenames;
 
 sub invert_filename {
     my ($filename) = @_;
+
+    # I don't trust inversion.
+    return undef;
 
     return undef if ($concede_stalemates);
 
