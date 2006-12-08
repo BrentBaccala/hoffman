@@ -4573,7 +4573,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.321 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.322 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9288,17 +9288,24 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	/* If we've going to consider a captured piece identical to this one, skip it.  Remember
 	 * that compute_extra_and_missing_pieces() uses the LAST identical piece, so we want to skip
 	 * everything before it.
+	 *
+	 * I've made this a bit more liberal now, because if we're dealing with move restrictions,
+	 * then we might have a missing piece in the futurebase line up with one of our pieces that
+	 * is identical to captured_piece in the sense that it's the same color and type, but not
+	 * identical in the sense of next_identical_piece.
 	 */
 	if (tb->next_identical_piece[captured_piece] != -1) continue;
 
 	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 	    if (tb->piece_type[captured_piece] == PAWN) {
 		if ((futurebases[fbnum]->extra_piece == -1)
-		    && (futurebases[fbnum]->missing_pawn == captured_piece)
+		    && (futurebases[fbnum]->missing_pawn != -1)
+		    && (tb->piece_color[futurebases[fbnum]->missing_pawn] == tb->piece_color[captured_piece])
 		    && (futurebases[fbnum]->missing_non_pawn == -1)) futurebase_cnt ++;
 	    } else {
 		if ((futurebases[fbnum]->extra_piece == -1)
-		    && (futurebases[fbnum]->missing_non_pawn == captured_piece)
+		    && (futurebases[fbnum]->missing_non_pawn != -1)
+		    && (tb->piece_color[futurebases[fbnum]->missing_non_pawn] == tb->piece_color[captured_piece])
 		    && (futurebases[fbnum]->missing_pawn == -1)) futurebase_cnt ++;
 	    }
 	}
@@ -10061,7 +10068,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    && (local_position_to_index(tb, &position) == -1)) {
 
 			    if (futuremoves[piece][movementptr->square] == -1) {
-				fatal("No futuremove!\n");
+				global_position_t global;
+				index_to_global_position(tb, index, &global);
+				fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
+				      piece_char[tb->piece_type[piece]],
+				      'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
 			    }
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fatal("Duplicate futuremove!\n");
@@ -10111,6 +10122,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    initialize_entry_with_PNTM_mated(tb, index);
 				    return 0;
 				}
+				if (futurecaptures[piece][i] == -1) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->piece_type[piece]], piece_char[tb->piece_type[i]]);
+				}
 				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 				    fatal("Duplicate futuremove!\n");
 				}
@@ -10157,6 +10174,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
+			if (promotions[piece] == -1) {
+			    global_position_t global;
+			    index_to_global_position(tb, index, &global);
+			    fatal("No futuremove: %s %c=?\n", global_position_to_FEN(&global),
+				  piece_char[tb->piece_type[piece]]);
+			}
 			if (futurevector & FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES)) {
 			    fatal("Duplicate futuremove!\n");
 			}
@@ -10176,7 +10199,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    && (local_position_to_index(tb, &position) == -1)) {
 
 			    if (futuremoves[piece][movementptr->square] == -1) {
-				fatal("No futuremove!\n");
+				global_position_t global;
+				index_to_global_position(tb, index, &global);
+				fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
+				      piece_char[tb->piece_type[piece]],
+				      'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
 			    }
 			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				fatal("Duplicate futuremove!\n");
@@ -10225,6 +10252,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			for (i = 2; i < tb->num_pieces; i ++) {
 			    if (movementptr->square + (tb->piece_color[piece] == WHITE ? -8 : 8)
 				== position.piece_position[i]) {
+				if (futurecaptures[piece][i] == -1) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->piece_type[piece]], piece_char[tb->piece_type[i]]);
+				}
 				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 				    fatal("Duplicate futuremove!\n");
 				}
@@ -10272,6 +10305,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    initialize_entry_with_PNTM_mated(tb, index);
 				    return 0;
 				}
+				if (futurecaptures[piece][i] == -1) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->piece_type[piece]], piece_char[tb->piece_type[i]]);
+				}
 				if (futurevector & FUTUREVECTORS(futurecaptures[piece][i],
 								 PROMOTION_POSSIBILITIES)) {
 				    fatal("Duplicate futuremove!\n");
@@ -10292,6 +10331,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				if ((i == BLACK_KING) || (i == WHITE_KING)) {
 				    initialize_entry_with_PNTM_mated(tb, index);
 				    return 0;
+				}
+				if (futurecaptures[piece][i] == -1) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->piece_type[piece]], piece_char[tb->piece_type[i]]);
 				}
 				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 				    fatal("Duplicate futuremove!\n");
