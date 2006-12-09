@@ -295,11 +295,6 @@ futurevector_t discarded_futuremoves = 0;
  *
  */
 
-/* Where are the kings located in the piece list? */
-
-#define WHITE_KING 0
-#define BLACK_KING 1
-
 typedef struct {
     struct tablebase *tb;
     uint64 board_vector;
@@ -499,6 +494,8 @@ typedef struct tablebase {
     int index_offset;
     index_t max_index;
     index_t modulus;
+    int white_king;
+    int black_king;
 
     int symmetry;
     int total_legal_piece_positions[MAX_PIECES];
@@ -1858,13 +1855,13 @@ index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 	    index |= COL(pos->en_passant_square) << shift_count;
 	    shift_count += 6;  /* because 2^6=64 */
-	} else if ((piece == WHITE_KING) && (tb->symmetry == 2)) {
+	} else if ((piece == tb->white_king) && (tb->symmetry == 2)) {
 	    /* white king is in left half of board */
 	    index |= ROW(pos->piece_position[piece]) << shift_count;
 	    shift_count += 3;
 	    index |= COL(pos->piece_position[piece]) << shift_count;
 	    shift_count += 2;
-	} else if ((piece == WHITE_KING) && (tb->symmetry == 4)) {
+	} else if ((piece == tb->white_king) && (tb->symmetry == 4)) {
 	    /* white king is in lower left quarter of board */
 	    index |= ROW(pos->piece_position[piece]) << shift_count;
 	    shift_count += 2;
@@ -1893,10 +1890,10 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 
 	int square;
 
-	if ((tb->symmetry == 2) && (piece == WHITE_KING)) {
+	if ((tb->symmetry == 2) && (piece == tb->white_king)) {
 	    square = rowcol2square(index & 7, (index >> 3) & 3);
 	    index >>= 5;
-	} else if ((tb->symmetry == 4) && (piece == WHITE_KING)) {
+	} else if ((tb->symmetry == 4) && (piece == tb->white_king)) {
 	    square = rowcol2square(index & 3, (index >> 2) & 3);
 	    index >>= 4;
 	} else {
@@ -2021,13 +2018,13 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 	    }
 	}
 
-	if ((piece == WHITE_KING) && (tb->symmetry == 2)) {
+	if ((piece == tb->white_king) && (tb->symmetry == 2)) {
 	    /* white king is in left half of board */
 	    index |= ROW(vals[piece]) << shift_count;
 	    shift_count += 3;
 	    index |= COL(vals[piece]) << shift_count;
 	    shift_count += 2;
-	} else if ((piece == WHITE_KING) && (tb->symmetry == 4)) {
+	} else if ((piece == tb->white_king) && (tb->symmetry == 4)) {
 	    /* white king is in lower left quarter of board */
 	    index |= ROW(vals[piece]) << shift_count;
 	    shift_count += 2;
@@ -2062,10 +2059,10 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
 
-	if ((tb->symmetry == 2) && (piece == WHITE_KING)) {
+	if ((tb->symmetry == 2) && (piece == tb->white_king)) {
 	    vals[piece] = rowcol2square(index & 7, (index >> 3) & 3);
 	    index >>= 5;
-	} else if ((tb->symmetry == 4) && (piece == WHITE_KING)) {
+	} else if ((tb->symmetry == 4) && (piece == tb->white_king)) {
 	    vals[piece] = rowcol2square(index & 3, (index >> 2) & 3);
 	    index >>= 4;
 	} else if (tb->last_paired_piece[piece] == -1) {
@@ -2318,7 +2315,9 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 
     index = 0;
 
-    for (piece = 2; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
@@ -2349,9 +2348,11 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
      * other before doing anything else...
      */
 
-    index = tb->compact_king_indices[pos->piece_position[WHITE_KING]][pos->piece_position[BLACK_KING]];
+    index = tb->compact_king_indices[pos->piece_position[tb->white_king]][pos->piece_position[tb->black_king]];
 
-    for (piece = 2; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	if (tb->next_paired_piece[piece] != -1) {
 
@@ -2407,7 +2408,9 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
     /* First, split index into an array of encoding values. */
 
-    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	if (tb->last_paired_piece[piece] == -1) {
 	    vals[piece] = index % tb->total_legal_piece_positions[piece];
@@ -2424,7 +2427,9 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
      * a seperate loop here because we might need previous encoding values to back out the deltas.
      */
 
-    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	if (tb->last_paired_piece[piece] != -1) {
 
@@ -2474,7 +2479,9 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
      * numbers first.
      */
 
-    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	if (tb->last_paired_piece[piece] != -1) {
 
@@ -2495,9 +2502,11 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	}
     }
 
-    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
 	int square = vals[piece];
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	/* This can happen if we have multiple identical pieces because we counted semilegal
 	 * positions to encode them with.
@@ -2519,16 +2528,16 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	}
     }
 
-    p->piece_position[WHITE_KING] = tb->compact_white_king_positions[index];
-    p->piece_position[BLACK_KING] = tb->compact_black_king_positions[index];
-    if (p->board_vector & BITVECTOR(p->piece_position[WHITE_KING])) return 0;
-    if (p->board_vector & BITVECTOR(p->piece_position[BLACK_KING])) return 0;
-    p->board_vector |= BITVECTOR(p->piece_position[WHITE_KING]);
-    p->board_vector |= BITVECTOR(p->piece_position[BLACK_KING]);
+    p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
+    p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
+    if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return 0;
+    if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return 0;
+    p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
+    p->board_vector |= BITVECTOR(p->piece_position[tb->black_king]);
     if (p->side_to_move == WHITE)
-	p->PTM_vector |= BITVECTOR(p->piece_position[WHITE_KING]);
+	p->PTM_vector |= BITVECTOR(p->piece_position[tb->white_king]);
     else
-	p->PTM_vector |= BITVECTOR(p->piece_position[BLACK_KING]);
+	p->PTM_vector |= BITVECTOR(p->piece_position[tb->black_king]);
     index /= tb->total_legal_compact_king_positions;
 
 #if 0
@@ -2574,7 +2583,9 @@ index_t local_position_to_standard_index(tablebase_t *tb, local_position_t *pos)
 
     index = 0;
 
-    for (piece = 2; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
@@ -2605,9 +2616,11 @@ index_t local_position_to_standard_index(tablebase_t *tb, local_position_t *pos)
      * other before doing anything else...
      */
 
-    index = tb->compact_king_indices[pos->piece_position[WHITE_KING]][pos->piece_position[BLACK_KING]];
+    index = tb->compact_king_indices[pos->piece_position[tb->white_king]][pos->piece_position[tb->black_king]];
 
-    for (piece = 2; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	if (tb->next_paired_piece[piece] != -1) {
 
@@ -2663,7 +2676,9 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     /* First, split index into an array of encoding values. */
 
-    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	if (tb->last_paired_piece[piece] == -1) {
 	    vals[piece] = index % tb->total_legal_piece_positions[piece];
@@ -2680,7 +2695,9 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
      * a seperate loop here because we might need previous encoding values to back out the deltas.
      */
 
-    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	if (tb->last_paired_piece[piece] != -1) {
 
@@ -2732,7 +2749,9 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
      * numbers first.
      */
 
-    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	if (tb->last_paired_piece[piece] != -1) {
 
@@ -2753,9 +2772,11 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	}
     }
 
-    for (piece = tb->num_pieces - 1; piece >= 2; piece --) {
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
 	int square = vals[piece];
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	/* This can happen if we have multiple identical pieces because we counted semilegal
 	 * positions to encode them with.
@@ -2777,16 +2798,16 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	}
     }
 
-    p->piece_position[WHITE_KING] = tb->compact_white_king_positions[index];
-    p->piece_position[BLACK_KING] = tb->compact_black_king_positions[index];
-    if (p->board_vector & BITVECTOR(p->piece_position[WHITE_KING])) return 0;
-    if (p->board_vector & BITVECTOR(p->piece_position[BLACK_KING])) return 0;
-    p->board_vector |= BITVECTOR(p->piece_position[WHITE_KING]);
-    p->board_vector |= BITVECTOR(p->piece_position[BLACK_KING]);
+    p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
+    p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
+    if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return 0;
+    if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return 0;
+    p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
+    p->board_vector |= BITVECTOR(p->piece_position[tb->black_king]);
     if (p->side_to_move == WHITE)
-	p->PTM_vector |= BITVECTOR(p->piece_position[WHITE_KING]);
+	p->PTM_vector |= BITVECTOR(p->piece_position[tb->white_king]);
     else
-	p->PTM_vector |= BITVECTOR(p->piece_position[BLACK_KING]);
+	p->PTM_vector |= BITVECTOR(p->piece_position[tb->black_king]);
     index /= tb->total_legal_compact_king_positions;
 
 #if 0
@@ -2885,7 +2906,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     position->reflection = 0;
 
     if (tb->symmetry >= 2) {
-	if (COL(position->piece_position[WHITE_KING]) >= 4) {
+	if (COL(position->piece_position[tb->white_king]) >= 4) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
 		position->piece_position[piece] = horizontal_reflection(position->piece_position[piece]);
 	    }
@@ -2897,7 +2918,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     }
 
     if (tb->symmetry >= 4) {
-	if (ROW(position->piece_position[WHITE_KING]) >= 4) {
+	if (ROW(position->piece_position[tb->white_king]) >= 4) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
 		position->piece_position[piece] = vertical_reflection(position->piece_position[piece]);
 	    }
@@ -2909,7 +2930,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     }
 
     if (tb->symmetry == 8) {
-	if (ROW(position->piece_position[WHITE_KING]) > COL(position->piece_position[WHITE_KING])) {
+	if (ROW(position->piece_position[tb->white_king]) > COL(position->piece_position[tb->white_king])) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
 		position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
 	    }
@@ -2919,8 +2940,8 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 	    position->reflection |= 1;
 	}
 #if 1
-	if (ROW(position->piece_position[WHITE_KING]) == COL(position->piece_position[WHITE_KING])) {
-	    if (ROW(position->piece_position[BLACK_KING]) > COL(position->piece_position[BLACK_KING])) {
+	if (ROW(position->piece_position[tb->white_king]) == COL(position->piece_position[tb->white_king])) {
+	    if (ROW(position->piece_position[tb->black_king]) > COL(position->piece_position[tb->black_king])) {
 		for (piece = 0; piece < tb->num_pieces; piece ++) {
 		    position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
 		}
@@ -3013,7 +3034,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
     int piece;
 
 #if CHECK_KING_LEGALITY_EARLY
-    if (! check_king_legality(position->piece_position[WHITE_KING], position->piece_position[BLACK_KING]))
+    if (! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
 	return -1;
 #endif
 
@@ -3092,8 +3113,8 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
      */
 
     if ((tb->symmetry == 8)
-	&& ((ROW(position->piece_position[WHITE_KING]) != COL(position->piece_position[WHITE_KING]))
-	    || (ROW(position->piece_position[BLACK_KING]) != COL(position->piece_position[BLACK_KING])))) {
+	&& ((ROW(position->piece_position[tb->white_king]) != COL(position->piece_position[tb->white_king]))
+	    || (ROW(position->piece_position[tb->black_king]) != COL(position->piece_position[tb->black_king])))) {
 	position->multiplicity = 2;
     } else {
 	position->multiplicity = 1;
@@ -3175,20 +3196,20 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
     }
 
 #if CHECK_KING_LEGALITY_EARLY
-    if (! check_king_legality(position->piece_position[WHITE_KING], position->piece_position[BLACK_KING]))
+    if (! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
 	return 0;
 #endif
 
     if ((tb->symmetry == 8)
-	&& (ROW(position->piece_position[WHITE_KING]) == COL(position->piece_position[WHITE_KING]))
-	&& (ROW(position->piece_position[BLACK_KING]) > COL(position->piece_position[BLACK_KING])))
+	&& (ROW(position->piece_position[tb->white_king]) == COL(position->piece_position[tb->white_king]))
+	&& (ROW(position->piece_position[tb->black_king]) > COL(position->piece_position[tb->black_king])))
 	return 0;
 
     /* Multiplicity - number of non-identical positions that this index corresponds to */
 
     if ((tb->symmetry == 8)
-	&& ((ROW(position->piece_position[WHITE_KING]) != COL(position->piece_position[WHITE_KING]))
-	    || (ROW(position->piece_position[BLACK_KING]) != COL(position->piece_position[BLACK_KING])))) {
+	&& ((ROW(position->piece_position[tb->white_king]) != COL(position->piece_position[tb->white_king]))
+	    || (ROW(position->piece_position[tb->black_king]) != COL(position->piece_position[tb->black_king])))) {
 	position->multiplicity = 2;
     } else {
 	position->multiplicity = 1;
@@ -3631,6 +3652,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     tb->num_pieces = result->nodesetval->nodeNr;
 
+    tb->white_king = -1;
+    tb->black_king = -1;
+
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	xmlChar * color = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "color");
@@ -3668,10 +3692,34 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    return NULL;
 	}
 
+	if ((tb->piece_color[piece] == WHITE) && (tb->piece_type[piece] == KING)) {
+	    if (tb->white_king != -1) {
+		fatal("Must have one white king and one black one!\n");
+		return NULL;
+	    } else {
+		tb->white_king = piece;
+	    }
+	}
+
+	if ((tb->piece_color[piece] == BLACK) && (tb->piece_type[piece] == KING)) {
+	    if (tb->black_king != -1) {
+		fatal("Must have one white king and one black one!\n");
+		return NULL;
+	    } else {
+		tb->black_king = piece;
+	    }
+	}
+
 	if (color != NULL) xmlFree(color);
 	if (type != NULL) xmlFree(type);
 	if (location != NULL) xmlFree(location);
     }
+
+    if ((tb->white_king == -1) || (tb->black_king == -1)) {
+	fatal("Must have one white king and one black one!\n");
+	return NULL;
+    }
+
 
     /* We quietly skipped over any plus signs after pawn locations, which mean that the pawn should
      * be advanced as far as possible along its file.  For example, if there is a white pawn at
@@ -3809,12 +3857,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
     }
 
-    if ((tb->piece_color[WHITE_KING] != WHITE) || (tb->piece_type[WHITE_KING] != KING)
-	|| (tb->piece_color[BLACK_KING] != BLACK) || (tb->piece_type[BLACK_KING] != KING)) {
-	fatal("Kings aren't where they need to be in piece list!\n");
-	return NULL;
-    }
-
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
@@ -3871,10 +3913,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
     }
 
-    tb->legal_squares[WHITE_KING] &= ~ tb->illegal_white_king_squares;
-    tb->legal_squares[BLACK_KING] &= ~ tb->illegal_black_king_squares;
-    tb->semilegal_squares[WHITE_KING] &= ~ tb->illegal_white_king_squares;
-    tb->semilegal_squares[BLACK_KING] &= ~ tb->illegal_black_king_squares;
+    tb->legal_squares[tb->white_king] &= ~ tb->illegal_white_king_squares;
+    tb->legal_squares[tb->black_king] &= ~ tb->illegal_black_king_squares;
+    tb->semilegal_squares[tb->white_king] &= ~ tb->illegal_white_king_squares;
+    tb->semilegal_squares[tb->black_king] &= ~ tb->illegal_black_king_squares;
 
     /* Strip the locations of frozen pieces off the legal squares bitvectors of all the other
      * pieces.  Like stripping the capture squares off the enemy king's legal bitvector, this is a
@@ -4066,8 +4108,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    break;
 	}
 
-	tb->last_paired_piece[WHITE_KING] = -1;
-	tb->next_paired_piece[WHITE_KING] = -1;
+	tb->last_paired_piece[tb->white_king] = -1;
+	tb->next_paired_piece[tb->white_king] = -1;
 
 	/* now do everything else */
 	for (piece = 1; piece < tb->num_pieces; piece ++) {
@@ -4095,9 +4137,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    for (square = 0; square < 64; square ++) {
 		if (! (tb->legal_squares[piece] & BITVECTOR(square))) continue;
-		if ((piece == WHITE_KING) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
-		if ((piece == WHITE_KING) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
-		if ((piece == WHITE_KING) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
 		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
 		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
@@ -4123,9 +4165,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	tb->max_index = 2;
 
 	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	    if (! (tb->legal_squares[WHITE_KING] & BITVECTOR(white_king_square))) continue;
+	    if (! (tb->legal_squares[tb->white_king] & BITVECTOR(white_king_square))) continue;
 	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		if (! (tb->legal_squares[BLACK_KING] & BITVECTOR(black_king_square))) continue;
+		if (! (tb->legal_squares[tb->black_king] & BITVECTOR(black_king_square))) continue;
 		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
 		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
 		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
@@ -4142,12 +4184,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
 	tb->max_index *= tb->total_legal_compact_king_positions;
 
-	tb->last_paired_piece[WHITE_KING] = -1;
-	tb->next_paired_piece[WHITE_KING] = -1;
-	tb->last_paired_piece[BLACK_KING] = -1;
-	tb->next_paired_piece[BLACK_KING] = -1;
+	tb->last_paired_piece[tb->white_king] = -1;
+	tb->next_paired_piece[tb->white_king] = -1;
+	tb->last_paired_piece[tb->black_king] = -1;
+	tb->next_paired_piece[tb->black_king] = -1;
 
-	for (piece = 2; piece < tb->num_pieces; piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
 		fatal("Can't have more than two identical pieces with 'compact' index (yet)\n");
@@ -4163,9 +4207,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 	    for (square = 0; square < 64; square ++) {
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
-		if ((piece == WHITE_KING) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
-		if ((piece == WHITE_KING) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
-		if ((piece == WHITE_KING) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
 		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
 		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
@@ -4198,9 +4242,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	tb->max_index = 2;
 
 	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	    if (! (tb->legal_squares[WHITE_KING] & BITVECTOR(white_king_square))) continue;
+	    if (! (tb->legal_squares[tb->white_king] & BITVECTOR(white_king_square))) continue;
 	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		if (! (tb->legal_squares[BLACK_KING] & BITVECTOR(black_king_square))) continue;
+		if (! (tb->legal_squares[tb->black_king] & BITVECTOR(black_king_square))) continue;
 		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
 		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
 		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
@@ -4217,12 +4261,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
 	tb->max_index *= tb->total_legal_compact_king_positions;
 
-	tb->last_paired_piece[WHITE_KING] = -1;
-	tb->next_paired_piece[WHITE_KING] = -1;
-	tb->last_paired_piece[BLACK_KING] = -1;
-	tb->next_paired_piece[BLACK_KING] = -1;
+	tb->last_paired_piece[tb->white_king] = -1;
+	tb->next_paired_piece[tb->white_king] = -1;
+	tb->last_paired_piece[tb->black_king] = -1;
+	tb->next_paired_piece[tb->black_king] = -1;
 
-	for (piece = 2; piece < tb->num_pieces; piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
 		fatal("Can't have more than two identical pieces with 'compact' index (yet)\n");
@@ -4271,9 +4317,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 	    for (square = 0; square < 64; square ++) {
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
-		if ((piece == WHITE_KING) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
-		if ((piece == WHITE_KING) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
-		if ((piece == WHITE_KING) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
 		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
 		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
@@ -4544,7 +4590,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.330 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.331 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8795,7 +8841,9 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
      * restricted) so that the capture can never occur.  Go to the trouble of checking for this.
      */
 
-    for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
+    for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+
+	if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
@@ -8934,9 +8982,9 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			 * would place the king in check from a frozen piece)
 			 */
 
-			if ((piece == WHITE_KING)
+			if ((piece == tb->white_king)
 			    && (tb->illegal_white_king_squares & BITVECTOR(movementptr->square))) continue;
-			if ((piece == BLACK_KING)
+			if ((piece == tb->black_king)
 			    && (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
 
 			/* If the piece is moving outside its legal squares, it's a futuremove.  Why
@@ -9103,11 +9151,13 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    /* for each possible captured_piece (i.e, everything but the two kings in piece numbers 0 and 1)
-     * check for capture futurebases
+    /* for each possible captured_piece (everything but the two kings), check for capture
+       futurebases
      */
 
-    for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
+    for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+
+	if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
@@ -9132,7 +9182,9 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 	/* First, we're looking for promotion capture futurebases. */
 
-	for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
+	for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+
+	    if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
 	    /* Check to see if the pawn can even be on a square where a promotion capture is
 	     * possible.
@@ -9300,11 +9352,13 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    /* for each possible captured_piece (i.e, everything but the two kings in piece numbers 0 and 1)
-     * check for capture futurebases
+    /* for each possible captured_piece (i.e, everything but the two kings) check for capture
+     * futurebases
      */
 
-    for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
+    for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+
+	if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
 	futurebase_cnt = 0;
 
@@ -9360,7 +9414,9 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 	/* First, we're looking for promotion capture futurebases. */
 
-	for (captured_piece = 2; captured_piece < tb->num_pieces; captured_piece ++) {
+	for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+
+	    if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
 	    /* Check to see if the pawn can even be on a square where a promotion capture is
 	     * possible.
@@ -9885,10 +9941,10 @@ int PTM_in_check(tablebase_t *tb, local_position_t *position)
 		 */
 
 		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[WHITE_KING])) return 1;
+		    && (movementptr->square == position->piece_position[tb->white_king])) return 1;
 
 		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[BLACK_KING])) return 1;
+		    && (movementptr->square == position->piece_position[tb->black_king])) return 1;
 
 	    }
 	} else {
@@ -9897,10 +9953,10 @@ int PTM_in_check(tablebase_t *tb, local_position_t *position)
 		 movementptr++) {
 
 		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[WHITE_KING])) return 1;
+		    && (movementptr->square == position->piece_position[tb->white_king])) return 1;
 
 		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[BLACK_KING])) return 1;
+		    && (movementptr->square == position->piece_position[tb->black_king])) return 1;
 
 	    }
 	}
@@ -9938,10 +9994,10 @@ int PNTM_in_check(tablebase_t *tb, local_position_t *position)
 		 */
 
 		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[BLACK_KING])) return 1;
+		    && (movementptr->square == position->piece_position[tb->black_king])) return 1;
 
 		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[WHITE_KING])) return 1;
+		    && (movementptr->square == position->piece_position[tb->white_king])) return 1;
 
 	    }
 	} else {
@@ -9950,10 +10006,10 @@ int PNTM_in_check(tablebase_t *tb, local_position_t *position)
 		 movementptr++) {
 
 		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[BLACK_KING])) return 1;
+		    && (movementptr->square == position->piece_position[tb->black_king])) return 1;
 
 		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[WHITE_KING])) return 1;
+		    && (movementptr->square == position->piece_position[tb->white_king])) return 1;
 
 	    }
 	}
@@ -10012,21 +10068,21 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			 movementptr++) {
 
 #if CHECK_KING_LEGALITY_EARLY
-			if (piece == WHITE_KING) {
+			if (piece == tb->white_king) {
 			    if (! check_king_legality(movementptr->square,
-						      position.piece_position[BLACK_KING])) continue;
+						      position.piece_position[tb->black_king])) continue;
 			}
-			if (piece == BLACK_KING) {
+			if (piece == tb->black_king) {
 			    if (! check_king_legality(movementptr->square,
-						      position.piece_position[WHITE_KING])) continue;
+						      position.piece_position[tb->white_king])) continue;
 			}
 #endif
 
 			/* Completely discard king moves into check by frozen pieces */
 
-			if ((piece == WHITE_KING)
+			if ((piece == tb->white_king)
 			    && (tb->illegal_white_king_squares & BITVECTOR(movementptr->square))) continue;
-			if ((piece == BLACK_KING)
+			if ((piece == tb->black_king)
 			    && (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
 
 			/* Move the piece, so we can make the following checks on the new position */
@@ -10081,12 +10137,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     */
 
 #if CHECK_KING_LEGALITY_EARLY
-		    if (piece == WHITE_KING) {
-			if (! check_king_legality(movementptr->square, position.piece_position[BLACK_KING]))
+		    if (piece == tb->white_king) {
+			if (! check_king_legality(movementptr->square, position.piece_position[tb->black_king]))
 			    continue;
 		    }
-		    if (piece == BLACK_KING) {
-			if (! check_king_legality(movementptr->square, position.piece_position[WHITE_KING]))
+		    if (piece == tb->black_king) {
+			if (! check_king_legality(movementptr->square, position.piece_position[tb->white_king]))
 			    continue;
 		    }
 #endif
@@ -10094,7 +10150,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			movecnt ++;
 			for (i = 0; i < tb->num_pieces; i ++) {
 			    if (movementptr->square == position.piece_position[i]) {
-				if ((i == BLACK_KING) || (i == WHITE_KING)) {
+				if ((i == tb->black_king) || (i == tb->white_king)) {
 				    initialize_entry_with_PNTM_mated(tb, index);
 				    return 0;
 				}
@@ -10225,7 +10281,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		    if (movementptr->square == position.en_passant_square) {
 			movecnt ++;
-			for (i = 2; i < tb->num_pieces; i ++) {
+			for (i = 0; i < tb->num_pieces; i ++) {
+			    if ((i == tb->white_king) || (i == tb->black_king)) continue;
 			    if (movementptr->square + (tb->piece_color[piece] == WHITE ? -8 : 8)
 				== position.piece_position[i]) {
 				if (futurecaptures[piece][i] == -1) {
@@ -10277,7 +10334,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			for (i = 0; i < tb->num_pieces; i ++) {
 			    if (movementptr->square == position.piece_position[i]) {
-				if ((i == BLACK_KING) || (i == WHITE_KING)) {
+				if ((i == tb->black_king) || (i == tb->white_king)) {
 				    initialize_entry_with_PNTM_mated(tb, index);
 				    return 0;
 				}
@@ -10304,7 +10361,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			for (i = 0; i < tb->num_pieces; i ++) {
 			    if (movementptr->square == position.piece_position[i]) {
-				if ((i == BLACK_KING) || (i == WHITE_KING)) {
+				if ((i == tb->black_king) || (i == tb->white_king)) {
 				    initialize_entry_with_PNTM_mated(tb, index);
 				    return 0;
 				}
@@ -11177,8 +11234,8 @@ int main(int argc, char *argv[])
 
 			if ((movementptr->vector & pos.PTM_vector) == 0) {
 
-			    if ((movementptr->square == pos.piece_position[BLACK_KING])
-				|| (movementptr->square == pos.piece_position[WHITE_KING])) {
+			    if ((movementptr->square == pos.piece_position[tb->black_king])
+				|| (movementptr->square == pos.piece_position[tb->white_king])) {
 
 				/* printf("MATE\n"); */
 
@@ -11392,8 +11449,8 @@ int main(int argc, char *argv[])
 			    continue;
 			}
 
-			if ((movementptr->square == pos.piece_position[BLACK_KING])
-			    || (movementptr->square == pos.piece_position[WHITE_KING])) {
+			if ((movementptr->square == pos.piece_position[tb->black_king])
+			    || (movementptr->square == pos.piece_position[tb->white_king])) {
 
 			    /* printf("MATE\n"); */
 
