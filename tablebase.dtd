@@ -86,7 +86,9 @@
 <!ATTLIST piece
 	color	(white|black)	#REQUIRED
 	type	(king|queen|rook|bishop|knight|pawn)	#REQUIRED
-	location CDATA		#IMPLIED>
+	location CDATA		#IMPLIED
+	index-ordering (reverse)			#IMPLIED>
+
 <!ATTLIST futurebase
 	filename CDATA		#IMPLIED
 	url CDATA		#IMPLIED

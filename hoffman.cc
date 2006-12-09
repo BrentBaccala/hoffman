@@ -3582,6 +3582,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlChar * modulus;
     int piece, piece2, square, white_king_square, black_king_square, dir;
     int pass;
+    int reverse_index_ordering[MAX_PIECES];
 
     tb = malloc(sizeof(tablebase_t));
     if (tb == NULL) {
@@ -3685,6 +3686,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		fatal("Illegal piece location (%s)\n", location);
 		return NULL;
 	    }
+	}
+
+	if ((xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "index-ordering") != NULL)
+	    && (strcmp((char *) xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "index-ordering"),
+		       "reverse") == 0)) {
+	    reverse_index_ordering[piece] = 1;
+	} else {
+	    reverse_index_ordering[piece] = 0;
 	}
 
 	if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
@@ -4135,7 +4144,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	tb->max_index = 2;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    for (square = 0; square < 64; square ++) {
+	    for (square = (reverse_index_ordering[piece] ? 63 : 0);
+		 (reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
+		 (reverse_index_ordering[piece] ? (square --) : (square ++))) {
 		if (! (tb->legal_squares[piece] & BITVECTOR(square))) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
@@ -4205,7 +4216,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	     * identical pieces assumes that both pieces occupy the same range of squares.
 	     */
 
-	    for (square = 0; square < 64; square ++) {
+	    for (square = (reverse_index_ordering[piece] ? 63 : 0);
+		 (reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
+		 (reverse_index_ordering[piece] ? (square --) : (square ++))) {
+
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
@@ -4315,7 +4329,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		}
 	    }
 
-	    for (square = 0; square < 64; square ++) {
+	    for (square = (reverse_index_ordering[piece] ? 63 : 0);
+		 (reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
+		 (reverse_index_ordering[piece] ? (square --) : (square ++))) {
+
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
@@ -4590,7 +4607,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.331 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.332 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
