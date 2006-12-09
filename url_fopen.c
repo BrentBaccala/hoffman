@@ -128,6 +128,8 @@ read_callback(char *buffer,
     cookie->buffer += size;
     cookie->buffer_len -= size;
 
+    /* fprintf(stderr, "read_callback returns %d\n", size); */
+
     return size;
 }
 
