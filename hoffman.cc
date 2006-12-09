@@ -4544,9 +4544,9 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.328 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.329 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "args", BAD_CAST options);
+    xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     xmlNewChild(node, NULL, BAD_CAST "start-time", BAD_CAST strbuf);
