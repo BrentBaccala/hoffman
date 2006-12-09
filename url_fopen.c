@@ -170,6 +170,8 @@ fill_buffer(struct curl_cookie *cookie,int want,int waittime)
 
         rc = select(maxfd+1, &fdread, &fdwrite, &fdexcep, &timeout);
 
+	if (rc == -1) break;
+
         switch(rc) {
         case -1:
             /* select error */
@@ -243,13 +245,20 @@ static int cleaner (void *ptr)
         /* get file descriptors from the transfers */
         curl_multi_fdset(multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
 
-	if (maxfd == -1) break;
+	if (maxfd == -1) {
+	  break;
+	}
 
         /* In a real-world program you OF COURSE check the return code of the
            function calls, *and* you make sure that maxfd is bigger than -1
            so that the call to select() below makes sense! */
 
         rc = select(maxfd+1, &fdread, &fdwrite, &fdexcep, NULL);
+
+	if (rc == -1) {
+	  ret = -1;
+	  break;
+	}
 
         switch(rc) {
         case -1:
@@ -357,6 +366,8 @@ static ssize_t writer(void *ptr, const char *buffer, size_t size)
            so that the call to select() below makes sense! */
 
         rc = select(maxfd+1, &fdread, &fdwrite, &fdexcep, NULL);
+
+	if (rc == -1) break;
 
         switch(rc) {
         case -1:
