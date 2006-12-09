@@ -2348,9 +2348,13 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
      * other before doing anything else...
      */
 
-    index = tb->compact_king_indices[pos->piece_position[tb->white_king]][pos->piece_position[tb->black_king]];
-
     for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if (piece == tb->white_king) {
+	    index *= tb->total_legal_compact_king_positions;
+	    index += tb->compact_king_indices[pos->piece_position[tb->white_king]]
+		[pos->piece_position[tb->black_king]];
+	}
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
@@ -2399,6 +2403,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 {
     int piece;
     uint8 vals[MAX_PIECES];
+    int king_index;
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
@@ -2409,6 +2414,11 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
     /* First, split index into an array of encoding values. */
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	if (piece == tb->white_king) {
+	    king_index = index % tb->total_legal_compact_king_positions;
+	    index /= tb->total_legal_compact_king_positions;
+	}
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
@@ -2528,8 +2538,8 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	}
     }
 
-    p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
-    p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
+    p->piece_position[tb->white_king] = tb->compact_white_king_positions[king_index];
+    p->piece_position[tb->black_king] = tb->compact_black_king_positions[king_index];
     if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return 0;
     if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return 0;
     p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
@@ -2538,7 +2548,6 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	p->PTM_vector |= BITVECTOR(p->piece_position[tb->white_king]);
     else
 	p->PTM_vector |= BITVECTOR(p->piece_position[tb->black_king]);
-    index /= tb->total_legal_compact_king_positions;
 
 #if 0
     /* Identical pieces have to appear in sorted order. */
@@ -2616,9 +2625,13 @@ index_t local_position_to_standard_index(tablebase_t *tb, local_position_t *pos)
      * other before doing anything else...
      */
 
-    index = tb->compact_king_indices[pos->piece_position[tb->white_king]][pos->piece_position[tb->black_king]];
-
     for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if (piece == tb->white_king) {
+	    index *= tb->total_legal_compact_king_positions;
+	    index += tb->compact_king_indices[pos->piece_position[tb->white_king]]
+		[pos->piece_position[tb->black_king]];
+	}
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
@@ -2667,6 +2680,7 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
 {
     int piece;
     uint8 vals[MAX_PIECES];
+    int king_index;
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
@@ -2677,6 +2691,11 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
     /* First, split index into an array of encoding values. */
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	if (piece == tb->white_king) {
+	    king_index = index % tb->total_legal_compact_king_positions;
+	    index /= tb->total_legal_compact_king_positions;
+	}
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
@@ -2798,8 +2817,8 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	}
     }
 
-    p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
-    p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
+    p->piece_position[tb->white_king] = tb->compact_white_king_positions[king_index];
+    p->piece_position[tb->black_king] = tb->compact_black_king_positions[king_index];
     if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return 0;
     if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return 0;
     p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
@@ -2808,7 +2827,6 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	p->PTM_vector |= BITVECTOR(p->piece_position[tb->white_king]);
     else
 	p->PTM_vector |= BITVECTOR(p->piece_position[tb->black_king]);
-    index /= tb->total_legal_compact_king_positions;
 
 #if 0
     /* Identical pieces have to appear in sorted order. */
@@ -4607,7 +4625,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.332 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.333 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
