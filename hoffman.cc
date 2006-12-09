@@ -4536,7 +4536,11 @@ void unload_futurebase(tablebase_t *tb)
 {
     if (tb->xml != NULL) xmlFreeDoc(tb->xml);
     tb->xml = NULL;
-    if (tb->file != NULL) fclose(tb->file);
+    if (tb->file != NULL) {
+	if (fclose(tb->file) != 0) {
+	    warning("fclose failed during unload_futurebase()\n");
+	}
+    }
     tb->file = NULL;
 }
 
@@ -4625,7 +4629,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.333 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.334 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
