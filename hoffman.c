@@ -610,9 +610,9 @@ int verbose = 1;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 38431 */
+#define DEBUG_MOVE 89
 
-/* #define DEBUG_FUTUREMOVE 200860 */
+#define DEBUG_FUTUREMOVE 798
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -4629,7 +4629,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.334 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.335 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4826,6 +4826,8 @@ void invert_colors_of_global_position(global_position_t *global)
  * The only thing I don't like about this function right now is that it returns -1 if there is more
  * than one restricted piece, and we certainly could have liberal tablebases with lots of restricted
  * pieces that we want to back-prop from.
+ *
+ * XXX need to ASSERT that sizeof(..._pieces_processed_bitvector) is at least MAX_PIECES!!
  */
 
 #define NONE 0x80
@@ -4835,18 +4837,19 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 						 int invert_colors)
 {
     int foreign_piece;
-    int piece;
+    int local_piece;
     int restricted_piece = NONE;
     int missing_piece1 = NONE;
     int missing_piece2 = NONE;
     int extra_piece = NONE;
-    short pieces_processed_bitvector = 0;
+    short local_pieces_processed_bitvector = 0;
+    short foreign_pieces_processed_bitvector = 0;
 
     memset(local, 0, sizeof(local_position_t));
 
-    for (piece = 0; piece < tb2->num_pieces; piece ++) {
-	local->piece_position[piece] = -1;
-	local->permuted_piece[piece] = piece;
+    for (local_piece = 0; local_piece < tb2->num_pieces; local_piece ++) {
+	local->piece_position[local_piece] = -1;
+	local->permuted_piece[local_piece] = local_piece;
     }
 
     local->en_passant_square = foreign->en_passant_square;
@@ -4854,66 +4857,78 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
     if (invert_colors) flip_side_to_move_local(local);
 
+    /* First, see if we can slot foreign pieces into the local tablebase on semilegal squares. */
+
     for (foreign_piece = 0; foreign_piece < tb1->num_pieces; foreign_piece ++) {
 
 	int sq = foreign->piece_position[foreign_piece];
 
 	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
 
-	/* First, see if we can slot this piece into the tablebase on a semilegal square */
+	for (local_piece = 0; local_piece < tb2->num_pieces; local_piece ++) {
 
-	for (piece = 0; piece < tb2->num_pieces; piece ++) {
-
-	    if ((tb1->piece_type[foreign_piece] == tb2->piece_type[piece])
+	    if ((tb1->piece_type[foreign_piece] == tb2->piece_type[local_piece])
 		&& (invert_colors
-		    ? (tb1->piece_color[foreign_piece] != tb2->piece_color[piece])
-		    : (tb1->piece_color[foreign_piece] == tb2->piece_color[piece]))
-		&& (tb2->semilegal_squares[piece] & BITVECTOR(sq))
-		&& !(pieces_processed_bitvector & (1 << piece))) {
+		    ? (tb1->piece_color[foreign_piece] != tb2->piece_color[local_piece])
+		    : (tb1->piece_color[foreign_piece] == tb2->piece_color[local_piece]))
+		&& (tb2->semilegal_squares[local_piece] & BITVECTOR(sq))
+		&& !(local_pieces_processed_bitvector & (1 << local_piece))) {
 
-		local->piece_position[piece] = sq;
+		local->piece_position[local_piece] = sq;
 		local->board_vector |= BITVECTOR(sq);
-		if (tb2->piece_color[piece] == local->side_to_move)
+		if (tb2->piece_color[local_piece] == local->side_to_move)
 		    local->PTM_vector |= BITVECTOR(sq);
 
-		pieces_processed_bitvector |= (1 << piece);
+		local_pieces_processed_bitvector |= (1 << local_piece);
+		foreign_pieces_processed_bitvector |= (1 << foreign_piece);
+
+		break;
+	    }
+	}
+    }
+
+    /* If that didn't work for a foreign piece, see if we can slip it in on a non-semilegal square
+     * (a semiillegal square?)  Now, you might wonder if a different ordering of pieces might result
+     * in a successful assignment onto semilegal squares, where the current ordering would fail, but
+     * that's not so, because different semilegal groups of identical pieces never overlap
+     * (otherwise they would have been formed into a single group).  So for each piece type of a
+     * given color, there is only a single semilegal group for a given square.  But restricted
+     * pieces are a bit different, since until we've done all the pieces, we can't tell which ones
+     * are unassigned and thus available for a restricted piece.  That's why we run this next loop
+     * seperate from the first.
+     */
+
+    for (foreign_piece = 0; foreign_piece < tb1->num_pieces; foreign_piece ++) {
+
+	int sq = foreign->piece_position[foreign_piece];
+
+	if (foreign_pieces_processed_bitvector & (1 << foreign_piece)) continue;
+
+	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
+
+	for (local_piece = 0; local_piece < tb2->num_pieces; local_piece ++) {
+
+	    if ((tb1->piece_type[foreign_piece] == tb2->piece_type[local_piece])
+		&& (invert_colors
+		    ? (tb1->piece_color[foreign_piece] != tb2->piece_color[local_piece])
+		    : (tb1->piece_color[foreign_piece] == tb2->piece_color[local_piece]))
+		&& !(local_pieces_processed_bitvector & (1 << local_piece))) {
+
+		local->piece_position[local_piece] = sq;
+		local->board_vector |= BITVECTOR(sq);
+		if (tb2->piece_color[local_piece] == local->side_to_move)
+		    local->PTM_vector |= BITVECTOR(sq);
+
+		local_pieces_processed_bitvector |= (1 << local_piece);
+		foreign_pieces_processed_bitvector |= (1 << foreign_piece);
+
+		restricted_piece = local_piece;
 
 		break;
 	    }
 	}
 
-	/* If that didn't work, see if we can slip it in on a non-semilegal square (a semiillegal
-	 * square?)  Now, you might wonder if a different ordering of pieces might result in a
-	 * successful assignment onto semilegal squares, where the current ordering would fail, but
-	 * that's not so, because different semilegal groups of identical pieces never overlap
-	 * (otherwise they would have been formed into a single group).
-	 */
-
-	if ((piece == tb2->num_pieces) && (restricted_piece == NONE)) {
-
-	    for (piece = 0; piece < tb2->num_pieces; piece ++) {
-
-		if ((tb1->piece_type[foreign_piece] == tb2->piece_type[piece])
-		    && (invert_colors
-			? (tb1->piece_color[foreign_piece] != tb2->piece_color[piece])
-			: (tb1->piece_color[foreign_piece] == tb2->piece_color[piece]))
-		    && !(pieces_processed_bitvector & (1 << piece))) {
-
-		    local->piece_position[piece] = sq;
-		    local->board_vector |= BITVECTOR(sq);
-		    if (tb2->piece_color[piece] == local->side_to_move)
-			local->PTM_vector |= BITVECTOR(sq);
-
-		    pieces_processed_bitvector |= (1 << piece);
-
-		    restricted_piece = piece;
-
-		    break;
-		}
-	    }
-	}
-
-	if (piece == tb2->num_pieces) {
+	if (local_piece == tb2->num_pieces) {
 	    if (extra_piece != NONE) {
 #if 0
 		fatal("More than one extra piece in translation\n");
@@ -4927,16 +4942,16 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 
     /* Make sure all the local pieces but one or two have been accounted for. */
 
-    for (piece = 0; piece < tb2->num_pieces; piece ++) {
-	if (!(pieces_processed_bitvector & (1 << piece))) {
+    for (local_piece = 0; local_piece < tb2->num_pieces; local_piece ++) {
+	if (!(local_pieces_processed_bitvector & (1 << local_piece))) {
 	    if (missing_piece1 == NONE) {
-		missing_piece1 = piece;
+		missing_piece1 = local_piece;
 	    } else if (missing_piece2 == NONE) {
-		if (tb2->piece_type[piece] == PAWN) {
+		if (tb2->piece_type[local_piece] == PAWN) {
 		    missing_piece2 = missing_piece1;
-		    missing_piece1 = piece;
+		    missing_piece1 = local_piece;
 		} else {
-		    missing_piece2 = piece;
+		    missing_piece2 = local_piece;
 		}
 	    } else {
 		fatal("More than one missing piece in translation\n");
@@ -4980,7 +4995,7 @@ index_t global_position_to_local_position(tablebase_t *tb, global_position_t *gl
     int missing_piece2 = NONE;
     int extra_piece = NONE;
     int square;
-    short pieces_processed_bitvector = 0;
+    short local_pieces_processed_bitvector = 0;
 
     memset(local, 0, sizeof(local_position_t));
 
@@ -4996,14 +5011,14 @@ index_t global_position_to_local_position(tablebase_t *tb, global_position_t *gl
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
 	    for (piece = 0; piece < tb->num_pieces; piece ++) {
 		if ((global->board[square] == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
-		    && !(pieces_processed_bitvector & (1 << piece))) {
+		    && !(local_pieces_processed_bitvector & (1 << piece))) {
 
 		    local->piece_position[piece] = square;
 		    local->board_vector |= BITVECTOR(square);
 		    if (tb->piece_color[piece] == local->side_to_move)
 			local->PTM_vector |= BITVECTOR(square);
 
-		    pieces_processed_bitvector |= (1 << piece);
+		    local_pieces_processed_bitvector |= (1 << piece);
 
 		    break;
 		}
@@ -5030,7 +5045,7 @@ index_t global_position_to_local_position(tablebase_t *tb, global_position_t *gl
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (!(pieces_processed_bitvector & (1 << piece))) {
+	if (!(local_pieces_processed_bitvector & (1 << piece))) {
 	    if (missing_piece1 == NONE) {
 		missing_piece1 = piece;
 	    } else if (missing_piece2 == NONE) {
