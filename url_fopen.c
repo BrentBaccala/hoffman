@@ -164,6 +164,10 @@ fill_buffer(struct curl_cookie *cookie,int want,int waittime)
         /* get file descriptors from the transfers */
         curl_multi_fdset(multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
 
+	if (maxfd == -1) {
+	  break;
+	}
+
         /* In a real-world program you OF COURSE check the return code of the
            function calls, *and* you make sure that maxfd is bigger than -1
            so that the call to select() below makes sense! */
@@ -429,8 +433,17 @@ url_fopen(char *url,const char *operation)
 
     cookie->curl = curl_easy_init();
 
+    /* I sometimes turn on the VERBOSE option to debug this thing.
+     * The FORBID_REUSE option is here to avoid a problem I had when
+     * you attempt to transfer files (possibly more than one) by
+     * reading part of the file, then coming back and reading the
+     * whole thing again.  Some combination provokes a "426 Illegal
+     * Seek" from my FTP server; FORBID_REUSE fixes this.
+     */
+
     curl_easy_setopt(cookie->curl, CURLOPT_URL, url);
     curl_easy_setopt(cookie->curl, CURLOPT_VERBOSE, 0);
+    curl_easy_setopt(cookie->curl, CURLOPT_FORBID_REUSE, 1);
 
     /* Curl's sense of 'read' and 'write' is backwards from ours */
 
