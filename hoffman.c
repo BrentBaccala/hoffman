@@ -4629,7 +4629,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.337 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.338 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4905,6 +4905,11 @@ int translate_foreign_position_to_local_position(tablebase_t *tb1, local_positio
 	if (foreign_pieces_processed_bitvector & (1 << foreign_piece)) continue;
 
 	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
+
+	if (restricted_piece != NONE) {
+	    /* more than one restricted piece in translation */
+	    return -1;
+	}
 
 	for (local_piece = 0; local_piece < tb2->num_pieces; local_piece ++) {
 
