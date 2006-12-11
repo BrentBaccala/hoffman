@@ -4629,7 +4629,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.335 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.336 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8192,7 +8192,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 					     int invert_colors_of_futurebase)
 {
     index_t future_index;
-    local_position_t current_position;
+    local_position_t position;
     int piece;
     uint32 conversion_result;
     int extra_piece, restricted_piece, captured_piece, missing_piece2;
@@ -8224,7 +8224,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 
 	    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
 									  reflections[reflection],
-									  tb, &current_position,
+									  tb, &position,
 									  invert_colors_of_futurebase);
 
 #ifdef DEBUG_FUTUREMOVE
@@ -8251,36 +8251,58 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		 * we could have en passant capturable pawns in the futurebase position.
 		 */
 
-		if (current_position.en_passant_square != -1) continue;
+		if (position.en_passant_square != -1) continue;
 
 		/* Since the position resulted from a capture, we only want to consider future
 		 * positions where the side to move is not the side that captured.
 		 */
 
-		if (current_position.side_to_move != tb->piece_color[captured_piece])
+		if (position.side_to_move != tb->piece_color[captured_piece])
 		    continue;
 
 		/* We're going to back step a half move now */
 
-		flip_side_to_move_local(&current_position);
+		flip_side_to_move_local(&position);
 
 		if (restricted_piece == NONE) {
 
-		    /* No pieces were on restricted squares.  Check them all. */
+		    /* No pieces were on restricted squares.  Consider them all as the possible
+		     * capturing piece.
+		     */
 
 		    for (piece = 0; piece < tb->num_pieces; piece++) {
 
-			consider_possible_captures(tb, futurebase, future_index, &current_position,
+			consider_possible_captures(tb, futurebase, future_index, &position,
 						   piece, captured_piece);
 		    }
 
 		} else {
 
-		    /* One piece was on a restricted square.  It's the only possible capturing piece. */
+		    /* One piece was on a restricted square.  It's the obvious capturing piece, but
+		     * it's not the only possible one, because it might be possible to swap it with
+		     * an identical piece that would put it on a semilegal square and put the other
+		     * piece on the restricted square.  Obviously, that other piece would have to be
+		     * in the same semilegal group as the original restricted piece, and we can take
+		     * advantage of the fact that translate_foreign_index_to_local_position()
+		     * assigns the last piece in the group as the restricted piece.
+		     */
 
-		    consider_possible_captures(tb, futurebase, future_index, &current_position,
+		    int restricted_square = position.piece_position[restricted_piece];
+
+		    consider_possible_captures(tb, futurebase, future_index, &position,
 					       restricted_piece, captured_piece);
 
+		    while (tb->last_identical_piece[restricted_piece] != -1) {
+
+			position.piece_position[restricted_piece]
+			    = position.piece_position[tb->last_identical_piece[restricted_piece]];
+			position.piece_position[tb->last_identical_piece[restricted_piece]]
+			    = restricted_square;
+			restricted_piece = tb->last_identical_piece[restricted_piece];
+
+			consider_possible_captures(tb, futurebase, future_index, &position,
+						   restricted_piece, captured_piece);
+		    }
 		}
 	    }
 	}
