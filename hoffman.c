@@ -610,9 +610,9 @@ int verbose = 1;
  * doing to process a single move.
  */
 
-#define DEBUG_MOVE 89
+/* #define DEBUG_MOVE 89 */
 
-#define DEBUG_FUTUREMOVE 798
+/* #define DEBUG_FUTUREMOVE 798 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -4629,7 +4629,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.338 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.339 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8286,10 +8286,13 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		    /* One piece was on a restricted square.  It's the obvious capturing piece, but
 		     * it's not the only possible one, because it might be possible to swap it with
 		     * an identical piece that would put it on a semilegal square and put the other
-		     * piece on the restricted square.  Obviously, that other piece would have to be
-		     * in the same semilegal group as the original restricted piece, and we can take
-		     * advantage of the fact that translate_foreign_index_to_local_position()
-		     * assigns the last piece in the group as the restricted piece.
+		     * piece on the restricted square.  The simplest way to understand this is in
+		     * terms of semilegal group - each square on the board can only have a single
+		     * semilegal group for a given piece type and color.  A restricted piece is on a
+		     * square whose semilegal group is already full.  If the square's semilegal
+		     * group is in fact empty, then there's only one restricted piece we need to
+		     * consider.  Otherwise, we need to consider each piece in the semilegal group
+		     * as the possible restricted piece.
 		     */
 
 		    int restricted_square = position.piece_position[restricted_piece];
@@ -8297,16 +8300,20 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		    consider_possible_captures(tb, futurebase, future_index, &position,
 					       restricted_piece, captured_piece);
 
-		    while (tb->last_identical_piece[restricted_piece] != -1) {
+		    for (piece = 0; piece < tb->num_pieces; piece++) {
 
-			position.piece_position[restricted_piece]
-			    = position.piece_position[tb->last_identical_piece[restricted_piece]];
-			position.piece_position[tb->last_identical_piece[restricted_piece]]
-			    = restricted_square;
-			restricted_piece = tb->last_identical_piece[restricted_piece];
+			if ((tb->piece_color[piece] == tb->piece_color[restricted_piece])
+			    && (tb->piece_type[piece] == tb->piece_type[restricted_piece])
+			    && (tb->semilegal_squares[piece] & BITVECTOR(restricted_square))) {
 
-			consider_possible_captures(tb, futurebase, future_index, &position,
-						   restricted_piece, captured_piece);
+			    position.piece_position[restricted_piece] = position.piece_position[piece];
+			    position.piece_position[piece] = restricted_square;
+
+			    consider_possible_captures(tb, futurebase, future_index, &position,
+						       restricted_piece, captured_piece);
+
+			    position.piece_position[piece] = position.piece_position[restricted_piece];
+			}
 		    }
 		}
 	    }
@@ -10227,6 +10234,20 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    continue;
 		    }
 #endif
+		    /* Completely discard king moves into check by frozen pieces
+		     *
+		     * XXX what happens if we're back-propagating from a futurebase with frozen
+		     * pieces that block king movements into a tablebase without those frozen
+		     * pieces?  Then kings on in-check squares would be illegal in the futurebase,
+		     * but not in the current tablebase, and we'd miss some futuremoves.  Maybe
+		     * overall solution is to discard in-check positions early.
+		     */
+
+		    if ((piece == tb->white_king)
+			&& (tb->illegal_white_king_squares & BITVECTOR(movementptr->square))) continue;
+		    if ((piece == tb->black_king)
+			&& (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
+
 		    if ((movementptr->vector & position.PTM_vector) == 0) {
 			movecnt ++;
 			for (i = 0; i < tb->num_pieces; i ++) {
