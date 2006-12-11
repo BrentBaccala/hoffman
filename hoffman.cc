@@ -3075,11 +3075,11 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_piece[piece] != -1)) {
 	    if (tb->piece_color[piece] == WHITE) {
 		if (position->piece_position[piece] > position->piece_position[tb->blocking_piece[piece]]) {
-		    return 0;
+		    return -1;
 		}
 	    } else {
 		if (position->piece_position[piece] < position->piece_position[tb->blocking_piece[piece]]) {
-		    return 0;
+		    return -1;
 		}
 	    }
 	}
@@ -4629,7 +4629,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.336 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.337 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
