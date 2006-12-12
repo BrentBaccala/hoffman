@@ -418,7 +418,7 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
  * </entries-format>
  */
 
-struct format entries_format = {4,2, 0xff,0,8, 0xff,8,8};
+const struct format entries_format = {4,2, 0xff,0,8, 0xff,8,8};
 
 /* This is the "one-byte-dtm" format */
 
@@ -4636,7 +4636,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.340 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.341 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5665,81 +5665,76 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
     } else if (tb->file != NULL) {
 
-	/* it's a preloaded tablebase - we're reading from a compressed file */
-
-	/* XXX I can't see any reason why this shouldn't be integrated into the next code case. */
+	/* it's a preloaded tablebase - we're reading from a compressed file (possibly over the network) */
 
 	static char entry[MAX_FORMAT_BYTES];
 	static tablebase_t *cached_tb = NULL;
 	static index_t cached_index = 0;
 	int retval;
 
-	if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
-				  == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
+	if (tb->format.bits == 3) {
 
-#if 0
-	if (LEFTSHIFT(index, tb->format.bits - 3)
-	    != LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
-	    if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
-		fatal("Seek failed in fetch_entry_pointer()\n");
-	    }
-	}
+	    /* Special case for the very common one-byte-DTM format */
 
-	retval = fread(entry, tb->format.bytes, 1, tb->file);
-	if (retval != 1) {
-	    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
-	}
+	    if ((cached_tb == tb) && (index == cached_index)) return entry;
 
-	switch (tb->format.bits) {
-	case 0:
-	    tb->next_read_index = (index + 8) & ~7;
-	    break;
-	case 1:
-	    tb->next_read_index = (index + 4) & ~3;
-	    break;
-	case 2:
-	    tb->next_read_index = (index + 2) & ~1;
-	    break;
-	default:
-	    tb->next_read_index = index + 1;
-	    break;
-	}
-#else
+	    /* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
 
-	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
-
-	if (LEFTSHIFT(index, tb->format.bits - 3)
-	    < LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
-	    if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
-		fatal("Seek failed in fetch_entry_pointer()\n");
-	    }
-	}
-
-	do {
-
-	    retval = fread(entry, tb->format.bytes, 1, tb->file);
-	    if (retval != 1) {
-		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
+	    if (index < tb->next_read_index) {
+		if (fseek(tb->file, tb->offset + index, SEEK_SET) != 0) {
+		    fatal("Seek failed in fetch_entry_pointer()\n");
+		}
 	    }
 
-	    switch (tb->format.bits) {
-	    case 0:
-		tb->next_read_index = (tb->next_read_index + 8) & ~7;
-		break;
-	    case 1:
-		tb->next_read_index = (tb->next_read_index + 4) & ~3;
-		break;
-	    case 2:
-		tb->next_read_index = (tb->next_read_index + 2) & ~1;
-		break;
-	    default:
-		tb->next_read_index = tb->next_read_index + 1;
-		break;
-	    }
-	} while (LEFTSHIFT(index, tb->format.bits - 3)
-		 >= LEFTSHIFT(tb->next_read_index, tb->format.bits - 3));
+	    do {
 
-#endif
+		if ((retval = fgetc(tb->file)) == EOF) {
+		    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
+		}
+		tb->next_read_index ++;
+
+	    } while (tb->next_read_index <= index);
+
+	    entry[0] = retval;
+
+	} else {
+
+	    if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
+				      == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
+
+	    /* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
+
+	    if (LEFTSHIFT(index, tb->format.bits - 3)
+		< LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
+		if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
+		    fatal("Seek failed in fetch_entry_pointer()\n");
+		}
+	    }
+
+	    do {
+
+		retval = fread(entry, tb->format.bytes, 1, tb->file);
+		if (retval != 1) {
+		    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
+		}
+
+		switch (tb->format.bits) {
+		case 0:
+		    tb->next_read_index = (tb->next_read_index + 8) & ~7;
+		    break;
+		case 1:
+		    tb->next_read_index = (tb->next_read_index + 4) & ~3;
+		    break;
+		case 2:
+		    tb->next_read_index = (tb->next_read_index + 2) & ~1;
+		    break;
+		default:
+		    tb->next_read_index = tb->next_read_index + 1;
+		    break;
+		}
+	    } while (LEFTSHIFT(index, tb->format.bits - 3)
+		     >= LEFTSHIFT(tb->next_read_index, tb->format.bits - 3));
+	}
 
 	cached_tb = tb;
 	cached_index = index;
