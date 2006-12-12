@@ -4504,7 +4504,14 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 	return NULL;
     }
 
-    for (xml_size = 0; (fileptr[xml_size] = fgetc(file)) != '\0'; xml_size ++) ;
+    for (xml_size = 0; xml_size < sizeof(fileptr); xml_size ++) {
+	fileptr[xml_size] = fgetc(file);
+	if (fileptr[xml_size] == EOF) {
+	    fatal("%s reading '%s'\n", strerror(errno), filename);
+	    return NULL;
+	}
+	if (fileptr[xml_size] == '\0') break;
+    }
 
     doc = xmlReadMemory(fileptr, xml_size, NULL, NULL, 0);
 
@@ -4629,7 +4636,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.339 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.340 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
