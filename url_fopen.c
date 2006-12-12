@@ -174,7 +174,10 @@ fill_buffer(struct curl_cookie *cookie,int want,int waittime)
 
         rc = select(maxfd+1, &fdread, &fdwrite, &fdexcep, &timeout);
 
-	if (rc == -1) break;
+	if ((rc == -1) && (errno != EINTR)) {
+	    perror("select");
+	    break;
+	}
 
         switch(rc) {
         case -1:
@@ -259,9 +262,10 @@ static int cleaner (void *ptr)
 
         rc = select(maxfd+1, &fdread, &fdwrite, &fdexcep, NULL);
 
-	if (rc == -1) {
-	  ret = -1;
-	  break;
+	if ((rc == -1) && (errno != EINTR)) {
+	    perror("select");
+	    ret = -1;
+	    break;
 	}
 
         switch(rc) {
