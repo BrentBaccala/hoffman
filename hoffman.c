@@ -434,9 +434,9 @@ struct format one_byte_dtm_format = {3,1, 0xff,0,8};
  * </proptable-format>
  */
 
-struct format proptable_format = {7,16, 0xffff,32,16, 0xff,56,8,
-				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
-				  -1,FORMAT_FLAG_NONE, -1};
+const struct format proptable_format = {7,16, 0xffff,32,16, 0xff,56,8,
+					0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
+					-1,FORMAT_FLAG_NONE, -1};
 
 
 
@@ -4636,7 +4636,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.341 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.342 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7137,24 +7137,8 @@ void insert_into_proptable(proptable_entry_t *pentry)
     goto retry;
 }
 
-void insert_or_commit_propentry(proptable_entry_t *propentry)
-{
-    backproped_moves[total_passes] ++;
-
-#ifdef DEBUG_MOVE
-    if (get_propentry_index(propentry) == DEBUG_MOVE)
-	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) propentry), *(((uint64 *) propentry) + 1));
-#endif
-
-    if (num_propentries == 0) {
-	commit_proptable_entry(propentry);
-    } else {
-	insert_into_proptable(propentry);
-    }
-}
-
-void insert_or_commit_trivial_propentry(index_t index, short dtm, short movecnt,
-					futurevector_t futurevector)
+void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
+				futurevector_t futurevector)
 {
     char entry[MAX_FORMAT_BYTES];
     void *ptr = entry;
@@ -7207,7 +7191,18 @@ void insert_or_commit_trivial_propentry(index_t index, short dtm, short movecnt,
     }
 #endif
 
-    insert_or_commit_propentry(ptr);
+    backproped_moves[total_passes] ++;
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
+#endif
+
+    if (num_propentries == 0) {
+	commit_proptable_entry(ptr);
+    } else {
+	insert_into_proptable(ptr);
+    }
 }
 
 
@@ -7249,11 +7244,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	int dtm = get_raw_DTM(futurebase, future_index);
 
 	if (dtm > 0) {
-	    insert_or_commit_trivial_propentry(current_index, -dtm, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, -dtm, movecnt, FUTUREVECTOR(futuremove));
 	} else if (dtm < 0) {
-	    insert_or_commit_trivial_propentry(current_index, -dtm+1, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, -dtm+1, movecnt, FUTUREVECTOR(futuremove));
 	} else {
-	    insert_or_commit_trivial_propentry(current_index, 0, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, 0, movecnt, FUTUREVECTOR(futuremove));
 	}
 
     } else {
@@ -7274,9 +7269,9 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	/* I use twos here because there's a lot of stuff that gets cut out for the special case of 1 */
 
 	if ((flag && (stm == WHITE)) || (!flag && (stm == BLACK))) {
-	    insert_or_commit_trivial_propentry(current_index, -2, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, -2, movecnt, FUTUREVECTOR(futuremove));
 	} else {
-	    insert_or_commit_trivial_propentry(current_index, 2, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, 2, movecnt, FUTUREVECTOR(futuremove));
 	}
 
     }
@@ -8871,7 +8866,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	/* PTM_wins(tb, index, 1, 1); */
 	/* We insert here with DTM=2 (mate in one), movecnt=1 (XXX), and no futuremove */
 	/* XXX I bet we want to insert with position's multiplicity as movecnt */
-	insert_or_commit_trivial_propentry(index, 2, 1, 0);
+	insert_or_commit_propentry(index, 2, 1, 0);
     }
 
     /* discard - we ignore these unhandled futuremoves by decrementing movecnt */
@@ -8881,7 +8876,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	    if (futurevector & discarded_futuremoves & FUTUREVECTOR(futuremove)) {
 		/* tb->entries[index].movecnt --; */
 		/* XXX this isn't handled right - a draw is different from a discard */
-		insert_or_commit_trivial_propentry(index, 0, 0, 0);
+		insert_or_commit_propentry(index, 0, 0, 0);
 	    }
 	}
     }
@@ -9701,13 +9696,13 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
      */
 
     if (dtm > 0) {
-	insert_or_commit_trivial_propentry(current_index, -dtm, 1, 0);
+	insert_or_commit_propentry(current_index, -dtm, 1, 0);
     } else if (dtm < 0) {
-	insert_or_commit_trivial_propentry(current_index, -dtm+1, 1, 0);
+	insert_or_commit_propentry(current_index, -dtm+1, 1, 0);
     } else if (get_entry_movecnt(tb, future_index) == MOVECNT_PTM_WINS_UNPROPED) {
-	insert_or_commit_trivial_propentry(current_index, -2, 1, 0);
+	insert_or_commit_propentry(current_index, -2, 1, 0);
     } else if (get_entry_movecnt(tb, future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
-	insert_or_commit_trivial_propentry(current_index, 2, 1, 0);
+	insert_or_commit_propentry(current_index, 2, 1, 0);
     } else {
 	fatal("Intra-table back prop doesn't match dtm or movecnt\n");
     }
