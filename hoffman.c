@@ -1846,6 +1846,7 @@ uint32 invert_in_finite_field(uint32 b, uint32 m)
 index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 {
     int shift_count = 1;
+    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
     index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
     int piece;
 
@@ -1975,6 +1976,7 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 {
     int shift_count = 1;
+    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
     index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
     int piece;
     uint8 vals[MAX_PIECES];
@@ -2395,10 +2397,7 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 	}
     }
 
-    /* We've still got code that assumes flipping the index's LSB flip side-to-move.
-     *
-     * Actually, we don't anymore, but I want to put it back because it's more efficient.
-     */
+    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
 
     index *= 2;
     index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
@@ -2672,10 +2671,7 @@ index_t local_position_to_standard_index(tablebase_t *tb, local_position_t *pos)
 	}
     }
 
-    /* We've still got code that assumes flipping the index's LSB flip side-to-move.
-     *
-     * Actually, we don't anymore, but I want to put it back because it's more efficient.
-     */
+    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
 
     index *= 2;
     index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
@@ -3326,6 +3322,18 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 #endif
 
     return 1;
+}
+
+int index_to_side_to_move(tablebase_t *tb, index_t index)
+{
+    local_position_t position;
+
+    if (tb->modulus != 0) {
+	if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) return -1;
+	else return position.side_to_move;
+    } else {
+	return (index - tb->index_offset) & 1;
+    }
 }
 
 /* check_1000_positions(); check_1000_indices() - used just to double check the code above.
@@ -4643,7 +4651,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.345 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.346 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4733,16 +4741,6 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 
 
 /***** INDICES AND POSITIONS *****/
-
-/* This function could be made a bit faster, but this simpler version is hopefully safer. */
-
-int index_to_side_to_move(tablebase_t *tb, index_t index)
-{
-    local_position_t position;
-
-    if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) return -1;
-    else return position.side_to_move;
-}
 
 inline void flip_side_to_move_local(local_position_t *position)
 {
