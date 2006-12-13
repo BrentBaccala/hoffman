@@ -220,6 +220,9 @@ int pass_target_dtms[MAX_PASSES];
 int positions_finalized[MAX_PASSES];
 uint64 backproped_moves[MAX_PASSES];
 
+uint8 positive_passes_needed[MAX_PASSES];
+uint8 negative_passes_needed[MAX_PASSES];
+
 int entries_write_stalls = 0;
 int entries_read_stalls = 0;
 int proptable_read_stalls = 0;
@@ -4636,7 +4639,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.343 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.344 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5969,6 +5972,9 @@ void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm)
     }
 #endif
 
+    if (dtm > 0) positive_passes_needed[dtm] = 1;
+    if (dtm < 0) negative_passes_needed[-dtm] = 1;
+
     set_entry_movecnt(tb, index, movecnt);
     if (entries_format.dtm_bits > 0) set_entry_raw_DTM(tb, index, dtm);
 }
@@ -6059,8 +6065,13 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
 	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)) {
 	set_entry_movecnt(tb, index, MOVECNT_PTM_WINS_UNPROPED);
 	set_entry_raw_DTM(tb, index, dtm);
+	positive_passes_needed[dtm] = 1;
     } else if (dtm < get_entry_raw_DTM(tb, index)) {
+	/* This can happen if we get a PTM mate during futurebase back prop, then, later during
+	 * futurebase back prop or during intra-table back prop, improve upon the mate.
+	 */
 	set_entry_raw_DTM(tb, index, dtm);
+	positive_passes_needed[dtm] = 1;
     }
 }
 
@@ -6090,21 +6101,12 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 	    set_entry_raw_DTM(tb, index, dtm);
 	}
 
-	/* We deal with checkmates and stalemates during initialization now */
-#if 0
-	if ((get_entry_movecnt(tb, index) == 0) && (!get_entry_in_check_flag(tb, index))
-	    && (get_entry_raw_DTM(tb, index) == -1)) {
-
-	    /* In this case, the only moves at PTM's disposal move him into check (DTM is now one,
-	     * so it would drop to zero on next move).  So we need to distinguish here between being
-	     * in check (it's checkmate) and not being in check (stalemate).  This is stalemate...
+	if (get_entry_movecnt(tb, index) == MOVECNT_PNTM_WINS_UNPROPED) {  /* i.e, zero */
+	    /* The DTM passed in was the one that pushed movecnt to zero, but it might be the best
+	     * line, so that's why we fetch entry DTM here.
 	     */
-
-	    total_stalemate_positions ++;
-
-	    set_entry_raw_DTM(tb, index, 0);
+	    negative_passes_needed[-get_entry_raw_DTM(tb, index)] = 1;
 	}
-#endif
     }
 }
 
@@ -10573,10 +10575,10 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, 
     while ((dtm <= upper_dtm_limit) || (-dtm >= lower_dtm_limit)) {
 
 	/* PTM wins */
-	propagation_pass(dtm);
+	if (positive_passes_needed[dtm]) propagation_pass(dtm);
 
 	/* PNTM wins */
-	propagation_pass(-dtm);
+	if (negative_passes_needed[dtm]) propagation_pass(-dtm);
 
 	dtm ++;
     }
@@ -10584,10 +10586,12 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, 
     while (1) {
 
 	/* PTM wins */
-	if (propagation_pass(dtm) == 0) break;
+	if (positive_passes_needed[dtm]) propagation_pass(dtm);
+	else break;
 
 	/* PNTM wins */
-	if (propagation_pass(-dtm) == 0) break;
+	if (negative_passes_needed[dtm]) propagation_pass(-dtm);
+	else break;
 
 	dtm ++;
     }
