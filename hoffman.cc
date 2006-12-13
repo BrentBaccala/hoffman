@@ -249,17 +249,21 @@ typedef uint32 futurevector_t;
 
 /* These arrays hold the bit locations in the futurevector of various futuremoves. */
 
-int num_futuremoves = 0;
+int num_futuremoves[2] = {0, 0};
 int futurecaptures[MAX_PIECES][MAX_PIECES];
 int promotions[MAX_PIECES];
 int futuremoves[MAX_PIECES][64];
 
 /* XXX hardwired 100 futuremove max here */
-char movestr[100][16];
+char white_movestr[100][16];
+char black_movestr[100][16];
 
-futurevector_t pruned_futuremoves = 0;
-futurevector_t conceded_futuremoves = 0;
-futurevector_t discarded_futuremoves = 0;
+futurevector_t pruned_white_futuremoves = 0;
+futurevector_t pruned_black_futuremoves = 0;
+futurevector_t conceded_white_futuremoves = 0;
+futurevector_t conceded_black_futuremoves = 0;
+futurevector_t discarded_white_futuremoves = 0;
+futurevector_t discarded_black_futuremoves = 0;
 
 /* position - the data structures that represents a board position
  *
@@ -4639,7 +4643,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.344 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.345 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7228,7 +7232,8 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	global_position_t global;
 
 	index_to_global_position(tb, current_index, &global);
-	fatal("Futuremove never assigned: %s %s\n", global_position_to_FEN(&global), movestr[futuremove]);
+	fatal("Futuremove never assigned: %s %s\n", global_position_to_FEN(&global),
+	      (global.side_to_move == WHITE ? white_movestr : black_movestr)[futuremove]);
 
 	return;
     }
@@ -8842,20 +8847,23 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
  */
 
 int all_futuremoves_handled = 1;
-futurevector_t unpruned_futuremoves;
+futurevector_t unpruned_white_futuremoves;
+futurevector_t unpruned_black_futuremoves;
 
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
 
     int futuremove;
+    int stm = index_to_side_to_move(tb, index);
 
-    if (futurevector & unpruned_futuremoves) {
+    if (futurevector & (stm == WHITE ? unpruned_white_futuremoves : unpruned_black_futuremoves)) {
 	global_position_t global;
 	index_to_global_position(tb, index, &global);
 	fatal("Futuremoves not handled under move restrictions: %d %s",
 	      index, global_position_to_FEN(&global));
-	for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
-	    if (futurevector & unpruned_futuremoves & FUTUREVECTOR(futuremove)) {
-		fatal(" %s", movestr[futuremove]);
+	for (futuremove = 0; futuremove < num_futuremoves[stm]; futuremove ++) {
+	    if (futurevector & FUTUREVECTOR(futuremove)
+		& (stm == WHITE ? unpruned_white_futuremoves : unpruned_black_futuremoves)) {
+		fatal(" %s", (stm == WHITE ? white_movestr : black_movestr)[futuremove]);
 	    }
 	}
 	fatal("\n");
@@ -8864,7 +8872,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 
     /* concede - we treat these unhandled futuremoves as forced wins for PTM */
 
-    if (futurevector & conceded_futuremoves) {
+    if (futurevector & (stm == WHITE ? conceded_white_futuremoves : conceded_black_futuremoves)) {
 	/* PTM_wins(tb, index, 1, 1); */
 	/* We insert here with DTM=2 (mate in one), movecnt=1 (XXX), and no futuremove */
 	/* XXX I bet we want to insert with position's multiplicity as movecnt */
@@ -8873,9 +8881,11 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 
     /* discard - we ignore these unhandled futuremoves by decrementing movecnt */
 
-    if (futurevector & discarded_futuremoves) {
-	for (futuremove = 0; futuremove < num_futuremoves; futuremove ++) {
-	    if (futurevector & discarded_futuremoves & FUTUREVECTOR(futuremove)) {
+    if (futurevector & (stm == WHITE ? discarded_white_futuremoves : discarded_black_futuremoves)) {
+	for (futuremove = 0; futuremove < num_futuremoves[stm]; futuremove ++) {
+	    if (futurevector & FUTUREVECTOR(futuremove)
+		& (stm == WHITE ? discarded_white_futuremoves : discarded_black_futuremoves)) {
+
 		/* tb->entries[index].movecnt --; */
 		/* XXX this isn't handled right - a draw is different from a discard */
 		insert_or_commit_propentry(index, 0, 0, 0);
@@ -8920,7 +8930,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     int dir;
     struct movement *movementptr;
 
-
     /* First, consider all possible pairs of pieces that might capture, and assign a number (in the
      * futurecaptures array) to each pair.  We'll ultimately use this number as an index into a bit
      * vector to determine if this capture has been handled in any particular position.  However,
@@ -8960,8 +8969,8 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			    for (movementptr = movements[tb->piece_type[capturing_piece]][sq][dir];
 				 movementptr->square != -1; movementptr++) {
 				if (movementptr->vector & tb->legal_squares[captured_piece]) {
-				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
-				    num_futuremoves ++;
+				    futurecaptures[capturing_piece][captured_piece]
+					= num_futuremoves[tb->piece_color[capturing_piece]] ++;
 				    goto next_pair_of_pieces;
 				}
 				/* If we hit a frozen piece, then this movement direction ends here */
@@ -8974,15 +8983,26 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			    if (movementptr->vector & tb->legal_squares[captured_piece]) {
 
-				futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
+				/* If it's a pawn capture that results in promotion, assign
+				 * PROMOTION_POSSIBILTIES bits in the futurevector
+				 */
 
-				/* a pawn capture that results in promotion - PROMOTION_POSSIBILTIES moves */
-
-				if ((ROW(movementptr->square) == 0) || (ROW(movementptr->square) == 7)) {
-				    num_futuremoves += PROMOTION_POSSIBILITIES;
+				if (tb->piece_color[capturing_piece] == WHITE) {
+				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves[WHITE];
+				    if (ROW(movementptr->square) == 7) {
+					num_futuremoves[WHITE] += PROMOTION_POSSIBILITIES;
+				    } else {
+					num_futuremoves[WHITE] ++;
+				    }
 				} else {
-				    num_futuremoves ++;
+				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves[BLACK];
+				    if (ROW(movementptr->square) == 0) {
+					num_futuremoves[BLACK] += PROMOTION_POSSIBILITIES;
+				    } else {
+					num_futuremoves[BLACK] ++;
+				    }
 				}
+
 				goto next_pair_of_pieces;
 			    }
 
@@ -8993,15 +9013,15 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 				if ((tb->piece_type[capturing_piece] == WHITE) && (ROW(sq) == 4)
 				    && (tb->legal_squares[captured_piece]
 					& BITVECTOR(movementptr->square - 8))) {
-				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
-				    num_futuremoves ++;
+				    futurecaptures[capturing_piece][captured_piece]
+					= num_futuremoves[WHITE] ++;
 				    goto next_pair_of_pieces;
 				}
 				if ((tb->piece_type[capturing_piece] == BLACK) && (ROW(sq) == 3)
 				    && (tb->legal_squares[captured_piece]
 					& BITVECTOR(movementptr->square + 8))) {
-				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves;
-				    num_futuremoves ++;
+				    futurecaptures[capturing_piece][captured_piece]
+					= num_futuremoves[BLACK] ++;
 				    goto next_pair_of_pieces;
 				}
 			    }
@@ -9030,8 +9050,8 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	    for (sq = (tb->piece_color[piece] == WHITE ? 48 : 8);
 		 sq <= (tb->piece_color[piece] == WHITE ? 55 : 15); sq++) {
 		if (tb->legal_squares[piece] & BITVECTOR(sq)) {
-		    promotions[piece] = num_futuremoves;
-		    num_futuremoves += PROMOTION_POSSIBILITIES;
+		    promotions[piece] = num_futuremoves[tb->piece_color[piece]];
+		    num_futuremoves[tb->piece_color[piece]] += PROMOTION_POSSIBILITIES;
 		    break;
 		}
 	    }
@@ -9082,8 +9102,8 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
-				futuremoves[piece][movementptr->square] = num_futuremoves;
-				num_futuremoves ++;
+				futuremoves[piece][movementptr->square]
+				    = num_futuremoves[tb->piece_color[piece]] ++;
 			    }
 			}
 		    }
@@ -9116,8 +9136,8 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
 			    && (tb->blocking_piece[piece] == -1)) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
-				futuremoves[piece][movementptr->square] = num_futuremoves;
-				num_futuremoves ++;
+				futuremoves[piece][movementptr->square]
+				    = num_futuremoves[tb->piece_color[piece]] ++;
 			    }
 			}
 		    }
@@ -9126,18 +9146,29 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	}
     }
 
-    info("%d possible futuremoves\n", num_futuremoves);
+    info("%d possible WHITE futuremoves\n", num_futuremoves[WHITE]);
+    info("%d possible BLACK futuremoves\n", num_futuremoves[BLACK]);
 
     if (num_propentries == 0) {
-	if (num_futuremoves > sizeof(futurevector_t)*8) {
+	if (num_futuremoves[WHITE] > sizeof(futurevector_t)*8) {
 	    fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-		  num_futuremoves, sizeof(futurevector_t)*8);
+		  num_futuremoves[WHITE], sizeof(futurevector_t)*8);
+	    terminate();
+	}
+	if (num_futuremoves[BLACK] > sizeof(futurevector_t)*8) {
+	    fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
+		  num_futuremoves[BLACK], sizeof(futurevector_t)*8);
 	    terminate();
 	}
     } else {
-	if (num_futuremoves > proptable_format.futurevector_bits) {
+	if (num_futuremoves[WHITE] > proptable_format.futurevector_bits) {
 	    fatal("Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
-		  num_futuremoves, proptable_format.futurevector_bits);
+		  num_futuremoves[WHITE], proptable_format.futurevector_bits);
+	    terminate();
+	}
+	if (num_futuremoves[BLACK] > proptable_format.futurevector_bits) {
+	    fatal("Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
+		  num_futuremoves[BLACK], proptable_format.futurevector_bits);
 	    terminate();
 	}
     }
@@ -9179,15 +9210,33 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
     }
 
     if (prune != result->nodesetval->nodeNr) {
-	if (pruned_futuremoves & FUTUREVECTOR(futuremove)) {
-	    warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
-	}
-	pruned_futuremoves |= FUTUREVECTOR(futuremove);
-	if (type == RESTRICTION_CONCEDE) {
-	    conceded_futuremoves |= FUTUREVECTOR(futuremove);
-	}
-	if (type == RESTRICTION_DISCARD) {
-	    discarded_futuremoves |= FUTUREVECTOR(futuremove);
+	if (color == WHITE) {
+
+	    if (pruned_white_futuremoves & FUTUREVECTOR(futuremove)) {
+		warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
+	    }
+
+	    pruned_white_futuremoves |= FUTUREVECTOR(futuremove);
+
+	    if (type == RESTRICTION_CONCEDE) {
+		conceded_white_futuremoves |= FUTUREVECTOR(futuremove);
+	    }
+	    if (type == RESTRICTION_DISCARD) {
+		discarded_white_futuremoves |= FUTUREVECTOR(futuremove);
+	    }
+	} else {
+	    if (pruned_black_futuremoves & FUTUREVECTOR(futuremove)) {
+		warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
+	    }
+
+	    pruned_black_futuremoves |= FUTUREVECTOR(futuremove);
+
+	    if (type == RESTRICTION_CONCEDE) {
+		conceded_black_futuremoves |= FUTUREVECTOR(futuremove);
+	    }
+	    if (type == RESTRICTION_DISCARD) {
+		discarded_black_futuremoves |= FUTUREVECTOR(futuremove);
+	    }
 	}
     }
 
@@ -9248,14 +9297,17 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
+	    char * movestr = (tb->piece_color[capturing_piece] == WHITE)
+		? white_movestr[futurecaptures[capturing_piece][captured_piece]]
+		: black_movestr[futurecaptures[capturing_piece][captured_piece]];
+
 	    if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
-		sprintf(movestr[futurecaptures[capturing_piece][captured_piece]], "%cx%c",
+		sprintf(movestr, "%cx%c",
 			piece_char[tb->piece_type[capturing_piece]],
 			piece_char[tb->piece_type[captured_piece]]);
 
-		assign_pruning_statement(tb, tb->piece_color[capturing_piece],
-					 movestr[futurecaptures[capturing_piece][captured_piece]],
+		assign_pruning_statement(tb, tb->piece_color[capturing_piece], movestr,
 					 futurecaptures[capturing_piece][captured_piece]);
 	    }
 	}
@@ -9307,13 +9359,16 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 	    for (i = 0; promoted_pieces[i] != 0; i ++) {
 
-		sprintf(movestr[futurecaptures[pawn][captured_piece] + i], "Px%c=%c",
+		char * movestr = (tb->piece_color[pawn] == WHITE)
+		    ? white_movestr[futurecaptures[pawn][captured_piece] + i]
+		    : black_movestr[futurecaptures[pawn][captured_piece] + i];
+
+		sprintf(movestr, "Px%c=%c",
 			piece_char[tb->piece_type[captured_piece]],
 			piece_char[promoted_pieces[i]]);
 		sprintf(movestr2, "Px%c=any", piece_char[tb->piece_type[captured_piece]]);
 
-		assign_pruning_statement(tb, tb->piece_color[pawn],
-					 movestr[futurecaptures[pawn][captured_piece] + i],
+		assign_pruning_statement(tb, tb->piece_color[pawn], movestr,
 					 futurecaptures[pawn][captured_piece] + i);
 		assign_pruning_statement(tb, tb->piece_color[pawn], movestr2,
 					 futurecaptures[pawn][captured_piece] + i);
@@ -9326,11 +9381,14 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 	for (i = 0; promoted_pieces[i] != 0; i ++) {
 
-	    sprintf(movestr[promotions[pawn] + i], "P=%c", piece_char[promoted_pieces[i]]);
+	    char * movestr = (tb->piece_color[pawn] == WHITE)
+		? white_movestr[promotions[pawn] + i]
+		: black_movestr[promotions[pawn] + i];
+
+	    sprintf(movestr, "P=%c", piece_char[promoted_pieces[i]]);
 	    sprintf(movestr2, "P=any");
 
-	    assign_pruning_statement(tb, tb->piece_color[pawn], movestr[promotions[pawn] + i],
-				     promotions[pawn] + i);
+	    assign_pruning_statement(tb, tb->piece_color[pawn], movestr, promotions[pawn] + i);
 	    assign_pruning_statement(tb, tb->piece_color[pawn], movestr2, promotions[pawn] + i);
 	}
     }
@@ -9340,21 +9398,25 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
+
 	for (sq = 0; sq < 64; sq ++) {
 	    if (futuremoves[piece][sq] != -1) {
 
-		sprintf(movestr[futuremoves[piece][sq]], "%c%c%c", piece_char[tb->piece_type[piece]],
-			'a' + COL(sq), '1' + ROW(sq));
+		char * movestr = (tb->piece_color[piece] == WHITE)
+		    ? white_movestr[futuremoves[piece][sq]]
+		    : black_movestr[futuremoves[piece][sq]];
+
+		sprintf(movestr, "%c%c%c", piece_char[tb->piece_type[piece]], 'a' + COL(sq), '1' + ROW(sq));
 		sprintf(movestr2, "%cany", piece_char[tb->piece_type[piece]]);
 
-		assign_pruning_statement(tb, tb->piece_color[piece], movestr[futuremoves[piece][sq]],
-					 futuremoves[piece][sq]);
+		assign_pruning_statement(tb, tb->piece_color[piece], movestr, futuremoves[piece][sq]);
 		assign_pruning_statement(tb, tb->piece_color[piece], movestr2, futuremoves[piece][sq]);
 	    }
 	}
     }
 
-    unpruned_futuremoves = ~pruned_futuremoves;
+    unpruned_white_futuremoves = ~pruned_white_futuremoves;
+    unpruned_black_futuremoves = ~pruned_black_futuremoves;
 
     return 1;
 }
@@ -9480,11 +9542,20 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
-		    if (! (pruned_futuremoves & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
-			fatal("No futurebase or pruning for %s move %s\n",
-			      colors[tb->piece_color[capturing_piece]],
-			      movestr[futurecaptures[capturing_piece][captured_piece]]);
-			return 0;
+		    if (tb->piece_color[capturing_piece] == WHITE) {
+			if (! (pruned_white_futuremoves
+			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
+			    fatal("No futurebase or pruning for WHITE move %s\n",
+				  white_movestr[futurecaptures[capturing_piece][captured_piece]]);
+			    return 0;
+			}
+		    } else {
+			if (! (pruned_black_futuremoves
+			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
+			    fatal("No futurebase or pruning for BLACK move %s\n",
+				  black_movestr[futurecaptures[capturing_piece][captured_piece]]);
+			    return 0;
+			}
 		    }
 		}
 	    }
@@ -9573,11 +9644,20 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 		if (promoted_pieces_handled & (1 << promoted_pieces[i])) continue;
 
-		if (! (pruned_futuremoves & FUTUREVECTOR(futurecaptures[pawn][captured_piece] + i))) {
-		    fatal("No futurebase or pruning for %s move %s\n",
-			  colors[tb->piece_color[pawn]],
-			  movestr[futurecaptures[pawn][captured_piece] + i]);
-		    return 0;
+		if (tb->piece_color[pawn] == WHITE) {
+		    if (! (pruned_white_futuremoves
+			   & FUTUREVECTOR(futurecaptures[pawn][captured_piece] + i))) {
+			fatal("No futurebase or pruning for WHITE move %s\n",
+			      white_movestr[futurecaptures[pawn][captured_piece] + i]);
+			return 0;
+		    }
+		} else {
+		    if (! (pruned_black_futuremoves
+			   & FUTUREVECTOR(futurecaptures[pawn][captured_piece] + i))) {
+			fatal("No futurebase or pruning for BLACK move %s\n",
+			      black_movestr[futurecaptures[pawn][captured_piece] + i]);
+			return 0;
+		    }
 		}
 	    }
 	}
@@ -9613,11 +9693,18 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 	    if (promoted_pieces_handled & (1 << promoted_pieces[i])) continue;
 
-	    if (! (pruned_futuremoves & FUTUREVECTOR(promotions[pawn] + i))) {
-
-		fatal("No futurebase or pruning for %s move %s\n",
-		      colors[tb->piece_color[pawn]], movestr[promotions[pawn] + i]);
-		return 0;
+	    if (tb->piece_color[pawn] == WHITE) {
+		if (! (pruned_white_futuremoves & FUTUREVECTOR(promotions[pawn] + i))) {
+		    fatal("No futurebase or pruning for WHITE move %s\n",
+			  white_movestr[promotions[pawn] + i]);
+		    return 0;
+		}
+	    } else {
+		if (! (pruned_black_futuremoves & FUTUREVECTOR(promotions[pawn] + i))) {
+		    fatal("No futurebase or pruning for BLACK move %s\n",
+			  black_movestr[promotions[pawn] + i]);
+		    return 0;
+		}
 	    }
 	}
     }
@@ -9639,10 +9726,18 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	    for (sq = 0; sq < 64; sq ++) {
 		if (futuremoves[piece][sq] != -1) {
 
-		    if (! (pruned_futuremoves & FUTUREVECTOR(futuremoves[piece][sq]))) {
-			fatal("No futurebase or pruning for %s move %s\n",
-			      colors[tb->piece_color[piece]], movestr[futuremoves[piece][sq]]);
-			return 0;
+		    if (tb->piece_color[piece] == WHITE) {
+			if (! (pruned_white_futuremoves & FUTUREVECTOR(futuremoves[piece][sq]))) {
+			    fatal("No futurebase or pruning for WHITE move %s\n",
+				  white_movestr[futuremoves[piece][sq]]);
+			    return 0;
+			}
+		    } else {
+			if (! (pruned_black_futuremoves & FUTUREVECTOR(futuremoves[piece][sq]))) {
+			    fatal("No futurebase or pruning for BLACK move %s\n",
+				  black_movestr[futuremoves[piece][sq]]);
+			    return 0;
+			}
 		    }
 		}
 	    }
