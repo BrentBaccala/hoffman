@@ -4636,7 +4636,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.342 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.343 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7145,7 +7145,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("insert_or_commit_trivial_proptable; index=%d; dtm=%d; movecnt=%d; futurevector=0x%llx\n",
+	printf("insert_or_commit_proptable; index=%d; dtm=%d; movecnt=%d; futurevector=0x%llx\n",
 	       index, dtm, movecnt, futurevector);
 #endif
 
