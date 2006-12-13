@@ -4651,7 +4651,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.346 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.347 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6288,13 +6288,8 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
     set_propentry_futurevector(dest, get_propentry_futurevector(dest) | get_propentry_futurevector(src));
 }
 
-void commit_proptable_entry(proptable_entry_t *propentry)
+void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futurevector_t futurevector)
 {
-    uint32 *ptr = (uint32 *) propentry;
-    index_t index = get_propentry_index(propentry);
-    int dtm = get_propentry_dtm(ptr);
-    int movecnt = get_propentry_movecnt(ptr);
-    futurevector_t futurevector = get_propentry_futurevector(ptr);
     int i;
 
 #if 0
@@ -6338,7 +6333,7 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 	    }
 	}
     } else if (proptable_format.PTM_wins_flag_offset != -1) {
-	if (get_propentry_PTM_wins_flag(ptr)) {
+	if (PTM_wins_flag) {
 	    PTM_wins(proptable_tb, index, dtm);
 	} else {
 	    for (i=0; i<movecnt; i++) {
@@ -6348,6 +6343,18 @@ void commit_proptable_entry(proptable_entry_t *propentry)
     } else {
 	fatal("Can't handle proptable formats without either a DTM field or PTM wins flag\n");
     }
+}
+
+void commit_proptable_entry(proptable_entry_t *propentry)
+{
+    uint32 *ptr = (uint32 *) propentry;
+    index_t index = get_propentry_index(propentry);
+    int dtm = get_propentry_dtm(ptr);
+    uint8 PTM_wins_flag = get_propentry_PTM_wins_flag(ptr);
+    int movecnt = get_propentry_movecnt(ptr);
+    futurevector_t futurevector = get_propentry_futurevector(ptr);
+
+    commit_entry(index, dtm, PTM_wins_flag, movecnt, futurevector);
 }
 
 
@@ -7144,21 +7151,13 @@ void insert_into_proptable(proptable_entry_t *pentry)
 void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 				futurevector_t futurevector)
 {
-    char entry[MAX_FORMAT_BYTES];
-    void *ptr = entry;
+    uint8 PTM_wins_flag;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	printf("insert_or_commit_proptable; index=%d; dtm=%d; movecnt=%d; futurevector=0x%llx\n",
 	       index, dtm, movecnt, futurevector);
 #endif
-
-    memset(ptr, 0, proptable_format.bytes);
-
-    set_propentry_index(ptr, index);
-    set_propentry_dtm(ptr, dtm);
-    set_propentry_movecnt(ptr, movecnt);
-    set_propentry_futurevector(ptr, futurevector);
 
     /* The only time it makes sense to use a PTM-wins-flag in the proptable is if we're generating a
      * bitbase (because otherwise we need a DTM field in the proptable).  Positive or negative DTM
@@ -7169,42 +7168,37 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
      */
 
     if (dtm != 0) {
-	set_propentry_PTM_wins_flag(ptr, (dtm > 0) ? 1 : 0);
+	PTM_wins_flag = (dtm > 0) ? 1 : 0;
     } else {
 	int win_side = ((proptable_tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) ? WHITE : BLACK);
-	set_propentry_PTM_wins_flag(ptr, (index_to_side_to_move(proptable_tb, index) == win_side) ? 0 : 1);
+	PTM_wins_flag = (index_to_side_to_move(proptable_tb, index) == win_side) ? 0 : 1;
     }
-
-#if 0
-    /* Don't track futuremoves for illegal (DTM 1) positions */
-
-    if ((proptable_tb->futurevectors != NULL) && (get_entry_DTM(proptable_tb, index) != 1)) {
-
-	if ((futurevector & proptable_tb->futurevectors[index]) != futurevector) {
-	    /* This could happen simply if the futuremove has already been considered */
-	    /* XXX In particular, I need to turn this off right now for symmetric tablebases */
-#if 0
-	    global_position_t global;
-	    index_to_global_position(proptable_tb, index, &global);
-	    fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
-#endif
-	    return;
-	}
-
-	proptable_tb->futurevectors[index] ^= futurevector;
-    }
-#endif
 
     backproped_moves[total_passes] ++;
 
+    if (num_propentries == 0) {
+
+	commit_entry(index, dtm, PTM_wins_flag, movecnt, futurevector);
+
+    } else {
+
+	char entry[MAX_FORMAT_BYTES];
+	void *ptr = entry;
+
+	memset(ptr, 0, proptable_format.bytes);
+
+	set_propentry_index(ptr, index);
+	set_propentry_dtm(ptr, dtm);
+	set_propentry_movecnt(ptr, movecnt);
+	set_propentry_futurevector(ptr, futurevector);
+
+	set_propentry_PTM_wins_flag(ptr, PTM_wins_flag);
+
 #ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
+	if (index == DEBUG_MOVE)
+	    fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
 #endif
 
-    if (num_propentries == 0) {
-	commit_proptable_entry(ptr);
-    } else {
 	insert_into_proptable(ptr);
     }
 }
