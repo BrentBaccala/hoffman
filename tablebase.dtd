@@ -8,6 +8,7 @@
 <!ATTLIST index
 	type (naive|naive2|simple|standard|compact)		#REQUIRED
 	symmetry (1|2|2-way|4|8|8-way)			#IMPLIED
+	king-positions (all|no-frozen-checks)		#IMPLIED
 	offset CDATA					#IMPLIED
 	modulus CDATA				#IMPLIED>
 
