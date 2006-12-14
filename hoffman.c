@@ -243,7 +243,7 @@ struct timeval proptable_preload_time = {0, 0};
  * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move.
  */
 
-typedef uint32 futurevector_t;
+typedef uint16 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 
@@ -4651,7 +4651,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.347 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.348 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -10259,41 +10259,48 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			if ((piece == tb->black_king)
 			    && (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
 
-			/* Move the piece, so we can make the following checks on the new position */
+			/* Move the piece, so we can test the new position for check */
 
 			position.piece_position[piece] = movementptr->square;
 
-			/* If a piece is moving outside its legal squares AND we can't permute the
-			 * pieces into a position where everything is legal, we regard this as a
-			 * futuremove (since it will require back prop from futurebases).  We could
-			 * just check if local_position_to_index() returns a valid index, but
-			 * checking the legal_squares bitvector first makes this a little faster.
+			position.board_vector |= BITVECTOR(movementptr->square);
+
+			/* If we're NOT moving into check AND the piece is moving outside its legal
+			 * squares AND we can't permute the pieces into a position where everything
+			 * is legal, we regard this as a futuremove (since it will require back prop
+			 * from futurebases).  We could just check if local_position_to_index()
+			 * returns a valid index, but checking the legal_squares bitvector first
+			 * makes this a little faster.
 			 */
 
-			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
-			    && (local_position_to_index(tb, &position) == -1)) {
+			if (! PTM_in_check(tb, &position)) {
 
-			    if (futuremoves[piece][movementptr->square] == -1) {
-				global_position_t global;
-				index_to_global_position(tb, index, &global);
-				fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
-				      piece_char[tb->piece_type[piece]],
-				      'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
+			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+				&& (local_position_to_index(tb, &position) == -1)) {
+
+				if (futuremoves[piece][movementptr->square] == -1) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->piece_type[piece]],
+					  'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
+				}
+				if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
+				    fatal("Duplicate futuremove!\n");
+				}
+				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
+				futuremovecnt ++;
 			    }
-			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				fatal("Duplicate futuremove!\n");
-			    }
-			    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-			    futuremovecnt ++;
+
+			    checkmate_is_possible = 0;
 			}
 
-			if (checkmate_is_possible) {
-			    position.board_vector |= BITVECTOR(movementptr->square);
+			position.board_vector &= ~BITVECTOR(movementptr->square);
 
-			    checkmate_is_possible = PTM_in_check(tb, &position);
-
-			    position.board_vector &= ~BITVECTOR(movementptr->square);
-			}
+			/* Yes, we count a move even if we're moving into check.  I want to change
+			 * this, but for now, we handle this by back proping from the PNTM mated
+			 * positions.
+			 */
 
 			movecnt ++;
 
@@ -10342,27 +10349,30 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    initialize_entry_with_PNTM_mated(tb, index);
 				    return 0;
 				}
-				if (futurecaptures[piece][i] == -1) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->piece_type[piece]], piece_char[tb->piece_type[i]]);
+
+				position.piece_position[i] = -1;
+				position.piece_position[piece] = movementptr->square;
+
+				if (! PTM_in_check(tb, &position)) {
+
+				    if (futurecaptures[piece][i] == -1) {
+					global_position_t global;
+					index_to_global_position(tb, index, &global);
+					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					      piece_char[tb->piece_type[piece]],
+					      piece_char[tb->piece_type[i]]);
+				    }
+				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+					fatal("Duplicate futuremove!\n");
+				    }
+
+				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				    futuremovecnt ++;
+
+				    checkmate_is_possible = 0;
 				}
-				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-				    fatal("Duplicate futuremove!\n");
-				}
 
-				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-				futuremovecnt ++;
-
-				if (checkmate_is_possible) {
-				    position.piece_position[i] = -1;
-				    position.piece_position[piece] = movementptr->square;
-
-				    checkmate_is_possible = PTM_in_check(tb, &position);
-
-				    position.piece_position[i] = movementptr->square;
-				}
+				position.piece_position[i] = movementptr->square;
 
 				break;
 			    }
@@ -10381,60 +10391,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
-		    /* Move the piece.  Some of the checks below require this. */
+		    /* Move the piece.  The in-check test below require this. */
 
 		    position.piece_position[piece] = movementptr->square;
-
-		    /* If the piece is a pawn and we're moving to the last rank, then this has
-		     * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
-		     * knight, maybe rook and bishop).  As such, they will require back
-		     * propagation from futurebases and must therefore be flagged as
-		     * futuremoves.
-		     */
-
-		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
-
-			if (promotions[piece] == -1) {
-			    global_position_t global;
-			    index_to_global_position(tb, index, &global);
-			    fatal("No futuremove: %s %c=?\n", global_position_to_FEN(&global),
-				  piece_char[tb->piece_type[piece]]);
-			}
-			if (futurevector & FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES)) {
-			    fatal("Duplicate futuremove!\n");
-			}
-			futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
-			futuremovecnt += PROMOTION_POSSIBILITIES;
-
-			movecnt += PROMOTION_POSSIBILITIES;
-
-		    } else {
-
-			/* If a piece is moving outside its legal squares AND we can't permute the
-			 * pieces into a position where everything is legal, we regard this as a
-			 * futuremove (since it will require back prop from futurebases).
-			 */
-
-			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
-			    && (local_position_to_index(tb, &position) == -1)) {
-
-			    if (futuremoves[piece][movementptr->square] == -1) {
-				global_position_t global;
-				index_to_global_position(tb, index, &global);
-				fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
-				      piece_char[tb->piece_type[piece]],
-				      'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-			    }
-			    if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				fatal("Duplicate futuremove!\n");
-			    }
-			    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-			    futuremovecnt ++;
-			}
-
-			movecnt ++;
-
-		    }
+		    position.board_vector |= BITVECTOR(movementptr->square);
 
 		    /* What about pawn promotions here?  Well, we're looking to see if the moving
 		     * side is in check after the pawn move, and the only way the pawn could affect
@@ -10443,13 +10403,66 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     * moves here.
 		     */
 
-		    if (checkmate_is_possible) {
-			position.board_vector |= BITVECTOR(movementptr->square);
+		    if (! PTM_in_check(tb, &position)) {
 
-			checkmate_is_possible = PTM_in_check(tb, &position);
+			/* If the piece is a pawn and we're moving to the last rank, then this has
+			 * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
+			 * knight, maybe rook and bishop).  As such, they will require back
+			 * propagation from futurebases and must therefore be flagged as
+			 * futuremoves.
+			 */
 
-			position.board_vector &= ~BITVECTOR(movementptr->square);
+			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+
+			    if (promotions[piece] == -1) {
+				global_position_t global;
+				index_to_global_position(tb, index, &global);
+				fatal("No futuremove: %s %c=?\n", global_position_to_FEN(&global),
+				      piece_char[tb->piece_type[piece]]);
+			    }
+			    if (futurevector & FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES)) {
+				fatal("Duplicate futuremove!\n");
+			    }
+			    futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
+			    futuremovecnt += PROMOTION_POSSIBILITIES;
+
+			    /* movecnt += PROMOTION_POSSIBILITIES; */
+
+			} else {
+
+			    /* If a piece is moving outside its legal squares AND we can't permute
+			     * the pieces into a position where everything is legal, we regard this
+			     * as a futuremove (since it will require back prop from futurebases).
+			     */
+
+			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+				&& (local_position_to_index(tb, &position) == -1)) {
+
+				if (futuremoves[piece][movementptr->square] == -1) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->piece_type[piece]],
+					  'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
+				}
+				if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
+				    fatal("Duplicate futuremove!\n");
+				}
+				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
+				futuremovecnt ++;
+			    }
+
+			    /* movecnt ++; */
+			}
 		    }
+
+		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+			movecnt += PROMOTION_POSSIBILITIES;
+		    } else {
+			movecnt ++;
+		    }
+
+		    position.board_vector &= ~BITVECTOR(movementptr->square);
 
 		}
 
@@ -10465,6 +10478,14 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     movementptr->square != -1;
 		     movementptr++) {
 
+		    /* If we're capturing to the last rank, then this has to be a promotion move, in
+		     * fact, PROMOTION_POSSIBILITIES moves.  (queen, knight, maybe rook and bishop).
+		     */
+
+		    int num_futuremoves =
+			((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0))
+			? PROMOTION_POSSIBILITIES : 1;
+
 		    /* A special check for en passant captures.  */
 
 		    if (movementptr->square == position.en_passant_square) {
@@ -10473,32 +10494,32 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    if ((i == tb->white_king) || (i == tb->black_king)) continue;
 			    if (movementptr->square + (tb->piece_color[piece] == WHITE ? -8 : 8)
 				== position.piece_position[i]) {
-				if (futurecaptures[piece][i] == -1) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->piece_type[piece]], piece_char[tb->piece_type[i]]);
-				}
-				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-				    fatal("Duplicate futuremove!\n");
-				}
-				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-				futuremovecnt ++;
 
-				if (checkmate_is_possible) {
-				    position.board_vector &= ~BITVECTOR(position.piece_position[i]);
-				    position.board_vector |= BITVECTOR(position.en_passant_square);
-				    position.piece_position[piece] = position.en_passant_square;
-				    position.piece_position[i] = -1;
+				position.piece_position[piece] = position.en_passant_square;
+				position.board_vector |= BITVECTOR(position.en_passant_square);
+				position.board_vector &= ~BITVECTOR(position.piece_position[i]);
+				position.piece_position[i] = -1;
 
-				    checkmate_is_possible = PTM_in_check(tb, &position);
-
-				    position.piece_position[i] = position.en_passant_square
-					+ (tb->piece_color[piece] == WHITE ? -8 : 8);
-				    position.board_vector |= BITVECTOR(position.piece_position[i]);
-				    position.board_vector &= ~BITVECTOR(position.en_passant_square);
+				if (! PTM_in_check(tb, &position)) {
+				    if (futurecaptures[piece][i] == -1) {
+					global_position_t global;
+					index_to_global_position(tb, index, &global);
+					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					      piece_char[tb->piece_type[piece]],
+					      piece_char[tb->piece_type[i]]);
+				    }
+				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+					fatal("Duplicate futuremove!\n");
+				    }
+				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				    futuremovecnt ++;
+				    checkmate_is_possible = 0;
 				}
 
+				position.piece_position[i] = position.en_passant_square
+				    + (tb->piece_color[piece] == WHITE ? -8 : 8);
+				position.board_vector |= BITVECTOR(position.piece_position[i]);
+				position.board_vector &= ~BITVECTOR(position.en_passant_square);
 
 				break;
 			    }
@@ -10509,63 +10530,36 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		    if (((movementptr->vector & position.board_vector) == 0)
 			|| ((movementptr->vector & position.PTM_vector) != 0)) continue;
 
-		    /* If the piece is a pawn and we're moving to the last rank, then this has
-		     * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
-		     * knight, maybe rook and bishop).  As such, they will require back
-		     * propagation from futurebases and must therefore be flagged as
-		     * futuremoves.
-		     */
+		    movecnt += num_futuremoves;
 
-		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+		    for (i = 0; i < tb->num_pieces; i ++) {
+			if (movementptr->square == position.piece_position[i]) {
+			    if ((i == tb->black_king) || (i == tb->white_king)) {
+				initialize_entry_with_PNTM_mated(tb, index);
+				return 0;
+			    }
 
-			movecnt += PROMOTION_POSSIBILITIES;
+			    position.piece_position[i] = -1;
+			    position.piece_position[piece] = movementptr->square;
 
-			for (i = 0; i < tb->num_pieces; i ++) {
-			    if (movementptr->square == position.piece_position[i]) {
-				if ((i == tb->black_king) || (i == tb->white_king)) {
-				    initialize_entry_with_PNTM_mated(tb, index);
-				    return 0;
-				}
+			    if (PTM_in_check(tb, &position)) {
 				if (futurecaptures[piece][i] == -1) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
 				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
 					  piece_char[tb->piece_type[piece]], piece_char[tb->piece_type[i]]);
 				}
-				if (futurevector & FUTUREVECTORS(futurecaptures[piece][i],
-								 PROMOTION_POSSIBILITIES)) {
+				if (futurevector
+				    & FUTUREVECTORS(futurecaptures[piece][i], num_futuremoves)) {
 				    fatal("Duplicate futuremove!\n");
 				}
-				futurevector |= FUTUREVECTORS(futurecaptures[piece][i],
-							      PROMOTION_POSSIBILITIES);
-				futuremovecnt ++;
-				break;
+				futurevector |= FUTUREVECTORS(futurecaptures[piece][i], num_futuremoves);
+				futuremovecnt += num_futuremoves;
+				checkmate_is_possible = 0;
 			    }
-			}
 
-		    } else {
-
-			movecnt ++;
-
-			for (i = 0; i < tb->num_pieces; i ++) {
-			    if (movementptr->square == position.piece_position[i]) {
-				if ((i == tb->black_king) || (i == tb->white_king)) {
-				    initialize_entry_with_PNTM_mated(tb, index);
-				    return 0;
-				}
-				if (futurecaptures[piece][i] == -1) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->piece_type[piece]], piece_char[tb->piece_type[i]]);
-				}
-				if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-				    fatal("Duplicate futuremove!\n");
-				}
-				futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-				futuremovecnt ++;
-				break;
-			    }
+			    position.piece_position[i] = movementptr->square;
+			    break;
 			}
 		    }
 
@@ -10573,14 +10567,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			fatal("Couldn't match pawn capture!\n");
 		    }
 
-		    if (checkmate_is_possible) {
-			position.piece_position[i] = -1;
-			position.piece_position[piece] = movementptr->square;
-
-			checkmate_is_possible = PTM_in_check(tb, &position);
-
-			position.piece_position[i] = movementptr->square;
-		    }
 
 		}
 
@@ -10593,8 +10579,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	/* Finally, we want to determine is if we're in check.  This is significant because if
 	 * and when we decide there are no valid moves out of this position, being in check is
-	 * the difference between this being checkmate or stalemate.  We note being in check by
-	 * setting the high order bit in the unsigned char movecnt.
+	 * the difference between this being checkmate or stalemate.
 	 */
 
 	if (checkmate_is_possible) {
