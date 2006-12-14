@@ -4651,7 +4651,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.349 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.350 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5006,88 +5006,36 @@ int translate_foreign_index_to_local_position(tablebase_t *tb1, index_t index1, 
 
 index_t global_position_to_local_position(tablebase_t *tb, global_position_t *global, local_position_t *local)
 {
-    int piece;
-    int restricted_piece = NONE;
-    int missing_piece1 = NONE;
-    int missing_piece2 = NONE;
-    int extra_piece = NONE;
     int square;
-    short local_pieces_processed_bitvector = 0;
+    tablebase_t fake_tb;
+    local_position_t fake_position;
 
-    memset(local, 0, sizeof(local_position_t));
+    memset(&fake_tb, 0, sizeof(fake_tb));
+    memset(&fake_position, 0, sizeof(fake_position));
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	local->piece_position[piece] = -1;
-	local->permuted_piece[piece] = piece;
-    }
-
-    local->en_passant_square = global->en_passant_square;
-    local->side_to_move = global->side_to_move;
+    fake_position.side_to_move = global->side_to_move;
+    fake_position.en_passant_square = global->en_passant_square;
 
     for (square = 0; square < NUM_SQUARES; square ++) {
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
-	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		if ((global->board[square] == global_pieces[tb->piece_color[piece]][tb->piece_type[piece]])
-		    && !(local_pieces_processed_bitvector & (1 << piece))) {
+	    int color;
+	    int type;
 
-		    local->piece_position[piece] = square;
-		    local->board_vector |= BITVECTOR(square);
-		    if (tb->piece_color[piece] == local->side_to_move)
-			local->PTM_vector |= BITVECTOR(square);
+	    for (color = WHITE; color <= BLACK; color ++) {
+		for (type = KING; type <= PAWN; type ++) {
 
-		    local_pieces_processed_bitvector |= (1 << piece);
-
-		    break;
+		    if (global->board[square] == global_pieces[color][type]) {
+			fake_tb.piece_color[fake_tb.num_pieces] = color;
+			fake_tb.piece_type[fake_tb.num_pieces] = type;
+			fake_position.piece_position[fake_tb.num_pieces] = square;
+			fake_tb.num_pieces ++;
+		    }
 		}
-	    }
-	    if (piece == tb->num_pieces) {
-		if (extra_piece != NONE) {
-		    /* This can happen if we're probing a whole bunch of radically different tablebases. */
-		    /* fprintf(stderr, "More than one extra piece in translation\n"); */
-		    return -1;
-		}
-		/* XXX I'd like to change this (for consistency) to be the piece index in the
-		 * futurebase, but since there is still an intermediate global position, that will
-		 * have to wait.
-		 */
-		extra_piece = square;
 	    }
 	}
     }
 
-
-    /* Make sure all the pieces but one have been accounted for.  We count a piece as "free" if
-     * either it hasn't been processed at all, or if it was processed but was outside its move
-     * restriction.
-     */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (!(local_pieces_processed_bitvector & (1 << piece))) {
-	    if (missing_piece1 == NONE) {
-		missing_piece1 = piece;
-	    } else if (missing_piece2 == NONE) {
-		if (tb->piece_type[piece] == PAWN) {
-		    missing_piece2 = missing_piece1;
-		    missing_piece1 = piece;
-		} else {
-		    missing_piece2 = piece;
-		}
-	    } else {
-		/* This can happen if we're probing a whole bunch of radically different tablebases. */
-		/* fprintf(stderr, "More than one missing piece in translation\n"); */
-		return -1;
-	    }
-	} else if (!(tb->semilegal_squares[piece] & BITVECTOR(local->piece_position[piece]))) {
-	    if (restricted_piece == NONE) restricted_piece = piece;
-	    else {
-		/* This can happen if we're probing a whole bunch of radically different tablebases. */
-		/* fprintf(stderr, "More than one restricted piece in translation\n"); */
-		return -1;
-	    }
-	}
-    }
-
-    return ((missing_piece2 << 24) | (extra_piece << 16) | (restricted_piece << 8) | missing_piece1);
+    return translate_foreign_position_to_local_position(&fake_tb, &fake_position, tb, local, 0);
 }
 
 index_t global_position_to_index(tablebase_t *tb, global_position_t *global)
