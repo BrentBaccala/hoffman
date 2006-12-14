@@ -4665,7 +4665,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.352 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.353 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9675,6 +9675,13 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	    && (futurebases[fbnum]->missing_non_pawn == -1)) futurebase_cnt ++;
     }
 
+    /* I'd like to construct a mask of all allowable squares for each color and type of piece, and
+     * verify that the futurebases or pruning actually account for all possible restricted
+     * movements.  This would let me catch early things like forgetting to specify a g4 tablebase
+     * for a pawn frozen on g2.  For now, we only check for missing pruning if there are no "normal"
+     * futurebases at all.
+     */
+
     if (futurebase_cnt == 0) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    for (sq = 0; sq < 64; sq ++) {
@@ -9696,9 +9703,6 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		}
 	    }
 	}
-    } else if (futurebase_cnt > 1) {
-	fatal("Multiple futurebases for restricted moves\n");
-	return 0;
     }
 
     /* Unload the futurebases (for now; we'll need them again later) */
