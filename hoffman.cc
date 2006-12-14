@@ -4665,7 +4665,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.351 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.352 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -10782,6 +10782,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     int i;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
+    struct rlimit rlimit;
 
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
@@ -10806,14 +10807,14 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (num_propentries != 0) {
 	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
 	if (tb->entries_fd == -1) {
-	    fatal("Can't open 'entries' for read-write\n");
+	    fatal("Can't open 'entries' for read-write: %s\n", strerror(errno));
 	    return 0;
 	}
 	init_entry_buffers(tb);
     } else {
 	tb->entries = (entry_t *) malloc(LEFTSHIFT(tb->max_index + 1, entries_format.bits - 3));
 	if (tb->entries == NULL) {
-	    fatal("Can't malloc tablebase entries\n");
+	    fatal("Can't malloc tablebase entries: %s\n", strerror(errno));
 	    return 0;
 	}
 	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, entries_format.bits - 3));
@@ -10823,14 +10824,14 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #if USE_DUAL_PROPTABLES
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
 	if (posix_memalign((void **) &proptable1, 1024, num_propentries * proptable_format.bytes) != 0) {
-	    fatal("Can't posix_memalign proptable\n");
+	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
 	    return 0;
 	}
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
 	memset(proptable1, 0, num_propentries * proptable_format.bytes);
 
 	if (posix_memalign((void **) &proptable2, 1024, num_propentries * proptable_format.bytes) != 0) {
-	    fatal("Can't posix_memalign proptable\n");
+	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
 	    return 0;
 	}
 	memset(proptable2, 0, num_propentries * proptable_format.bytes);
@@ -10840,7 +10841,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #if ZERO_PROPTABLES_USING_DISK
 	zeros_fd = open("zeros", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
 	if (zeros_fd == -1) {
-	    fatal("Can't open 'zeros' for writing zero propfile\n");
+	    fatal("Can't open 'zeros' for writing zero propfile: %s\n", strerror(errno));
 	    return 0;
 	}
 	do_write(zeros_fd, proptable1, num_propentries * proptable_format.bytes);
@@ -10848,7 +10849,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #else
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
 	if (posix_memalign((void **) &proptable, 1024, num_propentries * proptable_format.bytes) != 0) {
-	    fatal("Can't posix_memalign proptable\n");
+	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
 	    return 0;
 	}
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
@@ -10880,8 +10881,29 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
 	if (tb->futurevectors == NULL) {
-	    fatal("Can't malloc tablebase futurevectors\n");
+	    fatal("Can't malloc tablebase futurevectors: %s\n", strerror(errno));
 	    return 0;
+	}
+
+	/* Due to the heavily random access pattern of memory during back propagation, this
+	 * application performs horribly if required to swap.  Attempt to lock all of its pages into
+	 * memory, and die with a fatal error if we couldn't.  It seems better to die here, so we
+	 * can detect this condition and rerun with either simpler tablebases (if there are pawns
+	 * that can be factored) or using proptables.
+	 *
+	 * I'm finding that this system call is dangerous on Linux.  If you haven't set a resource
+	 * limit, it can hang the machine if you try to lock more memory than the system physically
+	 * possesses.  So I check first to make sure that a limit has been set before attempting the
+	 * lock.
+	 */
+
+	if (getrlimit(RLIMIT_MEMLOCK, &rlimit) == -1) {
+	    warning("Can't getrlimit RLIMIT_MEMLOCK: %s\n", strerror(errno));
+	} else if (rlimit.rlim_cur != 0) {
+	    if (mlockall(MCL_CURRENT) == -1) {
+		fatal("Can't mlockall memory: %s\n", strerror(errno));
+		return 0;
+	    }
 	}
 
 	gettimeofday(&pass_start_times[total_passes], NULL);
