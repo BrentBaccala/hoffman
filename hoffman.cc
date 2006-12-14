@@ -4651,7 +4651,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.348 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.349 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -10293,16 +10293,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    }
 
 			    checkmate_is_possible = 0;
+			    movecnt ++;
 			}
 
 			position.board_vector &= ~BITVECTOR(movementptr->square);
-
-			/* Yes, we count a move even if we're moving into check.  I want to change
-			 * this, but for now, we handle this by back proping from the PNTM mated
-			 * positions.
-			 */
-
-			movecnt ++;
 
 		    }
 
@@ -10327,14 +10321,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    continue;
 		    }
 #endif
-		    /* Completely discard king moves into check by frozen pieces
-		     *
-		     * XXX what happens if we're back-propagating from a futurebase with frozen
-		     * pieces that block king movements into a tablebase without those frozen
-		     * pieces?  Then kings on in-check squares would be illegal in the futurebase,
-		     * but not in the current tablebase, and we'd miss some futuremoves.  Maybe
-		     * overall solution is to discard in-check positions early.
-		     */
+		    /* Completely discard king moves into check by frozen pieces */
 
 		    if ((piece == tb->white_king)
 			&& (tb->illegal_white_king_squares & BITVECTOR(movementptr->square))) continue;
@@ -10342,7 +10329,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			&& (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
 
 		    if ((movementptr->vector & position.PTM_vector) == 0) {
-			movecnt ++;
+
 			for (i = 0; i < tb->num_pieces; i ++) {
 			    if (movementptr->square == position.piece_position[i]) {
 				if ((i == tb->black_king) || (i == tb->white_king)) {
@@ -10370,6 +10357,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    futuremovecnt ++;
 
 				    checkmate_is_possible = 0;
+				    movecnt ++;
 				}
 
 				position.piece_position[i] = movementptr->square;
@@ -10426,7 +10414,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
 			    futuremovecnt += PROMOTION_POSSIBILITIES;
 
-			    /* movecnt += PROMOTION_POSSIBILITIES; */
+			    movecnt += PROMOTION_POSSIBILITIES;
 
 			} else {
 
@@ -10452,14 +10440,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				futuremovecnt ++;
 			    }
 
-			    /* movecnt ++; */
+			    movecnt ++;
 			}
-		    }
-
-		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
-			movecnt += PROMOTION_POSSIBILITIES;
-		    } else {
-			movecnt ++;
 		    }
 
 		    position.board_vector &= ~BITVECTOR(movementptr->square);
@@ -10489,7 +10471,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		    /* A special check for en passant captures.  */
 
 		    if (movementptr->square == position.en_passant_square) {
-			movecnt ++;
+
 			for (i = 0; i < tb->num_pieces; i ++) {
 			    if ((i == tb->white_king) || (i == tb->black_king)) continue;
 			    if (movementptr->square + (tb->piece_color[piece] == WHITE ? -8 : 8)
@@ -10513,7 +10495,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    }
 				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 				    futuremovecnt ++;
+
 				    checkmate_is_possible = 0;
+				    movecnt ++;
 				}
 
 				position.piece_position[i] = position.en_passant_square
@@ -10529,8 +10513,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		    if (((movementptr->vector & position.board_vector) == 0)
 			|| ((movementptr->vector & position.PTM_vector) != 0)) continue;
-
-		    movecnt += num_futuremoves;
 
 		    for (i = 0; i < tb->num_pieces; i ++) {
 			if (movementptr->square == position.piece_position[i]) {
@@ -10555,7 +10537,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				}
 				futurevector |= FUTUREVECTORS(futurecaptures[piece][i], num_futuremoves);
 				futuremovecnt += num_futuremoves;
+
 				checkmate_is_possible = 0;
+				movecnt += num_futuremoves;
 			    }
 
 			    position.piece_position[i] = movementptr->square;
@@ -10577,9 +10561,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	}
 
-	/* Finally, we want to determine is if we're in check.  This is significant because if
-	 * and when we decide there are no valid moves out of this position, being in check is
-	 * the difference between this being checkmate or stalemate.
+	/* Finally, if every possible moves leads us into check (because checkmate_is_possible was
+	 * never cleared to zero), we determine if we're in check, being the difference between this
+	 * being checkmate or stalemate.
 	 */
 
 	if (checkmate_is_possible) {
@@ -10643,6 +10627,12 @@ void initialize_tablebase(tablebase_t *tb)
 void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, int upper_dtm_limit)
 {
     int dtm = 1;
+
+    /* DTM 1 positions are illegal (PNTM is in check), so back prop from these positions is not
+     * necessary because we don't count moves into check as part of movecnt.
+     */
+
+    positive_passes_needed[1] = 0;
 
     while ((dtm <= upper_dtm_limit) || (-dtm >= lower_dtm_limit)) {
 
