@@ -3902,6 +3902,35 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+    /* Fetch the index type */
+
+    index = xmlGetProp(tablebase, BAD_CAST "index");
+    index_node = tablebase;  /* XXX here for backwards compatibility */
+    if (index == NULL) {
+	context = xmlXPathNewContext(tb->xml);
+	result = xmlXPathEvalExpression(BAD_CAST "//index", context);
+	if (result->nodesetval->nodeNr == 1) {
+	    index_node = result->nodesetval->nodeTab[0];
+	    index = xmlGetProp(index_node, BAD_CAST "type");
+	    if (xmlGetProp(index_node, BAD_CAST "offset") != NULL) {
+		tb->index_offset = atoi((char *) xmlGetProp(index_node, BAD_CAST "offset"));
+	    }
+	}
+	xmlXPathFreeObject(result);
+	xmlXPathFreeContext(context);
+    }
+    if (index == NULL) {
+	tb->index_type = NAIVE_INDEX;
+	xmlNewProp(tablebase, BAD_CAST "index", BAD_CAST "naive");
+	warning("Index type not expressly specified; assuming NAIVE\n");
+    } else {
+	tb->index_type = find_name_in_array((char *) index, index_types);
+	if (tb->index_type == -1) {
+	    fatal("Unknown tablebase index type '%s'\n", index);
+	    return NULL;
+	}
+    }
+
     /* Now, compute a bitvector for all the pieces that are frozen on single squares.  This
      * 'frozen_pieces_vector' differs from 'blocked_squares' because a square can be blocked by a
      * pawn that is at least partially mobile on a single file.  Frozen pieces, on the other hand,
@@ -3914,6 +3943,15 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
      * This doesn't work quite right if we had a non-frozen identical piece overlapping the frozen
      * piece, in which case semilegal_squares has already been expanded out to include the union of
      * the two.  At least this doesn't seem to break anything; just introduce an inefficiency.
+     *
+     * There is a problem with this that led me to introduce the "king-positions" option to turn
+     * this off.  Although a king can never move into check from a frozen piece in the current
+     * tablebase, if we're using this as a futurebase, and the piece isn't frozen (or frozen on a
+     * different square) in the new tablebase, then a frozen piece move from one tablebase to the
+     * other can put the king in check this way.  Still, we'll never back prop out of these
+     * positions, only into them, so there might be something to be gained from grouping them all
+     * together at the end of the tablebase or something.  Still haven't decided the best
+     * way to handle this.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -3925,29 +3963,34 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		}
 		tb->frozen_pieces_vector |= BITVECTOR(square);
 
-		switch (tb->piece_type[piece]) {
-		case PAWN:
-		    if (tb->piece_color[piece] == WHITE) {
-			if (COL(square) != 7) tb->illegal_black_king_squares |= BITVECTOR(square + 9);
-			if (COL(square) != 0) tb->illegal_black_king_squares |= BITVECTOR(square + 7);
-		    } else {
-			if (COL(square) != 7) tb->illegal_white_king_squares |= BITVECTOR(square - 7);
-			if (COL(square) != 0) tb->illegal_white_king_squares |= BITVECTOR(square - 9);
-		    }
-		    break;
-		default:
-		    for (dir=0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
-			if (movements[tb->piece_type[piece]][square][dir][0].square != -1) {
-			    if (tb->piece_color[piece] == WHITE) {
-				tb->illegal_black_king_squares
-				    |= BITVECTOR(movements[tb->piece_type[piece]][square][dir][0].square);
-			    } else {
-				tb->illegal_white_king_squares
-				    |= BITVECTOR(movements[tb->piece_type[piece]][square][dir][0].square);
+		if ((xmlGetProp(index_node, BAD_CAST "king-positions") == NULL)
+		    || !strcmp((char *) xmlGetProp(index_node, BAD_CAST "king-positions"),
+			       "no-frozen-checks")) {
+
+		    switch (tb->piece_type[piece]) {
+		    case PAWN:
+			if (tb->piece_color[piece] == WHITE) {
+			    if (COL(square) != 7) tb->illegal_black_king_squares |= BITVECTOR(square + 9);
+			    if (COL(square) != 0) tb->illegal_black_king_squares |= BITVECTOR(square + 7);
+			} else {
+			    if (COL(square) != 7) tb->illegal_white_king_squares |= BITVECTOR(square - 7);
+			    if (COL(square) != 0) tb->illegal_white_king_squares |= BITVECTOR(square - 9);
+			}
+			break;
+		    default:
+			for (dir=0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+			    if (movements[tb->piece_type[piece]][square][dir][0].square != -1) {
+				if (tb->piece_color[piece] == WHITE) {
+				    tb->illegal_black_king_squares
+					|= BITVECTOR(movements[tb->piece_type[piece]][square][dir][0].square);
+				} else {
+				    tb->illegal_white_king_squares
+					|= BITVECTOR(movements[tb->piece_type[piece]][square][dir][0].square);
+				}
 			    }
 			}
+			break;
 		    }
-		    break;
 		}
 
 		break;
@@ -4028,35 +4071,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     }
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
-
-    /* Fetch the index type */
-
-    index = xmlGetProp(tablebase, BAD_CAST "index");
-    index_node = tablebase;  /* XXX here for backwards compatibility */
-    if (index == NULL) {
-	context = xmlXPathNewContext(tb->xml);
-	result = xmlXPathEvalExpression(BAD_CAST "//index", context);
-	if (result->nodesetval->nodeNr == 1) {
-	    index_node = result->nodesetval->nodeTab[0];
-	    index = xmlGetProp(index_node, BAD_CAST "type");
-	    if (xmlGetProp(index_node, BAD_CAST "offset") != NULL) {
-		tb->index_offset = atoi((char *) xmlGetProp(index_node, BAD_CAST "offset"));
-	    }
-	}
-	xmlXPathFreeObject(result);
-	xmlXPathFreeContext(context);
-    }
-    if (index == NULL) {
-	tb->index_type = NAIVE_INDEX;
-	xmlNewProp(tablebase, BAD_CAST "index", BAD_CAST "naive");
-	warning("Index type not expressly specified; assuming NAIVE\n");
-    } else {
-	tb->index_type = find_name_in_array((char *) index, index_types);
-	if (tb->index_type == -1) {
-	    fatal("Unknown tablebase index type '%s'\n", index);
-	    return NULL;
-	}
-    }
 
     /* Extract index symmetry (if it was specified) */
 
@@ -4651,7 +4665,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.350 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.351 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
