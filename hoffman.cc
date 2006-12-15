@@ -4665,7 +4665,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.353 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.354 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -10490,7 +10490,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    position.piece_position[i] = -1;
 			    position.piece_position[piece] = movementptr->square;
 
-			    if (PTM_in_check(tb, &position)) {
+			    if (! PTM_in_check(tb, &position)) {
 				if (futurecaptures[piece][i] == -1) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
