@@ -4665,7 +4665,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.354 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.355 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5623,92 +5623,14 @@ void init_entry_buffers(tablebase_t *tb)
     wait_for_entry_buffer_green(0);
 }
 
-entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
+/* Make sure that 'index' is in the yellow entry buffer.  All these colors remind me of the game
+ * Twister, thus the name of this function...
+ */
+
+void twister(tablebase_t *tb, index_t index)
 {
-    if (tb->entries != NULL) {
-
-	/* entries array exists in memory - so just return a pointer into it */
-	return (void *)(tb->entries) + LEFTSHIFT(index, entries_format.bits - 3);
-
-    } else if (tb->file != NULL) {
-
-	/* it's a preloaded tablebase - we're reading from a compressed file (possibly over the network) */
-
-	static char entry[MAX_FORMAT_BYTES];
-	static tablebase_t *cached_tb = NULL;
-	static index_t cached_index = 0;
-	int retval;
-
-	if (tb->format.bits == 3) {
-
-	    /* Special case for the very common one-byte-DTM format */
-
-	    if ((cached_tb == tb) && (index == cached_index)) return entry;
-
-	    /* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
-
-	    if (index < tb->next_read_index) {
-		if (fseek(tb->file, tb->offset + index, SEEK_SET) != 0) {
-		    fatal("Seek failed in fetch_entry_pointer()\n");
-		}
-	    }
-
-	    do {
-
-		if ((retval = fgetc(tb->file)) == EOF) {
-		    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
-		}
-		tb->next_read_index ++;
-
-	    } while (tb->next_read_index <= index);
-
-	    entry[0] = retval;
-
-	} else {
-
-	    if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
-				      == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
-
-	    /* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
-
-	    if (LEFTSHIFT(index, tb->format.bits - 3)
-		< LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
-		if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
-		    fatal("Seek failed in fetch_entry_pointer()\n");
-		}
-	    }
-
-	    do {
-
-		retval = fread(entry, tb->format.bytes, 1, tb->file);
-		if (retval != 1) {
-		    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
-		}
-
-		switch (tb->format.bits) {
-		case 0:
-		    tb->next_read_index = (tb->next_read_index + 8) & ~7;
-		    break;
-		case 1:
-		    tb->next_read_index = (tb->next_read_index + 4) & ~3;
-		    break;
-		case 2:
-		    tb->next_read_index = (tb->next_read_index + 2) & ~1;
-		    break;
-		default:
-		    tb->next_read_index = tb->next_read_index + 1;
-		    break;
-		}
-	    } while (LEFTSHIFT(index, tb->format.bits - 3)
-		     >= LEFTSHIFT(tb->next_read_index, tb->format.bits - 3));
-	}
-
-	cached_tb = tb;
-	cached_index = index;
-	return entry;
-
-    } else if ((index < entry_buffers[yellow_entry_buffer].start)
-	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
+    if ((index < entry_buffers[yellow_entry_buffer].start)
+	|| (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
 
 	/* The index we're looking for isn't in the yellow buffer.  Play Twister. */
 
@@ -5803,9 +5725,99 @@ entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
 	fprintf(stderr, "Can't fetch in fetch_entry_pointer\n");
     }
+}
 
-    return (void *) (entry_buffers[yellow_entry_buffer].buffer)
-	+ LEFTSHIFT(index - entry_buffers[yellow_entry_buffer].start, entries_format.bits - 3);
+inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
+{
+    if (tb->entries != NULL) {
+
+	/* entries array exists in memory - so just return a pointer into it */
+	return (void *)(tb->entries) + LEFTSHIFT(index, entries_format.bits - 3);
+
+    } else if (tb->file != NULL) {
+
+	/* it's a preloaded tablebase - we're reading from a compressed file (possibly over the network) */
+
+	static char entry[MAX_FORMAT_BYTES];
+	static tablebase_t *cached_tb = NULL;
+	static index_t cached_index = 0;
+	int retval;
+
+	if (tb->format.bits == 3) {
+
+	    /* Special case for the very common one-byte-DTM format */
+
+	    if ((cached_tb == tb) && (index == cached_index)) return entry;
+
+	    /* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
+
+	    if (index < tb->next_read_index) {
+		if (fseek(tb->file, tb->offset + index, SEEK_SET) != 0) {
+		    fatal("Seek failed in fetch_entry_pointer()\n");
+		}
+	    }
+
+	    do {
+
+		if ((retval = fgetc(tb->file)) == EOF) {
+		    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
+		}
+		tb->next_read_index ++;
+
+	    } while (tb->next_read_index <= index);
+
+	    entry[0] = retval;
+
+	} else {
+
+	    if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
+				      == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
+
+	    /* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
+
+	    if (LEFTSHIFT(index, tb->format.bits - 3)
+		< LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
+		if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
+		    fatal("Seek failed in fetch_entry_pointer()\n");
+		}
+	    }
+
+	    do {
+
+		retval = fread(entry, tb->format.bytes, 1, tb->file);
+		if (retval != 1) {
+		    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
+		}
+
+		switch (tb->format.bits) {
+		case 0:
+		    tb->next_read_index = (tb->next_read_index + 8) & ~7;
+		    break;
+		case 1:
+		    tb->next_read_index = (tb->next_read_index + 4) & ~3;
+		    break;
+		case 2:
+		    tb->next_read_index = (tb->next_read_index + 2) & ~1;
+		    break;
+		default:
+		    tb->next_read_index = tb->next_read_index + 1;
+		    break;
+		}
+	    } while (LEFTSHIFT(index, tb->format.bits - 3)
+		     >= LEFTSHIFT(tb->next_read_index, tb->format.bits - 3));
+	}
+
+	cached_tb = tb;
+	cached_index = index;
+	return entry;
+
+    } else {
+
+	twister(tb, index);
+
+	return (void *) (entry_buffers[yellow_entry_buffer].buffer)
+	    + LEFTSHIFT(index - entry_buffers[yellow_entry_buffer].start, entries_format.bits - 3);
+    }
 }
 
 
