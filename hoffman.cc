@@ -868,7 +868,11 @@ inline int get_signed_field(uint32 *ptr, uint32 mask, int offset)
 {
     int val;
 
-    if (offset == -1) return 0;
+    /* It is truly amazing how much of a difference commenting out this next idiot check makes in
+     * gcc 4.0.4's ability to optimize this code, at least on i386.
+     */
+
+    /* if (offset == -1) return 0; */
 
     while (offset >= 32) {
 	offset -= 32;
@@ -885,19 +889,22 @@ inline int get_signed_field(uint32 *ptr, uint32 mask, int offset)
 
 inline void set_signed_field(uint32 *ptr, uint32 mask, int offset, int val)
 {
-    if (offset == -1) return;
+    /* if (offset == -1) return; */
 
     while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
     }
 
+#if 0
     if ((val > 0) && (val > (mask >> 1))) {
 	fatal("value too large in set_signed_field\n");
     }
     if ((val < 0) && (val < ~(mask >> 1))) {
 	fatal("value too small in set_signed_field\n");
     }
+#endif
+
     *ptr &= (~ (mask << offset));
     *ptr |= (val & mask) << offset;
 }
@@ -4699,7 +4706,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.359 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.360 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
