@@ -425,6 +425,8 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
  * </entries-format>
  */
 
+#define USE_PROPTABLES 0
+
 #define USE_CONST_ENTRIES_FORMAT 1
 
 #if !USE_CONST_ENTRIES_FORMAT
@@ -619,7 +621,6 @@ int zeros_fd = -1;
 
 tablebase_t *current_tb = NULL;
 
-/* 0 indicates that we're not using proptables */
 int proptable_MBs = 0;
 int num_propentries = 0;
 
@@ -4698,7 +4699,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.358 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.359 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4725,7 +4726,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprintf(strbuf, "%ld", rusage.ru_minflt);
     xmlNewChild(node, NULL, BAD_CAST "page-reclaims", BAD_CAST strbuf);
 
-    if (num_propentries > 0) {
+    if (USE_PROPTABLES) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprintf(strbuf, "%d", entries_write_stalls);
 	xmlNewChild(node, NULL, BAD_CAST "entries-write-stalls", BAD_CAST strbuf);
@@ -5847,7 +5848,7 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 inline entry_t * fetch_current_entry_pointer(index_t index)
 {
-    if (current_tb->entries != NULL) {
+    if (! USE_PROPTABLES) {
 
 	/* entries array exists in memory - so just return a pointer into it */
 
@@ -6136,8 +6137,8 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 /* When propagating a change from one position to another, we go through this table to do it.  By
  * maintaining this table sorted, we avoid the random accesses that would be required to propagate
  * directly from one position to another.  It only makes sense to use a propagation table if the
- * tablebase can't fit in memory.  If the tablebase does fit in memory, we set num_propentries to
- * zero and bypass almost this entire section of code.
+ * tablebase can't fit in memory.  If the tablebase does fit in memory, we bypass almost this entire
+ * section of code.
  *
  * We insert into the propagation table using an "address calculation insertion sort".  Knuth
  * described it by analogy to shelving books.  You're sorting the books as you place them onto the
@@ -6320,13 +6321,13 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
 
     /* Somewhat of a special case here.  First of all, futurevector is non-zero only on the first
      * back-propagation pass, when we back prop from the futurebases.  Also, if we're not using
-     * proptables (so num_propentries is zero), then I use a seperate array for the futurevectors,
-     * which got filled in when we initialized the tablebase.  In that case, we now check off the
-     * futurevectors in that array as we back prop.  If we are using proptables, then this gets done
-     * during the initialization pass and we don't use the seperate array.
+     * proptables, then I use a seperate array for the futurevectors, which got filled in when we
+     * initialized the tablebase.  In that case, we now check off the futurevectors in that array as
+     * we back prop.  If we are using proptables, then this gets done during the initialization pass
+     * and we don't use the seperate array.
      */
 
-    if ((num_propentries == 0) && (futurevector != 0)) {
+    if ((! USE_PROPTABLES) && (futurevector != 0)) {
 
 	if ((futurevector & current_tb->futurevectors[index]) != futurevector) {
 	    /* This could happen simply if the futuremove has already been considered */
@@ -7005,7 +7006,7 @@ int propagation_pass(int target_dtm)
     if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
     pass_target_dtms[total_passes] = target_dtm;
 
-    if (num_propentries != 0) {
+    if (USE_PROPTABLES) {
 	proptable_finalize(target_dtm);
     } else {
 
@@ -7194,7 +7195,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 
     backproped_moves[total_passes] ++;
 
-    if (num_propentries == 0) {
+    if (! USE_PROPTABLES) {
 
 	commit_entry(index, dtm, PTM_wins_flag, movecnt, futurevector);
 
@@ -9159,7 +9160,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     info("%d possible WHITE futuremoves\n", num_futuremoves[WHITE]);
     info("%d possible BLACK futuremoves\n", num_futuremoves[BLACK]);
 
-    if (num_propentries == 0) {
+    if (! USE_PROPTABLES) {
 	if (num_futuremoves[WHITE] > sizeof(futurevector_t)*8) {
 	    fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
 		  num_futuremoves[WHITE], sizeof(futurevector_t)*8);
@@ -10864,7 +10865,11 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     num_propentries = proptable_MBs * 1024 * 1024 / proptable_format.bytes;
 
-    if (num_propentries != 0) {
+    if (USE_PROPTABLES) {
+	if (num_propentries == 0) {
+	    fatal("Using proptables, but proptable size not specified\n");
+	    return 0;
+	}
 	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
 	if (tb->entries_fd == -1) {
 	    fatal("Can't open 'entries' for read-write: %s\n", strerror(errno));
@@ -10880,7 +10885,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
     }
 
-    if (num_propentries != 0) {
+    if (USE_PROPTABLES) {
 #if USE_DUAL_PROPTABLES
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
 	if (posix_memalign((void **) &proptable1, 1024, num_propentries * proptable_format.bytes) != 0) {
@@ -10932,7 +10937,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (! check_1000_indices(tb)) return 0;
     /* check_1000_positions(tb); */  /* This becomes a problem with symmetry, among other things */
 
-    if (num_propentries == 0) {
+    if (! USE_PROPTABLES) {
 
 	/* No proptables.  Allocate a futurevectors array, initialize the tablebase, back propagate
 	 * the futurebases (noting which futuremoves have been handled in the futurevectors array),
