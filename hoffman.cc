@@ -4698,7 +4698,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.357 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.358 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5760,93 +5760,104 @@ void twister(tablebase_t *tb, index_t index)
     }
 }
 
+/* Fetch an entry pointer from a preloaded tablebase - we're reading from a compressed file
+ * (possibly over the network)
+ */
+
 inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 {
-    if (tb->entries != NULL) {
+    static char entry[MAX_FORMAT_BYTES];
+    static tablebase_t *cached_tb = NULL;
+    static index_t cached_index = 0;
+    int retval;
 
-	/* entries array exists in memory - so just return a pointer into it */
-	return (void *)(tb->entries) + LEFTSHIFT(index, ENTRIES_FORMAT_BITS - 3);
+    if (tb->file == NULL) {
+	fatal("fetch_entry_pointer() called on a non-preloaded tablebase\n");
+	terminate();
+    }
 
-    } else if (tb->file != NULL) {
+    if (tb->format.bits == 3) {
 
-	/* it's a preloaded tablebase - we're reading from a compressed file (possibly over the network) */
+	/* Special case for the very common one-byte-DTM format */
 
-	static char entry[MAX_FORMAT_BYTES];
-	static tablebase_t *cached_tb = NULL;
-	static index_t cached_index = 0;
-	int retval;
+	if ((cached_tb == tb) && (index == cached_index)) return entry;
 
-	if (tb->format.bits == 3) {
+	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
 
-	    /* Special case for the very common one-byte-DTM format */
-
-	    if ((cached_tb == tb) && (index == cached_index)) return entry;
-
-	    /* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
-
-	    if (index < tb->next_read_index) {
-		if (fseek(tb->file, tb->offset + index, SEEK_SET) != 0) {
-		    fatal("Seek failed in fetch_entry_pointer()\n");
-		}
+	if (index < tb->next_read_index) {
+	    if (fseek(tb->file, tb->offset + index, SEEK_SET) != 0) {
+		fatal("Seek failed in fetch_entry_pointer()\n");
 	    }
-
-	    do {
-
-		if ((retval = fgetc(tb->file)) == EOF) {
-		    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
-		}
-		tb->next_read_index ++;
-
-	    } while (tb->next_read_index <= index);
-
-	    entry[0] = retval;
-
-	} else {
-
-	    if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
-				      == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
-
-	    /* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
-
-	    if (LEFTSHIFT(index, tb->format.bits - 3)
-		< LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
-		if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
-		    fatal("Seek failed in fetch_entry_pointer()\n");
-		}
-	    }
-
-	    do {
-
-		retval = fread(entry, tb->format.bytes, 1, tb->file);
-		if (retval != 1) {
-		    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
-		}
-
-		switch (tb->format.bits) {
-		case 0:
-		    tb->next_read_index = (tb->next_read_index + 8) & ~7;
-		    break;
-		case 1:
-		    tb->next_read_index = (tb->next_read_index + 4) & ~3;
-		    break;
-		case 2:
-		    tb->next_read_index = (tb->next_read_index + 2) & ~1;
-		    break;
-		default:
-		    tb->next_read_index = tb->next_read_index + 1;
-		    break;
-		}
-	    } while (LEFTSHIFT(index, tb->format.bits - 3)
-		     >= LEFTSHIFT(tb->next_read_index, tb->format.bits - 3));
 	}
 
-	cached_tb = tb;
-	cached_index = index;
-	return entry;
+	do {
+
+	    if ((retval = fgetc(tb->file)) == EOF) {
+		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
+	    }
+	    tb->next_read_index ++;
+
+	} while (tb->next_read_index <= index);
+
+	entry[0] = retval;
 
     } else {
 
-	twister(tb, index);
+	if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
+				  == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
+
+	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
+
+	if (LEFTSHIFT(index, tb->format.bits - 3)
+	    < LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
+	    if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
+		fatal("Seek failed in fetch_entry_pointer()\n");
+	    }
+	}
+
+	do {
+
+	    retval = fread(entry, tb->format.bytes, 1, tb->file);
+	    if (retval != 1) {
+		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
+	    }
+
+	    switch (tb->format.bits) {
+	    case 0:
+		tb->next_read_index = (tb->next_read_index + 8) & ~7;
+		break;
+	    case 1:
+		tb->next_read_index = (tb->next_read_index + 4) & ~3;
+		break;
+	    case 2:
+		tb->next_read_index = (tb->next_read_index + 2) & ~1;
+		break;
+	    default:
+		tb->next_read_index = tb->next_read_index + 1;
+		break;
+	    }
+	} while (LEFTSHIFT(index, tb->format.bits - 3)
+		 >= LEFTSHIFT(tb->next_read_index, tb->format.bits - 3));
+    }
+
+    cached_tb = tb;
+    cached_index = index;
+    return entry;
+}
+
+inline entry_t * fetch_current_entry_pointer(index_t index)
+{
+    if (current_tb->entries != NULL) {
+
+	/* entries array exists in memory - so just return a pointer into it */
+
+	return (void *)(current_tb->entries) + LEFTSHIFT(index, ENTRIES_FORMAT_BITS - 3);
+
+    } else {
+
+	/* we're using proptables, so make sure we've got the right buffer and then return the pointer */
+
+	twister(current_tb, index);
 
 	return (void *) (entry_buffers[yellow_entry_buffer].buffer)
 	    + LEFTSHIFT(index - entry_buffers[yellow_entry_buffer].start, ENTRIES_FORMAT_BITS - 3);
@@ -5884,32 +5895,32 @@ inline int get_raw_DTM(tablebase_t *tb, index_t index)
 			    tb->format.dtm_offset + ((index << tb->format.bits) % 8));
 }
 
-inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
+inline int get_entry_raw_DTM(index_t index)
 {
-    return get_signed_field(fetch_entry_pointer(tb, index),
+    return get_signed_field(fetch_current_entry_pointer(index),
 			    ENTRIES_FORMAT_DTM_MASK,
 			    ENTRIES_FORMAT_DTM_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
 }
 
-inline void set_entry_raw_DTM(tablebase_t *tb, index_t index, int dtm)
+inline void set_entry_raw_DTM(index_t index, int dtm)
 {
     if (ENTRIES_FORMAT_DTM_BITS == 0) return;
-    set_signed_field(fetch_entry_pointer(tb, index),
+    set_signed_field(fetch_current_entry_pointer(index),
 		     ENTRIES_FORMAT_DTM_MASK,
 		     ENTRIES_FORMAT_DTM_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8),
 		     dtm);
 }
 
-inline int get_entry_movecnt(tablebase_t *tb, index_t index)
+inline int get_entry_movecnt(index_t index)
 {
-    return get_unsigned_field(fetch_entry_pointer(tb, index),
+    return get_unsigned_field(fetch_current_entry_pointer(index),
 			      ENTRIES_FORMAT_MOVECNT_MASK,
 			      ENTRIES_FORMAT_MOVECNT_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
 }
 
-inline void set_entry_movecnt(tablebase_t *tb, index_t index, int movecnt)
+inline void set_entry_movecnt(index_t index, int movecnt)
 {
-    set_unsigned_field(fetch_entry_pointer(tb, index),
+    set_unsigned_field(fetch_current_entry_pointer(index),
 		       ENTRIES_FORMAT_MOVECNT_MASK,
 		       ENTRIES_FORMAT_MOVECNT_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8),
 		       movecnt);
@@ -5917,28 +5928,28 @@ inline void set_entry_movecnt(tablebase_t *tb, index_t index, int movecnt)
 
 inline int get_flag(tablebase_t *tb, index_t index)
 {
-    return get_unsigned_field(fetch_entry_pointer(tb, index),
+    return get_unsigned_field(fetch_current_entry_pointer(index),
 			      1,
 			      tb->format.flag_offset + ((index << tb->format.bits) % 8));
 }
 
-inline int get_entry_flag(tablebase_t *tb, index_t index)
+inline int get_entry_flag(index_t index)
 {
-    return get_unsigned_field(fetch_entry_pointer(tb, index),
+    return get_unsigned_field(fetch_current_entry_pointer(index),
 			      1,
 			      ENTRIES_FORMAT_FLAG_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
 }
 
-inline short does_PTM_win(tablebase_t *tb, index_t index)
+inline short does_PTM_win(index_t index)
 {
-    return (get_entry_movecnt(tb, index) == MOVECNT_PTM_WINS_PROPED)
-	|| (get_entry_movecnt(tb, index) == MOVECNT_PTM_WINS_UNPROPED);
+    return (get_entry_movecnt(index) == MOVECNT_PTM_WINS_PROPED)
+	|| (get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED);
 }
 
-inline short does_PNTM_win(tablebase_t *tb, index_t index)
+inline short does_PNTM_win(index_t index)
 {
-    return (get_entry_movecnt(tb, index) == MOVECNT_PNTM_WINS_PROPED)
-	|| (get_entry_movecnt(tb, index) == MOVECNT_PNTM_WINS_UNPROPED);
+    return (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_PROPED)
+	|| (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
 }
 
 /* Get the result in a format suitable for a one-byte DTM tablebase
@@ -5954,14 +5965,14 @@ inline short does_PNTM_win(tablebase_t *tb, index_t index)
  * might let PTM slip off the hook, so in that case we indicate draw.
  */
 
-int get_entry_DTM(tablebase_t *tb, index_t index)
+int get_entry_DTM(index_t index)
 {
-    return (does_PTM_win(tb, index) || does_PNTM_win(tb, index)) ? get_entry_raw_DTM(tb, index) : 0;
+    return (does_PTM_win(index) || does_PNTM_win(index)) ? get_entry_raw_DTM(index) : 0;
 }
 
 inline boolean is_position_valid(tablebase_t *tb, index_t index)
 {
-    return (get_entry_DTM(tb,index) != 1);
+    return (get_raw_DTM(tb, index) != 1);
 }
 
 /* Five possible ways we can initialize a tablebase entry for a position:
@@ -5984,8 +5995,8 @@ void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm)
     if (dtm > 0) positive_passes_needed[dtm] = 1;
     if (dtm < 0) negative_passes_needed[-dtm] = 1;
 
-    set_entry_movecnt(tb, index, movecnt);
-    if (ENTRIES_FORMAT_DTM_BITS > 0) set_entry_raw_DTM(tb, index, dtm);
+    set_entry_movecnt(index, movecnt);
+    if (ENTRIES_FORMAT_DTM_BITS > 0) set_entry_raw_DTM(index, dtm);
 }
 
 void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
@@ -6070,16 +6081,16 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
 
     if (dtm < 0) {
 	fatal("Negative distance to mate in PTM_wins!?\n");
-    } else if ((get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_PROPED)
-	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)) {
-	set_entry_movecnt(tb, index, MOVECNT_PTM_WINS_UNPROPED);
-	set_entry_raw_DTM(tb, index, dtm);
+    } else if ((get_entry_movecnt(index) != MOVECNT_PTM_WINS_PROPED)
+	       && (get_entry_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)) {
+	set_entry_movecnt(index, MOVECNT_PTM_WINS_UNPROPED);
+	set_entry_raw_DTM(index, dtm);
 	positive_passes_needed[dtm] = 1;
-    } else if (dtm < get_entry_raw_DTM(tb, index)) {
+    } else if (dtm < get_entry_raw_DTM(index)) {
 	/* This can happen if we get a PTM mate during futurebase back prop, then, later during
 	 * futurebase back prop or during intra-table back prop, improve upon the mate.
 	 */
-	set_entry_raw_DTM(tb, index, dtm);
+	set_entry_raw_DTM(index, dtm);
 	positive_passes_needed[dtm] = 1;
     }
 }
@@ -6088,33 +6099,33 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("add_one_to_PNTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, get_entry_raw_DTM(tb, index));
+	printf("add_one_to_PNTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, get_entry_raw_DTM(index));
 #endif
 
     if (dtm > 0) {
 	fatal("Positive distance to mate in PNTM_wins!?\n");
-    } else if ((get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_PROPED)
-	       && (get_entry_movecnt(tb, index) != MOVECNT_PTM_WINS_UNPROPED)
-	       && (get_entry_movecnt(tb, index) != MOVECNT_PNTM_WINS_PROPED)
-	       && (get_entry_movecnt(tb, index) != MOVECNT_PNTM_WINS_UNPROPED)
-	       && (get_entry_movecnt(tb, index) != MOVECNT_STALEMATE)) {
+    } else if ((get_entry_movecnt(index) != MOVECNT_PTM_WINS_PROPED)
+	       && (get_entry_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)
+	       && (get_entry_movecnt(index) != MOVECNT_PNTM_WINS_PROPED)
+	       && (get_entry_movecnt(index) != MOVECNT_PNTM_WINS_UNPROPED)
+	       && (get_entry_movecnt(index) != MOVECNT_STALEMATE)) {
 
 	/* We should never get here with MOVECNT_PNTM_WINS_UNPROPED (or PROPED) because we have to
 	 * have decremented the movecnt already to zero to have gotten either of those flags.
 	 */
 
-	set_entry_movecnt(tb, index, get_entry_movecnt(tb, index) - 1);
+	set_entry_movecnt(index, get_entry_movecnt(index) - 1);
 
-	if ((dtm < get_entry_raw_DTM(tb, index)) && (get_entry_raw_DTM(tb, index) <= 0)) {
+	if ((dtm < get_entry_raw_DTM(index)) && (get_entry_raw_DTM(index) <= 0)) {
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
-	    set_entry_raw_DTM(tb, index, dtm);
+	    set_entry_raw_DTM(index, dtm);
 	}
 
-	if (get_entry_movecnt(tb, index) == MOVECNT_PNTM_WINS_UNPROPED) {  /* i.e, zero */
+	if (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED) {  /* i.e, zero */
 	    /* The DTM passed in was the one that pushed movecnt to zero, but it might be the best
 	     * line, so that's why we fetch entry DTM here.
 	     */
-	    negative_passes_needed[-get_entry_raw_DTM(tb, index)] = 1;
+	    negative_passes_needed[-get_entry_raw_DTM(index)] = 1;
 	}
     }
 }
@@ -6304,7 +6315,7 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
      * propagation for illegal positions.
      */
 
-    if (get_entry_raw_DTM(current_tb, index) == 1) return;
+    if (get_entry_raw_DTM(index) == 1) return;
 #endif
 
     /* Somewhat of a special case here.  First of all, futurevector is non-zero only on the first
@@ -6682,9 +6693,9 @@ void back_propagate_index(index_t index, int target_dtm)
      * assumed like the horizontal or vertical cases.
      */
 
-    if (((get_entry_movecnt(current_tb, index) == MOVECNT_PTM_WINS_UNPROPED)
-	 || (get_entry_movecnt(current_tb, index) == MOVECNT_PNTM_WINS_UNPROPED))
-	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (get_entry_DTM(current_tb, index) == target_dtm))) {
+    if (((get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)
+	 || (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED))
+	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (get_entry_DTM(index) == target_dtm))) {
 
 	back_propagate_index_within_table(current_tb, index, REFLECTION_NONE);
 	if (current_tb->symmetry == 8) {
@@ -6696,11 +6707,11 @@ void back_propagate_index(index_t index, int target_dtm)
 	 * positions, so we don't increment anything if DTM is 1.
 	 */
 
-	if (get_entry_movecnt(current_tb, index) == MOVECNT_PTM_WINS_UNPROPED) {
-	    set_entry_movecnt(current_tb, index, MOVECNT_PTM_WINS_PROPED);
+	if (get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED) {
+	    set_entry_movecnt(index, MOVECNT_PTM_WINS_PROPED);
 	    if (target_dtm > 1) player_wins[index_to_side_to_move(current_tb, index)] ++;
 	} else {
-	    set_entry_movecnt(current_tb, index, MOVECNT_PNTM_WINS_PROPED);
+	    set_entry_movecnt(index, MOVECNT_PNTM_WINS_PROPED);
 	    player_wins[1 - index_to_side_to_move(current_tb, index)] ++;
 	}
 
@@ -6929,7 +6940,7 @@ void proptable_finalize(int target_dtm)
 
 	/* Don't track futuremoves for illegal (DTM 1) positions */
 
-	if ((target_dtm == 0) && (get_entry_DTM(current_tb, index) != 1)) {
+	if ((target_dtm == 0) && (get_entry_DTM(index) != 1)) {
 
 	    if ((futurevector & possible_futuremoves) != futurevector) {
 		/* Commented out because if we're not using DTM this code will run for illegal positions */
@@ -8898,7 +8909,7 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
     index_t index;
 
     for (index = 0; index <= tb->max_index; index ++) {
-	if (get_entry_DTM(tb, index) != 1) {
+	if (get_entry_DTM(index) != 1) {
 	    finalize_futuremove(tb, index, tb->futurevectors[index]);
 	}
     }
@@ -9769,7 +9780,7 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, local_position_t *current_position)
 {
     index_t current_index;
-    int dtm = get_entry_DTM(tb, future_index);
+    int dtm = get_entry_DTM(future_index);
 
     current_index = local_position_to_index(tb, current_position);
 
@@ -9799,9 +9810,9 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 	insert_or_commit_propentry(current_index, -dtm, 1, 0);
     } else if (dtm < 0) {
 	insert_or_commit_propentry(current_index, -dtm+1, 1, 0);
-    } else if (get_entry_movecnt(tb, future_index) == MOVECNT_PTM_WINS_UNPROPED) {
+    } else if (get_entry_movecnt(future_index) == MOVECNT_PTM_WINS_UNPROPED) {
 	insert_or_commit_propentry(current_index, -2, 1, 0);
-    } else if (get_entry_movecnt(tb, future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
+    } else if (get_entry_movecnt(future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
 	insert_or_commit_propentry(current_index, 2, 1, 0);
     } else {
 	fatal("Intra-table back prop doesn't match dtm or movecnt\n");
@@ -10760,8 +10771,8 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
     for (index = 0; index <= tb->max_index; index ++) {
 
-	dtm = get_entry_DTM(tb, index);
-	raw_dtm = get_entry_raw_DTM(tb, index);
+	dtm = get_entry_DTM(index);
+	raw_dtm = get_entry_raw_DTM(index);
 
 	if (tb->format.dtm_bits > 0) {
 	    /* If we're saving movecnt, then use the raw DTM, else "cook" it. */
@@ -10771,7 +10782,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	}
 
 	if (tb->format.movecnt_bits > 0) {
-	    int movecnt = get_entry_movecnt(tb, index);
+	    int movecnt = get_entry_movecnt(index);
 	    set_unsigned_field(entry, tb->format.movecnt_mask,
 			       tb->format.movecnt_offset + ((index << tb->format.bits) % 8),
 			       movecnt);
@@ -10782,13 +10793,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	    set_unsigned_field(entry, 1,
 			       tb->format.flag_offset + ((index << tb->format.bits) % 8),
 			       (index_to_side_to_move(tb, index) == WHITE)
-			       ? does_PTM_win(tb, index) : does_PNTM_win(tb,index));
+			       ? does_PTM_win(index) : does_PNTM_win(index));
 	    break;
 	case FORMAT_FLAG_WHITE_DRAWS:
 	    set_unsigned_field(entry, 1,
 			       tb->format.flag_offset + ((index << tb->format.bits) % 8),
 			       (index_to_side_to_move(tb, index) == WHITE)
-			       ? !does_PNTM_win(tb, index) : !does_PTM_win(tb,index));
+			       ? !does_PNTM_win(index) : !does_PTM_win(index));
 	    break;
 	}
 
@@ -11194,7 +11205,7 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
 void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm)
 {
     /* int dtm = fetch_DTM_from_disk(tb, index); */
-    /* int dtm = get_entry_DTM(tb, index); */
+    /* int dtm = get_entry_DTM(index); */
     int dtm = get_raw_DTM(tb, index);
 
     if (dtm == 0) {
