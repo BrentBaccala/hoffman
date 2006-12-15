@@ -425,7 +425,35 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
  * </entries-format>
  */
 
-const struct format entries_format = {4,2, 0xff,0,8, 0xff,8,8};
+#define USE_CONST_ENTRIES_FORMAT 1
+
+#if !USE_CONST_ENTRIES_FORMAT
+
+struct format entries_format = {4,2, 0xff,0,8, 0xff,8,8};
+
+#define ENTRIES_FORMAT_BITS (entries_format.bits)
+#define ENTRIES_FORMAT_BYTES (entries_format.bytes)
+#define ENTRIES_FORMAT_DTM_MASK (entries_format.dtm_mask)
+#define ENTRIES_FORMAT_DTM_OFFSET (entries_format.dtm_offset)
+#define ENTRIES_FORMAT_DTM_BITS (entries_format.dtm_bits)
+#define ENTRIES_FORMAT_MOVECNT_MASK (entries_format.movecnt_mask)
+#define ENTRIES_FORMAT_MOVECNT_OFFSET (entries_format.movecnt_offset)
+#define ENTRIES_FORMAT_MOVECNT_BITS (entries_format.movecnt_bits)
+#define ENTRIES_FORMAT_FLAG_OFFSET (entries_format.flag_offset)
+
+#else
+
+#define ENTRIES_FORMAT_BITS 4
+#define ENTRIES_FORMAT_BYTES 2
+#define ENTRIES_FORMAT_DTM_MASK 0xff
+#define ENTRIES_FORMAT_DTM_OFFSET 0
+#define ENTRIES_FORMAT_DTM_BITS 8
+#define ENTRIES_FORMAT_MOVECNT_MASK 0xff
+#define ENTRIES_FORMAT_MOVECNT_OFFSET 8
+#define ENTRIES_FORMAT_MOVECNT_BITS 8
+#define ENTRIES_FORMAT_FLAG_OFFSET 0
+
+#endif
 
 /* This is the "one-byte-dtm" format */
 
@@ -4049,11 +4077,16 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression(BAD_CAST "//entries-format", context);
     if (result->nodesetval->nodeNr == 1) {
+#if (!USE_CONST_ENTRIES_FORMAT)
 	if (! parse_format(result->nodesetval->nodeTab[0], &entries_format)) return NULL;
-	if (entries_format.movecnt_bits == 0) {
+	if (ENTRIES_FORMAT_MOVECNT_BITS == 0) {
 	    fatal("Entries format must contain a movecnt field\n");
 	    return NULL;
 	}
+#else
+	fatal("Entries format constant in this version of Hoffman\n");
+	return NULL;
+#endif
     }
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
@@ -4665,7 +4698,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.355 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.356 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -4735,7 +4768,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 	xmlNewProp(passNode, BAD_CAST "real-time", BAD_CAST strbuf);
 
 	if (! strcmp(pass_type[passnum], "intratable")) {
-	    if (entries_format.dtm_bits > 0) {
+	    if (ENTRIES_FORMAT_DTM_BITS > 0) {
 		sprintf(strbuf, "%d", pass_target_dtms[passnum]);
 		xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
 	    }
@@ -5496,7 +5529,7 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 
 #define NUM_ENTRY_BUFFERS 4
 #define ENTRY_BUFFER_ENTRIES (1<<12)
-#define ENTRY_BUFFER_BYTES LEFTSHIFT(ENTRY_BUFFER_ENTRIES, entries_format.bits - 3)
+#define ENTRY_BUFFER_BYTES LEFTSHIFT(ENTRY_BUFFER_ENTRIES, ENTRIES_FORMAT_BITS - 3)
 
 struct entry_buffer {
     entry_t *buffer;
@@ -5522,7 +5555,7 @@ void turn_entry_buffer_blue(int fd, int buffernum)
     entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
     entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
     entry_buffers[buffernum].aiocb.aio_offset
-	= LEFTSHIFT(entry_buffers[buffernum].start, entries_format.bits - 3);
+	= LEFTSHIFT(entry_buffers[buffernum].start, ENTRIES_FORMAT_BITS - 3);
 
     if (aio_read(& entry_buffers[buffernum].aiocb) != 0) {
 	fprintf(stderr, "Can't enqueue aio_read for entry buffer\n");
@@ -5556,7 +5589,7 @@ void wait_for_entry_buffer_green(int buffernum)
 	memset(entry_buffers[buffernum].buffer, 0, ENTRY_BUFFER_BYTES);
     } else if ((retval != ENTRY_BUFFER_BYTES)
 	       && (retval != LEFTSHIFT(proptable_tb->max_index % ENTRY_BUFFER_ENTRIES,
-				       entries_format.bits - 3)))  {
+				       ENTRIES_FORMAT_BITS - 3)))  {
 	fprintf(stderr, "entry buffer aio_read didn't return ENTRY_BUFFER_BYTES\n");
 	kill(getpid(), SIGSTOP);
     }
@@ -5574,7 +5607,7 @@ void turn_entry_buffer_red(int fd, int buffernum)
     entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
     entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
     entry_buffers[buffernum].aiocb.aio_offset
-	= LEFTSHIFT(entry_buffers[buffernum].start, entries_format.bits - 3);
+	= LEFTSHIFT(entry_buffers[buffernum].start, ENTRIES_FORMAT_BITS - 3);
 
     if (aio_write(& entry_buffers[buffernum].aiocb) != 0) {
 	fprintf(stderr, "Can't enqueue aio_write for entry buffer\n");
@@ -5732,7 +5765,7 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     if (tb->entries != NULL) {
 
 	/* entries array exists in memory - so just return a pointer into it */
-	return (void *)(tb->entries) + LEFTSHIFT(index, entries_format.bits - 3);
+	return (void *)(tb->entries) + LEFTSHIFT(index, ENTRIES_FORMAT_BITS - 3);
 
     } else if (tb->file != NULL) {
 
@@ -5816,7 +5849,7 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	twister(tb, index);
 
 	return (void *) (entry_buffers[yellow_entry_buffer].buffer)
-	    + LEFTSHIFT(index - entry_buffers[yellow_entry_buffer].start, entries_format.bits - 3);
+	    + LEFTSHIFT(index - entry_buffers[yellow_entry_buffer].start, ENTRIES_FORMAT_BITS - 3);
     }
 }
 
@@ -5837,11 +5870,11 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
  *
  */
 
-#define MOVECNT_PTM_WINS_PROPED (entries_format.movecnt_mask)
-#define MOVECNT_PNTM_WINS_PROPED (entries_format.movecnt_mask - 1)
-#define MOVECNT_PTM_WINS_UNPROPED (entries_format.movecnt_mask - 2)
-#define MOVECNT_STALEMATE (entries_format.movecnt_mask - 3)
-#define MOVECNT_MAX (entries_format.movecnt_mask - 4)
+#define MOVECNT_PTM_WINS_PROPED (ENTRIES_FORMAT_MOVECNT_MASK)
+#define MOVECNT_PNTM_WINS_PROPED (ENTRIES_FORMAT_MOVECNT_MASK - 1)
+#define MOVECNT_PTM_WINS_UNPROPED (ENTRIES_FORMAT_MOVECNT_MASK - 2)
+#define MOVECNT_STALEMATE (ENTRIES_FORMAT_MOVECNT_MASK - 3)
+#define MOVECNT_MAX (ENTRIES_FORMAT_MOVECNT_MASK - 4)
 #define MOVECNT_PNTM_WINS_UNPROPED (0)
 
 inline int get_raw_DTM(tablebase_t *tb, index_t index)
@@ -5854,31 +5887,31 @@ inline int get_raw_DTM(tablebase_t *tb, index_t index)
 inline int get_entry_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_signed_field(fetch_entry_pointer(tb, index),
-			    entries_format.dtm_mask,
-			    entries_format.dtm_offset + ((index << entries_format.bits) % 8));
+			    ENTRIES_FORMAT_DTM_MASK,
+			    ENTRIES_FORMAT_DTM_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
 }
 
 inline void set_entry_raw_DTM(tablebase_t *tb, index_t index, int dtm)
 {
-    if (entries_format.dtm_bits == 0) return;
+    if (ENTRIES_FORMAT_DTM_BITS == 0) return;
     set_signed_field(fetch_entry_pointer(tb, index),
-		     entries_format.dtm_mask,
-		     entries_format.dtm_offset + ((index << entries_format.bits) % 8),
+		     ENTRIES_FORMAT_DTM_MASK,
+		     ENTRIES_FORMAT_DTM_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8),
 		     dtm);
 }
 
 inline int get_entry_movecnt(tablebase_t *tb, index_t index)
 {
     return get_unsigned_field(fetch_entry_pointer(tb, index),
-			      entries_format.movecnt_mask,
-			      entries_format.movecnt_offset + ((index << entries_format.bits) % 8));
+			      ENTRIES_FORMAT_MOVECNT_MASK,
+			      ENTRIES_FORMAT_MOVECNT_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
 }
 
 inline void set_entry_movecnt(tablebase_t *tb, index_t index, int movecnt)
 {
     set_unsigned_field(fetch_entry_pointer(tb, index),
-		       entries_format.movecnt_mask,
-		       entries_format.movecnt_offset + ((index << entries_format.bits) % 8),
+		       ENTRIES_FORMAT_MOVECNT_MASK,
+		       ENTRIES_FORMAT_MOVECNT_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8),
 		       movecnt);
 }
 
@@ -5893,7 +5926,7 @@ inline int get_entry_flag(tablebase_t *tb, index_t index)
 {
     return get_unsigned_field(fetch_entry_pointer(tb, index),
 			      1,
-			      entries_format.flag_offset + ((index << entries_format.bits) % 8));
+			      ENTRIES_FORMAT_FLAG_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
 }
 
 inline short does_PTM_win(tablebase_t *tb, index_t index)
@@ -5952,7 +5985,7 @@ void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm)
     if (dtm < 0) negative_passes_needed[-dtm] = 1;
 
     set_entry_movecnt(tb, index, movecnt);
-    if (entries_format.dtm_bits > 0) set_entry_raw_DTM(tb, index, dtm);
+    if (ENTRIES_FORMAT_DTM_BITS > 0) set_entry_raw_DTM(tb, index, dtm);
 }
 
 void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
@@ -6651,7 +6684,7 @@ void back_propagate_index(index_t index, int target_dtm)
 
     if (((get_entry_movecnt(proptable_tb, index) == MOVECNT_PTM_WINS_UNPROPED)
 	 || (get_entry_movecnt(proptable_tb, index) == MOVECNT_PNTM_WINS_UNPROPED))
-	&& ((entries_format.dtm_bits == 0) || (get_entry_DTM(proptable_tb, index) == target_dtm))) {
+	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (get_entry_DTM(proptable_tb, index) == target_dtm))) {
 
 	back_propagate_index_within_table(proptable_tb, index, REFLECTION_NONE);
 	if (proptable_tb->symmetry == 8) {
@@ -6951,8 +6984,8 @@ int propagation_pass(int target_dtm)
 {
     index_t index;
 
-    if (((target_dtm > 0) && (target_dtm > (entries_format.dtm_mask >> 1)))
-	|| ((target_dtm < 0) && (target_dtm < -(entries_format.dtm_mask >> 1)))) {
+    if (((target_dtm > 0) && (target_dtm > (ENTRIES_FORMAT_DTM_MASK >> 1)))
+	|| ((target_dtm < 0) && (target_dtm < -(ENTRIES_FORMAT_DTM_MASK >> 1)))) {
 	fatal("DTM entry field size exceeded\n");
 	terminate();
     }
@@ -10828,12 +10861,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	}
 	init_entry_buffers(tb);
     } else {
-	tb->entries = (entry_t *) malloc(LEFTSHIFT(tb->max_index + 1, entries_format.bits - 3));
+	tb->entries = (entry_t *) malloc(LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
 	if (tb->entries == NULL) {
 	    fatal("Can't malloc tablebase entries: %s\n", strerror(errno));
 	    return 0;
 	}
-	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, entries_format.bits - 3));
+	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
     }
 
     if (num_propentries != 0) {
