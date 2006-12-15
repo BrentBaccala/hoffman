@@ -617,7 +617,7 @@ proptable_entry_t *proptable1 = NULL;
 proptable_entry_t *proptable2 = NULL;
 int zeros_fd = -1;
 
-tablebase_t *proptable_tb = NULL;
+tablebase_t *current_tb = NULL;
 
 /* 0 indicates that we're not using proptables */
 int proptable_MBs = 0;
@@ -664,30 +664,30 @@ void terminate (void)
     FILE * file;
 
     if (fatal_errors > 0) {
-	if ((proptable_tb != NULL) && (proptable_tb->xml != NULL)) {
-	    context = xmlXPathNewContext(proptable_tb->xml);
+	if ((current_tb != NULL) && (current_tb->xml != NULL)) {
+	    context = xmlXPathNewContext(current_tb->xml);
 	    result = xmlXPathEvalExpression(BAD_CAST "//error-report", context);
 
 	    if (result->nodesetval->nodeNr > 0) {
 		url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
 		if (url != NULL) {
 		    file = url_fopen(url, "w");
-		    xmlDocDump(file, proptable_tb->xml);
+		    xmlDocDump(file, current_tb->xml);
 		    fclose(file);
 		}
 	    }
 	}
 	exit(EXIT_FAILURE);
     } else {
-	if ((proptable_tb != NULL) && (proptable_tb->xml != NULL)) {
-	    context = xmlXPathNewContext(proptable_tb->xml);
+	if ((current_tb != NULL) && (current_tb->xml != NULL)) {
+	    context = xmlXPathNewContext(current_tb->xml);
 	    result = xmlXPathEvalExpression(BAD_CAST "//completion-report", context);
 
 	    if (result->nodesetval->nodeNr > 0) {
 		url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
 		if (url != NULL) {
 		    file = url_fopen(url, "w");
-		    xmlDocDump(file, proptable_tb->xml);
+		    xmlDocDump(file, current_tb->xml);
 		    fclose(file);
 		}
 	    }
@@ -708,8 +708,8 @@ void fatal (char * format, ...)
 
     vfprintf(stderr, format, va);
 
-    if ((proptable_tb != NULL) && (proptable_tb->xml != NULL)) {
-	xmlNodePtr tablebase = xmlDocGetRootElement(proptable_tb->xml);
+    if ((current_tb != NULL) && (current_tb->xml != NULL)) {
+	xmlNodePtr tablebase = xmlDocGetRootElement(current_tb->xml);
 	vsnprintf(strbuf, sizeof(strbuf), format, va);
 	if (index(strbuf, '\n') != NULL) *index(strbuf, '\n') = '\0';
 	xmlNodeAddContent(tablebase, BAD_CAST "   ");
@@ -4698,7 +4698,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.356 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.357 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5588,7 +5588,7 @@ void wait_for_entry_buffer_green(int buffernum)
 	/* zero byte read - this is OK the first time through */
 	memset(entry_buffers[buffernum].buffer, 0, ENTRY_BUFFER_BYTES);
     } else if ((retval != ENTRY_BUFFER_BYTES)
-	       && (retval != LEFTSHIFT(proptable_tb->max_index % ENTRY_BUFFER_ENTRIES,
+	       && (retval != LEFTSHIFT(current_tb->max_index % ENTRY_BUFFER_ENTRIES,
 				       ENTRIES_FORMAT_BITS - 3)))  {
 	fprintf(stderr, "entry buffer aio_read didn't return ENTRY_BUFFER_BYTES\n");
 	kill(getpid(), SIGSTOP);
@@ -6285,7 +6285,7 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 
     if (get_propentry_futurevector(dest) & get_propentry_futurevector(src)) {
 	global_position_t global;
-	index_to_global_position(proptable_tb, get_propentry_index(PROPTABLE_ELEM(propentry)), &global);
+	index_to_global_position(current_tb, get_propentry_index(PROPTABLE_ELEM(propentry)), &global);
 	/* This might happen just because of symmetry issues */
 #if 0
 	fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
@@ -6304,7 +6304,7 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
      * propagation for illegal positions.
      */
 
-    if (get_entry_raw_DTM(proptable_tb, index) == 1) return;
+    if (get_entry_raw_DTM(current_tb, index) == 1) return;
 #endif
 
     /* Somewhat of a special case here.  First of all, futurevector is non-zero only on the first
@@ -6317,34 +6317,34 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
 
     if ((num_propentries == 0) && (futurevector != 0)) {
 
-	if ((futurevector & proptable_tb->futurevectors[index]) != futurevector) {
+	if ((futurevector & current_tb->futurevectors[index]) != futurevector) {
 	    /* This could happen simply if the futuremove has already been considered */
 	    /* XXX In particular, I need to turn this off right now for symmetric tablebases */
 #if 0
 	    global_position_t global;
-	    index_to_global_position(proptable_tb, index, &global);
+	    index_to_global_position(current_tb, index, &global);
 	    fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
 #endif
 	    return;
 	}
 
-	proptable_tb->futurevectors[index] ^= futurevector;
+	current_tb->futurevectors[index] ^= futurevector;
     }
 
     if (proptable_format.dtm_bits > 0) {
 	if (dtm > 0) {
-	    PTM_wins(proptable_tb, index, dtm);
+	    PTM_wins(current_tb, index, dtm);
 	} else if (dtm < 0) {
 	    for (i=0; i<movecnt; i++) {
-		add_one_to_PNTM_wins(proptable_tb, index, dtm);
+		add_one_to_PNTM_wins(current_tb, index, dtm);
 	    }
 	}
     } else if (proptable_format.PTM_wins_flag_offset != -1) {
 	if (PTM_wins_flag) {
-	    PTM_wins(proptable_tb, index, dtm);
+	    PTM_wins(current_tb, index, dtm);
 	} else {
 	    for (i=0; i<movecnt; i++) {
-		add_one_to_PNTM_wins(proptable_tb, index, dtm);
+		add_one_to_PNTM_wins(current_tb, index, dtm);
 	    }
 	}
     } else {
@@ -6427,8 +6427,8 @@ void proptable_full(void)
 
     /* XXX redo this by recording this data into an array and generating the XML when we're done */
 #if 0
-    xmlNodeAddContent(proptable_tb->current_pass_stats, BAD_CAST "\n      ");
-    node = xmlNewChild(proptable_tb->current_pass_stats, NULL, BAD_CAST "proptable", NULL);
+    xmlNodeAddContent(current_tb->current_pass_stats, BAD_CAST "\n      ");
+    node = xmlNewChild(current_tb->current_pass_stats, NULL, BAD_CAST "proptable", NULL);
     sprintf(strbuf, "%d", proptable_entries);
     xmlNewProp(node, BAD_CAST "entries", BAD_CAST strbuf);
     sprintf(strbuf, "%d", proptable_merges);
@@ -6657,7 +6657,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
     /* No, we're really at the end! */
 
     /* XXX could be a problem if max_index + 1 won't fit in the index element */
-    set_propentry_index(dest, proptable_tb->max_index + 1);
+    set_propentry_index(dest, current_tb->max_index + 1);
 }
 
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
@@ -6682,13 +6682,13 @@ void back_propagate_index(index_t index, int target_dtm)
      * assumed like the horizontal or vertical cases.
      */
 
-    if (((get_entry_movecnt(proptable_tb, index) == MOVECNT_PTM_WINS_UNPROPED)
-	 || (get_entry_movecnt(proptable_tb, index) == MOVECNT_PNTM_WINS_UNPROPED))
-	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (get_entry_DTM(proptable_tb, index) == target_dtm))) {
+    if (((get_entry_movecnt(current_tb, index) == MOVECNT_PTM_WINS_UNPROPED)
+	 || (get_entry_movecnt(current_tb, index) == MOVECNT_PNTM_WINS_UNPROPED))
+	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (get_entry_DTM(current_tb, index) == target_dtm))) {
 
-	back_propagate_index_within_table(proptable_tb, index, REFLECTION_NONE);
-	if (proptable_tb->symmetry == 8) {
-	    back_propagate_index_within_table(proptable_tb, index, REFLECTION_DIAGONAL);
+	back_propagate_index_within_table(current_tb, index, REFLECTION_NONE);
+	if (current_tb->symmetry == 8) {
+	    back_propagate_index_within_table(current_tb, index, REFLECTION_DIAGONAL);
 	}
 	positions_finalized[total_passes] ++;
 
@@ -6696,12 +6696,12 @@ void back_propagate_index(index_t index, int target_dtm)
 	 * positions, so we don't increment anything if DTM is 1.
 	 */
 
-	if (get_entry_movecnt(proptable_tb, index) == MOVECNT_PTM_WINS_UNPROPED) {
-	    set_entry_movecnt(proptable_tb, index, MOVECNT_PTM_WINS_PROPED);
-	    if (target_dtm > 1) player_wins[index_to_side_to_move(proptable_tb, index)] ++;
+	if (get_entry_movecnt(current_tb, index) == MOVECNT_PTM_WINS_UNPROPED) {
+	    set_entry_movecnt(current_tb, index, MOVECNT_PTM_WINS_PROPED);
+	    if (target_dtm > 1) player_wins[index_to_side_to_move(current_tb, index)] ++;
 	} else {
-	    set_entry_movecnt(proptable_tb, index, MOVECNT_PNTM_WINS_PROPED);
-	    player_wins[1 - index_to_side_to_move(proptable_tb, index)] ++;
+	    set_entry_movecnt(current_tb, index, MOVECNT_PNTM_WINS_PROPED);
+	    player_wins[1 - index_to_side_to_move(current_tb, index)] ++;
 	}
 
     }
@@ -6857,7 +6857,7 @@ void proptable_finalize(int target_dtm)
 	    proptable_num[highbit + i] = i;
 	} else {
 	    /* XXX could be a problem if max_index + 1 won't fit in the index element */
-	    set_propentry_index(SORTING_NETWORK_ELEM(highbit + i), proptable_tb->max_index + 1);
+	    set_propentry_index(SORTING_NETWORK_ELEM(highbit + i), current_tb->max_index + 1);
 	    proptable_num[highbit + i] = -1;
 	}
     }
@@ -6877,7 +6877,7 @@ void proptable_finalize(int target_dtm)
 
     /* Now, process the data through the sorting network. */
 
-    for (index = 0; index <= proptable_tb->max_index; index ++) {
+    for (index = 0; index <= current_tb->max_index; index ++) {
 
 	futurevector_t futurevector = 0;
 	futurevector_t possible_futuremoves;
@@ -6887,7 +6887,7 @@ void proptable_finalize(int target_dtm)
 	}
 
 	if (target_dtm == 0) {
-	    possible_futuremoves = initialize_tablebase_entry(proptable_tb, index);
+	    possible_futuremoves = initialize_tablebase_entry(current_tb, index);
 	}
 
 	while (get_propentry_index(SORTING_NETWORK_ELEM(1)) == index ) {
@@ -6902,7 +6902,7 @@ void proptable_finalize(int target_dtm)
 
 	    if (get_propentry_futurevector(SORTING_NETWORK_ELEM(1)) & futurevector) {
 		global_position_t global;
-		index_to_global_position(proptable_tb, get_propentry_index(SORTING_NETWORK_ELEM(1)), &global);
+		index_to_global_position(current_tb, get_propentry_index(SORTING_NETWORK_ELEM(1)), &global);
 		fatal("Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
 	    }
 
@@ -6929,17 +6929,17 @@ void proptable_finalize(int target_dtm)
 
 	/* Don't track futuremoves for illegal (DTM 1) positions */
 
-	if ((target_dtm == 0) && (get_entry_DTM(proptable_tb, index) != 1)) {
+	if ((target_dtm == 0) && (get_entry_DTM(current_tb, index) != 1)) {
 
 	    if ((futurevector & possible_futuremoves) != futurevector) {
 		/* Commented out because if we're not using DTM this code will run for illegal positions */
 #if 0
 		global_position_t global;
-		index_to_global_position(proptable_tb, index, &global);
+		index_to_global_position(current_tb, index, &global);
 		fprintf(stderr, "Futuremove discrepancy: %d %s\n", index, global_position_to_FEN(&global)); /* BREAKPOINT */
 #endif
 	    } else {
-		finalize_futuremove(proptable_tb, index, possible_futuremoves ^ futurevector);
+		finalize_futuremove(current_tb, index, possible_futuremoves ^ futurevector);
 	    }
 	}
 
@@ -6998,7 +6998,7 @@ int propagation_pass(int target_dtm)
 	proptable_finalize(target_dtm);
     } else {
 
-	for (index = 0; index <= proptable_tb->max_index; index ++) {
+	for (index = 0; index <= current_tb->max_index; index ++) {
 	    back_propagate_index(index, target_dtm);
 	}
 
@@ -7030,7 +7030,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
     /* I had a bug here with the scaling_factor rounding down - that's why we increment by one */
 
     if (scaling_factor == 0) {
-	scaling_factor = proptable_tb->max_index / num_propentries;
+	scaling_factor = current_tb->max_index / num_propentries;
 	scaling_factor ++;
 	info("Scaling factor %d\n", scaling_factor);
     }
@@ -7177,8 +7177,8 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
     if (dtm != 0) {
 	PTM_wins_flag = (dtm > 0) ? 1 : 0;
     } else {
-	int win_side = ((proptable_tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) ? WHITE : BLACK);
-	PTM_wins_flag = (index_to_side_to_move(proptable_tb, index) == win_side) ? 0 : 1;
+	int win_side = ((current_tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) ? WHITE : BLACK);
+	PTM_wins_flag = (index_to_side_to_move(current_tb, index) == win_side) ? 0 : 1;
     }
 
     backproped_moves[total_passes] ++;
@@ -10837,7 +10837,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (tb == NULL) return 0;
 
     /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
-    proptable_tb = tb;
+    current_tb = tb;
 
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression(BAD_CAST "//output", context);
