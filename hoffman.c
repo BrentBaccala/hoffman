@@ -4711,7 +4711,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.363 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.364 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9029,19 +9029,79 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			    : ((possible_captures[capturing_piece] & 0x0000000000ff0000LL) << 8))
 			   & tb->legal_squares[captured_piece]))) {
 
-		    futurecaptures[capturing_piece][captured_piece]
-			= num_futuremoves[tb->piece_color[capturing_piece]];
+		    int futuremoves_needed;
+		    int candidate_futuremove = -1;
+		    int candidate_piece = -1;
 
-		    /* If it's a pawn capture that results in promotion, assign
-		     * PROMOTION_POSSIBILTIES bits in the futurevector
+		    /* Compute how many futuremoves we need; if it's a pawn capture that results in
+		     * promotion, then we'll need PROMOTION_POSSIBILTIES bits in the futurevector
 		     */
 
 		    if (possible_captures[capturing_piece] & tb->legal_squares[captured_piece]
 			& ((tb->piece_color[capturing_piece] == WHITE)
 			   ? 0xff00000000000000LL : 0x00000000000000ffLL)) {
-			num_futuremoves[tb->piece_color[capturing_piece]] += PROMOTION_POSSIBILITIES;
+			futuremoves_needed = PROMOTION_POSSIBILITIES;
 		    } else {
-			num_futuremoves[tb->piece_color[capturing_piece]] ++;
+			futuremoves_needed = 1;
+		    }
+
+		    /* Be conservative about handing out bit positions in the futurevector.  Look
+		     * through the other pieces that have been assigned bit positions and see if we
+		     * can find one that can never capture onto the squares that our piece can
+		     * capture onto and reuse its bit positions.
+		     *
+		     * This code could be a lot more aggressively conservative, but for now I settle
+		     * for handling the common simple case of pawns more than two files apart never
+		     * being able to capture the same piece.  I only look at futuremoves for the
+		     * current captured_piece, and only so far as the current capturing_piece.
+		     * That's why the nesting order of the two captured_piece and capturing_piece
+		     * loops is important above.  First we look for a candidate futuremove, then we
+		     * try to bust it by looking for overlaps.
+		     *
+		     * XXX This code ignores the possibility that one futuremove's pruning might be
+		     * different from another's, and therefore would have to be handled differently.
+		     * At the moment, we assign this bits first, and then check pruning when we're
+		     * all done, so we'd have to rework the code a bit to fit this in.  For the
+		     * moment, we fatal if pruning restrictions on two overlaping futuremoves
+		     * conflict with each other, but that's not perfect because if a move has no
+		     * pruning whatsoever, it can overlap with one that does, and the pruned move's
+		     * pruning will dominate the other one.
+		     */
+
+		    for (piece = 0; piece < capturing_piece; piece ++) {
+			if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
+			if (futurecaptures[piece][captured_piece] != -1) {
+			    if (! (possible_captures[capturing_piece] & possible_captures[piece])) {
+				candidate_futuremove = futurecaptures[piece][captured_piece];
+				candidate_piece = piece;
+			    }
+			}
+		    }
+
+		    for (piece = 0; piece < capturing_piece; piece ++) {
+			if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
+			if (piece == candidate_piece) continue;
+			if (futurecaptures[piece][captured_piece] != -1) {
+			    if ((candidate_futuremove != -1)
+				&& (futurecaptures[piece][captured_piece] >= candidate_futuremove)
+				&& (futurecaptures[piece][captured_piece] <
+				    candidate_futuremove + futuremoves_needed)) {
+				candidate_futuremove = -1;
+				break;
+			    }
+			}
+		    }
+
+		    if (candidate_futuremove == -1) {
+			candidate_futuremove = num_futuremoves[tb->piece_color[capturing_piece]];
+		    }
+
+		    futurecaptures[capturing_piece][captured_piece] = candidate_futuremove;
+
+		    if (candidate_futuremove + futuremoves_needed
+			> num_futuremoves[tb->piece_color[capturing_piece]]) {
+			num_futuremoves[tb->piece_color[capturing_piece]]
+			    = candidate_futuremove + futuremoves_needed;
 		    }
 		}
 	    }
@@ -9234,9 +9294,15 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
 
 	    if (type == RESTRICTION_CONCEDE) {
 		conceded_white_futuremoves |= FUTUREVECTOR(futuremove);
+		if (discarded_white_futuremoves & FUTUREVECTOR(futuremove)) {
+		    fatal("Conflicting pruning statements ('%s') match a futuremove\n", pruning_statement);
+		}
 	    }
 	    if (type == RESTRICTION_DISCARD) {
 		discarded_white_futuremoves |= FUTUREVECTOR(futuremove);
+		if (conceded_white_futuremoves & FUTUREVECTOR(futuremove)) {
+		    fatal("Conflicting pruning statements ('%s') match a futuremove\n", pruning_statement);
+		}
 	    }
 	} else {
 	    if (pruned_black_futuremoves & FUTUREVECTOR(futuremove)) {
@@ -9247,9 +9313,15 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
 
 	    if (type == RESTRICTION_CONCEDE) {
 		conceded_black_futuremoves |= FUTUREVECTOR(futuremove);
+		if (discarded_black_futuremoves & FUTUREVECTOR(futuremove)) {
+		    fatal("Conflicting pruning statements ('%s') match a futuremove\n", pruning_statement);
+		}
 	    }
 	    if (type == RESTRICTION_DISCARD) {
 		discarded_black_futuremoves |= FUTUREVECTOR(futuremove);
+		if (conceded_black_futuremoves & FUTUREVECTOR(futuremove)) {
+		    fatal("Conflicting pruning statements ('%s') match a futuremove\n", pruning_statement);
+		}
 	    }
 	}
     }
@@ -9432,7 +9504,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     unpruned_white_futuremoves = ~pruned_white_futuremoves;
     unpruned_black_futuremoves = ~pruned_black_futuremoves;
 
-    return 1;
+    return (fatal_errors == 0);
 }
 
 
