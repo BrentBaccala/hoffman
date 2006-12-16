@@ -4711,7 +4711,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.362 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.363 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8953,8 +8953,48 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     int sq;
     int dir;
     struct movement *movementptr;
+    uint64 possible_captures[MAX_PIECES];
 
-    /* First, consider all possible pairs of pieces that might capture, and assign a number (in the
+    /* Start by computing a board vector (possible_captures) showing all possible squares where each
+     * piece can capture onto.
+     */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	possible_captures[piece] = 0;
+
+	for (sq = 0; sq < 64; sq ++) {
+
+	    /* We make the checks here using legal_squares and not semilegal_squares because
+	     * we're assigning futuremove numbers to individual pieces that can capture.  The
+	     * movements we consider here, being captures, would take us to a futurebase anyway,
+	     * so there's no question of whether the resulting position is fully legal or not.
+	     */
+
+	    if (tb->legal_squares[piece] & BITVECTOR(sq)) {
+		if (tb->piece_type[piece] != PAWN) {
+		    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+			for (movementptr = movements[tb->piece_type[piece]][sq][dir];
+			     movementptr->square != -1; movementptr++) {
+
+			    possible_captures[piece] |= movementptr->vector;
+
+			    /* If we hit a frozen piece, then this movement direction ends here */
+			    if (movementptr->vector & tb->frozen_pieces_vector) break;
+			}
+		    }
+		} else {
+		    for (movementptr = capture_pawn_movements[sq][tb->piece_color[piece]];
+			 movementptr->square != -1; movementptr++) {
+
+			possible_captures[piece] |= movementptr->vector;
+		    }
+		}
+	    }
+	}
+    }
+
+    /* Now, consider all possible pairs of pieces that might capture, and assign a number (in the
      * futurecaptures array) to each pair.  We'll ultimately use this number as an index into a bit
      * vector to determine if this capture has been handled in any particular position.  However,
      * there's a common enough "special" case: the two pieces are frozen (or at least sufficiently
@@ -8971,90 +9011,40 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	    if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) continue;
 
-	    /* We run through the board either from end to start (if the capturing piece is white)
-	     * or from start to end (if it's black) in order to make sure that pawn captures that
-	     * result in promotions are considered before any other pawn captures, since promotion
-	     * captures are treated as multiple moves, not just one.
-	     */
+	    if (tb->piece_type[capturing_piece] != PAWN) {
 
-	    for (sq = (tb->piece_color[capturing_piece] == WHITE ? 63 : 0);
-		 tb->piece_color[capturing_piece] == WHITE ? (sq >= 0) : (sq <= 63);
-		 tb->piece_color[capturing_piece] == WHITE ? sq-- : sq++) {
+		if (possible_captures[capturing_piece] & tb->legal_squares[captured_piece]) {
+		    futurecaptures[capturing_piece][captured_piece]
+			= num_futuremoves[tb->piece_color[capturing_piece]] ++;
+		}
 
-		/* We make the checks here using legal_squares and not semilegal_squares because
-		 * we're assigning futuremove numbers to individual pieces that can capture.  The
-		 * movements we consider here, being captures, would take us to a futurebase anyway,
-		 * so there's no question of whether the resulting position is fully legal or not.
-		 */
+	    } else {
 
-		if (tb->legal_squares[capturing_piece] & BITVECTOR(sq)) {
-		    if (tb->piece_type[capturing_piece] != PAWN) {
-			for (dir = 0; dir < number_of_movement_directions[tb->piece_type[capturing_piece]]; dir++) {
-			    for (movementptr = movements[tb->piece_type[capturing_piece]][sq][dir];
-				 movementptr->square != -1; movementptr++) {
-				if (movementptr->vector & tb->legal_squares[captured_piece]) {
-				    futurecaptures[capturing_piece][captured_piece]
-					= num_futuremoves[tb->piece_color[capturing_piece]] ++;
-				    goto next_pair_of_pieces;
-				}
-				/* If we hit a frozen piece, then this movement direction ends here */
-				if (movementptr->vector & tb->frozen_pieces_vector) break;
-			    }
-			}
+		/* if it's a pawn-takes-pawn situation, check for en passant as well */
+
+		if ((possible_captures[capturing_piece] & tb->legal_squares[captured_piece])
+		    | ((tb->piece_type[captured_piece] == PAWN)
+		       && (((tb->piece_color[capturing_piece] == WHITE)
+			    ? ((possible_captures[capturing_piece] & 0x0000ff0000000000LL) >> 8)
+			    : ((possible_captures[capturing_piece] & 0x0000000000ff0000LL) << 8))
+			   & tb->legal_squares[captured_piece]))) {
+
+		    futurecaptures[capturing_piece][captured_piece]
+			= num_futuremoves[tb->piece_color[capturing_piece]];
+
+		    /* If it's a pawn capture that results in promotion, assign
+		     * PROMOTION_POSSIBILTIES bits in the futurevector
+		     */
+
+		    if (possible_captures[capturing_piece] & tb->legal_squares[captured_piece]
+			& ((tb->piece_color[capturing_piece] == WHITE)
+			   ? 0xff00000000000000LL : 0x00000000000000ffLL)) {
+			num_futuremoves[tb->piece_color[capturing_piece]] += PROMOTION_POSSIBILITIES;
 		    } else {
-			for (movementptr = capture_pawn_movements[sq][tb->piece_color[capturing_piece]];
-			     movementptr->square != -1; movementptr++) {
-
-			    if (movementptr->vector & tb->legal_squares[captured_piece]) {
-
-				/* If it's a pawn capture that results in promotion, assign
-				 * PROMOTION_POSSIBILTIES bits in the futurevector
-				 */
-
-				if (tb->piece_color[capturing_piece] == WHITE) {
-				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves[WHITE];
-				    if (ROW(movementptr->square) == 7) {
-					num_futuremoves[WHITE] += PROMOTION_POSSIBILITIES;
-				    } else {
-					num_futuremoves[WHITE] ++;
-				    }
-				} else {
-				    futurecaptures[capturing_piece][captured_piece] = num_futuremoves[BLACK];
-				    if (ROW(movementptr->square) == 0) {
-					num_futuremoves[BLACK] += PROMOTION_POSSIBILITIES;
-				    } else {
-					num_futuremoves[BLACK] ++;
-				    }
-				}
-
-				goto next_pair_of_pieces;
-			    }
-
-			    /* if it's a pawn-takes-pawn situation, check for en passant as well */
-
-			    if (tb->piece_type[captured_piece] == PAWN) {
-
-				if ((tb->piece_color[capturing_piece] == WHITE) && (ROW(sq) == 4)
-				    && (tb->legal_squares[captured_piece]
-					& BITVECTOR(movementptr->square - 8))) {
-				    futurecaptures[capturing_piece][captured_piece]
-					= num_futuremoves[WHITE] ++;
-				    goto next_pair_of_pieces;
-				}
-				if ((tb->piece_color[capturing_piece] == BLACK) && (ROW(sq) == 3)
-				    && (tb->legal_squares[captured_piece]
-					& BITVECTOR(movementptr->square + 8))) {
-				    futurecaptures[capturing_piece][captured_piece]
-					= num_futuremoves[BLACK] ++;
-				    goto next_pair_of_pieces;
-				}
-			    }
-
-			}
+			num_futuremoves[tb->piece_color[capturing_piece]] ++;
 		    }
 		}
 	    }
-	next_pair_of_pieces: ;
 	}
     }
 
