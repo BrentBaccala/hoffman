@@ -911,7 +911,7 @@ inline void set_signed_field(uint32 *ptr, uint32 mask, int offset, int val)
 
 inline unsigned int get_unsigned_field(uint32 *ptr, uint32 mask, int offset)
 {
-    if (offset == -1) return 0;
+    /* if (offset == -1) return 0; */
 
     while (offset >= 32) {
 	offset -= 32;
@@ -923,16 +923,18 @@ inline unsigned int get_unsigned_field(uint32 *ptr, uint32 mask, int offset)
 
 inline void set_unsigned_field(uint32 *ptr, uint32 mask, int offset, unsigned int val)
 {
-    if (offset == -1) return;
+    /* if (offset == -1) return; */
 
     while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
     }
 
+#if 0
     if (val > mask) {
 	fatal("value too large in set_unsigned_field\n");
     }
+#endif
     *ptr &= (~ (mask << offset));
     *ptr |= (val & mask) << offset;
 }
@@ -941,7 +943,7 @@ inline uint64 get_unsigned64bit_field(void *fieldptr, uint64 mask, int offset)
 {
     uint64 *ptr = (uint64 *)fieldptr;
 
-    if (offset == -1) return 0;
+    /* if (offset == -1) return 0; */
 
     while (offset >= 64) {
 	offset -= 64;
@@ -955,16 +957,19 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
 {
     uint64 *ptr = (uint64 *)fieldptr;
 
-    if (offset == -1) return;
+    /* if (offset == -1) return; */
 
     while (offset >= 64) {
 	offset -= 64;
 	ptr ++;
     }
 
+#if 0
     if (val > mask) {
 	fatal("value too large in set_unsigned_field\n");
     }
+#endif
+
     *ptr &= (~ (mask << offset));
     *ptr |= (val & mask) << offset;
 }
@@ -4706,7 +4711,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.360 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.361 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5905,6 +5910,7 @@ inline int get_raw_DTM(tablebase_t *tb, index_t index)
 
 inline int get_entry_raw_DTM(index_t index)
 {
+    if (ENTRIES_FORMAT_DTM_BITS == 0) return 0;
     return get_signed_field(fetch_current_entry_pointer(index),
 			    ENTRIES_FORMAT_DTM_MASK,
 			    ENTRIES_FORMAT_DTM_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
