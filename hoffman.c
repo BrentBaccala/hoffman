@@ -251,6 +251,7 @@ typedef uint16 futurevector_t;
 
 int num_futuremoves[2] = {0, 0};
 int futurecaptures[MAX_PIECES][MAX_PIECES];
+int promotion_captures[MAX_PIECES][MAX_PIECES];
 int promotions[MAX_PIECES];
 int futuremoves[MAX_PIECES][64];
 
@@ -4711,7 +4712,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.365 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.366 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7867,18 +7868,18 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			    && futurebase->piece_type[extra_piece] == QUEEN) {
 
 			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-									  futurecaptures[true_pawn][true_captured_piece] + QUEEN - 1,
+									  promotion_captures[true_pawn][true_captured_piece] + QUEEN - 1,
 									  &position);
 			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-									  futurecaptures[true_pawn][true_captured_piece] + ROOK - 1,
+									  promotion_captures[true_pawn][true_captured_piece] + ROOK - 1,
 									  &position);
 			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-									  futurecaptures[true_pawn][true_captured_piece] + BISHOP - 1,
+									  promotion_captures[true_pawn][true_captured_piece] + BISHOP - 1,
 									  &position);
 
 			} else {
 			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-									  futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+									  promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 									  &position);
 			}
 
@@ -7914,19 +7915,19 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			    && futurebase->piece_type[extra_piece] == QUEEN) {
 
 			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-									  futurecaptures[true_pawn][true_captured_piece] + QUEEN - 1,
+									  promotion_captures[true_pawn][true_captured_piece] + QUEEN - 1,
 									  &position);
 			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-									  futurecaptures[true_pawn][true_captured_piece] + ROOK - 1,
+									  promotion_captures[true_pawn][true_captured_piece] + ROOK - 1,
 									  &position);
 			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-									  futurecaptures[true_pawn][true_captured_piece] + BISHOP - 1,
+									  promotion_captures[true_pawn][true_captured_piece] + BISHOP - 1,
 									  &position);
 
 			} else {
 
 			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
-									  futurecaptures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+									  promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 									  &position);
 			}
 
@@ -9044,23 +9045,32 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		    int candidate_piece = -1;
 		    char candidate_movestr[MOVESTR_CHARS];
 
-		    /* Compute how many futuremoves we need; if it's a pawn capture that results in
-		     * promotion, then we'll need PROMOTION_POSSIBILTIES bits in the futurevector
-		     */
+		    /* start by dishing out a non-promotion futurecapture */
+
+		    char * my_movestr
+			= movestr[tb->piece_color[capturing_piece]]
+			[num_futuremoves[tb->piece_color[capturing_piece]]];
+
+		    sprintf(my_movestr, "%cx%c",
+			    piece_char[tb->piece_type[capturing_piece]],
+			    piece_char[tb->piece_type[captured_piece]]);
+
+		    futurecaptures[capturing_piece][captured_piece]
+			= num_futuremoves[tb->piece_color[capturing_piece]] ++;
+
+		    /* Keep going only if it's a pawn capture that results in promotion */
 
 		    if (possible_captures[capturing_piece] & tb->legal_squares[captured_piece]
 			& ((tb->piece_color[capturing_piece] == WHITE)
 			   ? 0xff00000000000000LL : 0x00000000000000ffLL)) {
-			futuremoves_needed = PROMOTION_POSSIBILITIES;
-			sprintf(candidate_movestr, "Px%c Px%c=%c",
-				piece_char[tb->piece_type[captured_piece]],
-				piece_char[tb->piece_type[captured_piece]],
-				piece_char[promoted_pieces[0]]);
-
 		    } else {
-			futuremoves_needed = 1;
-			sprintf(candidate_movestr, "Px%c", piece_char[tb->piece_type[captured_piece]]);
+			continue;
 		    }
+
+		    futuremoves_needed = PROMOTION_POSSIBILITIES;
+		    sprintf(candidate_movestr, "Px%c=%c",
+			    piece_char[tb->piece_type[captured_piece]],
+			    piece_char[promoted_pieces[0]]);
 
 		    /* Be conservative about handing out bit positions in the futurevector.  Look
 		     * through the other pieces that have been assigned bit positions and see if we
@@ -9087,10 +9097,10 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		    for (piece = 0; piece < capturing_piece; piece ++) {
 			if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
-			if (futurecaptures[piece][captured_piece] != -1) {
+			if (promotion_captures[piece][captured_piece] != -1) {
 			    if ((! (possible_captures[capturing_piece] & possible_captures[piece]))
-				&& (! strcmp(candidate_movestr, movestr[tb->piece_color[piece]][futurecaptures[piece][captured_piece]]))) {
-				candidate_futuremove = futurecaptures[piece][captured_piece];
+				&& (! strcmp(candidate_movestr, movestr[tb->piece_color[piece]][promotion_captures[piece][captured_piece]]))) {
+				candidate_futuremove = promotion_captures[piece][captured_piece];
 				candidate_piece = piece;
 			    }
 			}
@@ -9099,10 +9109,10 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		    for (piece = 0; piece < capturing_piece; piece ++) {
 			if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
 			if (piece == candidate_piece) continue;
-			if (futurecaptures[piece][captured_piece] != -1) {
+			if (promotion_captures[piece][captured_piece] != -1) {
 			    if ((candidate_futuremove != -1)
-				&& (futurecaptures[piece][captured_piece] >= candidate_futuremove)
-				&& (futurecaptures[piece][captured_piece] <
+				&& (promotion_captures[piece][captured_piece] >= candidate_futuremove)
+				&& (promotion_captures[piece][captured_piece] <
 				    candidate_futuremove + futuremoves_needed)) {
 				candidate_futuremove = -1;
 				break;
@@ -9114,7 +9124,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			candidate_futuremove = num_futuremoves[tb->piece_color[capturing_piece]];
 		    }
 
-		    futurecaptures[capturing_piece][captured_piece] = candidate_futuremove;
+		    promotion_captures[capturing_piece][captured_piece] = candidate_futuremove;
 
 		    strcpy(movestr[tb->piece_color[capturing_piece]][candidate_futuremove],
 			   candidate_movestr);
@@ -9484,24 +9494,20 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 		if (! (tb->legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
 	    }
 
-	    /* check all futurebases for a 'promotion capture' with captured_piece missing
-	     *
-	     * XXX this can overlap with the captured piece check above and result in a multiple
-	     * pruning statement warning if we've got both PxX and PxX=Y statements
-	     */
+	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
 
-	    if (futurecaptures[pawn][captured_piece] == -1) continue;
+	    if (promotion_captures[pawn][captured_piece] == -1) continue;
 
 	    for (i = 0; promoted_pieces[i] != 0; i ++) {
 
-		char * movestr1 = movestr[tb->piece_color[pawn]][futurecaptures[pawn][captured_piece] + i];
+		char * movestr1 = movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece] + i];
 
 		sprintf(movestr2, "Px%c=any", piece_char[tb->piece_type[captured_piece]]);
 
 		assign_pruning_statement(tb, tb->piece_color[pawn], movestr1,
-					 futurecaptures[pawn][captured_piece] + i);
+					 promotion_captures[pawn][captured_piece] + i);
 		assign_pruning_statement(tb, tb->piece_color[pawn], movestr2,
-					 futurecaptures[pawn][captured_piece] + i);
+					 promotion_captures[pawn][captured_piece] + i);
 	    }
 	}
 
@@ -9728,7 +9734,7 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 	    promoted_pieces_handled = 0;
 
-	    if (futurecaptures[pawn][captured_piece] == -1) continue;
+	    if (promotion_captures[pawn][captured_piece] == -1) continue;
 
 	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		if ((futurebases[fbnum]->extra_piece != -1)
@@ -9770,16 +9776,16 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 
 		if (tb->piece_color[pawn] == WHITE) {
 		    if (! (pruned_white_futuremoves
-			   & FUTUREVECTOR(futurecaptures[pawn][captured_piece] + i))) {
+			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece] + i))) {
 			fatal("No futurebase or pruning for WHITE move %s\n",
-			      movestr[WHITE][futurecaptures[pawn][captured_piece] + i]);
+			      movestr[WHITE][promotion_captures[pawn][captured_piece] + i]);
 			return 0;
 		    }
 		} else {
 		    if (! (pruned_black_futuremoves
-			   & FUTUREVECTOR(futurecaptures[pawn][captured_piece] + i))) {
+			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece] + i))) {
 			fatal("No futurebase or pruning for BLACK move %s\n",
-			      movestr[BLACK][futurecaptures[pawn][captured_piece] + i]);
+			      movestr[BLACK][promotion_captures[pawn][captured_piece] + i]);
 			return 0;
 		    }
 		}
@@ -10600,9 +10606,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     * fact, PROMOTION_POSSIBILITIES moves.  (queen, knight, maybe rook and bishop).
 		     */
 
-		    int num_futuremoves =
-			((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0))
-			? PROMOTION_POSSIBILITIES : 1;
+		    int is_promotion_capture =
+			((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0));
 
 		    /* A special check for en passant captures.  */
 
@@ -10661,21 +10666,40 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    position.piece_position[piece] = movementptr->square;
 
 			    if (! PTM_in_check(tb, &position)) {
-				if (futurecaptures[piece][i] == -1) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->piece_type[piece]], piece_char[tb->piece_type[i]]);
+				if (! is_promotion_capture) {
+				    if (futurecaptures[piece][i] == -1) {
+					global_position_t global;
+					index_to_global_position(tb, index, &global);
+					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					      piece_char[tb->piece_type[piece]],
+					      piece_char[tb->piece_type[i]]);
+				    }
+				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+					fatal("Duplicate futuremove!\n");
+				    }
+				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+				    futuremovecnt ++;
+				    movecnt ++;
+				} else {
+				    if (promotion_captures[piece][i] == -1) {
+					global_position_t global;
+					index_to_global_position(tb, index, &global);
+					fatal("No futuremove: %s %cx%c=*\n", global_position_to_FEN(&global),
+					      piece_char[tb->piece_type[piece]],
+					      piece_char[tb->piece_type[i]]);
+				    }
+				    if (futurevector
+					& FUTUREVECTORS(promotion_captures[piece][i],
+							PROMOTION_POSSIBILITIES)) {
+					fatal("Duplicate futuremove!\n");
+				    }
+				    futurevector |= FUTUREVECTORS(promotion_captures[piece][i],
+								  PROMOTION_POSSIBILITIES);
+				    futuremovecnt += PROMOTION_POSSIBILITIES;
+				    movecnt += PROMOTION_POSSIBILITIES;
 				}
-				if (futurevector
-				    & FUTUREVECTORS(futurecaptures[piece][i], num_futuremoves)) {
-				    fatal("Duplicate futuremove!\n");
-				}
-				futurevector |= FUTUREVECTORS(futurecaptures[piece][i], num_futuremoves);
-				futuremovecnt += num_futuremoves;
 
 				checkmate_is_possible = 0;
-				movecnt += num_futuremoves;
 			    }
 
 			    position.piece_position[i] = movementptr->square;
