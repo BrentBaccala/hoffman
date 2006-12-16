@@ -4717,7 +4717,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.370 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.371 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9032,6 +9032,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
 	    futurecaptures[capturing_piece][captured_piece] = -1;
+	    promotion_captures[capturing_piece][captured_piece] = -1;
 
 	    if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) continue;
 
@@ -9363,8 +9364,8 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
 
 	if (!strcasecmp((char *) prune_move, pruning_statement)) break;
 
-	if (!strcasecmp("any", pruning_statement + strlen(pruning_statement) - 3)
-	    && !strncasecmp((char *) prune_move, pruning_statement, strlen(pruning_statement) - 3)) break;
+	if (!strcasecmp("any", (char *) prune_move + strlen((char *) prune_move) - 3)
+	    && !strncasecmp((char *) prune_move, pruning_statement, strlen((char *) prune_move) - 3)) break;
     }
 
     if (prune != result->nodesetval->nodeNr) {
@@ -9432,8 +9433,6 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     int pawn;
     int sq;
     int i;
-    char movestr2[MOVESTR_CHARS];
-
 
     /* Check pruning statements for consistency, and record stalemate pruning if specified */
 
