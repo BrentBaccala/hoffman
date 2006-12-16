@@ -4712,7 +4712,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.366 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.367 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9741,13 +9741,12 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		    && (futurebases[fbnum]->piece_color[futurebases[fbnum]->extra_piece]
 			== (futurebases[fbnum]->invert_colors ? 1 - tb->piece_color[pawn] : tb->piece_color[pawn]))
 		    && (futurebases[fbnum]->missing_non_pawn != -1)
-		    && (futurebases[fbnum]->piece_color[futurebases[fbnum]->missing_non_pawn]
-			== (futurebases[fbnum]->invert_colors ? 1 - tb->piece_color[captured_piece] : tb->piece_color[captured_piece]))
-		    && (futurebases[fbnum]->piece_type[futurebases[fbnum]->missing_non_pawn]
+		    && (tb->piece_color[futurebases[fbnum]->missing_non_pawn]
+			== tb->piece_color[captured_piece])
+		    && (tb->piece_type[futurebases[fbnum]->missing_non_pawn]
 			== tb->piece_type[captured_piece])
 		    && (futurebases[fbnum]->missing_pawn != -1)
-		    && (futurebases[fbnum]->piece_color[futurebases[fbnum]->missing_pawn]
-			== (futurebases[fbnum]->invert_colors ? 1 - tb->piece_color[pawn] : tb->piece_color[pawn]))) {
+		    && (tb->piece_color[futurebases[fbnum]->missing_pawn] == tb->piece_color[pawn])) {
 
 		    promoted_pieces_handled
 			|= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
