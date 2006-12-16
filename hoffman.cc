@@ -4717,7 +4717,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.369 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.370 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8940,7 +8940,7 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
  *
  * We could just dismiss any moves that aren't handled by our futurebases, but I've found this to be
  * a source of error, since moves tend to get overlooked this way.  We're also concerned with the
- * more sobering possibility of a single move getting processed twice.
+ * more sobering possibility of a single move getting processed twice by two different futurebases.
  *
  * So we assign numbers, bit positions in a bit vector, actually, to each futuremove.  When we
  * initialize the tablebase, we set bits in the vector (each position has its own vector) for each
@@ -8948,6 +8948,24 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
  * make sure it's still set, then clear it.  After we've back propagated all the futurebases, we run
  * through the entire tablebase, making sure that the only bits that remain set correspond to prune
  * statements.
+ *
+ * This function not only assigns the numbers, but also prints an identifying string, such as "KxP"
+ * or "Re4", into the movestr array for each number assigned.  This string will then be matched
+ * against the pruning statements specified in the configuration file.  Sometimes the strings will
+ * repeat.  For example, if we have two pawns and an enemy queen, we'll probably end up with two
+ * different bit positions, both assigned as "QxP".  The reason is that there are probably positions
+ * where the queen could take either pawn, so both possibilities have to be tracked.
+ *
+ * Because we need a "futurevector" for each position in the tablebase, we want to keep it as small
+ * as possible, so we try to use as few bit positions as possible.  In particular, we track white
+ * and black futuremoves seperately (since from a given position only one or the other will be
+ * possible) and we try to reuse bit positions for pawn capture-promotions if the pawns are
+ * sufficiently restricted so that only one or the other could capture the enemy piece in a given
+ * position.
+ *
+ * We could do a lot better, though.  For moves that are pruned without any matching futurebase,
+ * there's really no reason to track them at all, since there are no futurebases that could possibly
+ * generate them.  The pruning for such moves could be performed during tablebase initialization.
  */
 
 void assign_numbers_to_futuremoves(tablebase_t *tb) {
@@ -9064,10 +9082,9 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		    /* Keep going only if it's a pawn capture that results in promotion */
 
-		    if (possible_captures[capturing_piece] & tb->legal_squares[captured_piece]
-			& ((tb->piece_color[capturing_piece] == WHITE)
-			   ? 0xff00000000000000LL : 0x00000000000000ffLL)) {
-		    } else {
+		    if (! (possible_captures[capturing_piece] & tb->legal_squares[captured_piece]
+			   & ((tb->piece_color[capturing_piece] == WHITE)
+			      ? 0xff00000000000000LL : 0x00000000000000ffLL))) {
 			continue;
 		    }
 
@@ -9078,8 +9095,8 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		    /* Be conservative about handing out bit positions in the futurevector.  Look
 		     * through the other pieces that have been assigned bit positions and see if we
-		     * can find one that can never capture onto the squares that our piece can
-		     * capture onto and reuse its bit positions.
+		     * can find one with an identical movestr that can never capture onto the
+		     * squares that our piece can capture onto and reuse its bit positions.
 		     *
 		     * This code could be a lot more aggressively conservative, but for now I settle
 		     * for handling the common simple case of pawns more than two files apart never
@@ -9087,16 +9104,9 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		     * current captured_piece, and only so far as the current capturing_piece.
 		     * That's why the nesting order of the two captured_piece and capturing_piece
 		     * loops is important above.  First we look for a candidate futuremove, then we
-		     * try to bust it by looking for overlaps.
-		     *
-		     * XXX This code ignores the possibility that one futuremove's pruning might be
-		     * different from another's, and therefore would have to be handled differently.
-		     * At the moment, we assign this bits first, and then check pruning when we're
-		     * all done, so we'd have to rework the code a bit to fit this in.  For the
-		     * moment, we fatal if pruning restrictions on two overlaping futuremoves
-		     * conflict with each other, but that's not perfect because if a move has no
-		     * pruning whatsoever, it can overlap with one that does, and the pruned move's
-		     * pruning will dominate the other one.
+		     * try to bust it by looking for overlaps.  We only check the movestr for the
+		     * first of the PROMOTION_POSSIBILITIES, since if it matched for the first one,
+		     * it will have to match for the remaining ones, too.
 		     */
 
 		    for (piece = 0; piece < capturing_piece; piece ++) {
@@ -9321,10 +9331,12 @@ void print_futuremoves(void)
  *
  * searches the tablebase's XML pruning statements for one matching (more or less identically) the
  * specified color and string.  If there is a match, set the corresponding bit in the
- * pruned_futuremoves bit vector.  The function can be called more than once for a given bit.  For
- * example, the function might be called on the same bit for both "Pf6" and "Pany" (assuming there
- * is a white pawn frozen on f5).  If there are multiple prune statements that match a given bit, it
- * is currently undefined what happens, so we print an error message.
+ * pruned_futuremoves bit vector.  The function can be called more than once for a given bit, but
+ * probably shouldn't be.  For example, the function might be called on the same bit for "PxQ=Q" if
+ * there are two pawns that can promote into a queen.  The function also allows a trailing "any" in
+ * the prune statement to act as a wildcard; "Pany" would match "Pf6", for example, and "P=any"
+ * would match "P=Q".  If there are multiple prune statements that match a given bit, only the first
+ * one is used; the rest are silently (!) ignored.
  */
 
 void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statement, int futuremove)
@@ -9350,6 +9362,9 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
 	type = find_name_in_array((char *) prune_type, restriction_types);
 
 	if (!strcasecmp((char *) prune_move, pruning_statement)) break;
+
+	if (!strcasecmp("any", pruning_statement + strlen(pruning_statement) - 3)
+	    && !strncasecmp((char *) prune_move, pruning_statement, strlen(pruning_statement) - 3)) break;
     }
 
     if (prune != result->nodesetval->nodeNr) {
@@ -9452,9 +9467,9 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
-	    char * movestr1 = movestr[tb->piece_color[capturing_piece]][futurecaptures[capturing_piece][captured_piece]];
-
 	    if (futurecaptures[capturing_piece][captured_piece] != -1) {
+
+		char * movestr1 = movestr[tb->piece_color[capturing_piece]][futurecaptures[capturing_piece][captured_piece]];
 
 		assign_pruning_statement(tb, tb->piece_color[capturing_piece], movestr1,
 					 futurecaptures[capturing_piece][captured_piece]);
@@ -9506,11 +9521,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 		char * movestr1 = movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece] + i];
 
-		sprintf(movestr2, "Px%c=any", piece_char[tb->piece_type[captured_piece]]);
-
 		assign_pruning_statement(tb, tb->piece_color[pawn], movestr1,
-					 promotion_captures[pawn][captured_piece] + i);
-		assign_pruning_statement(tb, tb->piece_color[pawn], movestr2,
 					 promotion_captures[pawn][captured_piece] + i);
 	    }
 	}
@@ -9523,10 +9534,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 	    char * movestr1 = movestr[tb->piece_color[pawn]][promotions[pawn] + i];
 
-	    sprintf(movestr2, "P=any");
-
 	    assign_pruning_statement(tb, tb->piece_color[pawn], movestr1, promotions[pawn] + i);
-	    assign_pruning_statement(tb, tb->piece_color[pawn], movestr2, promotions[pawn] + i);
 	}
     }
 
@@ -9541,10 +9549,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 		char * movestr1 = movestr[tb->piece_color[piece]][futuremoves[piece][sq]];
 
-		sprintf(movestr2, "%cany", piece_char[tb->piece_type[piece]]);
-
 		assign_pruning_statement(tb, tb->piece_color[piece], movestr1, futuremoves[piece][sq]);
-		assign_pruning_statement(tb, tb->piece_color[piece], movestr2, futuremoves[piece][sq]);
 	    }
 	}
     }
