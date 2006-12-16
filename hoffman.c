@@ -4711,7 +4711,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.361 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.362 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9034,14 +9034,14 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			    if (tb->piece_type[captured_piece] == PAWN) {
 
-				if ((tb->piece_type[capturing_piece] == WHITE) && (ROW(sq) == 4)
+				if ((tb->piece_color[capturing_piece] == WHITE) && (ROW(sq) == 4)
 				    && (tb->legal_squares[captured_piece]
 					& BITVECTOR(movementptr->square - 8))) {
 				    futurecaptures[capturing_piece][captured_piece]
 					= num_futuremoves[WHITE] ++;
 				    goto next_pair_of_pieces;
 				}
-				if ((tb->piece_type[capturing_piece] == BLACK) && (ROW(sq) == 3)
+				if ((tb->piece_color[capturing_piece] == BLACK) && (ROW(sq) == 3)
 				    && (tb->legal_squares[captured_piece]
 					& BITVECTOR(movementptr->square + 8))) {
 				    futurecaptures[capturing_piece][captured_piece]
