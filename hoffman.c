@@ -701,7 +701,7 @@ void terminate (void)
 void fatal (char * format, ...)
 {
     va_list va;
-    char strbuf[256];
+    static char strbuf[256] = {'\0'};
 
     /* BREAKPOINT */
     if (index(format, '\n') != NULL) fatal_errors ++;
@@ -711,12 +711,17 @@ void fatal (char * format, ...)
     vfprintf(stderr, format, va);
 
     if ((current_tb != NULL) && (current_tb->xml != NULL)) {
-	xmlNodePtr tablebase = xmlDocGetRootElement(current_tb->xml);
-	vsnprintf(strbuf, sizeof(strbuf), format, va);
-	if (index(strbuf, '\n') != NULL) *index(strbuf, '\n') = '\0';
-	xmlNodeAddContent(tablebase, BAD_CAST "   ");
-	xmlNewChild(tablebase, NULL, BAD_CAST "error", BAD_CAST strbuf);
-	xmlNodeAddContent(tablebase, BAD_CAST "\n");
+	vsnprintf(strbuf + strlen(strbuf), sizeof(strbuf) - strlen(strbuf), format, va);
+	if (index(strbuf, '\n') != NULL) {
+	    xmlNodePtr tablebase = xmlDocGetRootElement(current_tb->xml);
+
+	    *index(strbuf, '\n') = '\0';
+	    xmlNodeAddContent(tablebase, BAD_CAST "   ");
+	    xmlNewChild(tablebase, NULL, BAD_CAST "error", BAD_CAST strbuf);
+	    xmlNodeAddContent(tablebase, BAD_CAST "\n");
+
+	    memset(strbuf, 0, sizeof(strbuf));
+	}
     }
 
     va_end(va);
@@ -4712,7 +4717,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.368 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.369 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8883,8 +8888,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
     if (futurevector & (stm == WHITE ? unpruned_white_futuremoves : unpruned_black_futuremoves)) {
 	global_position_t global;
 	index_to_global_position(tb, index, &global);
-	fatal("Futuremoves not handled under move restrictions: %d %s",
-	      index, global_position_to_FEN(&global));
+	fatal("Futuremoves not handled: %d %s", index, global_position_to_FEN(&global));
 	for (futuremove = 0; futuremove < num_futuremoves[stm]; futuremove ++) {
 	    if (futurevector & FUTUREVECTOR(futuremove)
 		& (stm == WHITE ? unpruned_white_futuremoves : unpruned_black_futuremoves)) {
