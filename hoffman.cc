@@ -647,7 +647,7 @@ int verbose = 1;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 89 */
+/* #define DEBUG_MOVE 1365 */
 
 /* #define DEBUG_FUTUREMOVE 798 */
 
@@ -4712,7 +4712,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.367 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.368 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -10342,6 +10342,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
     struct movement *movementptr;
     int i;
 
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	fprintf(stderr, "Initializing %d\n", index);
+#endif
+
     if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 
 	initialize_entry_as_illegal(tb, index);
@@ -10352,7 +10357,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	/* Now we need to count moves.  FORWARD moves. */
 	int movecnt = 0;
 	int futuremovecnt = 0;
-	int checkmate_is_possible = 1;
 	futurevector_t futurevector = 0;
 
 	/* En passant:
@@ -10433,7 +10437,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				futuremovecnt ++;
 			    }
 
-			    checkmate_is_possible = 0;
 			    movecnt ++;
 			}
 
@@ -10496,8 +10499,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 				    futuremovecnt ++;
-
-				    checkmate_is_possible = 0;
 				    movecnt ++;
 				}
 
@@ -10554,7 +10555,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    }
 			    futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
 			    futuremovecnt += PROMOTION_POSSIBILITIES;
-
 			    movecnt += PROMOTION_POSSIBILITIES;
 
 			} else {
@@ -10635,8 +10635,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    }
 				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 				    futuremovecnt ++;
-
-				    checkmate_is_possible = 0;
 				    movecnt ++;
 				}
 
@@ -10697,8 +10695,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    futuremovecnt += PROMOTION_POSSIBILITIES;
 				    movecnt += PROMOTION_POSSIBILITIES;
 				}
-
-				checkmate_is_possible = 0;
 			    }
 
 			    position.piece_position[i] = movementptr->square;
@@ -10720,12 +10716,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	}
 
-	/* Finally, if every possible moves leads us into check (because checkmate_is_possible was
-	 * never cleared to zero), we determine if we're in check, being the difference between this
-	 * being checkmate or stalemate.
+	/* Finally, if every possible moves leads us into check, we determine if we're in check,
+	 * being the difference between this being checkmate or stalemate.
 	 */
 
-	if (checkmate_is_possible) {
+	if (movecnt == 0) {
 	    if (PTM_in_check(tb, &position)) {
 		initialize_entry_with_PTM_mated(tb, index);
 	    } else {
