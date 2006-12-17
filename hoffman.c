@@ -426,7 +426,7 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
  * </entries-format>
  */
 
-#define USE_PROPTABLES 0
+#define USE_PROPTABLES 1
 
 #define USE_CONST_ENTRIES_FORMAT 1
 
@@ -472,9 +472,28 @@ struct format one_byte_dtm_format = {3,1, 0xff,0,8};
  * </proptable-format>
  */
 
+#define USE_CONST_PROPTABLE_FORMAT 0
+
+#if !USE_CONST_PROPTABLE_FORMAT
+
 const struct format proptable_format = {7,16, 0xffff,32,16, 0xff,56,8,
 					0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
 					-1,FORMAT_FLAG_NONE, -1};
+
+#define PROPTABLE_FORMAT_BYTES (proptable_format.bytes)
+#define PROPTABLE_FORMAT_INDEX_MASK (proptable_format.index_mask)
+#define PROPTABLE_FORMAT_INDEX_OFFSET (proptable_format.index_offset)
+#define PROPTABLE_FORMAT_FUTUREVECTOR_BITS (proptable_format.futurevector_bits)
+#define PROPTABLE_FORMAT_FUTUREVECTOR_MASK (proptable_format.futurevector_mask)
+#define PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET (proptable_format.futurevector_offset)
+#define PROPTABLE_FORMAT_DTM_BITS (proptable_format.dtm_bits)
+#define PROPTABLE_FORMAT_DTM_MASK (proptable_format.dtm_mask)
+#define PROPTABLE_FORMAT_DTM_OFFSET (proptable_format.dtm_offset)
+#define PROPTABLE_FORMAT_MOVECNT_MASK (proptable_format.movecnt_mask)
+#define PROPTABLE_FORMAT_MOVECNT_OFFSET (proptable_format.movecnt_offset)
+#define PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET (proptable_format.PTM_wins_flag_offset)
+
+#endif
 
 
 
@@ -4717,7 +4736,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.371 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.372 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6185,54 +6204,60 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 int proptable_entries = 0;
 int proptable_merges = 0;
 
-#define PROPTABLE_ELEM(n)  ((void *)proptable + proptable_format.bytes * (n))
+#define PROPTABLE_ELEM(n)  ((void *)proptable + PROPTABLE_FORMAT_BYTES * (n))
 
 index_t get_propentry_index(proptable_entry_t *propentry)
 {
     uint32 *ptr = (uint32 *) propentry;
-    return get_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset);
+    return get_unsigned_field(ptr, PROPTABLE_FORMAT_INDEX_MASK, PROPTABLE_FORMAT_INDEX_OFFSET);
 }
 
 void set_propentry_index(proptable_entry_t *propentry, index_t index)
 {
     uint32 *ptr = (uint32 *) propentry;
-    set_unsigned_field(ptr, proptable_format.index_mask, proptable_format.index_offset, index);
+    set_unsigned_field(ptr, PROPTABLE_FORMAT_INDEX_MASK, PROPTABLE_FORMAT_INDEX_OFFSET, index);
 }
 
 futurevector_t get_propentry_futurevector(proptable_entry_t *propentry)
 {
     uint32 *ptr = (uint32 *) propentry;
-    return get_unsigned64bit_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset);
+    return get_unsigned64bit_field(ptr, PROPTABLE_FORMAT_FUTUREVECTOR_MASK, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET);
 }
 
 void set_propentry_futurevector(proptable_entry_t *propentry, futurevector_t futurevector)
 {
     uint32 *ptr = (uint32 *) propentry;
-    set_unsigned64bit_field(ptr, proptable_format.futurevector_mask, proptable_format.futurevector_offset, futurevector);
+    set_unsigned64bit_field(ptr, PROPTABLE_FORMAT_FUTUREVECTOR_MASK, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET, futurevector);
 }
 
 int get_propentry_dtm(proptable_entry_t *propentry)
 {
     uint32 *ptr = (uint32 *) propentry;
-    return get_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset);
+    if (PROPTABLE_FORMAT_DTM_BITS > 0) {
+	return get_signed_field(ptr, PROPTABLE_FORMAT_DTM_MASK, PROPTABLE_FORMAT_DTM_OFFSET);
+    } else {
+	return 0;
+    }
 }
 
 void set_propentry_dtm(proptable_entry_t *propentry, int distance)
 {
     uint32 *ptr = (uint32 *) propentry;
-    set_signed_field(ptr, proptable_format.dtm_mask, proptable_format.dtm_offset, distance);
+    if (PROPTABLE_FORMAT_DTM_BITS > 0) {
+	set_signed_field(ptr, PROPTABLE_FORMAT_DTM_MASK, PROPTABLE_FORMAT_DTM_OFFSET, distance);
+    }
 }
 
 int get_propentry_movecnt(proptable_entry_t *propentry)
 {
     uint32 *ptr = (uint32 *) propentry;
-    return get_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset);
+    return get_unsigned_field(ptr, PROPTABLE_FORMAT_MOVECNT_MASK, PROPTABLE_FORMAT_MOVECNT_OFFSET);
 }
 
 void set_propentry_movecnt(proptable_entry_t *propentry, int movecnt)
 {
     uint32 *ptr = (uint32 *) propentry;
-    set_unsigned_field(ptr, proptable_format.movecnt_mask, proptable_format.movecnt_offset, movecnt);
+    set_unsigned_field(ptr, PROPTABLE_FORMAT_MOVECNT_MASK, PROPTABLE_FORMAT_MOVECNT_OFFSET, movecnt);
 }
 
 int get_propentry_PTM_wins_flag(proptable_entry_t *propentry)
@@ -6244,8 +6269,8 @@ int get_propentry_PTM_wins_flag(proptable_entry_t *propentry)
      * DTM field to "emulate" it.
      */
 
-    if (proptable_format.PTM_wins_flag_offset != -1) {
-	return get_unsigned_field(ptr, 1, proptable_format.PTM_wins_flag_offset);
+    if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
+	return get_unsigned_field(ptr, 1, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET);
     } else {
 	return (get_propentry_dtm(ptr) > 0) ? 1 : 0;
     }
@@ -6254,7 +6279,9 @@ int get_propentry_PTM_wins_flag(proptable_entry_t *propentry)
 void set_propentry_PTM_wins_flag(proptable_entry_t *propentry, int PTM_wins_flag)
 {
     uint32 *ptr = (uint32 *) propentry;
-    set_unsigned_field(ptr, 1, proptable_format.PTM_wins_flag_offset, PTM_wins_flag);
+    if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
+	set_unsigned_field(ptr, 1, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET, PTM_wins_flag);
+    }
 }
 
 void insert_at_propentry(int propentry, proptable_entry_t * pentry)
@@ -6265,7 +6292,7 @@ void insert_at_propentry(int propentry, proptable_entry_t * pentry)
 		get_propentry_index(pentry), propentry);
 #endif
 
-    memcpy(PROPTABLE_ELEM(propentry), pentry, proptable_format.bytes);
+    memcpy(PROPTABLE_ELEM(propentry), pentry, PROPTABLE_FORMAT_BYTES);
 
     proptable_entries ++;
 
@@ -6362,7 +6389,7 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
 	current_tb->futurevectors[index] ^= futurevector;
     }
 
-    if (proptable_format.dtm_bits > 0) {
+    if (PROPTABLE_FORMAT_DTM_BITS > 0) {
 	if (dtm > 0) {
 	    PTM_wins(current_tb, index, dtm);
 	} else if (dtm < 0) {
@@ -6370,7 +6397,7 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
 		add_one_to_PNTM_wins(current_tb, index, dtm);
 	    }
 	}
-    } else if (proptable_format.PTM_wins_flag_offset != -1) {
+    } else if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
 	if (PTM_wins_flag) {
 	    PTM_wins(current_tb, index, dtm);
 	} else {
@@ -6420,7 +6447,7 @@ void finalize_proptable_write(void)
 
     ret = aio_return(&proptable_output_aiocb);
 
-    if (ret != num_propentries * proptable_format.bytes) {
+    if (ret != num_propentries * PROPTABLE_FORMAT_BYTES) {
 	fprintf(stderr, "proptable aio_write returned %d, not PROPTABLE_BYTES\n", ret);
 	kill(getpid(), SIGSTOP);
     }
@@ -6429,8 +6456,8 @@ void finalize_proptable_write(void)
      * If we don't USE_DUAL_PROPTABLES, then proptable1 and proptable2 have the same value.
      */
 
-    if (proptable == proptable1) memset(proptable2, 0, num_propentries * proptable_format.bytes);
-    else memset(proptable1, 0, num_propentries * proptable_format.bytes);
+    if (proptable == proptable1) memset(proptable2, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
+    else memset(proptable1, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
 
     proptable_write_in_progress = 0;
 }
@@ -6490,11 +6517,11 @@ void proptable_full(void)
     memset(&proptable_output_aiocb, 0, sizeof(struct aiocb));
     proptable_output_aiocb.aio_fildes = proptable_output_fd;
     proptable_output_aiocb.aio_buf = proptable;
-    proptable_output_aiocb.aio_nbytes = num_propentries * proptable_format.bytes;
+    proptable_output_aiocb.aio_nbytes = num_propentries * PROPTABLE_FORMAT_BYTES;
 #if SEPERATE_PROPTABLE_FILES
     proptable_output_aiocb.aio_offset = 0;
 #else
-    proptable_output_aiocb.aio_offset = num_proptables * num_propentries * proptable_format.bytes;
+    proptable_output_aiocb.aio_offset = num_proptables * num_propentries * PROPTABLE_FORMAT_BYTES;
 #endif
     proptable_output_aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
 
@@ -6576,7 +6603,7 @@ int *proptable_current_buffernum;
  */
 
 #define PROPTABLE_BUFFER_ENTRIES (1<<13)
-#define PROPTABLE_BUFFER_BYTES (PROPTABLE_BUFFER_ENTRIES * proptable_format.bytes)
+#define PROPTABLE_BUFFER_BYTES (PROPTABLE_BUFFER_ENTRIES * PROPTABLE_FORMAT_BYTES)
 #define BUFFERS_PER_PROPTABLE 4
 
 #define propbuf(tablenum, buffernum) (((tablenum) * BUFFERS_PER_PROPTABLE) + buffernum)
@@ -6598,11 +6625,11 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 	while (proptable_buffer_index[tablenum] < PROPTABLE_BUFFER_ENTRIES) {
 
 	    if (get_propentry_index(proptable_buffer[current_propbuf(tablenum)]
-				    + proptable_format.bytes * (proptable_buffer_index[tablenum])) != 0) {
+				    + PROPTABLE_FORMAT_BYTES * (proptable_buffer_index[tablenum])) != 0) {
 		memcpy(dest,
 		       proptable_buffer[current_propbuf(tablenum)]
-		       + proptable_format.bytes * (proptable_buffer_index[tablenum]),
-		       proptable_format.bytes);
+		       + PROPTABLE_FORMAT_BYTES * (proptable_buffer_index[tablenum]),
+		       PROPTABLE_FORMAT_BYTES);
 
 		proptable_buffer_index[tablenum] ++;
 		return;
@@ -6625,7 +6652,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	offset = proptable_aiocb[current_propbuf(tablenum)].aio_offset
 	    + PROPTABLE_BUFFER_BYTES * BUFFERS_PER_PROPTABLE;
-	if (offset % (num_propentries * proptable_format.bytes)
+	if (offset % (num_propentries * PROPTABLE_FORMAT_BYTES)
 	    < PROPTABLE_BUFFER_BYTES * BUFFERS_PER_PROPTABLE) offset = 0;
 
 	memset(&proptable_aiocb[current_propbuf(tablenum)], 0, sizeof(struct aiocb));
@@ -6758,7 +6785,7 @@ void proptable_finalize(int target_dtm)
     int proptable_input_fd;
 #endif
 
-#define SORTING_NETWORK_ELEM(n)  (sorting_network + proptable_format.bytes * (n))
+#define SORTING_NETWORK_ELEM(n)  (sorting_network + PROPTABLE_FORMAT_BYTES * (n))
 
     index_t index;
 
@@ -6778,7 +6805,7 @@ void proptable_finalize(int target_dtm)
     for (highbit = 1; highbit <= num_input_proptables; highbit <<= 1);
 
     proptable_buffer = (proptable_entry_t **)
-	malloc(BUFFERS_PER_PROPTABLE * num_input_proptables * proptable_format.bytes);
+	malloc(BUFFERS_PER_PROPTABLE * num_input_proptables * PROPTABLE_FORMAT_BYTES);
     proptable_aiocb = (struct aiocb *)
 	calloc(BUFFERS_PER_PROPTABLE * num_input_proptables, sizeof(struct aiocb));
     proptable_buffer_index = (int *) calloc(num_input_proptables, sizeof(int));
@@ -6843,7 +6870,7 @@ void proptable_finalize(int target_dtm)
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_offset = PROPTABLE_BUFFER_BYTES * bufnum;
 #else
 	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_offset
-		= tablenum * num_propentries * proptable_format.bytes + PROPTABLE_BUFFER_BYTES * bufnum;
+		= tablenum * num_propentries * PROPTABLE_FORMAT_BYTES + PROPTABLE_BUFFER_BYTES * bufnum;
 #endif
 
 	    if (aio_read(& proptable_aiocb[propbuf(tablenum, bufnum)]) != 0) {
@@ -6867,7 +6894,7 @@ void proptable_finalize(int target_dtm)
     subtract_timeval(&tv2, &tv1);
     add_timeval(&proptable_preload_time, &tv2);
 
-    sorting_network = malloc(2*highbit * proptable_format.bytes);
+    sorting_network = malloc(2*highbit * PROPTABLE_FORMAT_BYTES);
     proptable_num = malloc(2*highbit * sizeof(int));
 
     if ((sorting_network == NULL) || (proptable_num == NULL)) {
@@ -6897,11 +6924,11 @@ void proptable_finalize(int target_dtm)
 	if (get_propentry_index(SORTING_NETWORK_ELEM(2*network_node))
 	    < get_propentry_index(SORTING_NETWORK_ELEM(2*network_node + 1))) {
 	    memcpy(SORTING_NETWORK_ELEM(network_node),
-		   SORTING_NETWORK_ELEM(2*network_node), proptable_format.bytes);
+		   SORTING_NETWORK_ELEM(2*network_node), PROPTABLE_FORMAT_BYTES);
 	    proptable_num[network_node] = proptable_num[2*network_node];
 	} else {
 	    memcpy(SORTING_NETWORK_ELEM(network_node),
-		   SORTING_NETWORK_ELEM(2*network_node + 1), proptable_format.bytes);
+		   SORTING_NETWORK_ELEM(2*network_node + 1), PROPTABLE_FORMAT_BYTES);
 	    proptable_num[network_node] = proptable_num[2*network_node+1];
 	}
     }
@@ -6948,11 +6975,11 @@ void proptable_finalize(int target_dtm)
 		if (get_propentry_index(SORTING_NETWORK_ELEM(2*network_node))
 		    < get_propentry_index(SORTING_NETWORK_ELEM(2*network_node+1))) {
 		    memcpy(SORTING_NETWORK_ELEM(network_node),
-			   SORTING_NETWORK_ELEM(2*network_node), proptable_format.bytes);
+			   SORTING_NETWORK_ELEM(2*network_node), PROPTABLE_FORMAT_BYTES);
 		    proptable_num[network_node] = proptable_num[2*network_node];
 		} else {
 		    memcpy(SORTING_NETWORK_ELEM(network_node),
-			   SORTING_NETWORK_ELEM(2*network_node + 1), proptable_format.bytes);
+			   SORTING_NETWORK_ELEM(2*network_node + 1), PROPTABLE_FORMAT_BYTES);
 		    proptable_num[network_node] = proptable_num[2*network_node+1];
 		}
 	    }
@@ -7100,8 +7127,8 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
 		if (get_propentry_index(PROPTABLE_ELEM(zerooffset)) == 0) {
 		    /* proptable[1:zerooffset] = proptable[0:zerooffset-1]; */
-		    memmove(proptable + proptable_format.bytes, proptable,
-			    (zerooffset) * proptable_format.bytes);
+		    memmove(proptable + PROPTABLE_FORMAT_BYTES, proptable,
+			    (zerooffset) * PROPTABLE_FORMAT_BYTES);
 		    /* proptable[0] = entry; */
 		    insert_at_propentry(0, pentry);
 		    return;
@@ -7135,9 +7162,9 @@ void insert_into_proptable(proptable_entry_t *pentry)
 		    /* proptable[num_propentries-zerooffset-1 : num_propentrys-2]
 		     *    = proptable[num_propentries-zerooffset : num_propentries-1];
 		     */
-		    memmove(proptable + (num_propentries - 1 - zerooffset) * proptable_format.bytes,
-			    proptable + (num_propentries - zerooffset) * proptable_format.bytes,
-			    (zerooffset) * proptable_format.bytes);
+		    memmove(proptable + (num_propentries - 1 - zerooffset) * PROPTABLE_FORMAT_BYTES,
+			    proptable + (num_propentries - zerooffset) * PROPTABLE_FORMAT_BYTES,
+			    (zerooffset) * PROPTABLE_FORMAT_BYTES);
 		    /* proptable[num_propentries-1] = entry; */
 		    insert_at_propentry(num_propentries - 1, pentry);
 		    return;
@@ -7160,9 +7187,9 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	    /* proptable[propentry+2 : propentry+zerooffset]
 	     *    = proptable[propentry+1 : propentry+zerooffset-1];
 	     */
-	    memmove(proptable + proptable_format.bytes * (propentry + 2),
-		    proptable + proptable_format.bytes * (propentry + 1),
-		    (zerooffset-1) * proptable_format.bytes);
+	    memmove(proptable + PROPTABLE_FORMAT_BYTES * (propentry + 2),
+		    proptable + PROPTABLE_FORMAT_BYTES * (propentry + 1),
+		    (zerooffset-1) * PROPTABLE_FORMAT_BYTES);
 	    /* proptable[propentry+1] = entry; */
 	    insert_at_propentry(propentry+1, pentry);
 	    return;
@@ -7172,9 +7199,9 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	    /* proptable[propentry-zerooffset : propentry-1]
 	     *    = proptable[propentry-zerooffset+1 : propentry];
 	     */
-	    memmove(proptable + proptable_format.bytes * (propentry - zerooffset),
-		    proptable + proptable_format.bytes * (propentry - zerooffset + 1),
-		    zerooffset * proptable_format.bytes);
+	    memmove(proptable + PROPTABLE_FORMAT_BYTES * (propentry - zerooffset),
+		    proptable + PROPTABLE_FORMAT_BYTES * (propentry - zerooffset + 1),
+		    zerooffset * PROPTABLE_FORMAT_BYTES);
 	    /* proptable[propentry] = entry; */
 	    insert_at_propentry(propentry, pentry);
 	    return;
@@ -7223,7 +7250,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 	char entry[MAX_FORMAT_BYTES];
 	void *ptr = entry;
 
-	memset(ptr, 0, proptable_format.bytes);
+	memset(ptr, 0, PROPTABLE_FORMAT_BYTES);
 
 	set_propentry_index(ptr, index);
 	set_propentry_dtm(ptr, dtm);
@@ -9303,14 +9330,14 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	    terminate();
 	}
     } else {
-	if (num_futuremoves[WHITE] > proptable_format.futurevector_bits) {
+	if (num_futuremoves[WHITE] > PROPTABLE_FORMAT_FUTUREVECTOR_BITS) {
 	    fatal("Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
-		  num_futuremoves[WHITE], proptable_format.futurevector_bits);
+		  num_futuremoves[WHITE], PROPTABLE_FORMAT_FUTUREVECTOR_BITS);
 	    terminate();
 	}
-	if (num_futuremoves[BLACK] > proptable_format.futurevector_bits) {
+	if (num_futuremoves[BLACK] > PROPTABLE_FORMAT_FUTUREVECTOR_BITS) {
 	    fatal("Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
-		  num_futuremoves[BLACK], proptable_format.futurevector_bits);
+		  num_futuremoves[BLACK], PROPTABLE_FORMAT_FUTUREVECTOR_BITS);
 	    terminate();
 	}
     }
@@ -11001,7 +11028,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    num_propentries = proptable_MBs * 1024 * 1024 / proptable_format.bytes;
+    num_propentries = proptable_MBs * 1024 * 1024 / PROPTABLE_FORMAT_BYTES;
 
     if (USE_PROPTABLES) {
 	if (num_propentries == 0) {
@@ -11026,18 +11053,18 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     if (USE_PROPTABLES) {
 #if USE_DUAL_PROPTABLES
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
-	if (posix_memalign((void **) &proptable1, 1024, num_propentries * proptable_format.bytes) != 0) {
+	if (posix_memalign((void **) &proptable1, 1024, num_propentries * PROPTABLE_FORMAT_BYTES) != 0) {
 	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
 	    return 0;
 	}
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
-	memset(proptable1, 0, num_propentries * proptable_format.bytes);
+	memset(proptable1, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
 
-	if (posix_memalign((void **) &proptable2, 1024, num_propentries * proptable_format.bytes) != 0) {
+	if (posix_memalign((void **) &proptable2, 1024, num_propentries * PROPTABLE_FORMAT_BYTES) != 0) {
 	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
 	    return 0;
 	}
-	memset(proptable2, 0, num_propentries * proptable_format.bytes);
+	memset(proptable2, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
 
 	proptable = proptable1;
 
@@ -11047,16 +11074,16 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    fatal("Can't open 'zeros' for writing zero propfile: %s\n", strerror(errno));
 	    return 0;
 	}
-	do_write(zeros_fd, proptable1, num_propentries * proptable_format.bytes);
+	do_write(zeros_fd, proptable1, num_propentries * PROPTABLE_FORMAT_BYTES);
 #endif
 #else
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
-	if (posix_memalign((void **) &proptable, 1024, num_propentries * proptable_format.bytes) != 0) {
+	if (posix_memalign((void **) &proptable, 1024, num_propentries * PROPTABLE_FORMAT_BYTES) != 0) {
 	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
 	    return 0;
 	}
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
-	memset(proptable, 0, num_propentries * proptable_format.bytes);
+	memset(proptable, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
 
 	proptable1 = proptable;
 	proptable2 = proptable;
