@@ -3891,11 +3891,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		if ((tb->blocking_piece[piece] != -1) && (tb->piece_type[tb->blocking_piece[piece]] == PAWN)
 		    && (tb->piece_color[tb->blocking_piece[piece]] == tb->piece_color[piece])) {
 		    if ((tb->piece_color[piece] == WHITE) && (tb->blocking_piece[piece] < piece)) {
-			fatal("Doubled WHITE pawns must (currently) appear in order in piece list\n");
+			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
 			return NULL;
 		    }
 		    if ((tb->piece_color[piece] == BLACK) && (tb->blocking_piece[piece] > piece)) {
-			fatal("Doubled BLACK pawns must (currently) appear in reverse order in piece list\n");
+			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
 			return NULL;
 		    }
 		}
@@ -4760,7 +4760,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.374 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.375 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
