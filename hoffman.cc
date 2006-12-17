@@ -4636,6 +4636,11 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
     tb = parse_XML_into_tablebase(doc);
 
+    if (tb == NULL) {
+	fatal("Futurebase preload failed: '%s'\n", filename);
+	return NULL;
+    }
+
     tb->file = file;
 
     tablebase = xmlDocGetRootElement(doc);
@@ -4755,7 +4760,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.373 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.374 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
