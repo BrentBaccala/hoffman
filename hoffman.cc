@@ -426,7 +426,7 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
  * </entries-format>
  */
 
-#define USE_PROPTABLES 1
+#define USE_PROPTABLES 0
 
 #define USE_CONST_ENTRIES_FORMAT 1
 
@@ -666,7 +666,7 @@ int verbose = 1;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 1365 */
+/* #define DEBUG_MOVE 11 */
 
 /* #define DEBUG_FUTUREMOVE 798 */
 
@@ -3881,6 +3881,25 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		    }
 		    square += dir;
 		}
+
+		/* This next batch of code is here because we (currently) sort 'identical' pieces
+		 * into increasing order when we normalize a position.  Since doubled pawns are
+		 * 'identical', the easiest way to handle them is to insure that they always appear
+		 * in the correct order in the piece list.
+		 */
+
+		if ((tb->blocking_piece[piece] != -1) && (tb->piece_type[tb->blocking_piece[piece]] == PAWN)
+		    && (tb->piece_color[tb->blocking_piece[piece]] == tb->piece_color[piece])) {
+		    if ((tb->piece_color[piece] == WHITE) && (tb->blocking_piece[piece] < piece)) {
+			fatal("Doubled WHITE pawns must (currently) appear in order in piece list\n");
+			return NULL;
+		    }
+		    if ((tb->piece_color[piece] == BLACK) && (tb->blocking_piece[piece] > piece)) {
+			fatal("Doubled BLACK pawns must (currently) appear in reverse order in piece list\n");
+			return NULL;
+		    }
+		}
+
 	    } else {
 		/* XXX This is a pawn, but it isn't a plus-pawn.  It can be blocked if it is frozen.
 		 * This matters because if a pawn is blocked, then we shouldn't complain if there is
@@ -4736,7 +4755,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.372 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.373 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
