@@ -767,6 +767,18 @@ void info (char * format, ...)
     va_end(va);
 }
 
+void sigaction_user_interrupt (int signal, siginfo_t * siginfo, void * ucontext)
+{
+    fatal("Interrupted by user\n");
+    terminate();
+}
+
+void sigaction_internal_error (int signal, siginfo_t * siginfo, void * ucontext)
+{
+    fatal("Internal error: %s at 0x%08x\n", strsignal(signal), siginfo->si_addr);
+    terminate();
+}
+
 /* Matches a string against a NULL-terminated array of strings using case insensitive match.
  * Returns index in array of matching string, or -1 if there was no match.
  */
@@ -4760,7 +4772,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.375 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.376 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11426,6 +11438,30 @@ int main(int argc, char *argv[])
     extern int optind;
     char options_string[256];
     char *options_string_ptr = options_string;
+    struct sigaction action;
+
+    /* Set signal handlers */
+
+    memset(&action, 0, sizeof(action));
+    action.sa_flags = SA_SIGINFO;
+    action.sa_sigaction = sigaction_user_interrupt;
+    if (sigaction(SIGINT, &action, NULL) == -1) {
+	warning("Can't install SIGINTR handler: %s\n", strerror(errno));
+    }
+
+    action.sa_sigaction = sigaction_internal_error;
+    if (sigaction(SIGSEGV, &action, NULL) == -1) {
+	warning("Can't install SIGSEGV handler: %s\n", strerror(errno));
+    }
+    if (sigaction(SIGILL, &action, NULL) == -1) {
+	warning("Can't install SIGILL handler: %s\n", strerror(errno));
+    }
+    if (sigaction(SIGFPE, &action, NULL) == -1) {
+	warning("Can't install SIGFPE handler: %s\n", strerror(errno));
+    }
+    if (sigaction(SIGBUS, &action, NULL) == -1) {
+	warning("Can't install SIGBUS handler: %s\n", strerror(errno));
+    }
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
