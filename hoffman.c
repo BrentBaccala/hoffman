@@ -696,6 +696,7 @@ void terminate (void)
 		    file = url_fopen(url, "w");
 		    xmlDocDump(file, current_tb->xml);
 		    fclose(file);
+		    xmlFree(url);
 		}
 	    }
 	}
@@ -711,6 +712,7 @@ void terminate (void)
 		    file = url_fopen(url, "w");
 		    xmlDocDump(file, current_tb->xml);
 		    fclose(file);
+		    xmlFree(url);
 		}
 	    }
 	}
@@ -3550,9 +3552,18 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	if (child->type == XML_ELEMENT_NODE) {
 	    char * bitstr = (char *) xmlGetProp(child, BAD_CAST "bits");
 	    char * offsetstr = (char *) xmlGetProp(child, BAD_CAST "offset");
+	    char * typestr;
 	    int bits = (bitstr != NULL) ? atoi(bitstr) : 0;
 	    int offset = (offsetstr != NULL) ? atoi(offsetstr) : -1;
 	    int format_field = find_name_in_array((char *) child->name, format_fields);
+
+	    if ((bitstr == NULL) &&
+		((format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG))) {
+		bits = 1;
+	    }
+
+	    if (bitstr != NULL) xmlFree(bitstr);
+	    if (offsetstr != NULL) xmlFree(offsetstr);
 
 	    if (format_field == -1) {
 		fatal("Unknown field in format: %s\n", (char *) child->name);
@@ -3564,13 +3575,10 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		      (char *) child->name);
 		return 0;
 	    }
-	    if ((bitstr != NULL) && (bits != 1)
+	    if ((bits != 1)
 		&& ((format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG))) {
 		fatal("Format fields 'flag' and 'PTM-wins-flag' only accept bits=\"1\"\n");
 		return 0;
-	    }
-	    if ((format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG)) {
-		bits = 1;
 	    }
 
 	    if ((offset == -1) && (auto_offset == -1)) {
@@ -3642,9 +3650,10 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		else format->futurevector_mask = (1LL << bits) - 1;
 		break;
 	    case FORMAT_FIELD_FLAG:
+		typestr = (char *) xmlGetProp(child, BAD_CAST "type");
 		format->flag_offset = offset;
-		format->flag_type = find_name_in_array((char *) xmlGetProp(child, BAD_CAST "type"),
-						       format_flag_types);
+		format->flag_type = find_name_in_array(typestr, format_flag_types);
+		if (typestr != NULL) xmlFree(typestr);
 		if (format->flag_type == -1) {
 		    fatal("'type' is a required property in format field 'flag'\n");
 		    return 0;
@@ -3703,6 +3712,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
     xmlChar * format;
     xmlChar * index;
     xmlChar * modulus;
+    xmlChar * index_symmetry;
     int piece, piece2, square, white_king_square, black_king_square, dir;
     int pass;
     int reverse_index_ordering[MAX_PIECES];
@@ -3751,9 +3761,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "type");
 	tb->stalemate_prune_type = find_name_in_array((char *) prune_type, restriction_types);
 	tb->stalemate_prune_color = find_name_in_array((char *) prune_color, colors);
+	if (prune_color != NULL) xmlFree(prune_color);
+	if (prune_type != NULL) xmlFree(prune_type);
 	if (tb->stalemate_prune_type != RESTRICTION_CONCEDE) {
 	    fatal("Stalemates can only be pruned to 'concede'\n");
-	    return NULL;
 	}
     }
     xmlXPathFreeObject(result);
@@ -3784,6 +3795,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	xmlChar * color = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "color");
 	xmlChar * type = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "type");
 	xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
+	xmlChar * index_ordering = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "index-ordering");
 
 	tb->piece_color[piece] = find_name_in_array((char *) color, colors);
 	tb->piece_type[piece] = find_name_in_array((char *) type, piece_name);
@@ -3807,13 +3819,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    }
 	    if (location[j] != '\0') {
 		fatal("Illegal piece location (%s)\n", location);
-		return NULL;
 	    }
 	}
 
-	if ((xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "index-ordering") != NULL)
-	    && (strcmp((char *) xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "index-ordering"),
-		       "reverse") == 0)) {
+	if ((index_ordering != NULL) && (strcmp((char *) index_ordering, "reverse") == 0)) {
 	    reverse_index_ordering[piece] = 1;
 	} else {
 	    reverse_index_ordering[piece] = 0;
@@ -3821,13 +3830,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
 	if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
 	    fatal("Illegal piece color (%s) or type (%s)\n", color, type);
-	    return NULL;
 	}
 
 	if ((tb->piece_color[piece] == WHITE) && (tb->piece_type[piece] == KING)) {
 	    if (tb->white_king != -1) {
 		fatal("Must have one white king and one black one!\n");
-		return NULL;
 	    } else {
 		tb->white_king = piece;
 	    }
@@ -3836,7 +3843,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	if ((tb->piece_color[piece] == BLACK) && (tb->piece_type[piece] == KING)) {
 	    if (tb->black_king != -1) {
 		fatal("Must have one white king and one black one!\n");
-		return NULL;
 	    } else {
 		tb->black_king = piece;
 	    }
@@ -3845,6 +3851,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	if (color != NULL) xmlFree(color);
 	if (type != NULL) xmlFree(type);
 	if (location != NULL) xmlFree(location);
+	if (index_ordering != NULL) xmlFree(index_ordering);
     }
 
     if ((tb->white_king == -1) || (tb->black_king == -1)) {
@@ -3927,11 +3934,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		    && (tb->piece_color[tb->blocking_piece[piece]] == tb->piece_color[piece])) {
 		    if ((tb->piece_color[piece] == WHITE) && (tb->blocking_piece[piece] < piece)) {
 			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
-			return NULL;
 		    }
 		    if ((tb->piece_color[piece] == BLACK) && (tb->blocking_piece[piece] > piece)) {
 			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
-			return NULL;
 		    }
 		}
 
@@ -3942,6 +3947,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		 * since we can always just add an extra pruning statement for the non-move.
 		 */
 	    }
+
+	    if (location != NULL) xmlFree(location);
 	}
     }
 
@@ -3970,6 +3977,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 			square += dir;
 		    }
 		}
+
+		if (location != NULL) xmlFree(location);
 	    }
 	}
     }
@@ -4032,8 +4041,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	if (result->nodesetval->nodeNr == 1) {
 	    index_node = result->nodesetval->nodeTab[0];
 	    index = xmlGetProp(index_node, BAD_CAST "type");
-	    if (xmlGetProp(index_node, BAD_CAST "offset") != NULL) {
-		tb->index_offset = atoi((char *) xmlGetProp(index_node, BAD_CAST "offset"));
+	    xmlChar * index_offset = xmlGetProp(index_node, BAD_CAST "offset");
+	    if (index_offset != NULL) {
+		tb->index_offset = atoi((char *) index_offset);
+		xmlFree(index_offset);
 	    }
 	}
 	xmlXPathFreeObject(result);
@@ -4049,6 +4060,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    fatal("Unknown tablebase index type '%s'\n", index);
 	    return NULL;
 	}
+	xmlFree(index);
+	index = NULL;
     }
 
     /* Now, compute a bitvector for all the pieces that are frozen on single squares.  This
@@ -4150,6 +4163,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    fatal("Unknown tablebase format '%s'\n", format);
 	    return NULL;
 	}
+	xmlFree(format);
     } else {
 	context = xmlXPathNewContext(tb->xml);
 	result = xmlXPathEvalExpression(BAD_CAST "//format", context);
@@ -4199,12 +4213,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     /* Extract index symmetry (if it was specified) */
 
-    if (xmlGetProp(index_node, BAD_CAST "symmetry") != NULL) {
-	tb->symmetry = atoi((char *) xmlGetProp(index_node, BAD_CAST "symmetry"));
+    index_symmetry = xmlGetProp(index_node, BAD_CAST "symmetry");
+    if (index_symmetry != NULL) {
+	tb->symmetry = atoi((char *) index_symmetry);
 	if ((tb->symmetry != 1) && (tb->symmetry != 2) && (tb->symmetry != 4) && (tb->symmetry != 8)) {
 	    fatal("Bad index symmetry %d\n", tb->symmetry);
-	    return NULL;
 	}
+	xmlFree(index_symmetry);
     } else {
 	tb->symmetry = 1;
     }
@@ -4668,6 +4683,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    return NULL;
 	}
 	tb->max_index = tb->modulus - 1;
+	xmlFree(modulus);
     }
 
     /* Fetch the move restrictions */
@@ -4689,21 +4705,22 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    type = find_name_in_array((char *) type_str, restriction_types);
 	    if ((color == -1) || (type == -1)) {
 		fatal("Illegal move restriction\n");
-		return NULL;
 	    } else {
 		if ((tb->move_restrictions[color] > 0) && (tb->move_restrictions[color] != type)) {
 		    fatal("Incompatible move restrictions\n");
-		    return NULL;
 		} else {
 		    tb->move_restrictions[color] = type;
 		}
 	    }
+
+	    if (color_str != NULL) xmlFree(color_str);
+	    if (type_str != NULL) xmlFree(type_str);
 	}
     }
 
     xmlXPathFreeContext(context);
 
-    return tb;
+    return (fatal_errors == 0) ? tb : NULL;
 }
 
 /* Parses an XML control file.
@@ -4810,6 +4827,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
     offsetstr = xmlGetProp(tablebase, BAD_CAST "offset");
     tb->offset = strtol((const char *) offsetstr, NULL, 0);
+    if (offsetstr != NULL) xmlFree(offsetstr);
 
 #if 0
     if (fseek(file, tb->offset, SEEK_SET) != 0) {
@@ -4923,7 +4941,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.379 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.380 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
