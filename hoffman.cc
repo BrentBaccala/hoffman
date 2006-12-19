@@ -2393,6 +2393,12 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
  * Encode en passant position-wide instead of adding an extra square for each pawn.  Would be a win
  * in positions with lots of pawns.
  *
+ * The 'compact' routines are also used for the 'no-en-passant' index type, which is identical to
+ * compact except that opposing plus-pawns are encoded as paired pieces.  So long as we leave en
+ * passant out of the picture, opposing plus-pawns occupy an identical range of squares and, so long
+ * as we know which two squares are occupied, we can always figure out which pawn is white and which
+ * is black because they can't jump over each other.  En passant would complicate this, because then
+ * the two pawns wouldn't be identical in their ranges.
  */
 
 index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
@@ -4917,7 +4923,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.378 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.379 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
