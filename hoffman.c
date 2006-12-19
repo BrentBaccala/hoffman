@@ -3869,7 +3869,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
      * can cut tablebase sizes by a factor of two for each pair.
      */
 
-    /* First, compute which piece, if any, is blocking each plus-pawn.  */
+    /* First, compute which piece, if any, is blocking each plus-pawn.  We do this by stripping out
+     * from the blocking piece's legal squares all possible positions of the plus-pawn as we move it
+     * forward.  This ensures that a white pawn restricted to "g2 g3", say, will block a black
+     * plus-pawn "g7+".  This is OK for non-pawns, too, since knights are the only pieces that can
+     * jump and a knight could never be frozen purely along a single file.  Plus-pawns themselves,
+     * since their legal_squares haven't been expanded yet, block other pawn-pawns at their origin
+     * square.
+     */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -3878,19 +3885,23 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	if (tb->piece_type[piece] == PAWN) {
 
 	    xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
+	    uint64 pawn_positions = 0xffffffffffffffffLL;
 
 	    if ((location != NULL) && (location[2] == '+')) {
 
 		int square = rowcol2square(location[1] - '1', location[0] - 'a');
 		int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
 
+		pawn_positions &= ~BITVECTOR(square);
 		square += dir;
+
 		while ((square < 56) && (square > 7) && (tb->blocking_piece[piece] == -1)) {
 		    for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
-			if (tb->legal_squares[piece2] == BITVECTOR(square)) {
+			if ((pawn_positions & tb->legal_squares[piece2]) == BITVECTOR(square)) {
 			    tb->blocking_piece[piece] = piece2;
 			}
 		    }
+		    pawn_positions &= ~BITVECTOR(square);
 		    square += dir;
 		}
 
@@ -4772,7 +4783,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.376 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.377 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
