@@ -543,8 +543,9 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 #define SIMPLE_INDEX 2
 #define COMPACT_INDEX 3
 #define STANDARD_INDEX 4
+#define NO_EN_PASSANT_INDEX 5
 
-char * index_types[] = {"naive", "naive2", "simple", "compact", "standard"};
+char * index_types[] = {"naive", "naive2", "simple", "compact", "standard", "no-en-passant"};
 
 typedef struct tablebase {
     int index_type;
@@ -666,7 +667,7 @@ int verbose = 1;
  * doing to process a single move.
  */
 
-/* #define DEBUG_MOVE 11 */
+/* #define DEBUG_MOVE 1 */
 
 /* #define DEBUG_FUTUREMOVE 798 */
 
@@ -3137,6 +3138,9 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	return -1;
 #endif
 
+    if ((tb->index_type == NO_EN_PASSANT_INDEX) && (position->en_passant_square != -1))
+	return -1;
+
     /* Recompute board_vector, and check for legality of piece positions */
 
     position->board_vector = 0;
@@ -3191,6 +3195,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	index = local_position_to_simple_index(tb, position);
 	break;
     case COMPACT_INDEX:
+    case NO_EN_PASSANT_INDEX:
 	index = local_position_to_compact_index(tb, position);
 	break;
     case STANDARD_INDEX:
@@ -3264,6 +3269,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 	ret = simple_index_to_local_position(tb, index, position);
 	break;
     case COMPACT_INDEX:
+    case NO_EN_PASSANT_INDEX:
 	ret = compact_index_to_local_position(tb, index, position);
 	break;
     case STANDARD_INDEX:
@@ -4232,11 +4238,41 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	return NULL;
     }
 
-    if ((tb->index_type != COMPACT_INDEX) && (tb->index_type != STANDARD_INDEX)) {
+    if ((tb->index_type != NO_EN_PASSANT_INDEX) && (tb->index_type != COMPACT_INDEX)
+	&& (tb->index_type != STANDARD_INDEX)) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->legal_squares[piece] != tb->semilegal_squares[piece]) {
-		fatal("Non-identical overlapping piece restrictions only allowed with 'compact' or 'standard' index types\n");
+		fatal("Non-identical overlapping piece restrictions not allowed with this index type\n");
 		return NULL;
+	    }
+	}
+    }
+
+    if (tb->index_type == NO_EN_PASSANT_INDEX) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    int col;
+	    int row1 = (tb->piece_color[piece] == WHITE) ? 1 : 6;
+	    int row3 = (tb->piece_color[piece] == WHITE) ? 3 : 4;
+	    int row4 = (tb->piece_color[piece] == WHITE) ? 4 : 3;
+	    if (tb->piece_type[piece] != PAWN) continue;
+	    for (col = 0; col < 8; col ++) {
+		if (tb->legal_squares[piece]
+		    & (BITVECTOR(rowcol2square(row1, col)) | BITVECTOR(rowcol2square(row3, col)))) {
+		    for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
+			if (tb->piece_type[piece2] != PAWN) continue;
+			if (tb->piece_color[piece2] == tb->piece_color[piece]) continue;
+			if ((col > 0)
+			    && (tb->legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col-1)))) {
+			    fatal("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible\n");
+			    return NULL;
+			}
+			if ((col < 7)
+			    && (tb->legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col+1)))) {
+			    fatal("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible\n");
+			    return NULL;
+			}
+		    }
+		}
 	    }
 	}
     }
@@ -4396,6 +4432,104 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 		    tb->simple_piece_indices[piece][COL(square)] = tb->total_legal_piece_positions[piece];
 		    tb->total_legal_piece_positions[piece] ++;
 		}
+	    }
+	    if (tb->last_paired_piece[piece] == -1) {
+		tb->max_index *= tb->total_legal_piece_positions[piece];
+	    } else if (tb->total_legal_piece_positions[piece]
+		       != tb->total_legal_piece_positions[tb->last_paired_piece[piece]]) {
+		fatal("Paired pieces don't have the same number of total legal positions\n");
+	    } else {
+		tb->max_index *= tb->total_legal_piece_positions[piece]/2;
+	    }
+	}
+
+	tb->max_index --;
+	break;
+
+    case NO_EN_PASSANT_INDEX:
+
+	/* The "2" is because side-to-play is part of the position */
+	tb->max_index = 2;
+
+	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
+	    if (! (tb->legal_squares[tb->white_king] & BITVECTOR(white_king_square))) continue;
+	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
+		if (! (tb->legal_squares[tb->black_king] & BITVECTOR(black_king_square))) continue;
+		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+		if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+		    && (ROW(black_king_square) > COL(black_king_square))) continue;
+#if CHECK_KING_LEGALITY_EARLY
+		if (! check_king_legality(white_king_square, black_king_square)) continue;
+#endif
+		tb->compact_white_king_positions[tb->total_legal_compact_king_positions] = white_king_square;
+		tb->compact_black_king_positions[tb->total_legal_compact_king_positions] = black_king_square;
+		tb->compact_king_indices[white_king_square][black_king_square] = tb->total_legal_compact_king_positions;
+		tb->total_legal_compact_king_positions ++;
+	    }
+	}
+	tb->max_index *= tb->total_legal_compact_king_positions;
+
+	tb->last_paired_piece[tb->white_king] = -1;
+	tb->next_paired_piece[tb->white_king] = -1;
+	tb->last_paired_piece[tb->black_king] = -1;
+	tb->next_paired_piece[tb->black_king] = -1;
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
+		fatal("Can't have more than two identical pieces with 'compact' index (yet)\n");
+		return NULL;
+	    }
+
+	    tb->last_paired_piece[piece] = tb->last_identical_piece[piece];
+	    tb->next_paired_piece[piece] = tb->next_identical_piece[piece];
+
+	    /* Note that we only set blocking_piece for plus-pawns, so if two pieces are mutually
+	     * blocking, they must be opposing plus-pawns.
+	     */
+
+	    if ((tb->blocking_piece[piece] != -1)
+		&& (tb->blocking_piece[tb->blocking_piece[piece]] == piece)) {
+
+		if ((tb->last_paired_piece[piece] != -1) || (tb->next_paired_piece[piece] != -1)) {
+		    fatal("Can't have a doubled pawn opposed by enemy pawn (yet)\n");
+		    return NULL;
+		}
+		if ((tb->blocking_piece[piece] > piece) && (tb->piece_color[piece] != WHITE)) {
+		    fatal("Mutually blocking pawns must currently be specified white pawn first\n");
+		    return NULL;
+		}
+		if (tb->blocking_piece[piece] > piece) {
+		    tb->next_paired_piece[piece] = tb->blocking_piece[piece];
+		} else {
+		    tb->last_paired_piece[piece] = tb->blocking_piece[piece];
+		}
+		/* We have to extend the semilegal squares of both blocking pawns because the
+		 * pairing is based on 2 pieces on n squares using (n)(n-1)/2 numbers.
+		 */
+		tb->semilegal_squares[piece] |= tb->semilegal_squares[tb->blocking_piece[piece]];
+	    }
+
+	    /* We count semilegal and not legal squares here because the pair encoding used for
+	     * identical pieces assumes that both pieces occupy the same range of squares.
+	     */
+
+	    for (square = (reverse_index_ordering[piece] ? 63 : 0);
+		 (reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
+		 (reverse_index_ordering[piece] ? (square --) : (square ++))) {
+
+		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
+		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
+		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
+		tb->total_legal_piece_positions[piece] ++;
+
 	    }
 	    if (tb->last_paired_piece[piece] == -1) {
 		tb->max_index *= tb->total_legal_piece_positions[piece];
@@ -4783,7 +4917,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.377 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.378 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -10236,14 +10370,16 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 		 * additional en passant positions is taken care of in
 		 * propagate_one_move_within_table()
 		 *
-		 * But we start with an extra check to make sure this isn't a double pawn move, it
+		 * But we start with an extra check to make sure this isn't a double pawn move, in
 		 * which case it would result in an en passant position, not the non-en passant
-		 * position we are in now (en passant got taken care of in the special case above).
+		 * position we are in now (en passant got taken care of in the special case
+		 * above)...  unless we are using the "no-en-passant" index type, in which case we
+		 * don't consider en passant at all, and so have to handle the double move here.
 		 */
 
 		if (((movementptr->square - origin_square) == 16)
 		    || ((movementptr->square - origin_square) == -16)) {
-		    continue;
+		    if (tb->index_type != NO_EN_PASSANT_INDEX) continue;
 		}
 
 		/* I go to the trouble to update board_vector here so we can check en passant
