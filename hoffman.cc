@@ -4941,7 +4941,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.380 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.381 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6030,6 +6030,8 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	if (index < tb->next_read_index) {
 	    if (fseek(tb->file, tb->offset + index, SEEK_SET) != 0) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
+	    } else {
+		tb->next_read_index = index;
 	    }
 	}
 
