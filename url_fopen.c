@@ -1,4 +1,5 @@
-/*****************************************************************************
+/* -*- mode: C; fill-column: 100; c-basic-offset: 4; -*-
+ *****************************************************************************
  *
  * This example source code introduces a libcurl-based C library
  * buffered I/O interface to URLs.  It supports fopen(), fread(),
@@ -56,9 +57,12 @@ struct curl_cookie
 {
     CURL *curl;
 
-    char *buffer;               /* buffer to store cached data*/
+    char operation;		/* read (r), write (w), or append (a) */
+    char *URL;			/* we malloc this ourselves */
+
+    char *buffer;               /* buffer to store cached data */
     int buffer_len;             /* currently allocated buffers length */
-    int buffer_pos;             /* end of data in buffer*/
+    int buffer_pos;             /* end of data in buffer */
     int still_running;          /* Is background url fetch still in progress */
 };
 
@@ -327,9 +331,29 @@ static ssize_t reader(void *ptr, char *buffer, size_t size)
 
     use_buffer(cookie,want);
 
-    /*printf("(fread) return %d bytes %d left\n", want,cookie->buffer_pos);*/
+    /* printf("(fread) return %d bytes %d left\n", want,cookie->buffer_pos); */
 
     return want;
+}
+
+static int start_cookie(struct curl_cookie *cookie);
+
+static int read_seeker (void *ptr, off64_t *position, int whence)
+{
+    struct curl_cookie *cookie = ptr;
+
+    /* only support rewinds, for now */
+
+    if ((whence != SEEK_SET) || (*position != 0)) return -1;
+
+    curl_multi_remove_handle(multi_handle, cookie->curl);
+    curl_easy_cleanup(cookie->curl);
+    cookie->still_running = 0;
+    cookie->buffer_pos = 0;
+
+    /* printf("(url rewind)\n"); */
+
+    return start_cookie(cookie);
 }
 
 static ssize_t writer(void *ptr, const char *buffer, size_t size)
@@ -402,63 +426,45 @@ static ssize_t writer(void *ptr, const char *buffer, size_t size)
     return (size - cookie->buffer_len);
 }
 
-static cookie_io_functions_t read_functions = {reader, NULL, NULL, cleaner};
+static cookie_io_functions_t read_functions = {reader, NULL, read_seeker, cleaner};
 static cookie_io_functions_t write_functions = {NULL, writer, NULL, cleaner};
 
-FILE *
-url_fopen(char *url,const char *operation)
+static int start_cookie(struct curl_cookie *cookie)
 {
-    /* this code could check for URLs or types in the 'url' and
-       basicly use the real fopen() for standard files */
-
-    FILE *file;
-    struct curl_cookie *cookie;
-
-#if 0
-    if ((file=fopen(url,operation)) != NULL)
-    {
-        return file;
-    }
-#endif
-
-    if ((operation[0] != 'r') && (operation[0] != 'w') && (operation[0] != 'a')) {
+    if ((cookie->operation != 'r') && (cookie->operation != 'w') && (cookie->operation != 'a')) {
 	errno = EINVAL;
-	return NULL;
+	return -1;
     }
-
-    cookie = (struct curl_cookie *) malloc(sizeof(struct curl_cookie));
-
-    if (cookie == NULL) {
-	errno = ENOMEM;
-	return NULL;
-    }
-
-    memset(cookie, 0, sizeof(struct curl_cookie));
 
     cookie->curl = curl_easy_init();
 
     /* I sometimes turn on the VERBOSE option to debug this thing.
+     *
      * The FORBID_REUSE option is here to avoid a problem I had when
      * you attempt to transfer files (possibly more than one) by
      * reading part of the file, then coming back and reading the
      * whole thing again.  Some combination provokes a "426 Illegal
      * Seek" from my FTP server; FORBID_REUSE fixes this.
+     *
+     * The FRESH_CONNECT option is here to avoid a problem I had
+     * rewinding an HTTP session.
      */
 
-    curl_easy_setopt(cookie->curl, CURLOPT_URL, url);
+    curl_easy_setopt(cookie->curl, CURLOPT_URL, cookie->URL);
     curl_easy_setopt(cookie->curl, CURLOPT_VERBOSE, 0);
+    curl_easy_setopt(cookie->curl, CURLOPT_FRESH_CONNECT, 1);
     curl_easy_setopt(cookie->curl, CURLOPT_FORBID_REUSE, 1);
 
     /* Curl's sense of 'read' and 'write' is backwards from ours */
 
-    if (operation[0] == 'r') {
+    if (cookie->operation == 'r') {
 	curl_easy_setopt(cookie->curl, CURLOPT_WRITEDATA, cookie);
 	curl_easy_setopt(cookie->curl, CURLOPT_WRITEFUNCTION, write_callback);
     } else {
 	curl_easy_setopt(cookie->curl, CURLOPT_READDATA, cookie);
 	curl_easy_setopt(cookie->curl, CURLOPT_READFUNCTION, read_callback);
 	curl_easy_setopt(cookie->curl, CURLOPT_UPLOAD, 1);
-	if (operation[0] == 'a') {
+	if (cookie->operation == 'a') {
 	  curl_easy_setopt(cookie->curl, CURLOPT_FTPAPPEND, 1);
 	}
     }
@@ -468,7 +474,7 @@ url_fopen(char *url,const char *operation)
 
     curl_multi_add_handle(multi_handle, cookie->curl);
 
-    if (operation[0] == 'r') {
+    if (cookie->operation == 'r') {
 
 	/* lets start the fetch */
 	while(curl_multi_perform(multi_handle, &cookie->still_running) ==
@@ -484,13 +490,50 @@ url_fopen(char *url,const char *operation)
 	    /* cleanup */
 	    curl_easy_cleanup(cookie->curl);
 
+	    /* XXX sometimes want to free buffer, too */
+	    free(cookie->URL);
 	    free(cookie);
 
 	    /* it was probably a bad URL */
 	    errno = EINVAL;
-	    return NULL;
+	    return -1;
 	}
     }
+
+    return 0;
+}
+
+FILE * url_fopen(char *url,const char *operation)
+{
+    /* this code could check for URLs or types in the 'url' and
+       basicly use the real fopen() for standard files */
+
+    FILE *file;
+    struct curl_cookie *cookie;
+
+    if ((operation[0] != 'r') && (operation[0] != 'w') && (operation[0] != 'a')) {
+	errno = EINVAL;
+	return NULL;
+    }
+
+    cookie = (struct curl_cookie *) malloc(sizeof(struct curl_cookie));
+
+    if (cookie == NULL) {
+	errno = ENOMEM;
+	return NULL;
+    }
+
+    memset(cookie, 0, sizeof(struct curl_cookie));
+
+    cookie->URL = malloc(strlen(url) + 1);
+    if (cookie->URL == NULL) {
+	errno = ENOMEM;
+	return NULL;
+    }
+    strcpy(cookie->URL, url);
+    cookie->operation = operation[0];
+
+    if (start_cookie(cookie) == -1) return NULL;
 
     if (operation[0] == 'r') {
 	file = fopencookie(cookie, operation, read_functions);
