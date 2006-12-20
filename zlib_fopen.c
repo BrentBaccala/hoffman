@@ -1,4 +1,5 @@
 /* -*- mode: C; fill-column: 100; c-basic-offset: 4; -*-
+ */
 
 #define _GNU_SOURCE
 
