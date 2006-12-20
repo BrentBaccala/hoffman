@@ -1,3 +1,4 @@
+/* -*- mode: C; fill-column: 100; c-basic-offset: 4; -*-
 
 #define _GNU_SOURCE
 
@@ -98,7 +99,45 @@ static int write_cleaner (void *ptr)
     return (ret == Z_STREAM_END) ? 0 : -1;
 }
 
-static cookie_io_functions_t read_functions = {reader, NULL, NULL, read_cleaner};
+static int read_seeker (void *ptr, off64_t *position, int whence)
+{
+    struct cookie *cookie = ptr;
+    int ret;
+    unsigned char buffer[16384];
+
+    if (whence == SEEK_END) return -1;
+    if (whence == SEEK_CUR) *position += cookie->zstream.total_out;
+
+    if (*position < cookie->zstream.total_out) {
+	/* rewind the underlying file and restart decompressing from the beginning */
+	if (fseek(cookie->file, 0, SEEK_SET) == -1) return -1;
+	memset(&cookie->zstream, 0, sizeof(z_stream));
+	if (inflateInit2(&cookie->zstream, 32 + MAX_WBITS) != Z_OK) return -1;
+    }
+
+    while (*position > cookie->zstream.total_out) {
+	cookie->zstream.next_out = buffer;
+	if (*position - cookie->zstream.total_out > sizeof(buffer)) {
+	    cookie->zstream.avail_out =  sizeof(buffer);
+	} else {
+	    cookie->zstream.avail_out = (*position - cookie->zstream.total_out);
+	}
+
+	if (cookie->zstream.avail_in == 0) {
+	    cookie->zstream.next_in = cookie->buffer;
+	    cookie->zstream.avail_in = fread(cookie->buffer, 1, cookie->bufsize, cookie->file);
+	    if (cookie->zstream.avail_in == 0) break;
+	}
+	if ((ret = inflate(&cookie->zstream, Z_NO_FLUSH)) != Z_OK) break;
+    }
+
+    ret = (*position == cookie->zstream.total_out) ? 0 : -1;
+    *position = cookie->zstream.total_out;
+
+    return ret;
+}
+
+static cookie_io_functions_t read_functions = {reader, NULL, read_seeker, read_cleaner};
 static cookie_io_functions_t write_functions = {NULL, writer, NULL, write_cleaner};
 
 FILE * zlib_fopen(FILE *file, char *operation)
@@ -128,16 +167,13 @@ FILE * zlib_fopen(FILE *file, char *operation)
 
     if (operation[0] == 'r') {
 	cookie->zstream.next_in = cookie->buffer;
-	/* if (inflateInit(&cookie->zstream) != Z_OK) { */
 	if (inflateInit2(&cookie->zstream, 32 + MAX_WBITS) != Z_OK) {
 	    errno = ENOMEM;
 	    return NULL;
 	}
     } else {
-	/* if (deflateInit(&cookie->zstream, Z_DEFAULT_COMPRESSION) != Z_OK) { */
 	if (deflateInit2(&cookie->zstream, Z_DEFAULT_COMPRESSION,
 			 Z_DEFLATED, 16 + MAX_WBITS, 8, Z_DEFAULT_STRATEGY) != Z_OK) {
-	/* if (deflateInit2(&cookie->zstream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 16+15, 8, Z_FILTERED) != Z_OK) { */
 	    errno = ENOMEM;
 	    return NULL;
 	}
