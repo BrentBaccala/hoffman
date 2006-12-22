@@ -4947,7 +4947,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.383 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.384 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11365,11 +11365,13 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * and run through the futurevectors array checking for unhandled futuremoves.
 	 */
 
-	tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t));
+	/* tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t)); */
+	tb->futurevectors = (futurevector_t *) malloc((tb->max_index + 1) * sizeof(futurevector_t));
 	if (tb->futurevectors == NULL) {
 	    fatal("Can't malloc tablebase futurevectors: %s\n", strerror(errno));
 	    return 0;
 	}
+	memset(tb->futurevectors, 0, (tb->max_index + 1) * sizeof(futurevector_t));
 
 	/* Due to the heavily random access pattern of memory during back propagation, this
 	 * application performs horribly if required to swap.  Attempt to lock all of its pages into
