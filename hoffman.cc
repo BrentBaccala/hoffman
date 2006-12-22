@@ -4723,6 +4723,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	}
     }
 
+    xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
     return (fatal_errors == 0) ? tb : NULL;
@@ -4946,7 +4947,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.382 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.383 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8950,6 +8951,11 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    filename = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "url");
 	}
 
+	if (filename == NULL) {
+	    fatal("No filename or URL specified in futurebase element\n");
+	    continue;
+	}
+
 	futurebase = preload_futurebase_from_file((char *) filename);
 
 	/* load_futurebase_from_file() already printed some kind of error message */
@@ -8962,7 +8968,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    xmlFree(colors_property);
 	}
 
-	if (! compute_extra_and_missing_pieces(tb, futurebase, (char *) filename)) return 0;
+	if (! compute_extra_and_missing_pieces(tb, futurebase, (char *) filename)) continue;
 
 	/* Various combinations of missing/extra pieces are legal for different futurebase types.
 	 */
@@ -8977,22 +8983,23 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    if (futurebase->extra_piece != -1) {
 		fatal("'%s': Extra piece in capture futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
 	    if ((futurebase->missing_pawn != -1) && (futurebase->missing_non_pawn != -1)) {
 		fatal("'%s': Too many missing pieces in capture futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
 	    if ((futurebase->missing_pawn == -1) && (futurebase->missing_non_pawn == -1)) {
 		fatal("'%s': No missing pieces in capture futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
-	    info("Back propagating from '%s'\n", (char *) filename);
-
-	    propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors);
+	    if (fatal_errors == 0) {
+		info("Back propagating from '%s'\n", (char *) filename);
+		propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors);
+	    }
 
 	} else if ((type != NULL) && !strcasecmp((char *) type, "promotion")) {
 
@@ -9003,25 +9010,26 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    if (futurebase->extra_piece == -1) {
 		fatal("'%s': No extra piece in promotion futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
 	    if (futurebase->missing_non_pawn != -1) {
 		fatal("'%s': Missing non-pawn in promotion futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
 	    if (futurebase->missing_pawn == -1) {
 		fatal("'%s': No missing pawn in promotion futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
 	    /* Ready to go. */
 
-	    info("Back propagating from '%s'\n", (char *) filename);
-
-	    propagate_moves_from_promotion_futurebase(tb, futurebase, futurebase->invert_colors,
-						      futurebase->missing_pawn);
+	    if (fatal_errors == 0) {
+		info("Back propagating from '%s'\n", (char *) filename);
+		propagate_moves_from_promotion_futurebase(tb, futurebase, futurebase->invert_colors,
+							  futurebase->missing_pawn);
+	    }
 
 	} else if ((type != NULL)
 		   && (!strcasecmp((char *) type, "promotion-capture") ||
@@ -9034,54 +9042,60 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    if (futurebase->extra_piece == -1) {
 		fatal("'%s': No extra piece in promotion capture futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
 	    if (futurebase->missing_non_pawn == -1) {
 		fatal("'%s': No missing non-pawn in promotion capture futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
 	    if (futurebase->missing_pawn == -1) {
 		fatal("'%s': No missing pawn in promotion capture futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
 	    /* Ready to go. */
 
-	    info("Back propagating from '%s'\n", (char *) filename);
-
-	    propagate_moves_from_promotion_capture_futurebase(tb, futurebase, futurebase->invert_colors,
-							      futurebase->missing_pawn);
+	    if (fatal_errors == 0) {
+		info("Back propagating from '%s'\n", (char *) filename);
+		propagate_moves_from_promotion_capture_futurebase(tb, futurebase, futurebase->invert_colors,
+								  futurebase->missing_pawn);
+	    }
 
 	} else if ((type != NULL) && !strcasecmp((char *) type, "normal")) {
 
 	    if (futurebase->extra_piece != -1) {
 		fatal("'%s': Extra piece in normal futurebase\n", filename);
-		return 0;
+		continue;
 	    }
 
 	    if ((futurebase->missing_pawn != -1) || (futurebase->missing_non_pawn != -1)) {
 		fatal("'%s': Missing pieces in normal futurebase\n", filename);
+		continue;
 	    }
 
-	    info("Back propagating from '%s'\n", (char *) filename);
-
-	    propagate_moves_from_normal_futurebase(tb, futurebase, futurebase->invert_colors);
+	    if (fatal_errors == 0) {
+		info("Back propagating from '%s'\n", (char *) filename);
+		propagate_moves_from_normal_futurebase(tb, futurebase, futurebase->invert_colors);
+	    }
 
 	} else {
 
 	    fatal("'%s': Unknown back propagation type (%s)\n", (char *) filename, (char *) type);
-	    return 0;
+	    continue;
 
 	}
 
+	if (type != NULL) xmlFree(type);
+	if (filename != NULL) xmlFree(filename);
 	unload_futurebase(futurebase);
     }
 
+    xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    return 1;
+    return (fatal_errors == 0);
 }
 
 /***** PRUNING *****/
@@ -9609,57 +9623,65 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
 	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
 					  BAD_CAST "type");
 
-	if (find_name_in_array((char *) prune_color, colors) != color) continue;
-
 	type = find_name_in_array((char *) prune_type, restriction_types);
 
-	if (!strcasecmp((char *) prune_move, pruning_statement)) break;
+	if ((find_name_in_array((char *) prune_color, colors) == color)
+	    && (!strcasecmp((char *) prune_move, pruning_statement)
+		|| (!strcasecmp("any", (char *) prune_move + strlen((char *) prune_move) - 3)
+		    && !strncasecmp((char *) prune_move, pruning_statement,
+				    strlen((char *) prune_move) - 3)))) {
 
-	if (!strcasecmp("any", (char *) prune_move + strlen((char *) prune_move) - 3)
-	    && !strncasecmp((char *) prune_move, pruning_statement, strlen((char *) prune_move) - 3)) break;
-    }
+	    if (color == WHITE) {
 
-    if (prune != result->nodesetval->nodeNr) {
-	if (color == WHITE) {
-
-	    if (pruned_white_futuremoves & FUTUREVECTOR(futuremove)) {
-		warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
-	    }
-
-	    pruned_white_futuremoves |= FUTUREVECTOR(futuremove);
-
-	    if (type == RESTRICTION_CONCEDE) {
-		conceded_white_futuremoves |= FUTUREVECTOR(futuremove);
-		if (discarded_white_futuremoves & FUTUREVECTOR(futuremove)) {
-		    fatal("Conflicting pruning statements ('%s') match a futuremove\n", pruning_statement);
+		if (pruned_white_futuremoves & FUTUREVECTOR(futuremove)) {
+		    warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
 		}
-	    }
-	    if (type == RESTRICTION_DISCARD) {
-		discarded_white_futuremoves |= FUTUREVECTOR(futuremove);
-		if (conceded_white_futuremoves & FUTUREVECTOR(futuremove)) {
-		    fatal("Conflicting pruning statements ('%s') match a futuremove\n", pruning_statement);
-		}
-	    }
-	} else {
-	    if (pruned_black_futuremoves & FUTUREVECTOR(futuremove)) {
-		warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
-	    }
 
-	    pruned_black_futuremoves |= FUTUREVECTOR(futuremove);
+		pruned_white_futuremoves |= FUTUREVECTOR(futuremove);
 
-	    if (type == RESTRICTION_CONCEDE) {
-		conceded_black_futuremoves |= FUTUREVECTOR(futuremove);
-		if (discarded_black_futuremoves & FUTUREVECTOR(futuremove)) {
-		    fatal("Conflicting pruning statements ('%s') match a futuremove\n", pruning_statement);
+		if (type == RESTRICTION_CONCEDE) {
+		    conceded_white_futuremoves |= FUTUREVECTOR(futuremove);
+		    if (discarded_white_futuremoves & FUTUREVECTOR(futuremove)) {
+			fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+			      pruning_statement);
+		    }
 		}
-	    }
-	    if (type == RESTRICTION_DISCARD) {
-		discarded_black_futuremoves |= FUTUREVECTOR(futuremove);
-		if (conceded_black_futuremoves & FUTUREVECTOR(futuremove)) {
-		    fatal("Conflicting pruning statements ('%s') match a futuremove\n", pruning_statement);
+		if (type == RESTRICTION_DISCARD) {
+		    discarded_white_futuremoves |= FUTUREVECTOR(futuremove);
+		    if (conceded_white_futuremoves & FUTUREVECTOR(futuremove)) {
+			fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+			      pruning_statement);
+		    }
+		}
+
+	    } else {
+
+		if (pruned_black_futuremoves & FUTUREVECTOR(futuremove)) {
+		    warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
+		}
+
+		pruned_black_futuremoves |= FUTUREVECTOR(futuremove);
+
+		if (type == RESTRICTION_CONCEDE) {
+		    conceded_black_futuremoves |= FUTUREVECTOR(futuremove);
+		    if (discarded_black_futuremoves & FUTUREVECTOR(futuremove)) {
+			fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+			      pruning_statement);
+		    }
+		}
+		if (type == RESTRICTION_DISCARD) {
+		    discarded_black_futuremoves |= FUTUREVECTOR(futuremove);
+		    if (conceded_black_futuremoves & FUTUREVECTOR(futuremove)) {
+			fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+			      pruning_statement);
+		    }
 		}
 	    }
 	}
+
+	if (prune_color != NULL) xmlFree(prune_color);
+	if (prune_move != NULL) xmlFree(prune_move);
+	if (prune_type != NULL) xmlFree(prune_type);
     }
 
     xmlXPathFreeObject(result);
@@ -9700,12 +9722,16 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 	if (type != tb->move_restrictions[color]) {
 	    fatal("Prune statements don't match tablebase restrictions\n");
-	    return 0;
 	}
+
+	if (prune_color != NULL) xmlFree(prune_color);
+	if (prune_type != NULL) xmlFree(prune_type);
     }
 
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
+
+    if (fatal_errors != 0) return 0;
 
     /* for each possible captured_piece (everything but the two kings), check for capture
        futurebases
@@ -9864,14 +9890,19 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	if (filename == NULL) {
 	    filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "url");
 	}
+	if (filename == NULL) {
+	    fatal("No filename or URL specified in futurebase element\n");
+	    continue;
+	}
+
 	futurebases[fbnum] = preload_futurebase_from_file((char *) filename);
 
 	/* load_futurebase_from_file() already printed some kind of error message */
-	if (futurebases[fbnum] == NULL) return 0;
+	if (futurebases[fbnum] == NULL) continue;
 
 	if (futurebases[fbnum]->symmetry < tb->symmetry) {
 	    fatal("Futurebases can't be less symmetric than the tablebase under construction\n");
-	    return 0;
+	    continue;
 	}
 
 	if (futurebases[fbnum]->max_dtm > *max_dtm) *max_dtm = futurebases[fbnum]->max_dtm;
@@ -9885,10 +9916,13 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 	}
 
 	compute_extra_and_missing_pieces(tb, futurebases[fbnum], (char *)filename);
+	if (filename != NULL) xmlFree(filename);
     }
 
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
+
+    if (fatal_errors != 0) return 0;
 
     /* for each possible captured_piece (i.e, everything but the two kings) check for capture
      * futurebases
