@@ -146,11 +146,11 @@
 
 /* The public face of libcurl */
 
-FILE * url_fopen(char *url,const char *operation);
+#include "url_fopen.h"
 
 /* The public face of zlib */
 
-FILE * zlib_fopen(FILE *file, char *operation);
+#include "zlib_fopen.h"
 
 
 /* Our DTD.  We compile it into the program because we want to validate our input against the
@@ -687,8 +687,10 @@ void terminate (void)
 {
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
+    xmlChar *buf;
+    int size;
     char * url;
-    FILE * file;
+    void * file;
 
     if (fatal_errors > 0) {
 	if ((current_tb != NULL) && (current_tb->xml != NULL)) {
@@ -698,9 +700,11 @@ void terminate (void)
 	    if (result->nodesetval->nodeNr > 0) {
 		url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
 		if (url != NULL) {
-		    file = url_fopen(url, "w");
-		    xmlDocDump(file, current_tb->xml);
-		    fclose(file);
+		    file = url_open(url, "w");
+		    xmlDocDumpMemory(current_tb->xml, &buf, &size);
+		    url_write(file, buf, size);
+		    url_close(file);
+		    xmlFree(buf);
 		    xmlFree(url);
 		}
 	    }
@@ -714,9 +718,11 @@ void terminate (void)
 	    if (result->nodesetval->nodeNr > 0) {
 		url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
 		if (url != NULL) {
-		    file = url_fopen(url, "w");
-		    xmlDocDump(file, current_tb->xml);
-		    fclose(file);
+		    file = url_open(url, "w");
+		    xmlDocDumpMemory(current_tb->xml, &buf, &size);
+		    url_write(file, buf, size);
+		    url_close(file);
+		    xmlFree(buf);
 		    xmlFree(url);
 		}
 	    }
@@ -4792,26 +4798,25 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     xmlChar * offsetstr;
 
     if (rindex(filename, ':') == NULL) {
-	file = fopen(filename, "r");
+	int fd;
+	fd = open(filename, O_RDONLY|O_LARGEFILE, 0);
+	if (fd != -1) {
+	    file = zlib_open((void *) fd, read, write, lseek64, close, "r");
+	}
     } else {
-	file = url_fopen(filename, "r");
+	void *ptr = url_open(filename, "r");
+	if (ptr != NULL) {
+	    file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "r");
+	}
     }
 
     if (file == NULL) {
-	fatal("Can't fopen file '%s'\n", filename);
-	return NULL;
-    }
-
-    file = zlib_fopen(file, "r");
-
-    if (file == NULL) {
-	fatal("Can't zlib_fopen file '%s'\n", filename);
+	fatal("Can't open tablebase '%s'\n", filename);
 	return NULL;
     }
 
     for (xml_size = 0; xml_size < sizeof(fileptr); xml_size ++) {
-	fileptr[xml_size] = fgetc(file);
-	if (fileptr[xml_size] == EOF) {
+	if (zlib_read(file, &fileptr[xml_size], 1) != 1) {
 	    fatal("%s reading '%s'\n", strerror(errno), filename);
 	    return NULL;
 	}
@@ -4836,14 +4841,14 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     if (offsetstr != NULL) xmlFree(offsetstr);
 
 #if 0
-    if (fseek(file, tb->offset, SEEK_SET) != 0) {
+    if (zlib_seek64(file, tb->offset, SEEK_SET) != 0) {
 	fatal("Seek failed in preload_futurebase_from_file()\n");
 	terminate();
     }
 #else
     xml_size ++; /* we read one zero byte */
     while (xml_size < tb->offset) {
-	fileptr[xml_size ++] = fgetc(file);
+	zlib_read(file, &fileptr[xml_size ++], 1);
     }
 #endif
 
@@ -4855,7 +4860,7 @@ void unload_futurebase(tablebase_t *tb)
     if (tb->xml != NULL) xmlFreeDoc(tb->xml);
     tb->xml = NULL;
     if (tb->file != NULL) {
-	if (fclose(tb->file) != 0) {
+	if (zlib_close(tb->file) != 0) {
 	    warning("fclose failed during unload_futurebase()\n");
 	}
     }
@@ -4947,7 +4952,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.385 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.386 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6038,7 +6043,7 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
 
 	if (index < tb->next_read_index) {
-	    if (fseek(tb->file, tb->offset + index, SEEK_SET) != 0) {
+	    if (zlib_seek64(tb->file, tb->offset + index, SEEK_SET) != tb->offset + index) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
 	    } else {
 		tb->next_read_index = index;
@@ -6047,14 +6052,12 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	do {
 
-	    if ((retval = fgetc(tb->file)) == EOF) {
+	    if (zlib_read(tb->file, &entry[0], 1) != 1) {
 		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	    }
 	    tb->next_read_index ++;
 
 	} while (tb->next_read_index <= index);
-
-	entry[0] = retval;
 
     } else {
 
@@ -6065,15 +6068,14 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	if (LEFTSHIFT(index, tb->format.bits - 3)
 	    < LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
-	    if (fseek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
+	    if (zlib_seek64(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
 	    }
 	}
 
 	do {
 
-	    retval = fread(entry, tb->format.bytes, 1, tb->file);
-	    if (retval != 1) {
+	    if (zlib_read(tb->file, entry, tb->format.bytes) != tb->format.bytes) {
 		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	    }
 
@@ -11113,7 +11115,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 {
     xmlDocPtr doc;
     int index;
-    FILE *file = NULL;
+    void *file = NULL;
     xmlNodePtr tablebase;
     xmlChar *buf;
     int size;
@@ -11126,9 +11128,16 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
     if (filename != NULL) {
 	if (rindex(filename, ':') == NULL) {
-	    file = fopen(filename, "w");
+	    int fd;
+	    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
+	    if (fd != -1) {
+		file = zlib_open((void *) fd, read, write, lseek64, close, "w");
+	    }
 	} else {
-	    file = url_fopen(filename, "w");
+	    void *ptr = url_open(filename, "w");
+	    if (ptr != NULL) {
+		file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "w");
+	    }
 	}
     } else {
 	xmlXPathContextPtr context;
@@ -11140,10 +11149,19 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	if (result->nodesetval->nodeNr == 1) {
 	    if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename"))
 		!= NULL) {
-		file = fopen(filename, "w");
+		int fd;
+		fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
+		if (fd != -1) {
+		    file = zlib_open((void *) fd, read, write, lseek64, close, "w");
+		}
+		xmlFree(filename);
 	    } else if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url"))
 		       != NULL) {
-		file = url_fopen(filename, "w");
+		void *ptr = url_open(filename, "w");
+		if (ptr != NULL) {
+		    file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "w");
+		}
+		xmlFree(filename);
 	    }
 	}
 
@@ -11153,13 +11171,6 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
     if (file == NULL) {
 	fatal("Can't open output tablebase\n");
-	terminate();
-    }
-
-    file = zlib_fopen(file, "w");
-
-    if (file == NULL) {
-	fatal("Can't zlib_fopen output tablebase\n");
 	terminate();
     }
 
@@ -11189,7 +11200,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	terminate();
     }
 
-    if (fwrite(buf, padded_size, 1, file) != 1) {
+    if (zlib_write(file, buf, padded_size) != padded_size) {
 	fatal("Tablebase write failed\n");
 	terminate();
     }
@@ -11233,7 +11244,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	/* If the next index will be aligned on a byte boundary, write out what we've buffered */
 
 	if ((((index + 1) << tb->format.bits) % 8) == 0) {
-	    if (fwrite(entry, tb->format.bytes, 1, file) != 1) {
+	    if (zlib_write(file, entry, tb->format.bytes) != tb->format.bytes) {
 		fatal("Tablebase write failed\n");
 		terminate();
 	    }
@@ -11243,13 +11254,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     /* If the last index plus one wasn't on a byte boundary, write out what we've buffered */
     
     if (((index << tb->format.bits) % 8) != 0) {
-	if (fwrite(entry, tb->format.bytes, 1, file) != 1) {
+	if (zlib_write(file, entry, tb->format.bytes) != tb->format.bytes) {
 	    fatal("Tablebase write failed\n");
 	    terminate();
 	}
     }
 
-    if (fclose(file) != 0) {
+    if (zlib_close(file) != 0) {
 	fatal("Tablebase write failed\n");
 	terminate();
     }
