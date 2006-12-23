@@ -4947,7 +4947,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.384 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.385 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11383,7 +11383,11 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * limit, it can hang the machine if you try to lock more memory than the system physically
 	 * possesses.  So I check first to make sure that a limit has been set before attempting the
 	 * lock.
+	 *
+	 * The #ifdef keeps this from even being attempted on a Windows system.
 	 */
+
+#ifdef RLIMIT_MEMLOCK
 
 	if (getrlimit(RLIMIT_MEMLOCK, &rlimit) == -1) {
 	    warning("Can't getrlimit RLIMIT_MEMLOCK: %s\n", strerror(errno));
@@ -11393,6 +11397,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 		return 0;
 	    }
 	}
+
+#endif
 
 	gettimeofday(&pass_start_times[total_passes], NULL);
 	pass_type[total_passes] = "initialization";
