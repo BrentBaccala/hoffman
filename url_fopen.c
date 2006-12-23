@@ -51,6 +51,8 @@
 #include <stdlib.h>
 #include <errno.h>
 
+#include "url_fopen.h"
+
 #include <curl/curl.h>
 
 struct curl_cookie
@@ -66,9 +68,6 @@ struct curl_cookie
     int still_running;          /* Is background url fetch still in progress */
 };
 
-
-/* exported function */
-FILE *url_fopen(char *url,const char *operation);
 
 /* we use a global one for convenience */
 static CURLM *multi_handle;
@@ -233,7 +232,7 @@ use_buffer(struct curl_cookie *cookie,int want)
 }
 
 
-static int cleaner (void *ptr)
+int url_close (void *ptr)
 {
     fd_set fdread;
     fd_set fdwrite;
@@ -308,7 +307,7 @@ static int cleaner (void *ptr)
     return ret;
 }
 
-static ssize_t reader(void *ptr, char *buffer, size_t size)
+ssize_t url_read(void *ptr, char *buffer, size_t size)
 {
     size_t want;
     struct curl_cookie *cookie = ptr;
@@ -338,7 +337,7 @@ static ssize_t reader(void *ptr, char *buffer, size_t size)
 
 static int start_cookie(struct curl_cookie *cookie);
 
-static int read_seeker (void *ptr, off64_t *position, int whence)
+int url_seekptr (void *ptr, off64_t *position, int whence)
 {
     struct curl_cookie *cookie = ptr;
 
@@ -356,7 +355,13 @@ static int read_seeker (void *ptr, off64_t *position, int whence)
     return start_cookie(cookie);
 }
 
-static ssize_t writer(void *ptr, const char *buffer, size_t size)
+off64_t url_seek64 (void *ptr, off64_t position, int whence)
+{
+    if (url_seekptr(ptr, &position, whence) == -1) return (off64_t)-1;
+    else return position;
+}
+
+ssize_t url_write(void *ptr, const char *buffer, size_t size)
 {
     fd_set fdread;
     fd_set fdwrite;
@@ -426,9 +431,6 @@ static ssize_t writer(void *ptr, const char *buffer, size_t size)
     return (size - cookie->buffer_len);
 }
 
-static cookie_io_functions_t read_functions = {reader, NULL, read_seeker, cleaner};
-static cookie_io_functions_t write_functions = {NULL, writer, NULL, cleaner};
-
 static int start_cookie(struct curl_cookie *cookie)
 {
     if ((cookie->operation != 'r') && (cookie->operation != 'w') && (cookie->operation != 'a')) {
@@ -474,6 +476,8 @@ static int start_cookie(struct curl_cookie *cookie)
 
     curl_multi_add_handle(multi_handle, cookie->curl);
 
+    cookie->still_running = 1;
+
     if (cookie->operation == 'r') {
 
 	/* lets start the fetch */
@@ -503,12 +507,11 @@ static int start_cookie(struct curl_cookie *cookie)
     return 0;
 }
 
-FILE * url_fopen(char *url,const char *operation)
+void * url_open(char *url,const char *operation)
 {
     /* this code could check for URLs or types in the 'url' and
        basicly use the real fopen() for standard files */
 
-    FILE *file;
     struct curl_cookie *cookie;
 
     if ((operation[0] != 'r') && (operation[0] != 'w') && (operation[0] != 'a')) {
@@ -535,12 +538,31 @@ FILE * url_fopen(char *url,const char *operation)
 
     if (start_cookie(cookie) == -1) return NULL;
 
+    return cookie;
+}
+
+#ifdef __GLIBC__
+
+static cookie_io_functions_t read_functions = {url_read, NULL, url_seekptr, url_close};
+static cookie_io_functions_t write_functions = {NULL, url_write, NULL, url_close};
+
+FILE * url_fopen(char *url,const char *operation)
+{
+    /* this code could check for URLs or types in the 'url' and
+       basicly use the real fopen() for standard files */
+
+    FILE *file;
+    struct curl_cookie *cookie;
+
+    cookie = (struct curl_cookie *) url_open(url, operation);
+
     if (operation[0] == 'r') {
 	file = fopencookie(cookie, operation, read_functions);
     } else {
-	cookie->still_running = 1;
 	file = fopencookie(cookie, operation, write_functions);
     }
 
     return file;
 }
+
+#endif

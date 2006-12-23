@@ -9,14 +9,36 @@
 #include <errno.h>
 #include <zlib.h>
 
+#define STRICT_ZLIB_OPEN_DECLARATION 1
+
+#include "zlib_fopen.h"
+
 struct cookie {
-    FILE *	file;
+    void *	ptr;
+
+    ssize_t (*read) (void *ptr, char *buffer, size_t size);
+    ssize_t (*write) (void *ptr, const char *buffer, size_t size);
+    off64_t (*seek) (void *ptr, off64_t position, int whence);
+    int (*close) (void *ptr);
+
+    char	operation;
+
     z_stream	zstream;
     void *	buffer;
     int		bufsize;
 };
 
-static ssize_t reader(void *ptr, char *buffer, size_t size)
+static ssize_t fread_wrapper(void *ptr, char *buffer, size_t size)
+{
+    return fread(buffer, 1, size, (FILE *) ptr);
+}
+
+static ssize_t fwrite_wrapper(void *ptr, const char *buffer, size_t size)
+{
+    return fwrite(buffer, 1, size, (FILE *) ptr);
+}
+
+ssize_t zlib_read(void *ptr, char *buffer, size_t size)
 {
     struct cookie *cookie = ptr;
     int ret;
@@ -27,7 +49,7 @@ static ssize_t reader(void *ptr, char *buffer, size_t size)
     do {
 	if (cookie->zstream.avail_in == 0) {
 	    cookie->zstream.next_in = cookie->buffer;
-	    cookie->zstream.avail_in = fread(cookie->buffer, 1, cookie->bufsize, cookie->file);
+	    cookie->zstream.avail_in = cookie->read(cookie->ptr, cookie->buffer, cookie->bufsize);
 	    if (cookie->zstream.avail_in == 0) break;
 	}
 	if ((ret = inflate(&cookie->zstream, Z_NO_FLUSH)) != Z_OK) break;
@@ -36,19 +58,7 @@ static ssize_t reader(void *ptr, char *buffer, size_t size)
     return (size - cookie->zstream.avail_out);
 }
 
-static int read_cleaner (void *ptr)
-{
-    struct cookie *cookie = ptr;
-
-    fclose(cookie->file);
-
-    free(cookie->buffer);
-    free(cookie);
-
-    return 0;
-}
-
-static ssize_t writer(void *ptr, const char *buffer, size_t size)
+ssize_t zlib_write(void *ptr, const char *buffer, size_t size)
 {
     struct cookie *cookie = ptr;
 
@@ -61,7 +71,7 @@ static ssize_t writer(void *ptr, const char *buffer, size_t size)
 	if (deflate(&cookie->zstream, Z_NO_FLUSH) != Z_OK) break;
 
 	if (cookie->zstream.avail_out < cookie->bufsize) {
-	    fwrite(cookie->buffer, cookie->bufsize - cookie->zstream.avail_out, 1, cookie->file);
+	    cookie->write(cookie->ptr, cookie->buffer, cookie->bufsize - cookie->zstream.avail_out);
 	    cookie->zstream.next_out = cookie->buffer;
 	    cookie->zstream.avail_out = cookie->bufsize;
 	}
@@ -70,27 +80,30 @@ static ssize_t writer(void *ptr, const char *buffer, size_t size)
     return (size - cookie->zstream.avail_in);
 }
 
-static int write_cleaner (void *ptr)
+int zlib_close (void *ptr)
 {
     struct cookie *cookie = ptr;
-    int ret;
+    int ret = Z_STREAM_END;
 
-    while ((ret = deflate(&cookie->zstream, Z_FINISH)) == Z_OK) {
+    if (cookie->operation != 'r') {
+
+	while ((ret = deflate(&cookie->zstream, Z_FINISH)) == Z_OK) {
+
+	    if (cookie->zstream.avail_out < cookie->bufsize) {
+		cookie->write(cookie->ptr, cookie->buffer, cookie->bufsize - cookie->zstream.avail_out);
+		cookie->zstream.next_out = cookie->buffer;
+		cookie->zstream.avail_out = cookie->bufsize;
+	    }
+	}
 
 	if (cookie->zstream.avail_out < cookie->bufsize) {
-	    fwrite(cookie->buffer, cookie->bufsize - cookie->zstream.avail_out, 1, cookie->file);
+	    cookie->write(cookie->ptr, cookie->buffer, cookie->bufsize - cookie->zstream.avail_out);
 	    cookie->zstream.next_out = cookie->buffer;
 	    cookie->zstream.avail_out = cookie->bufsize;
 	}
     }
 
-    if (cookie->zstream.avail_out < cookie->bufsize) {
-	fwrite(cookie->buffer, cookie->bufsize - cookie->zstream.avail_out, 1, cookie->file);
-	cookie->zstream.next_out = cookie->buffer;
-	cookie->zstream.avail_out = cookie->bufsize;
-    }
-
-    fclose(cookie->file);
+    cookie->close(cookie->ptr);
 
     free(cookie->buffer);
     free(cookie);
@@ -100,18 +113,19 @@ static int write_cleaner (void *ptr)
     return (ret == Z_STREAM_END) ? 0 : -1;
 }
 
-static int read_seeker (void *ptr, off64_t *position, int whence)
+int zlib_seekptr (void *ptr, off64_t *position, int whence)
 {
     struct cookie *cookie = ptr;
     int ret;
     unsigned char buffer[16384];
 
+    if (cookie->operation != 'r') return -1;
     if (whence == SEEK_END) return -1;
     if (whence == SEEK_CUR) *position += cookie->zstream.total_out;
 
     if (*position < cookie->zstream.total_out) {
 	/* rewind the underlying file and restart decompressing from the beginning */
-	if (fseek(cookie->file, 0, SEEK_SET) == -1) return -1;
+	if (cookie->seek(cookie->ptr, 0, SEEK_SET) == -1) return -1;
 	memset(&cookie->zstream, 0, sizeof(z_stream));
 	if (inflateInit2(&cookie->zstream, 32 + MAX_WBITS) != Z_OK) return -1;
     }
@@ -126,7 +140,7 @@ static int read_seeker (void *ptr, off64_t *position, int whence)
 
 	if (cookie->zstream.avail_in == 0) {
 	    cookie->zstream.next_in = cookie->buffer;
-	    cookie->zstream.avail_in = fread(cookie->buffer, 1, cookie->bufsize, cookie->file);
+	    cookie->zstream.avail_in = cookie->read(cookie->ptr, cookie->buffer, cookie->bufsize);
 	    if (cookie->zstream.avail_in == 0) break;
 	}
 	if ((ret = inflate(&cookie->zstream, Z_NO_FLUSH)) != Z_OK) break;
@@ -138,14 +152,16 @@ static int read_seeker (void *ptr, off64_t *position, int whence)
     return ret;
 }
 
-static cookie_io_functions_t read_functions = {reader, NULL, read_seeker, read_cleaner};
-static cookie_io_functions_t write_functions = {NULL, writer, NULL, write_cleaner};
-
-FILE * zlib_fopen(FILE *file, char *operation)
+off64_t zlib_seek64 (void *ptr, off64_t position, int whence)
 {
-    /* this code could check for URLs or types in the 'url' and
-       basicly use the real fopen() for standard files */
+    if (zlib_seekptr(ptr, &position, whence) == -1) return (off64_t)-1;
+    else return position;
+}
 
+void * zlib_open(void *ptr,
+		 ssize_t (*read)(void *, char *, size_t), ssize_t (*write)(void *, const char *, size_t),
+		 off64_t (*seek)(void *, off64_t, int), int (*close)(void *), char *operation)
+{
     struct cookie *cookie;
 
     cookie = (struct cookie *) malloc(sizeof(struct cookie));
@@ -157,7 +173,11 @@ FILE * zlib_fopen(FILE *file, char *operation)
 
     memset(cookie, 0, sizeof(struct cookie));
 
-    cookie->file = file;
+    cookie->ptr = ptr;
+    cookie->read = read;
+    cookie->write = write;
+    cookie->seek = seek;
+    cookie->close = close;
 
     cookie->bufsize = 16384;
     cookie->buffer = malloc(cookie->bufsize);
@@ -165,6 +185,8 @@ FILE * zlib_fopen(FILE *file, char *operation)
 	errno = ENOMEM;
 	return NULL;
     }
+
+    cookie->operation = operation[0];
 
     if (operation[0] == 'r') {
 	cookie->zstream.next_in = cookie->buffer;
@@ -180,9 +202,26 @@ FILE * zlib_fopen(FILE *file, char *operation)
 	}
     }
 
+    return cookie;
+}
+
+#ifdef __GLIBC__
+
+static cookie_io_functions_t read_functions = {zlib_read, NULL, zlib_seekptr, zlib_close};
+static cookie_io_functions_t write_functions = {NULL, zlib_write, NULL, zlib_close};
+
+FILE * zlib_fopen(FILE *file, char *operation)
+{
+    struct cookie *cookie;
+
+    cookie = zlib_open(file, fread_wrapper, fwrite_wrapper,
+		       (int (*)(void *, off_t, int)) fseek, (int (*)(void *)) fclose, operation);
+
     if (operation[0] == 'r') {
 	return fopencookie(cookie, operation, read_functions);
     } else {
 	return fopencookie(cookie, operation, write_functions);
     }
 }
+
+#endif
