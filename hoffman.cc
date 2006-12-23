@@ -4799,15 +4799,28 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
     if (rindex(filename, ':') == NULL) {
 	int fd;
+#ifdef O_LARGEFILE
 	fd = open(filename, O_RDONLY|O_LARGEFILE, 0);
 	if (fd != -1) {
 	    file = zlib_open((void *) fd, read, write, lseek64, close, "r");
 	}
+#else
+	fd = open(filename, O_RDONLY, 0);
+	if (fd != -1) {
+	    file = zlib_open((void *) fd, read, write, lseek, close, "r");
+	}
+#endif
     } else {
 	void *ptr = url_open(filename, "r");
+#ifdef O_LARGEFILE
 	if (ptr != NULL) {
 	    file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "r");
 	}
+#else
+	if (ptr != NULL) {
+	    file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "r");
+	}
+#endif
     }
 
     if (file == NULL) {
@@ -4952,7 +4965,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.386 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.387 $ $Locker:  $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6043,11 +6056,19 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
 
 	if (index < tb->next_read_index) {
+#ifdef O_LARGEFILE
 	    if (zlib_seek64(tb->file, tb->offset + index, SEEK_SET) != tb->offset + index) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
 	    } else {
 		tb->next_read_index = index;
 	    }
+#else
+	    if (zlib_seek(tb->file, tb->offset + index, SEEK_SET) != tb->offset + index) {
+		fatal("Seek failed in fetch_entry_pointer()\n");
+	    } else {
+		tb->next_read_index = index;
+	    }
+#endif
 	}
 
 	do {
@@ -6068,9 +6089,15 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	if (LEFTSHIFT(index, tb->format.bits - 3)
 	    < LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
+#ifdef O_LARGEFILE
 	    if (zlib_seek64(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
 	    }
+#else
+	    if (zlib_seek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
+		fatal("Seek failed in fetch_entry_pointer()\n");
+	    }
+#endif
 	}
 
 	do {
@@ -6746,7 +6773,11 @@ void proptable_full(void)
 #endif
 
     if (proptable_output_fd == -1) {
+#ifdef O_LARGEFILE
 	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
+#else
+	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_DIRECT, 0666);
+#endif
     }
     if (proptable_output_fd == -1) {
 	fatal("Can't open '%s' for writing propfile\n", outfilename);
@@ -11129,15 +11160,28 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     if (filename != NULL) {
 	if (rindex(filename, ':') == NULL) {
 	    int fd;
+#ifdef O_LARGEFILE
 	    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
 	    if (fd != -1) {
 		file = zlib_open((void *) fd, read, write, lseek64, close, "w");
 	    }
+#else
+	    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
+	    if (fd != -1) {
+		file = zlib_open((void *) fd, read, write, lseek, close, "w");
+	    }
+#endif
 	} else {
 	    void *ptr = url_open(filename, "w");
+#ifdef O_LARGEFILE
 	    if (ptr != NULL) {
 		file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "w");
 	    }
+#else
+	    if (ptr != NULL) {
+		file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "w");
+	    }
+#endif
 	}
     } else {
 	xmlXPathContextPtr context;
@@ -11150,17 +11194,30 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	    if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename"))
 		!= NULL) {
 		int fd;
+#ifdef O_LARGEFILE
 		fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
 		if (fd != -1) {
 		    file = zlib_open((void *) fd, read, write, lseek64, close, "w");
 		}
+#else
+		fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
+		if (fd != -1) {
+		    file = zlib_open((void *) fd, read, write, lseek, close, "w");
+		}
+#endif
 		xmlFree(filename);
 	    } else if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url"))
 		       != NULL) {
 		void *ptr = url_open(filename, "w");
+#ifdef O_LARGEFILE
 		if (ptr != NULL) {
 		    file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "w");
 		}
+#else
+		if (ptr != NULL) {
+		    file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "w");
+		}
+#endif
 		xmlFree(filename);
 	    }
 	}

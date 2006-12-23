@@ -50,6 +50,7 @@
 #include <sys/time.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <fcntl.h>
 
 #include "url_fopen.h"
 
@@ -337,7 +338,9 @@ ssize_t url_read(void *ptr, char *buffer, size_t size)
 
 static int start_cookie(struct curl_cookie *cookie);
 
-int url_seekptr (void *ptr, off64_t *position, int whence)
+#ifdef O_LARGEFILE
+
+int url_seekptr64 (void *ptr, off64_t *position, int whence)
 {
     struct curl_cookie *cookie = ptr;
 
@@ -357,7 +360,33 @@ int url_seekptr (void *ptr, off64_t *position, int whence)
 
 off64_t url_seek64 (void *ptr, off64_t position, int whence)
 {
-    if (url_seekptr(ptr, &position, whence) == -1) return (off64_t)-1;
+    if (url_seekptr64(ptr, &position, whence) == -1) return (off64_t)-1;
+    else return position;
+}
+
+#endif
+
+int url_seekptr (void *ptr, off_t *position, int whence)
+{
+    struct curl_cookie *cookie = ptr;
+
+    /* only support rewinds, for now */
+
+    if ((whence != SEEK_SET) || (*position != 0)) return -1;
+
+    curl_multi_remove_handle(multi_handle, cookie->curl);
+    curl_easy_cleanup(cookie->curl);
+    cookie->still_running = 0;
+    cookie->buffer_pos = 0;
+
+    /* printf("(url rewind)\n"); */
+
+    return start_cookie(cookie);
+}
+
+off_t url_seek (void *ptr, off_t position, int whence)
+{
+    if (url_seekptr(ptr, &position, whence) == -1) return (off_t)-1;
     else return position;
 }
 
@@ -543,7 +572,7 @@ void * url_open(char *url,const char *operation)
 
 #ifdef __GLIBC__
 
-static cookie_io_functions_t read_functions = {url_read, NULL, url_seekptr, url_close};
+static cookie_io_functions_t read_functions = {url_read, NULL, url_seekptr64, url_close};
 static cookie_io_functions_t write_functions = {NULL, url_write, NULL, url_close};
 
 FILE * url_fopen(char *url,const char *operation)
