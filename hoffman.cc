@@ -4965,7 +4965,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.388 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.389 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11733,6 +11733,7 @@ int main(int argc, char *argv[])
     int generating=0;
     int probing=0;
     int verify=0;
+    int dump_info=0;
     char *output_filename = NULL;
     extern char *optarg;
     extern int optind;
@@ -11781,12 +11782,15 @@ int main(int argc, char *argv[])
     verify_movements();
 
     while (1) {
-	c = getopt(argc, argv, "qgpvo:n:P:");
+	c = getopt(argc, argv, "iqgpvo:n:P:");
 
 	if (c == -1) break;
 
 	switch (c) {
 
+	case 'i':
+	    dump_info = 1;
+	    break;
 	case 'g':
 	    generating = 1;
 	    break;
@@ -11819,8 +11823,8 @@ int main(int argc, char *argv[])
 	terminate();
     }
 
-    if (!generating && !probing && !verify) {
-	fatal("At least one of generating (-g), probing (-p), or verify (-v) must be specified\n");
+    if (!generating && !probing && !verify && !dump_info) {
+	fatal("At least one of generating (-g), probing (-p), verify (-v), or info (-i) must be specified\n");
 	terminate();
     }
 
@@ -11849,6 +11853,7 @@ int main(int argc, char *argv[])
     for (argi=optind; argi<argc; argi++) {
 	info("Loading '%s'\n", argv[argi]);
 	tbs[i] = preload_futurebase_from_file(argv[argi]);
+	if (dump_info) xmlDocDump(stdout, tbs[i]->xml);
 	if (tbs[i] == NULL) {
 	    fatal("Error loading '%s'\n", argv[argi]);
 	} else {
