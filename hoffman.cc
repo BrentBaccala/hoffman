@@ -5010,7 +5010,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.390 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.391 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11187,6 +11187,10 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, 
 
 }
 
+/* The 'filename' argument passed in here is only optional.  If it is NULL, we'll look into the
+ * tablebase's XML for a <output> element.
+ */
+
 void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 {
     xmlDocPtr doc;
@@ -11201,6 +11205,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
     void *entry = entrybuf;
     int dtm;
     int raw_dtm;
+    int filename_needs_xmlFree = 0;
 
     if (filename != NULL) {
 	if (rindex(filename, ':') == NULL) {
@@ -11250,7 +11255,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 		    file = zlib_open((void *) fd, read, write, lseek, close, "w");
 		}
 #endif
-		xmlFree(filename);
+		filename_needs_xmlFree = 1;
 	    } else if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url"))
 		       != NULL) {
 		void *ptr = url_open(filename, "w");
@@ -11263,7 +11268,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 		    file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "w");
 		}
 #endif
-		xmlFree(filename);
+		filename_needs_xmlFree = 1;
 	    }
 	}
 
@@ -11273,10 +11278,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
     if (file == NULL) {
 	fatal("Can't open output tablebase\n");
+	if (filename_needs_xmlFree) xmlFree(filename);
 	terminate();
     }
 
     info("Writing '%s'\n", filename);
+
+    if (filename_needs_xmlFree) xmlFree(filename);
 
     doc = finalize_XML_header(tb, options);
 
