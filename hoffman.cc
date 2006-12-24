@@ -5291,7 +5291,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.394 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.395 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9368,6 +9368,126 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
     return all_futuremoves_handled;
 }
 
+/* assign_pruning_statement() - a helper function for compute_pruned_futuremoves()
+ *
+ * searches the tablebase's XML pruning statements for one matching (more or less identically) the
+ * specified color and string.  If there is a match, set the corresponding bit in the
+ * pruned_futuremoves bit vector.  The function can be called more than once for a given bit, but
+ * probably shouldn't be.  For example, the function might be called on the same bit for "PxQ=Q" if
+ * there are two pawns that can promote into a queen.  UNIX-style wildcards are allowed, so "Kd4"
+ * would match against "Kd4", "Kd?", "K?4", "K[a-d]4", or "K*".  The function also allows a trailing
+ * "any" in the prune statement to act as a "*" wildcard for backwards compatibility.
+ *
+ * If there are multiple prune statements that match a given futuremove, it's a warning if they are
+ * of the same type; a fatal error if their types are different.
+ */
+
+int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
+{
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+    int prune;
+    int type = RESTRICTION_NONE;
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//prune", context);
+
+    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
+	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
+					   BAD_CAST "color");
+	xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
+					  BAD_CAST "move");
+	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
+					  BAD_CAST "type");
+
+	/* Trailing 'any' is an older syntax that means '*' */
+
+	if (!strcasecmp("any", (char *) prune_move + strlen((char *) prune_move) - 3)) {
+	    prune_move[strlen((char *) prune_move) - 3] = '*';
+	    prune_move[strlen((char *) prune_move) - 2] = '\0';
+	}
+
+	if ((find_name_in_array((char *) prune_color, colors) == color)
+	    && (fnmatch((char *) prune_move, pruning_statement, FNM_CASEFOLD) == 0)) {
+
+	    if (type == RESTRICTION_NONE) {
+		type = find_name_in_array((char *) prune_type, restriction_types);
+	    } else if (type != find_name_in_array((char *) prune_type, restriction_types)) {
+		fatal("Conflicting pruning statements match futuremove %s\n", pruning_statement);
+	    } else {
+		warning("Multiple pruning statements match futuremove %s\n", pruning_statement);
+	    }
+	}
+
+	if (prune_color != NULL) xmlFree(prune_color);
+	if (prune_move != NULL) xmlFree(prune_move);
+	if (prune_type != NULL) xmlFree(prune_type);
+    }
+
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
+    return type;
+}
+
+void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statement, int futuremove)
+{
+    int type;
+
+    type = match_pruning_statement(tb, color, pruning_statement);
+
+    if (type != RESTRICTION_NONE) {
+
+	if (color == WHITE) {
+
+	    if (pruned_white_futuremoves & FUTUREVECTOR(futuremove)) {
+		warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
+	    }
+
+	    pruned_white_futuremoves |= FUTUREVECTOR(futuremove);
+
+	    if (type == RESTRICTION_CONCEDE) {
+		conceded_white_futuremoves |= FUTUREVECTOR(futuremove);
+		if (discarded_white_futuremoves & FUTUREVECTOR(futuremove)) {
+		    fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+			  pruning_statement);
+		}
+	    }
+	    if (type == RESTRICTION_DISCARD) {
+		discarded_white_futuremoves |= FUTUREVECTOR(futuremove);
+		if (conceded_white_futuremoves & FUTUREVECTOR(futuremove)) {
+		    fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+			  pruning_statement);
+		}
+	    }
+
+	} else {
+
+	    if (pruned_black_futuremoves & FUTUREVECTOR(futuremove)) {
+		warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
+	    }
+
+	    pruned_black_futuremoves |= FUTUREVECTOR(futuremove);
+
+	    if (type == RESTRICTION_CONCEDE) {
+		conceded_black_futuremoves |= FUTUREVECTOR(futuremove);
+		if (discarded_black_futuremoves & FUTUREVECTOR(futuremove)) {
+		    fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+			  pruning_statement);
+		}
+	    }
+	    if (type == RESTRICTION_DISCARD) {
+		discarded_black_futuremoves |= FUTUREVECTOR(futuremove);
+		if (conceded_black_futuremoves & FUTUREVECTOR(futuremove)) {
+		    fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+			  pruning_statement);
+		}
+	    }
+	}
+    }
+
+}
+
 /* assign_numbers_to_futuremoves()
  *
  * We could just dismiss any moves that aren't handled by our futurebases, but I've found this to be
@@ -9758,105 +9878,6 @@ void print_futuremoves(void)
     for (i=0; i < num_futuremoves[BLACK]; i ++) {
 	info("BLACK Futuremove %i: %s\n", i, movestr[BLACK][i]);
     }
-}
-
-/* assign_pruning_statement() - a helper function for compute_pruned_futuremoves()
- *
- * searches the tablebase's XML pruning statements for one matching (more or less identically) the
- * specified color and string.  If there is a match, set the corresponding bit in the
- * pruned_futuremoves bit vector.  The function can be called more than once for a given bit, but
- * probably shouldn't be.  For example, the function might be called on the same bit for "PxQ=Q" if
- * there are two pawns that can promote into a queen.  The function also allows a trailing "any" in
- * the prune statement to act as a wildcard; "Pany" would match "Pf6", for example, and "P=any"
- * would match "P=Q".  If there are multiple prune statements that match a given bit, only the first
- * one is used; the rest are silently (!) ignored.
- */
-
-void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statement, int futuremove)
-{
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
-    int prune;
-    int type;
-
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//prune", context);
-
-    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
-	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-					   BAD_CAST "color");
-	xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-					  BAD_CAST "move");
-	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
-					  BAD_CAST "type");
-
-	type = find_name_in_array((char *) prune_type, restriction_types);
-
-	/* Trailing 'any' is an older syntax that means '*' */
-
-	if (!strcasecmp("any", (char *) prune_move + strlen((char *) prune_move) - 3)) {
-	    prune_move[strlen((char *) prune_move) - 3] = '*';
-	    prune_move[strlen((char *) prune_move) - 2] = '\0';
-	}
-
-	if ((find_name_in_array((char *) prune_color, colors) == color)
-	    && (fnmatch((char *) prune_move, pruning_statement, FNM_CASEFOLD) == 0)) {
-
-	    if (color == WHITE) {
-
-		if (pruned_white_futuremoves & FUTUREVECTOR(futuremove)) {
-		    warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
-		}
-
-		pruned_white_futuremoves |= FUTUREVECTOR(futuremove);
-
-		if (type == RESTRICTION_CONCEDE) {
-		    conceded_white_futuremoves |= FUTUREVECTOR(futuremove);
-		    if (discarded_white_futuremoves & FUTUREVECTOR(futuremove)) {
-			fatal("Conflicting pruning statements ('%s') match a futuremove\n",
-			      pruning_statement);
-		    }
-		}
-		if (type == RESTRICTION_DISCARD) {
-		    discarded_white_futuremoves |= FUTUREVECTOR(futuremove);
-		    if (conceded_white_futuremoves & FUTUREVECTOR(futuremove)) {
-			fatal("Conflicting pruning statements ('%s') match a futuremove\n",
-			      pruning_statement);
-		    }
-		}
-
-	    } else {
-
-		if (pruned_black_futuremoves & FUTUREVECTOR(futuremove)) {
-		    warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
-		}
-
-		pruned_black_futuremoves |= FUTUREVECTOR(futuremove);
-
-		if (type == RESTRICTION_CONCEDE) {
-		    conceded_black_futuremoves |= FUTUREVECTOR(futuremove);
-		    if (discarded_black_futuremoves & FUTUREVECTOR(futuremove)) {
-			fatal("Conflicting pruning statements ('%s') match a futuremove\n",
-			      pruning_statement);
-		    }
-		}
-		if (type == RESTRICTION_DISCARD) {
-		    discarded_black_futuremoves |= FUTUREVECTOR(futuremove);
-		    if (conceded_black_futuremoves & FUTUREVECTOR(futuremove)) {
-			fatal("Conflicting pruning statements ('%s') match a futuremove\n",
-			      pruning_statement);
-		    }
-		}
-	    }
-	}
-
-	if (prune_color != NULL) xmlFree(prune_color);
-	if (prune_move != NULL) xmlFree(prune_move);
-	if (prune_type != NULL) xmlFree(prune_type);
-    }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 }
 
 /* This is where we parse pruning statements.  Fill in the pruned_futuremoves bit vector with bits
@@ -11855,7 +11876,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.394 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.395 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
