@@ -5010,7 +5010,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.391 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.392 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11817,6 +11817,14 @@ int main(int argc, char *argv[])
 	warning("Can't install SIGBUS handler: %s\n", strerror(errno));
     }
 
+    /* Note program start time */
+
+    gettimeofday(&program_start_time, NULL);
+
+    /* Print a greating banner with program version number. */
+
+    printf("Hoffman $Revision: 1.392 $ $Locker: baccala $\n");
+
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
     for (i=0; i<argc; i++) {
@@ -11828,8 +11836,6 @@ int main(int argc, char *argv[])
 	if (options_string_ptr >= options_string + sizeof(options_string)) break;
     }
     options_string[sizeof(options_string) - 1] = '\0';
-
-    gettimeofday(&program_start_time, NULL);
 
     init_movements();
     verify_movements();
