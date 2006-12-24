@@ -5291,7 +5291,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.397 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.398 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -10747,6 +10747,112 @@ int PTM_in_check(tablebase_t *tb, local_position_t *position)
     return 0;
 }
 
+int global_PTM_in_check(global_position_t *position)
+{
+    int piece_type;
+    int piece_color = 1 - position->side_to_move;
+    int square;
+    int dir;
+    struct movement *movementptr;
+
+    for (square = 0; square < 64; square ++) {
+
+	/* We only want to consider pieces of the side which is NOT to move... */
+
+	for (piece_type = 0; piece_type < NUM_PIECES; piece_type ++) {
+	    if (position->board[square] == global_pieces[piece_color][piece_type]) break;
+	}
+	if (piece_type == NUM_PIECES) continue;
+
+	if (piece_type != PAWN) {
+
+	    for (dir = 0; dir < number_of_movement_directions[piece_type]; dir++) {
+
+		for (movementptr = movements[piece_type][square][dir];
+		     ((movementptr->square != -1) && (position->board[movementptr->square] == 0));
+		     movementptr++) {
+		}
+
+		/* Now check to see if the movement ended because we hit against the king
+		 * of the opposite color.  If so, we're in check.
+		 */
+
+		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'K'))
+		    return 1;
+		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'k'))
+		    return 1;
+
+	    }
+	} else {
+	    for (movementptr = capture_pawn_movements[square][piece_color];
+		 movementptr->square != -1;
+		 movementptr++) {
+
+		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'K'))
+		    return 1;
+		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'k'))
+		    return 1;
+
+	    }
+	}
+    }
+
+    return 0;
+}
+
+int global_PNTM_in_check(global_position_t *position)
+{
+    int piece_type;
+    int piece_color = position->side_to_move;
+    int square;
+    int dir;
+    struct movement *movementptr;
+
+    for (square = 0; square < 64; square ++) {
+
+	/* We only want to consider pieces of the side which is to move... */
+
+	for (piece_type = 0; piece_type < NUM_PIECES; piece_type ++) {
+	    if (position->board[square] == global_pieces[piece_color][piece_type]) break;
+	}
+	if (piece_type == NUM_PIECES) continue;
+
+	if (piece_type != PAWN) {
+
+	    for (dir = 0; dir < number_of_movement_directions[piece_type]; dir++) {
+
+		for (movementptr = movements[piece_type][square][dir];
+		     ((movementptr->square != -1) && (position->board[movementptr->square] == 0));
+		     movementptr++) {
+		}
+
+		/* Now check to see if the movement ended because we hit against the king
+		 * of the opposite color.  If so, we're in check.
+		 */
+
+		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'k'))
+		    return 1;
+		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'K'))
+		    return 1;
+
+	    }
+	} else {
+	    for (movementptr = capture_pawn_movements[square][piece_color];
+		 movementptr->square != -1;
+		 movementptr++) {
+
+		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'k'))
+		    return 1;
+		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'K'))
+		    return 1;
+
+	    }
+	}
+    }
+
+    return 0;
+}
+
 int PNTM_in_check(tablebase_t *tb, local_position_t *position)
 {
     int piece;
@@ -11929,7 +12035,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.397 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.398 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12143,12 +12249,11 @@ int main(int argc, char *argv[])
 				    print_score(tb2, index2, pntm, ptm, 1);
 				}
 			    } else {
-				/* XXX need to check for check */
-#if 0
-				printf("   %c%s%s    NO DATA\n", piece_char[piece_type],
-				       algebraic_notation[square],
-				       algebraic_notation[movementptr->square]);
-#endif
+				if (! global_PNTM_in_check(&global_position)) {
+				    printf("   %c%s%s    NO DATA\n", piece_char[piece_type],
+					   algebraic_notation[square],
+					   algebraic_notation[movementptr->square]);
+				}
 			    }
 
 			    global_position.board[movementptr->square] = 0;
@@ -12156,6 +12261,8 @@ int main(int argc, char *argv[])
 			}
 
 			/* Now we consider possible captures */
+
+			if (movementptr->square == -1) continue;
 
 			if (((piece_color == WHITE)
 			     && (global_position.board[movementptr->square] >= 'a')
@@ -12166,8 +12273,7 @@ int main(int argc, char *argv[])
 
 			    char captured_piece = global_position.board[movementptr->square];
 
-			    if ((global_position.board[movementptr->square] == 'K')
-				|| (global_position.board[movementptr->square] == 'k')) {
+			    if ((captured_piece == 'K') || (captured_piece == 'k')) {
 
 				/* printf("MATE\n"); */
 
@@ -12176,19 +12282,19 @@ int main(int argc, char *argv[])
 				place_piece_in_global_position(&global_position, movementptr->square,
 							       piece_color, piece_type);
 
-				if (search_tablebases_for_global_position(tbs, &global_position,
-									  &tb2, &index2)) {
+				if (! global_PNTM_in_check(&global_position)) {
+				    if (search_tablebases_for_global_position(tbs, &global_position,
+									      &tb2, &index2)) {
 
-				    if (is_position_valid(tb2, index2)) {
 					printf ("   %c%sx%s   ", piece_char[piece_type],
 						algebraic_notation[square],
 						algebraic_notation[movementptr->square]);
 					print_score(tb2, index2, pntm, ptm, 1);
+				    } else {
+					printf("   %c%sx%s   NO DATA\n", piece_char[piece_type],
+					       algebraic_notation[square],
+					       algebraic_notation[movementptr->square]);
 				    }
-				} else {
-				    printf("   %c%sx%s   NO DATA\n", piece_char[piece_type],
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square]);
 				}
 
 			    }
@@ -12210,6 +12316,8 @@ int main(int argc, char *argv[])
 			 movementptr->square != -1;
 			 movementptr++) {
 
+			if (global_position.board[movementptr->square] != 0) continue;
+
 			if ((ROW(movementptr->square) != 0) && (ROW(movementptr->square) != 7)) {
 
 			    global_position.board[movementptr->square] = global_pieces[piece_color][PAWN];
@@ -12225,12 +12333,11 @@ int main(int argc, char *argv[])
 				    print_score(tb, index2, pntm, ptm, 1);
 				}
 			    } else {
-				/* probably a move into check */
-#if 0
+				if (! global_PNTM_in_check(&global_position)) {
 				    printf("   P%s%s    NO DATA\n",
 					   algebraic_notation[square],
 					   algebraic_notation[movementptr->square]);
-#endif
+				}
 			    }
 
 			    global_position.board[movementptr->square] = 0;
@@ -12255,10 +12362,12 @@ int main(int argc, char *argv[])
 					print_score(tb2, index2, pntm, ptm, 1);
 				    }
 				} else {
-				    printf("   P%s%s=%c  NO DATA\n",
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square],
-					   piece_char[*promoted_piece]);
+				    if (! global_PNTM_in_check(&global_position)) {
+					printf("   P%s%s=%c  NO DATA\n",
+					       algebraic_notation[square],
+					       algebraic_notation[movementptr->square],
+					       piece_char[*promoted_piece]);
+				    }
 				}
 			    }
 
@@ -12296,9 +12405,11 @@ int main(int argc, char *argv[])
 				    print_score(tb2, index2, pntm, ptm, 1);
 				}
 			    } else {
-				printf("   P%sx%s   NO DATA\n",
-				       algebraic_notation[square],
-				       algebraic_notation[movementptr->square]);
+				if (! global_PNTM_in_check(&global_position)) {
+				    printf("   P%sx%s   NO DATA\n",
+					   algebraic_notation[square],
+					   algebraic_notation[movementptr->square]);
+				}
 			    }
 
 			    continue;
@@ -12345,10 +12456,12 @@ int main(int argc, char *argv[])
 					print_score(tb2, index2, pntm, ptm, 1);
 				    }
 				} else {
-				    printf("   P%sx%s=%c NO DATA\n",
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square],
-					   piece_char[*promoted_piece]);
+				    if (! global_PNTM_in_check(&global_position)) {
+					printf("   P%sx%s=%c NO DATA\n",
+					       algebraic_notation[square],
+					       algebraic_notation[movementptr->square],
+					       piece_char[*promoted_piece]);
+				    }
 				}
 			    }
 
@@ -12370,9 +12483,11 @@ int main(int argc, char *argv[])
 				    print_score(tb2, index2, pntm, ptm, 1);
 				}
 			    } else {
-				printf("   P%sx%s   NO DATA\n",
-				       algebraic_notation[square],
-				       algebraic_notation[movementptr->square]);
+				if (! global_PNTM_in_check(&global_position)) {
+				    printf("   P%sx%s   NO DATA\n",
+					   algebraic_notation[square],
+					   algebraic_notation[movementptr->square]);
+				}
 			    }
 			}
 		    }
