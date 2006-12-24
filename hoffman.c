@@ -5291,7 +5291,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.398 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.399 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12035,7 +12035,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.398 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.399 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12238,18 +12238,15 @@ int main(int argc, char *argv[])
 			    global_position.board[movementptr->square]
 				= global_pieces[piece_color][piece_type];
 
-			    if (search_tablebases_for_global_position(tbs, &global_position, &tb2, &index2)){
+			    if (! global_PNTM_in_check(&global_position)) {
+				if (search_tablebases_for_global_position(tbs, &global_position,
+									  &tb2, &index2)){
 
-			    /* This is the next move, so we reverse the sense of PTM and PNTM */
-
-				if (is_position_valid(tb2, index2)) {
 				    printf("   %c%s%s    ", piece_char[piece_type],
 					   algebraic_notation[square],
 					   algebraic_notation[movementptr->square]);
 				    print_score(tb2, index2, pntm, ptm, 1);
-				}
-			    } else {
-				if (! global_PNTM_in_check(&global_position)) {
+				} else {
 				    printf("   %c%s%s    NO DATA\n", piece_char[piece_type],
 					   algebraic_notation[square],
 					   algebraic_notation[movementptr->square]);
@@ -12322,18 +12319,15 @@ int main(int argc, char *argv[])
 
 			    global_position.board[movementptr->square] = global_pieces[piece_color][PAWN];
 
-			    if (search_tablebases_for_global_position(tbs, &global_position, &tb2, &index2)){
+			    if (! global_PNTM_in_check(&global_position)) {
+				if (search_tablebases_for_global_position(tbs, &global_position,
+									  &tb2, &index2)){
 
-				/* This is the next move, so we reverse the sense of PTM and PNTM */
-
-				if (is_position_valid(tb2, index2)) {
 				    printf("   P%s%s    ",
 					   algebraic_notation[square],
 					   algebraic_notation[movementptr->square]);
 				    print_score(tb, index2, pntm, ptm, 1);
-				}
-			    } else {
-				if (! global_PNTM_in_check(&global_position)) {
+				} else {
 				    printf("   P%s%s    NO DATA\n",
 					   algebraic_notation[square],
 					   algebraic_notation[movementptr->square]);
@@ -12352,17 +12346,15 @@ int main(int argc, char *argv[])
 							       piece_color, *promoted_piece);
 
 
-				if (search_tablebases_for_global_position(tbs, &global_position,
-									  &tb2, &index2)){
-				    if (is_position_valid(tb2, index2)) {
+				if (! global_PNTM_in_check(&global_position)) {
+				    if (search_tablebases_for_global_position(tbs, &global_position,
+									      &tb2, &index2)){
 					printf ("   P%s%s=%c  ",
 						algebraic_notation[square],
 						algebraic_notation[movementptr->square],
 						piece_char[*promoted_piece]);
 					print_score(tb2, index2, pntm, ptm, 1);
-				    }
-				} else {
-				    if (! global_PNTM_in_check(&global_position)) {
+				    } else {
 					printf("   P%s%s=%c  NO DATA\n",
 					       algebraic_notation[square],
 					       algebraic_notation[movementptr->square],
@@ -12395,17 +12387,15 @@ int main(int argc, char *argv[])
 				global_position.board[global_position.en_passant_square + 8] = 0;
 			    }
 
-			    if (search_tablebases_for_global_position(tbs, &global_position,
-								      &tb2, &index2)) {
+			    if (! global_PNTM_in_check(&global_position)) {
+				if (search_tablebases_for_global_position(tbs, &global_position,
+									  &tb2, &index2)) {
 
-				if (is_position_valid(tb2, index2)) {
 				    printf ("   P%sx%s   ",
 					    algebraic_notation[square],
 					    algebraic_notation[movementptr->square]);
 				    print_score(tb2, index2, pntm, ptm, 1);
-				}
-			    } else {
-				if (! global_PNTM_in_check(&global_position)) {
+				} else {
 				    printf("   P%sx%s   NO DATA\n",
 					   algebraic_notation[square],
 					   algebraic_notation[movementptr->square]);
@@ -12445,18 +12435,16 @@ int main(int argc, char *argv[])
 				place_piece_in_global_position(&global_position, movementptr->square,
 							       piece_color, *promoted_piece);
 
-				if (search_tablebases_for_global_position(tbs, &global_position,
-									  &tb2, &index2)) {
+				if (! global_PNTM_in_check(&global_position)) {
+				    if (search_tablebases_for_global_position(tbs, &global_position,
+									      &tb2, &index2)) {
 
-				    if (is_position_valid(tb2, index2)) {
 					printf ("   P%sx%s=%c ",
 						algebraic_notation[square],
 						algebraic_notation[movementptr->square],
 						piece_char[*promoted_piece]);
 					print_score(tb2, index2, pntm, ptm, 1);
-				    }
-				} else {
-				    if (! global_PNTM_in_check(&global_position)) {
+				    } else {
 					printf("   P%sx%s=%c NO DATA\n",
 					       algebraic_notation[square],
 					       algebraic_notation[movementptr->square],
@@ -12473,17 +12461,15 @@ int main(int argc, char *argv[])
 			    place_piece_in_global_position(&global_position, movementptr->square,
 							   piece_color, PAWN);
 
-			    if (search_tablebases_for_global_position(tbs, &global_position,
-								      &tb2, &index2)) {
+			    if (! global_PNTM_in_check(&global_position)) {
+				if (search_tablebases_for_global_position(tbs, &global_position,
+									  &tb2, &index2)) {
 
-				if (is_position_valid(tb2, index2)) {
 				    printf ("   P%sx%s   ",
 					    algebraic_notation[square],
 					    algebraic_notation[movementptr->square]);
 				    print_score(tb2, index2, pntm, ptm, 1);
-				}
-			    } else {
-				if (! global_PNTM_in_check(&global_position)) {
+				} else {
 				    printf("   P%sx%s   NO DATA\n",
 					   algebraic_notation[square],
 					   algebraic_notation[movementptr->square]);
