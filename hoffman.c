@@ -5291,7 +5291,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.395 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.396 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6682,6 +6682,22 @@ void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt)
     }
 
     initialize_entry(tb, index, movecnt, 0);
+    total_legal_positions ++;
+}
+
+void initialize_entry_with_DTM(tablebase_t *tb, index_t index, int dtm)
+{
+#if 0
+    if (movecnt > MOVECNT_MAX) {
+	fatal("Attempting to initialize position with a movecnt that won't fit in field!\n");
+    }
+#endif
+
+    if (dtm > 0) {
+	initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, dtm);
+    } else {
+	initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, dtm);
+    }
     total_legal_positions ++;
 }
 
@@ -9413,9 +9429,11 @@ int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
 	    if (type == RESTRICTION_NONE) {
 		type = find_name_in_array((char *) prune_type, restriction_types);
 	    } else if (type != find_name_in_array((char *) prune_type, restriction_types)) {
-		fatal("Conflicting pruning statements match futuremove %s\n", pruning_statement);
+		fatal("Conflicting %s pruning statements match futuremove %s\n",
+		      colors[color], pruning_statement);
 	    } else {
-		warning("Multiple pruning statements match futuremove %s\n", pruning_statement);
+		warning("Multiple %s pruning statements match futuremove %s\n",
+			colors[color], pruning_statement);
 	    }
 	}
 
@@ -9530,6 +9548,9 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     int i;
     struct movement *movementptr;
     uint64 possible_captures[MAX_PIECES];
+    char local_movestr[MOVESTR_CHARS];
+    int futurebase_cnt;
+    int fbnum;
 
     /* Start by computing a board vector (possible_captures) showing all possible squares where each
      * piece can capture onto.
@@ -9745,8 +9766,16 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     }
 
     /* And now all piece moves outside their restriction.  We record a futuremove for each possible
-     * destination square that the piece can reach outside its move restriction.
+     * destination square that the piece can reach outside its move restriction, unless we've
+     * determined that there are no "normal" futurebases, in which case we flag the pruning right
+     * here and now.
      */
+
+    futurebase_cnt = 0;
+
+    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	if (futurebases[fbnum]->futurebase_type == FUTUREBASE_NORMAL) futurebase_cnt ++;
+    }
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -9788,12 +9817,27 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
 			    if (futuremoves[piece][movementptr->square] == -1) {
-				futuremoves[piece][movementptr->square]
-				    = num_futuremoves[tb->piece_color[piece]];
-				sprintf(movestr[tb->piece_color[piece]][num_futuremoves[tb->piece_color[piece]]],
-					"%c%c%c", piece_char[tb->piece_type[piece]],
+
+				sprintf(local_movestr, "%c%c%c", piece_char[tb->piece_type[piece]],
 					'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-				num_futuremoves[tb->piece_color[piece]] ++;
+
+				if (futurebase_cnt > 0) {
+				    futuremoves[piece][movementptr->square]
+					= num_futuremoves[tb->piece_color[piece]];
+				    strcpy(movestr[tb->piece_color[piece]][num_futuremoves[tb->piece_color[piece]]],
+					   local_movestr);
+				    num_futuremoves[tb->piece_color[piece]] ++;
+				} else {
+				    switch (match_pruning_statement(tb, tb->piece_color[piece],
+								    local_movestr)) {
+				    case RESTRICTION_DISCARD:
+					futuremoves[piece][movementptr->square] = -2;
+					break;
+				    case RESTRICTION_CONCEDE:
+					futuremoves[piece][movementptr->square] = -3;
+					break;
+				    }
+				}
 			    }
 			}
 		    }
@@ -10287,7 +10331,7 @@ boolean check_pruning(tablebase_t *tb) {
     if (futurebase_cnt == 0) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    for (sq = 0; sq < 64; sq ++) {
-		if (futuremoves[piece][sq] != -1) {
+		if (futuremoves[piece][sq] >= 0) {
 
 		    if (tb->piece_color[piece] == WHITE) {
 			if (! (pruned_white_futuremoves & FUTUREVECTOR(futuremoves[piece][sq]))) {
@@ -10846,18 +10890,27 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
 				&& (local_position_to_index(tb, &position) == -1)) {
 
-				if (futuremoves[piece][movementptr->square] == -1) {
+				if (futuremoves[piece][movementptr->square] == -2) {
+				    /* it's a discard - decrement movecnt so net change is zero */
+				    movecnt --;
+				} else if (futuremoves[piece][movementptr->square] == -3) {
+				    /* it's a concede - PTM wins */
+				    initialize_entry_with_DTM(tb, index, 2);
+				    return 0;
+				} else if (futuremoves[piece][movementptr->square] < 0) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
 				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
 					  piece_char[tb->piece_type[piece]],
 					  'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
+				} else {
+				    if (futurevector
+					& FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
+					fatal("Duplicate futuremove!\n");
+				    }
+				    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
+				    futuremovecnt ++;
 				}
-				if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				    fatal("Duplicate futuremove!\n");
-				}
-				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-				futuremovecnt ++;
 			    }
 
 			    movecnt ++;
@@ -10909,7 +10962,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 				if (! PTM_in_check(tb, &position)) {
 
-				    if (futurecaptures[piece][i] == -1) {
+				    if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
@@ -10967,7 +11020,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
-			    if (promotions[piece] == -1) {
+			    if (promotions[piece] < 0) {
 				global_position_t global;
 				index_to_global_position(tb, index, &global);
 				fatal("No futuremove: %s %c=?\n", global_position_to_FEN(&global),
@@ -10990,7 +11043,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
 				&& (local_position_to_index(tb, &position) == -1)) {
 
-				if (futuremoves[piece][movementptr->square] == -1) {
+				if (futuremoves[piece][movementptr->square] < 0) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
 				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
@@ -11046,7 +11099,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				position.piece_position[i] = -1;
 
 				if (! PTM_in_check(tb, &position)) {
-				    if (futurecaptures[piece][i] == -1) {
+				    if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
@@ -11087,7 +11140,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			    if (! PTM_in_check(tb, &position)) {
 				if (! is_promotion_capture) {
-				    if (futurecaptures[piece][i] == -1) {
+				    if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
@@ -11101,7 +11154,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    futuremovecnt ++;
 				    movecnt ++;
 				} else {
-				    if (promotion_captures[piece][i] == -1) {
+				    if (promotion_captures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c=*\n", global_position_to_FEN(&global),
@@ -11521,10 +11574,10 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #endif
 #endif
 
+    if (! preload_all_futurebases(tb, &max_dtm, &min_dtm)) return 0;
     assign_numbers_to_futuremoves(tb);
     print_futuremoves();
     if (! compute_pruned_futuremoves(tb)) return 0;
-    if (! preload_all_futurebases(tb, &max_dtm, &min_dtm)) return 0;
     if (! check_pruning(tb)) return 0;
 
     if (! check_1000_indices(tb)) return 0;
@@ -11876,7 +11929,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.395 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.396 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
