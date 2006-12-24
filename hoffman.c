@@ -96,6 +96,8 @@
 #include <fcntl.h>	/* for O_RDONLY */
 #include <netdb.h>	/* for gethostbyname() */
 
+#include <fnmatch.h>	/* for glob matching of pruning statements */
+
 #include <signal.h>	/* so user interrupts and internal errors are reported to the error URL */
 
 #include <sys/time.h>     /* for reporting resource utilization */
@@ -5289,7 +5291,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.393 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.394 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9790,11 +9792,15 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
 
 	type = find_name_in_array((char *) prune_type, restriction_types);
 
+	/* Trailing 'any' is an older syntax that means '*' */
+
+	if (!strcasecmp("any", (char *) prune_move + strlen((char *) prune_move) - 3)) {
+	    prune_move[strlen((char *) prune_move) - 3] = '*';
+	    prune_move[strlen((char *) prune_move) - 2] = '\0';
+	}
+
 	if ((find_name_in_array((char *) prune_color, colors) == color)
-	    && (!strcasecmp((char *) prune_move, pruning_statement)
-		|| (!strcasecmp("any", (char *) prune_move + strlen((char *) prune_move) - 3)
-		    && !strncasecmp((char *) prune_move, pruning_statement,
-				    strlen((char *) prune_move) - 3)))) {
+	    && (fnmatch((char *) prune_move, pruning_statement, FNM_CASEFOLD) == 0)) {
 
 	    if (color == WHITE) {
 
@@ -11849,7 +11855,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.393 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.394 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
