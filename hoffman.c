@@ -5291,7 +5291,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.396 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.397 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6338,7 +6338,7 @@ void twister(tablebase_t *tb, index_t index)
 	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
 
 	fprintf(stderr, "fetch_entry_pointer(): special read; needed %d had %d\n",
-		index, entry_buffers[yellow_entry_buffer].start);  /* BREAKPOINT */
+		index, entry_buffers[yellow_entry_buffer].start);
 
 	entry_buffers[yellow_entry_buffer].start = (index / ENTRY_BUFFER_ENTRIES) * ENTRY_BUFFER_ENTRIES;
 
@@ -11929,7 +11929,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.396 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.397 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12126,7 +12126,7 @@ int main(int argc, char *argv[])
 		    for (dir = 0; dir < number_of_movement_directions[piece_type]; dir++) {
 
 			for (movementptr = movements[piece_type][square][dir];
-			     global_position.board[movementptr->square] == 0;
+			     (movementptr->square != -1) && (global_position.board[movementptr->square] == 0);
 			     movementptr++) {
 
 			    global_position.board[movementptr->square]
@@ -12207,7 +12207,7 @@ int main(int argc, char *argv[])
 		    /* PAWNs */
 
 		    for (movementptr = normal_pawn_movements[square][piece_color];
-			 global_position.board[movementptr->square] == 0;
+			 movementptr->square != -1;
 			 movementptr++) {
 
 			if ((ROW(movementptr->square) != 0) && (ROW(movementptr->square) != 7)) {
@@ -12380,8 +12380,9 @@ int main(int argc, char *argv[])
 
 
 		}
-
 	    }
+
+	    global_position = saved_global_position;
 	}
     }
     write_history(".hoffman_history");
