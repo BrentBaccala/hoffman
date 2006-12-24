@@ -552,6 +552,13 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 
 char * index_types[] = {"naive", "naive2", "simple", "compact", "standard", "no-en-passant"};
 
+char * futurebase_types[] = {"capture", "promotion", "capture-promotion", "normal"};
+
+#define FUTUREBASE_CAPTURE 0
+#define FUTUREBASE_PROMOTION 1
+#define FUTUREBASE_CAPTURE_PROMOTION 2
+#define FUTUREBASE_NORMAL 3
+
 typedef struct tablebase {
     int index_type;
     int index_offset;
@@ -576,6 +583,8 @@ typedef struct tablebase {
 
     /* for futurebases only */
     FILE * file;
+    xmlChar * filename;
+    int futurebase_type;
     index_t next_read_index;
     long offset;
     int max_dtm;
@@ -646,6 +655,9 @@ proptable_entry_t *proptable2 = NULL;
 int zeros_fd = -1;
 
 tablebase_t *current_tb = NULL;
+
+tablebase_t **futurebases;
+int num_futurebases;
 
 int proptable_MBs = 0;
 int num_propentries = 0;
@@ -4830,6 +4842,9 @@ tablebase_t * parse_XML_control_file(char *filename)
 
 /* preload_futurebase_from_file() reads a tablebase's XML header and parses it, leaving the file
  * open and ready to begin reading the first entry with fetch_next_DTM_from_disk().
+ *
+ * XXX I save the 'filename' and xmlFree it when I unload the futurebase, but that isn't quite right
+ * if we're probing!  Fortunately, if we're probing, we never unload the futurebases...
  */
 
 tablebase_t * preload_futurebase_from_file(char *filename)
@@ -4890,6 +4905,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 	return NULL;
     }
 
+    tb->filename = filename;
     tb->file = file;
 
     tablebase = xmlDocGetRootElement(doc);
@@ -4915,14 +4931,277 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
 void unload_futurebase(tablebase_t *tb)
 {
+    if (tb->filename != NULL) xmlFree(tb->filename);
+    tb->filename = NULL;
+
     if (tb->xml != NULL) xmlFreeDoc(tb->xml);
     tb->xml = NULL;
+
     if (tb->file != NULL) {
 	if (zlib_close(tb->file) != 0) {
 	    warning("fclose failed during unload_futurebase()\n");
 	}
     }
     tb->file = NULL;
+}
+
+/* compute_extra_and_missing_piece()
+ *
+ * See comments for translate_foreign_position_to_local_position(), since this function mimicks that
+ * one, except that this function works on an entire tablebase, while the other one works on a
+ * single position within the tablebase.
+ */
+
+boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, char *filename)
+{
+    int piece;
+    int future_piece;
+    int piece_vector;
+    int color;
+
+    futurebase->extra_piece = -1;
+    futurebase->missing_pawn = -1;
+    futurebase->missing_non_pawn = -1;
+
+    /* Check futurebase to make sure its move restriction(s) match our own */
+
+    for (color = 0; color < 2; color ++) {
+	if ((futurebase->move_restrictions[color] != RESTRICTION_NONE)
+	    && (futurebase->move_restrictions[color]
+		!= tb->move_restrictions[futurebase->invert_colors ? 1 - color : color])) {
+	    fatal("'%s': Futurebase doesn't match move restrictions!\n", filename);
+	    return 0;
+	}
+    }
+
+    /* The futurebase can have different pieces than the current tablebase.  There can be a single
+     * extra piece, as well as a missing pawn and/or a missing non-pawn.  Find them.
+     */
+
+    /* piece_vector - set a bit for every piece in current tablebase */
+    piece_vector = (1 << tb->num_pieces) - 1;
+
+    for (future_piece = 0; future_piece < futurebase->num_pieces; future_piece ++) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (! (piece_vector & (1 << piece))) continue;
+	    if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
+		&& ((!futurebase->invert_colors &&
+		     (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
+		    || (futurebase->invert_colors &&
+			(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
+		piece_vector ^= (1 << piece);
+		break;
+	    }
+	}
+	if (piece == tb->num_pieces) {
+	    if ((futurebase->extra_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
+		futurebase->extra_piece = future_piece;
+	    } else {
+		fatal("'%s': Couldn't find future piece in tablebase\n", filename);
+		return 0;
+	    }
+	}
+    }
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	if ((tb->piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
+    }
+    if (piece != tb->num_pieces) {
+	futurebase->missing_pawn = piece;
+	piece_vector ^= (1 << piece);
+    }
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	if ((tb->piece_type[piece] != PAWN) && (piece_vector & (1 << piece))) break;
+    }
+    if (piece != tb->num_pieces) {
+	futurebase->missing_non_pawn = piece;
+	piece_vector ^= (1 << piece);
+    }
+
+    if (piece_vector != 0) {
+	fatal("'%s': Too many missing pieces in futurebase\n", filename);
+	return 0;
+    }
+
+    return 1;
+}
+
+boolean preload_all_futurebases(tablebase_t *tb, int *max_dtm, int *min_dtm)
+{
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+    int fbnum;
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//futurebase", context);
+    num_futurebases = result->nodesetval->nodeNr;
+    futurebases = malloc(sizeof(tablebase_t *) * num_futurebases);
+    if (futurebases == NULL) {
+	fatal("Can't malloc futurebases array\n");
+	return 0;
+    }
+
+    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	xmlChar * filename;
+	xmlChar * colors_property;
+	xmlChar * type;
+
+	filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "filename");
+	if (filename == NULL) {
+	    filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "url");
+	}
+	if (filename == NULL) {
+	    fatal("No filename or URL specified in futurebase element\n");
+	    continue;
+	}
+
+	futurebases[fbnum] = preload_futurebase_from_file((char *) filename);
+
+	/* load_futurebase_from_file() already printed some kind of error message */
+	if (futurebases[fbnum] == NULL) continue;
+
+	if (futurebases[fbnum]->symmetry < tb->symmetry) {
+	    fatal("Futurebases can't be less symmetric than the tablebase under construction\n");
+	    continue;
+	}
+
+	if (futurebases[fbnum]->max_dtm > *max_dtm) *max_dtm = futurebases[fbnum]->max_dtm;
+	if (futurebases[fbnum]->min_dtm < *min_dtm) *min_dtm = futurebases[fbnum]->min_dtm;
+
+	futurebases[fbnum]->invert_colors = 0;
+	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "colors");
+	if (colors_property != NULL) {
+	    if (!strcasecmp((char *) colors_property, "invert")) futurebases[fbnum]->invert_colors = 1;
+	    xmlFree(colors_property);
+	}
+
+	type = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "type");
+
+	futurebases[fbnum]->futurebase_type = find_name_in_array((char *) type, futurebase_types);
+
+	if (futurebases[fbnum]->futurebase_type == -1) {
+	    fatal("Unknown futurebase type '%s'\n", type);
+	}
+
+	compute_extra_and_missing_pieces(tb, futurebases[fbnum], (char *)filename);
+
+	/* Various combinations of missing/extra pieces are legal for different futurebase types. */
+
+	switch (futurebases[fbnum]->futurebase_type) {
+
+	case FUTUREBASE_CAPTURE:
+
+	    /* It's a capture futurebase.  Futurebase should have exactly one less piece than the
+	     * current tablebase.
+	     */
+
+	    if (futurebases[fbnum]->extra_piece != -1) {
+		fatal("'%s': Extra piece in capture futurebase\n", filename);
+		break;
+	    }
+
+	    if ((futurebases[fbnum]->missing_pawn != -1) && (futurebases[fbnum]->missing_non_pawn != -1)) {
+		fatal("'%s': Too many missing pieces in capture futurebase\n", filename);
+		break;
+	    }
+
+	    if ((futurebases[fbnum]->missing_pawn == -1) && (futurebases[fbnum]->missing_non_pawn == -1)) {
+		fatal("'%s': No missing pieces in capture futurebase\n", filename);
+		break;
+	    }
+
+	    break;
+
+	case FUTUREBASE_PROMOTION:
+
+	    /* It's a promotion futurebase.  Futurebase should have exactly the same number of
+	     * pieces as the current tablebase, and one of our pawns should have promoted into
+	     * something else.
+	     */
+
+	    if (futurebases[fbnum]->extra_piece == -1) {
+		fatal("'%s': No extra piece in promotion futurebase\n", filename);
+		break;
+	    }
+
+	    if (futurebases[fbnum]->missing_non_pawn != -1) {
+		fatal("'%s': Missing non-pawn in promotion futurebase\n", filename);
+		break;
+	    }
+
+	    if (futurebases[fbnum]->missing_pawn == -1) {
+		fatal("'%s': No missing pawn in promotion futurebase\n", filename);
+		break;
+	    }
+
+	    break;
+
+	case FUTUREBASE_CAPTURE_PROMOTION:
+
+	    /* It's a promotion capture futurebase.  Futurebase should have exactly one less piece
+	     * than the current tablebase, and one of our pawns should have promoted into something
+	     * else.
+	     */
+
+	    if (futurebases[fbnum]->extra_piece == -1) {
+		fatal("'%s': No extra piece in promotion capture futurebase\n", filename);
+		break;
+	    }
+
+	    if (futurebases[fbnum]->missing_non_pawn == -1) {
+		fatal("'%s': No missing non-pawn in promotion capture futurebase\n", filename);
+		break;
+	    }
+
+	    if (futurebases[fbnum]->missing_pawn == -1) {
+		fatal("'%s': No missing pawn in promotion capture futurebase\n", filename);
+		break;
+	    }
+
+	    break;
+
+	case FUTUREBASE_NORMAL:
+
+	    if (futurebases[fbnum]->extra_piece != -1) {
+		fatal("'%s': Extra piece in normal futurebase\n", filename);
+		break;
+	    }
+
+	    if ((futurebases[fbnum]->missing_pawn != -1) || (futurebases[fbnum]->missing_non_pawn != -1)) {
+		fatal("'%s': Missing pieces in normal futurebase\n", filename);
+		break;
+	    }
+
+	    break;
+
+	default:
+
+	    fatal("'%s': Unknown back propagation type (%s)\n", (char *) filename, (char *) type);
+	    break;
+
+	}
+
+	if (type != NULL) xmlFree(type);
+
+	/* We can't xmlFree filename here, because it's stashed away in the tablebase structure */
+	/* if (filename != NULL) xmlFree(filename); */
+    }
+
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
+    return (fatal_errors == 0);
+}
+
+void unload_all_futurebases(void)
+{
+    int fbnum;
+
+    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	unload_futurebase(futurebases[fbnum]);
+    }
+
 }
 
 /* Given a tablebase, change its XML structure to reflect the fact that the tablebase has now
@@ -5010,7 +5289,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.392 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.393 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8915,88 +9194,6 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
     }
 }
 
-/* compute_extra_and_missing_piece()
- *
- * See comments for translate_foreign_position_to_local_position(), since this function mimicks that
- * one, except that this function works on an entire tablebase, while the other one works on a
- * single position within the tablebase.
- */
-
-boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, char *filename)
-{
-    int piece;
-    int future_piece;
-    int piece_vector;
-    int color;
-
-    futurebase->extra_piece = -1;
-    futurebase->missing_pawn = -1;
-    futurebase->missing_non_pawn = -1;
-
-    /* Check futurebase to make sure its move restriction(s) match our own */
-
-    for (color = 0; color < 2; color ++) {
-	if ((futurebase->move_restrictions[color] != RESTRICTION_NONE)
-	    && (futurebase->move_restrictions[color]
-		!= tb->move_restrictions[futurebase->invert_colors ? 1 - color : color])) {
-	    fatal("'%s': Futurebase doesn't match move restrictions!\n", filename);
-	    return 0;
-	}
-    }
-
-    /* The futurebase can have different pieces than the current tablebase.  There can be a single
-     * extra piece, as well as a missing pawn and/or a missing non-pawn.  Find them.
-     */
-
-    /* piece_vector - set a bit for every piece in current tablebase */
-    piece_vector = (1 << tb->num_pieces) - 1;
-
-    for (future_piece = 0; future_piece < futurebase->num_pieces; future_piece ++) {
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (! (piece_vector & (1 << piece))) continue;
-	    if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
-		&& ((!futurebase->invert_colors &&
-		     (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
-		    || (futurebase->invert_colors &&
-			(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-		piece_vector ^= (1 << piece);
-		break;
-	    }
-	}
-	if (piece == tb->num_pieces) {
-	    if ((futurebase->extra_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
-		futurebase->extra_piece = future_piece;
-	    } else {
-		fatal("'%s': Couldn't find future piece in tablebase\n", filename);
-		return 0;
-	    }
-	}
-    }
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
-    }
-    if (piece != tb->num_pieces) {
-	futurebase->missing_pawn = piece;
-	piece_vector ^= (1 << piece);
-    }
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->piece_type[piece] != PAWN) && (piece_vector & (1 << piece))) break;
-    }
-    if (piece != tb->num_pieces) {
-	futurebase->missing_non_pawn = piece;
-	piece_vector ^= (1 << piece);
-    }
-
-    if (piece_vector != 0) {
-	fatal("'%s': Too many missing pieces in futurebase\n", filename);
-	return 0;
-    }
-
-    return 1;
-}
-
 /* Back propagates from all the futurebases.
  *
  * Should be called after the tablebase has been initialized, but before intra-table propagation.
@@ -9009,169 +9206,59 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 
 boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
-    int i;
+    int fbnum;
 
-    /* Fetch the futurebases from the XML */
+    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//futurebase", context);
+	tablebase_t * futurebase = futurebases[fbnum];
 
-    for (i=0; i < result->nodesetval->nodeNr; i++) {
-	xmlChar * filename;
-	xmlChar * type;
-	xmlChar * colors_property;
-	tablebase_t * futurebase;
+	switch (futurebase->futurebase_type) {
 
-	filename = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "filename");
-	if (filename == NULL) {
-	    filename = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "url");
-	}
-
-	if (filename == NULL) {
-	    fatal("No filename or URL specified in futurebase element\n");
-	    continue;
-	}
-
-	futurebase = preload_futurebase_from_file((char *) filename);
-
-	/* load_futurebase_from_file() already printed some kind of error message */
-	if (futurebase == NULL) return 0;
-
-	futurebase->invert_colors = 0;
-	colors_property = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "colors");
-	if (colors_property != NULL) {
-	    if (!strcasecmp((char *) colors_property, "invert")) futurebase->invert_colors = 1;
-	    xmlFree(colors_property);
-	}
-
-	if (! compute_extra_and_missing_pieces(tb, futurebase, (char *) filename)) continue;
-
-	/* Various combinations of missing/extra pieces are legal for different futurebase types.
-	 */
-
-	type = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "type");
-
-	if ((type != NULL) && !strcasecmp((char *) type, "capture")) {
-
-	    /* It's a capture futurebase.  Futurebase should have exactly one less piece than the
-	     * current tablebase.
-	     */
-
-	    if (futurebase->extra_piece != -1) {
-		fatal("'%s': Extra piece in capture futurebase\n", filename);
-		continue;
-	    }
-
-	    if ((futurebase->missing_pawn != -1) && (futurebase->missing_non_pawn != -1)) {
-		fatal("'%s': Too many missing pieces in capture futurebase\n", filename);
-		continue;
-	    }
-
-	    if ((futurebase->missing_pawn == -1) && (futurebase->missing_non_pawn == -1)) {
-		fatal("'%s': No missing pieces in capture futurebase\n", filename);
-		continue;
-	    }
+	case FUTUREBASE_CAPTURE:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) filename);
+		info("Back propagating from '%s'\n", (char *) futurebase->filename);
 		propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors);
 	    }
 
-	} else if ((type != NULL) && !strcasecmp((char *) type, "promotion")) {
+	    break;
 
-	    /* It's a promotion futurebase.  Futurebase should have exactly the same number of
-	     * pieces as the current tablebase, and one of our pawns should have promoted into
-	     * something else.  Determine what the pawn promoted into.
-	     */
-
-	    if (futurebase->extra_piece == -1) {
-		fatal("'%s': No extra piece in promotion futurebase\n", filename);
-		continue;
-	    }
-
-	    if (futurebase->missing_non_pawn != -1) {
-		fatal("'%s': Missing non-pawn in promotion futurebase\n", filename);
-		continue;
-	    }
-
-	    if (futurebase->missing_pawn == -1) {
-		fatal("'%s': No missing pawn in promotion futurebase\n", filename);
-		continue;
-	    }
-
-	    /* Ready to go. */
+	case FUTUREBASE_PROMOTION:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) filename);
+		info("Back propagating from '%s'\n", (char *) futurebase->filename);
 		propagate_moves_from_promotion_futurebase(tb, futurebase, futurebase->invert_colors,
 							  futurebase->missing_pawn);
 	    }
 
-	} else if ((type != NULL)
-		   && (!strcasecmp((char *) type, "promotion-capture") ||
-		       !strcasecmp((char *) type, "capture-promotion"))) {
+	    break;
 
-	    /* It's a promotion capture futurebase.  Futurebase should have exactly one less piece
-	     * than the current tablebase, and one of our pawns should have promoted into something
-	     * else.
-	     */
-
-	    if (futurebase->extra_piece == -1) {
-		fatal("'%s': No extra piece in promotion capture futurebase\n", filename);
-		continue;
-	    }
-
-	    if (futurebase->missing_non_pawn == -1) {
-		fatal("'%s': No missing non-pawn in promotion capture futurebase\n", filename);
-		continue;
-	    }
-
-	    if (futurebase->missing_pawn == -1) {
-		fatal("'%s': No missing pawn in promotion capture futurebase\n", filename);
-		continue;
-	    }
-
-	    /* Ready to go. */
+	case FUTUREBASE_CAPTURE_PROMOTION:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) filename);
+		info("Back propagating from '%s'\n", (char *) futurebase->filename);
 		propagate_moves_from_promotion_capture_futurebase(tb, futurebase, futurebase->invert_colors,
 								  futurebase->missing_pawn);
 	    }
 
-	} else if ((type != NULL) && !strcasecmp((char *) type, "normal")) {
+	    break;
 
-	    if (futurebase->extra_piece != -1) {
-		fatal("'%s': Extra piece in normal futurebase\n", filename);
-		continue;
-	    }
-
-	    if ((futurebase->missing_pawn != -1) || (futurebase->missing_non_pawn != -1)) {
-		fatal("'%s': Missing pieces in normal futurebase\n", filename);
-		continue;
-	    }
+	case FUTUREBASE_NORMAL:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) filename);
+		info("Back propagating from '%s'\n", (char *) futurebase->filename);
 		propagate_moves_from_normal_futurebase(tb, futurebase, futurebase->invert_colors);
 	    }
 
-	} else {
+	    break;
 
-	    fatal("'%s': Unknown back propagation type (%s)\n", (char *) filename, (char *) type);
-	    continue;
+	default:
+
+	    fatal("Unknown back propagation type for futurebase '%s'\n", futurebase->filename);
+	    break;
 
 	}
-
-	if (type != NULL) xmlFree(type);
-	if (filename != NULL) xmlFree(filename);
-	unload_futurebase(futurebase);
     }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     return (fatal_errors == 0);
 }
@@ -9933,12 +10020,8 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
  * problem.
  */
 
-boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
+boolean check_pruning(tablebase_t *tb) {
 
-    tablebase_t **futurebases;
-    int num_futurebases;
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
     int fbnum;
     int piece;
     int captured_piece;
@@ -9947,60 +10030,6 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
     int sq;
     int futurebase_cnt;
     int i;
-
-
-    /* First, preload all futurebases */
-
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//futurebase", context);
-    num_futurebases = result->nodesetval->nodeNr;
-    futurebases = malloc(sizeof(tablebase_t *) * num_futurebases);
-    if (futurebases == NULL) {
-	fatal("Can't malloc futurebases array\n");
-	return 0;
-    }
-
-    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	xmlChar * filename;
-	xmlChar * colors_property;
-
-	filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "filename");
-	if (filename == NULL) {
-	    filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "url");
-	}
-	if (filename == NULL) {
-	    fatal("No filename or URL specified in futurebase element\n");
-	    continue;
-	}
-
-	futurebases[fbnum] = preload_futurebase_from_file((char *) filename);
-
-	/* load_futurebase_from_file() already printed some kind of error message */
-	if (futurebases[fbnum] == NULL) continue;
-
-	if (futurebases[fbnum]->symmetry < tb->symmetry) {
-	    fatal("Futurebases can't be less symmetric than the tablebase under construction\n");
-	    continue;
-	}
-
-	if (futurebases[fbnum]->max_dtm > *max_dtm) *max_dtm = futurebases[fbnum]->max_dtm;
-	if (futurebases[fbnum]->min_dtm < *min_dtm) *min_dtm = futurebases[fbnum]->min_dtm;
-
-	futurebases[fbnum]->invert_colors = 0;
-	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "colors");
-	if (colors_property != NULL) {
-	    if (!strcasecmp((char *) colors_property, "invert")) futurebases[fbnum]->invert_colors = 1;
-	    xmlFree(colors_property);
-	}
-
-	compute_extra_and_missing_pieces(tb, futurebases[fbnum], (char *)filename);
-	if (filename != NULL) xmlFree(filename);
-    }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
-
-    if (fatal_errors != 0) return 0;
 
     /* for each possible captured_piece (i.e, everything but the two kings) check for capture
      * futurebases
@@ -10249,12 +10278,6 @@ boolean check_pruning(tablebase_t *tb, int *max_dtm, int *min_dtm) {
 		}
 	    }
 	}
-    }
-
-    /* Unload the futurebases (for now; we'll need them again later) */
-
-    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	unload_futurebase(futurebases[fbnum]);
     }
 
     return 1;
@@ -11474,7 +11497,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     assign_numbers_to_futuremoves(tb);
     print_futuremoves();
     if (! compute_pruned_futuremoves(tb)) return 0;
-    if (! check_pruning(tb, &max_dtm, &min_dtm)) return 0;
+    if (! preload_all_futurebases(tb, &max_dtm, &min_dtm)) return 0;
+    if (! check_pruning(tb)) return 0;
 
     if (! check_1000_indices(tb)) return 0;
     /* check_1000_positions(tb); */  /* This becomes a problem with symmetry, among other things */
@@ -11584,6 +11608,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	info("All futuremoves handled under move restrictions\n");
 
 #endif
+
+    unload_all_futurebases();
 
     /* We add one to dtm_limit here because, even if there are intra-table passes with no
      * progress made, we want to process at least one pass beyond the maximum mate-in value we
@@ -11823,7 +11849,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.392 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.393 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
