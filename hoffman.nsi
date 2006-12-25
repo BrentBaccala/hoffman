@@ -68,8 +68,10 @@ Section "Hoffman"
   File "k?k?.xml"
   File "lasker1901.xml"
   File "fortress*.xml"
+  File "genalltb.bat"
 
   SetOutPath $INSTDIR
+  File "hoffman.pdf"
   
   ; Write the installation path into the registry
   WriteRegStr HKLM SOFTWARE\freesoft.org\Hoffman "Install_Dir" "$INSTDIR"
@@ -85,6 +87,7 @@ Section "Hoffman"
   ; the Start Menu shortcuts
   CreateDirectory "$SMPROGRAMS\Hoffman"
   CreateShortCut "$SMPROGRAMS\Hoffman\Uninstall.lnk" "$INSTDIR\bin\uninstall.exe" "" "$INSTDIR\bin\uninstall.exe" 0
+  CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman User's Guide.lnk" "$INSTDIR\hoffman.pdf"
   CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman.lnk" "cmd.exe" "/k set path=%path%;$INSTDIR\bin"
 
 SectionEnd
@@ -104,7 +107,9 @@ Section "Uninstall"
   Delete "$INSTDIR\bin\*.dll"
   Delete "$INSTDIR\Examples\*.xml"
   Delete "$INSTDIR\Examples\*.htb"
+  Delete "$INSTDIR\Examples\genalltb.bat"
   Delete "$INSTDIR\Examples\.hoffman_history"
+  Delete "$INSTDIR\hoffman.pdf"
   Delete "$INSTDIR\.hoffman_history"
   Delete "$INSTDIR\bin\uninstall.exe"
 
