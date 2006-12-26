@@ -6,6 +6,10 @@
 
 use Data::Dumper;
 
+my $for_real = 1;
+
+my $analysis = "analysis4";
+
 @white_pawns = ('a5', 'b2', 'd4', 'g2', 'h3');
 @black_pawns = ('a6', 'd5', 'd6', 'g6', 'h7');
 
@@ -18,7 +22,7 @@ my $max_free_pieces = 4;
 
 my $concede_stalemates = 0;
 
-my $url_prefix = "ftp://vger.freesoft.org/Hoffman/analysis3/";
+my $url_prefix = "ftp://vger.freesoft.org/Hoffman/$analysis/";
 my $completion_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=complete&amp;tb=";
 my $error_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=error&amp;tb=";
 
@@ -185,9 +189,11 @@ sub generate_control_file_rows {
     my $cntl_filename = &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
     $cntl_filename =~ s/htb$/xml/;
 
-    open (OUT, ">&STDOUT") || die "open";
-    #open (OUT, ">/dev/null") || die "open";
-    #open (OUT, ">$cntl_filename") || die "open";
+    if ($for_real) {
+	open (OUT, ">$cntl_filename") || die "open";
+    } else {
+	open (OUT, ">&STDOUT") || die "open";
+    }
 
     print OUT "<tablebase>\n";
     print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
@@ -228,17 +234,20 @@ sub generate_control_file_rows {
 	}
     }
 
+    # Do the black pawns in reverse order here so that doubled pawns appear in board
+    # order, as is (currently) required by Hoffman.
+
     for (my $row = 0; $row < 8; $row ++) {
-	if ($$black_pawns_by_rows[$row] >= 1) {
-	    my $location = chr(97 + $row) . chr(48 + $earliest_black_pawns[$row]) . "+";
+	if ($$black_pawns_by_rows[$row] >= 2) {
+	    my $location = chr(97 + $row) . chr(48 + $next_black_pawns[$row]) . "+";
 	    if ($total_pieces > $max_free_pieces) {
 		print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$location\"/>\n";
 	    } else {
 		print OUT "   <piece color=\"black\" type=\"pawn\"/>\n";
 	    }
 	}
-	if ($$black_pawns_by_rows[$row] >= 2) {
-	    my $location = chr(97 + $row) . chr(48 + $next_black_pawns[$row]) . "+";
+	if ($$black_pawns_by_rows[$row] >= 1) {
+	    my $location = chr(97 + $row) . chr(48 + $earliest_black_pawns[$row]) . "+";
 	    if ($total_pieces > $max_free_pieces) {
 		print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$location\"/>\n";
 	    } else {
@@ -407,9 +416,13 @@ sub generate_todo_list {
     }
 }
 
-#open (MAKEFILE, ">makefile") || die "open";
-open (MAKEFILE, ">/dev/null") || die "open";
+if ($for_real) {
+    open (MAKEFILE, ">makefile") || die "open";
+} else {
+    open (MAKEFILE, ">/dev/null") || die "open";
+}
 
-push @todo_list, [[1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1],0,0];
+#push @todo_list, [[1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1],0,0];
+push @todo_list, [[0,1,0,0,0,0,1,1],[0,0,0,0,0,0,1,1],0,0];
 
 &generate_todo_list;
