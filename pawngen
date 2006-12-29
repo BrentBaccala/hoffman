@@ -6,7 +6,7 @@
 
 use Data::Dumper;
 
-my $for_real = 1;
+my $for_real = 0;
 
 my $analysis = "analysis4";
 
@@ -423,6 +423,487 @@ if ($for_real) {
 }
 
 #push @todo_list, [[1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1],0,0];
-push @todo_list, [[0,1,0,0,0,0,1,1],[0,0,0,0,0,0,1,1],0,0];
+#push @todo_list, [[0,1,0,0,0,0,1,1],[0,0,0,0,0,0,1,1],0,0];
 
-&generate_todo_list;
+#&generate_todo_list;
+
+# position format - K[pieces][pawn locations]K[pieces][pawn locations]
+
+my $white_queens_allowed = 1;
+my $black_queens_allowed = 0;
+
+my %positions;
+
+sub consider_position {
+    my ($position) = @_;
+
+    return if (exists $positions{$position});
+
+    $positions{$position} = undef;
+
+    #print "Considering $position\n";
+
+    # if we were considering pawn-pieces captured, that would be here
+
+    my $white_pawns = $position;
+    $white_pawns =~ s/^K[QRBN]*//;
+    $white_pawns =~ s/K.*//;
+
+    my $black_pawns = $position;
+    $black_pawns =~ s/^K[^K]*K[QRBN]*//;
+
+    my $pawns = $white_pawns . $black_pawns;
+
+    foreach $white_pawn (unpack "(a2)*", $white_pawns) {
+	#print "$white_pawn\n";
+	# first, try to queen the pawn
+	if ($white_queens_allowed and $white_pawn =~ /.7/) {
+	    if ($position !~ /^K[QRBN]/) {
+		my $position2 = $position;
+		$position2 =~ s/$white_pawn//;
+		$position2 =~ s/^K/KQ/;
+		#print "  $position2\n";
+		&consider_position($position2);
+	    }
+	    # if other black pieces allowed, consider capture promotions here
+	}
+	# now try to move the pawn forward
+	if ($white_pawn !~ /.7/) {
+	    my $forward_move = $white_pawn;
+	    $forward_move =~ tr/[2-7]/[3-8]/;
+	    if ($pawns !~ /$forward_move/) {
+		my $position2 = $position;
+		# have to consider queening
+		$position2 =~ s/$white_pawn/$forward_move/;
+		#print "  $forward_move $position2\n";
+		&consider_position($position2);
+
+		if ($forward_move =~ /.3/) {
+		    my $forward_move2 = $forward_move;
+		    $forward_move2 =~ tr/3/4/;
+		    if ($pawns !~ /$forward_move2/) {
+			my $position3 = $position;
+			$position3 =~ s/$white_pawn/$forward_move2/;
+			#print "  $forward_move2 $position3\n";
+			&consider_position($position3);
+		    }
+		}
+	    }
+	}
+	# can the pawn capture another pawn?
+	if ($white_pawn !~ /.7/) {
+	    if ($white_pawn !~ /a./) {
+		my $capture_move = $white_pawn;
+		$capture_move =~ tr/[2-7]/[3-8]/;
+		$capture_move =~ tr/[b-h]/[a-g]/;
+		if ($black_pawns =~ /$capture_move/) {
+		    my $position4 = $position;
+		    $position4 =~ s/$capture_move//;
+		    $position4 =~ s/$white_pawn/$capture_move/;
+		    #print "    $position4\n";
+		    &consider_position($position4);
+		}
+		# en passant capture?
+		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
+		    my $oldpawn = $capture_move;
+		    $oldpawn =~ s/6/5/;
+		    if ($black_pawns =~ /$oldpawn/) {
+			my $position5 = $position;
+			$position5 =~ s/$oldpawn//;
+			$position5 =~ s/$white_pawn/$capture_move/;
+			#print "    $position5\n";
+			&consider_position($position5);
+		    }
+		}
+	    }
+	    if ($white_pawn !~ /h./) {
+		my $capture_move = $white_pawn;
+		$capture_move =~ tr/[2-7]/[3-8]/;
+		$capture_move =~ tr/[a-g]/[b-h]/;
+		if ($black_pawns =~ /$capture_move/) {
+		    my $position4 = $position;
+		    $position4 =~ s/$capture_move//;
+		    $position4 =~ s/$white_pawn/$capture_move/;
+		    #print "    $position4\n";
+		    &consider_position($position4);
+		}
+		# en passant capture?
+		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
+		    my $oldpawn = $capture_move;
+		    $oldpawn =~ s/6/5/;
+		    if ($black_pawns =~ /$oldpawn/) {
+			my $position5 = $position;
+			$position5 =~ s/$oldpawn//;
+			$position5 =~ s/$white_pawn/$capture_move/;
+			#print "    $position5\n";
+			&consider_position($position5);
+		    }
+		}
+	    }
+	}
+	# can the pawn be captured by the black king?
+	my ($protector1, $protector2);
+	if ($white_pawn !~ /a./) {
+	    $protector1 = $white_pawn;
+	    $protector1 =~ tr/[b-h]/[a-g]/;
+	    $protector1 =~ tr/[2-7]/[1-6]/;
+	} else {
+	    $protector1 = "XX";
+	}
+	if ($white_pawn !~ /h./) {
+	    $protector2 = $white_pawn;
+	    $protector2 =~ tr/[a-g]/[b-h]/;
+	    $protector2 =~ tr/[2-7]/[1-6]/;
+	} else {
+	    $protector2 = "XX";
+	}
+	if ($white_pawns !~ /$protector1/ and $white_pawns !~ /$protector2/) {
+	    my $position6 = $position;
+	    $position6 =~ s/$white_pawn//;
+	    &consider_position($position6);
+	}
+    }
+
+    #print "\n";
+
+    foreach $black_pawn (unpack "(a2)*", $black_pawns) {
+	#print "$black_pawn\n";
+	# first, try to queen the pawn
+	if ($black_queens_allowed and $black_pawn =~ /.2/) {
+	    if ($position !~ /\BK[QRBN]/) {
+		my $position2 = $position;
+		$position2 =~ s/$black_pawn//;
+		$position2 =~ s/\BK/KQ/;
+		#print "  $position2\n";
+		&consider_position($position2);
+		# consider capture promotions
+		if ($position2 =~ /^K[QRBN]/) {
+		    $position2 =~ s/^K[QRBN]/K/;
+		    #print "  $position2\n";
+		    &consider_position($position2);
+		}
+	    }
+	}
+	# now try to move the pawn forward
+	if ($black_pawn !~ /.2/) {
+	    my $forward_move = $black_pawn;
+	    $forward_move =~ tr/[2-7]/[1-6]/;
+	    if ($pawns !~ /$forward_move/) {
+		my $position2 = $position;
+		# have to consider queening
+		$position2 =~ s/$black_pawn/$forward_move/;
+		#print "  $forward_move $position2\n";
+		&consider_position($position2);
+
+		if ($forward_move =~ /.6/) {
+		    my $forward_move2 = $forward_move;
+		    $forward_move2 =~ tr/6/5/;
+		    if ($pawns !~ /$forward_move2/) {
+			my $position3 = $position;
+			$position3 =~ s/$black_pawn/$forward_move2/;
+			#print "  $forward_move2 $position3\n";
+			&consider_position($position3);
+		    }
+		}
+	    }
+	}
+	# can the pawn capture another pawn?
+	if ($black_pawn !~ /.2/) {
+	    if ($black_pawn !~ /a./) {
+		my $capture_move = $black_pawn;
+		$capture_move =~ tr/[2-7]/[1-6]/;
+		$capture_move =~ tr/[b-h]/[a-g]/;
+		if ($white_pawns =~ /$capture_move/) {
+		    my $position4 = $position;
+		    $position4 =~ s/$capture_move//;
+		    $position4 =~ s/$black_pawn/$capture_move/;
+		    #print "    $position4\n";
+		    &consider_position($position4);
+		}
+		# en passant capture?
+		if ($capture_move =~ /.3/ and $pawns !~ /$capture_move/) {
+		    my $oldpawn = $capture_move;
+		    $oldpawn =~ s/3/4/;
+		    if ($white_pawns =~ /$oldpawn/) {
+			my $position5 = $position;
+			$position5 =~ s/$oldpawn//;
+			$position5 =~ s/$black_pawn/$capture_move/;
+			#print "    $position5\n";
+			&consider_position($position5);
+		    }
+		}
+	    }
+	    if ($black_pawn !~ /h./) {
+		my $capture_move = $black_pawn;
+		$capture_move =~ tr/[2-7]/[1-6]/;
+		$capture_move =~ tr/[a-g]/[b-h]/;
+		if ($white_pawns =~ /$capture_move/) {
+		    my $position4 = $position;
+		    $position4 =~ s/$capture_move//;
+		    $position4 =~ s/$black_pawn/$capture_move/;
+		    #print "     $position4\n";
+		    &consider_position($position4);
+		}
+		# en passant capture?
+		if ($capture_move =~ /.3/ and $pawns !~ /$capture_move/) {
+		    my $oldpawn = $capture_move;
+		    $oldpawn =~ s/3/4/;
+		    if ($white_pawns =~ /$oldpawn/) {
+			my $position5 = $position;
+			$position5 =~ s/$oldpawn//;
+			$position5 =~ s/$black_pawn/$capture_move/;
+			#print "    $position5\n";
+			&consider_position($position5);
+		    }
+		}
+	    }
+	}
+	# can the pawn be captured by the white king?
+	my ($protector1, $protector2);
+	if ($black_pawn !~ /a./) {
+	    $protector1 = $black_pawn;
+	    $protector1 =~ tr/[b-h]/[a-g]/;
+	    $protector1 =~ tr/[2-7]/[3-8]/;
+	} else {
+	    $protector1 = "XX";
+	}
+	if ($black_pawn !~ /h./) {
+	    $protector2 = $black_pawn;
+	    $protector2 =~ tr/[a-g]/[b-h]/;
+	    $protector2 =~ tr/[2-7]/[3-8]/;
+	} else {
+	    $protector2 = "XX";
+	}
+	if ($black_pawns !~ /$protector1/ and $black_pawns !~ /$protector2/) {
+	    my $position6 = $position;
+	    $position6 =~ s/$black_pawn//;
+	    &consider_position($position6);
+	}
+    }
+
+    # if both sides have non-king, non-pawns, have to consider captures here
+    if ($position =~ /^K[QRBN]/) {
+	my $position7 = $position;
+	$position7 =~ s/^K[QRBN]/K/;
+	&consider_position($position7);
+    }
+}
+
+sub checkallpositions {
+    my ($prefix, @sequence) = @_;
+    my $first = shift @sequence;
+    my $count = 0;
+
+    if (not defined $first) {
+	return exists $positions{$prefix} ? 1 : 0;
+    } elsif ($first =~ m:^K:) {
+	return &checkallpositions($prefix . $first, @sequence);
+    } elsif ($first =~ m:^(..)\+$:) {
+	my $pawn = $1;
+	if ($prefix =~ m:^K[^K]*$:) {
+	    # white plus-pawn
+	    while ($pawn !~ /8/ and "$prefix@sequence" !~ /$pawn/) {
+		my $current = &checkallpositions($prefix . $pawn, @sequence);
+		return 0 if ($current == 0);
+		$count += $current;
+		$pawn =~ tr/[2-7]/[3-8]/;
+	    }
+	} else {
+	    # black plus-pawn
+	    while ($pawn !~ /1/ and "$prefix@sequence" !~ /$pawn/) {
+		my $current = &checkallpositions($prefix . $pawn, @sequence);
+		return 0 if ($current == 0);
+		$count += $current;
+		$pawn =~ tr/[2-7]/[1-6]/;
+	    }
+	}
+
+    } else {
+
+	foreach $square (unpack "(a2)*", $first) {
+	    if ($prefix !~ /$square/) {
+		my $current = &checkallpositions($prefix . $square, @sequence);
+		return 0 if ($current == 0);
+		$count += $current;
+	    }
+	}
+    }
+
+    return $count;
+}
+
+sub assignallpositions {
+    my ($target, $prefix, @sequence) = @_;
+    my $first = shift @sequence;
+
+    if (not defined $first) {
+
+	#print "Assigning $prefix\n";
+	$positions{$prefix} = $target;
+
+    } elsif ($first =~ m:^K:) {
+
+	&assignallpositions($target, $prefix . $first, @sequence);
+
+    } elsif ($first =~ m:^(..)\+$:) {
+
+	my $pawn = $1;
+	if ($prefix =~ m:^K[^K]*$:) {
+	    # white plus-pawn
+	    #print "white pawn = $pawn\n";
+	    while ($pawn !~ /8/ and "$prefix@sequence" !~ /$pawn/) {
+		&assignallpositions($target, $prefix . $pawn, @sequence);
+		$count += $current;
+		$pawn =~ tr/[2-7]/[3-8]/;
+	    }
+	} else {
+	    # black plus-pawn
+	    while ($pawn !~ /1/ and "$prefix@sequence" !~ /$pawn/) {
+		&assignallpositions($target, $prefix . $pawn, @sequence);
+		$count += $current;
+		$pawn =~ tr/[2-7]/[1-6]/;
+	    }
+	}
+
+    } else {
+
+	foreach $square (unpack "(a2)*", $first) {
+	    if ($prefix !~ /$square/) {
+		&assignallpositions($target, $prefix . $square, @sequence);
+	    }
+	}
+
+    }
+}
+
+sub genset {
+    my ($position) = @_;
+
+    my $white_pawns = $position;
+    $white_pawns =~ s/^(K[QRBN]*)//;
+    my $white_base = $1;
+    $white_pawns =~ s/K.*//;
+    @white_pawns = unpack "(a2)*", $white_pawns;
+
+    my $black_pawns = $position;
+    $black_pawns =~ s/^K[^K]*(K[QRBN]*)//;
+    my $black_base = $1;
+    @black_pawns = unpack "(a2)*", $black_pawns;
+
+    #print "$white_base $black_base\n";
+
+    foreach my $white_pawn (@white_pawns) {
+
+	$white_pawn .= "+";
+
+	if (1 and &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+	    while ($white_pawn =~ m/^(.[3-7])/) {
+		$white_pawn =~ tr/[3-7]/[2-6]/;
+		if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+		    $white_pawn =~ tr/[2-6]/[3-7]/;
+		    last;
+		}
+	    }
+	    next;
+	}
+
+	$white_pawn = substr($white_pawn, 0, 2);
+
+	# consider advancing white pawn
+
+	while ($white_pawn =~ m/(.[2-6])$/) {
+	    my $lastpawn = $1;
+	    $lastpawn =~ tr/[2-6]/[3-7]/;
+
+	    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+	    $white_pawn .= $lastpawn;
+	    if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+		$white_pawn = substr($white_pawn, 0, -2);
+		last;
+	    }
+	}
+
+	# consider retreating white pawn
+
+	while ($white_pawn =~ m/^(.[3-7])/) {
+	    my $lastpawn = $1;
+	    $lastpawn =~ tr/[3-7]/[2-6]/;
+
+	    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+	    $white_pawn = $lastpawn . $white_pawn;
+	    if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+		$white_pawn = substr($white_pawn, 2);
+		last;
+	    }
+	}
+    }
+
+    foreach my $black_pawn (@black_pawns) {
+
+	$black_pawn .= "+";
+
+	if (1 and &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+	    while ($black_pawn =~ m/^(.[2-6])/) {
+		$black_pawn =~ tr/[2-6]/[3-7]/;
+		if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+		    $black_pawn =~ tr/[3-7]/[2-6]/;
+		    last;
+		}
+	    }
+	    next;
+	}
+
+	$black_pawn = substr($black_pawn, 0, 2);
+
+	# consider advancing black pawn
+
+	while ($black_pawn =~ m/(.[3-7])$/) {
+	    my $lastpawn = $1;
+	    $lastpawn =~ tr/[3-7]/[2-6]/;
+
+	    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
+	    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+	    $black_pawn .= $lastpawn;
+	    if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+		$black_pawn = substr($black_pawn, 0, -2);
+		last;
+	    }
+	}
+
+	# consider retreating black pawn
+
+	while ($black_pawn =~ m/^(.[2-6])/) {
+	    my $lastpawn = $1;
+	    $lastpawn =~ tr/[2-6]/[3-7]/;
+
+	    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
+	    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+	    $black_pawn = $lastpawn . $black_pawn;
+	    if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+		$black_pawn = substr($black_pawn, 2);
+		last;
+	    }
+	}
+    }
+
+    print "$white_base @white_pawns $black_base @black_pawns ",
+    &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns), "\n";
+    
+    &assignallpositions("$white_base@white_pawns$black_base@black_pawns",
+			$white_base, @white_pawns, $black_base, @black_pawns);
+}
+
+sub genallsets {
+    while (($position, $filename) = each %positions) {
+	&genset($position) if not defined $filename;
+    }
+}
+
+
+#&consider_position("Kh3Kh5");
+&consider_position("Kg2h3Kg6h5");
+#&consider_position("Kb7g2h3Kg6h5");
+#&consider_position("Kb7d4g2h3Kd5d6g6h5");
+
+#&genset("Kb7d4g2h3Kd5d6g6h5");
+&genallsets;
