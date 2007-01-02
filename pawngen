@@ -439,6 +439,8 @@ my $black_queens_allowed = 0;
 
 my %positions;
 
+# inverse sort
+
 sub isort {
     return sort {$b cmp $a} @_;
 }
@@ -711,18 +713,17 @@ sub assignorcheckallpositions {
 
     if (not defined $first) {
 
-	print DEBUG "Assigning $target to $prefix\n" if defined $target;
-	if (not defined $target) {
-	    print DEBUG "Considering $prefix", exists $positions{$prefix} ? " (present)" : "", "\n";
+	if (defined $target) {
+	    print DEBUG "Assigning $target to $prefix\n";
+	    $positions{$prefix} = $target;
+	    return 1;
+	} elsif (exists $positions{$prefix} and not defined $positions{$prefix}) {
+	    print DEBUG "Considering $prefix (exists and unassigned)\n";
+	    return 1;
+	} else {
+	    print DEBUG "Considering $prefix (doesn't exist or already assigned)\n";
+	    return 0;
 	}
-
-	$positions{$prefix} = $target if defined $target;
-#	if (exists $positions{$prefix} and not defined $positions{$prefix}) {
-#	    return 1;
-#	} else {
-#	    return 0;
-#	}
-	return exists $positions{$prefix} ? 1 : 0;
 
     } elsif ($first =~ m:^K:) {
 
@@ -789,6 +790,10 @@ sub genset {
     # Once we are testing for positions, we'll be moving the plus-pawns forward, so we want
     # them with lead pawn first.  That means inverse sort order for white (a5 then a4),
     # and standard sort order for black (a4 then a5).
+    #
+    # XXX - A possible problem with these regex's - the "B" for bishop could get confused
+    # with a "b" for a b-pawn, but that isn't a problem if we always use caps B for
+    # bishop and lowercase b for pawns.
 
     my $white_pawns = $position;
     $white_pawns =~ s/^(K[QRBN]*)//;
@@ -801,13 +806,13 @@ sub genset {
 
     #print "genset: $white_base @white_pawns $black_base @black_pawns\n";
 
-    my $white_limit = (1 << length($white_pawns)/2);
-    my $black_limit = (1 << length($black_pawns)/2);
-
     # There's two different ways we can expand the location of each pawn - by turning it into
     # a plus-pawn, or by explicitly adding to its list of squares.  It's really not clear
     # just what combination of these ways is best, so we try them all, keeping count of
     # which of them could assign the most positions, and use that at the end.
+
+    my $white_limit = (1 << length($white_pawns)/2);
+    my $black_limit = (1 << length($black_pawns)/2);
 
     my $best_count = 0;
     my @best_white_pawns;
@@ -828,10 +833,12 @@ sub genset {
 
 		    $white_pawn .= "+";
 
-		    if (&checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+		    if (&checkallpositions($white_base, (isort @white_pawns),
+					   $black_base, (sort @black_pawns))) {
 			while ($white_pawn =~ m/^(.[3-7])/) {
 			    $white_pawn =~ tr/[3-7]/[2-6]/;
-			    if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			    if (not &checkallpositions($white_base, (isort @white_pawns),
+						       $black_base, (sort @black_pawns))) {
 				$white_pawn =~ tr/[2-6]/[3-7]/;
 				last;
 			    }
@@ -848,7 +855,8 @@ sub genset {
 
 			#last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
 			$white_pawn .= $lastpawn;
-			if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			if (not &checkallpositions($white_base, (isort @white_pawns),
+						   $black_base, (sort @black_pawns))) {
 			    $white_pawn = substr($white_pawn, 0, -2);
 			    last;
 			}
@@ -862,7 +870,8 @@ sub genset {
 
 			#last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
 			$white_pawn = $lastpawn . $white_pawn;
-			if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			if (not &checkallpositions($white_base, (isort @white_pawns),
+						   $black_base, (sort @black_pawns))) {
 			    $white_pawn = substr($white_pawn, 2);
 			    last;
 			}
@@ -877,10 +886,12 @@ sub genset {
 
 		    $black_pawn .= "+";
 
-		    if (&checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+		    if (&checkallpositions($white_base, (isort @white_pawns),
+					   $black_base, (sort @black_pawns))) {
 			while ($black_pawn =~ m/^(.[2-6])/) {
 			    $black_pawn =~ tr/[2-6]/[3-7]/;
-			    if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			    if (not &checkallpositions($white_base, (isort @white_pawns),
+						       $black_base, (sort @black_pawns))) {
 				$black_pawn =~ tr/[3-7]/[2-6]/;
 				last;
 			    }
@@ -898,7 +909,8 @@ sub genset {
 			#last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
 			last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
 			$black_pawn .= $lastpawn;
-			if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			if (not &checkallpositions($white_base, (isort @white_pawns),
+						   $black_base, (sort @black_pawns))) {
 			    $black_pawn = substr($black_pawn, 0, -2);
 			    last;
 			}
@@ -913,7 +925,8 @@ sub genset {
 			#last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
 			last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
 			$black_pawn = $lastpawn . $black_pawn;
-			if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			if (not &checkallpositions($white_base, (isort @white_pawns),
+						   $black_base, (sort @black_pawns))) {
 			    $black_pawn = substr($black_pawn, 2);
 			    last;
 			}
@@ -926,9 +939,11 @@ sub genset {
 	    # is to prefer plus-pawns (because they are tested last) over an explicit location
 	    # list.
 
-	    if (&checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))
+	    if (&checkallpositions($white_base, (isort @white_pawns),
+				   $black_base, (sort @black_pawns))
 		>= $best_count) {
-		$best_count = &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
+		$best_count = &checkallpositions($white_base, (isort @white_pawns),
+						 $black_base, (sort @black_pawns));
 		@best_white_pawns = isort @white_pawns;
 		@best_black_pawns = sort @black_pawns;
 	    }
@@ -936,8 +951,7 @@ sub genset {
     }
 
     $LIST_SEPARATOR = " ";
-    print "$white_base @best_white_pawns $black_base @best_black_pawns ",
-    &checkallpositions($white_base, @best_white_pawns, $black_base, @best_black_pawns), "\n";
+    print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count\n";
     $LIST_SEPARATOR = undef;
 
     &assignallpositions("$white_base@best_white_pawns$black_base@best_black_pawns",
@@ -956,9 +970,10 @@ sub genallsets {
 
 
 #&consider_position("Kh3Kh5");
-&consider_position("Kg2h3Kg6h5");
+#&consider_position("Kg2h3Kg6h5");
 #&consider_position("Kb7g2h3Kg6h5");
-#&consider_position("Kb7d4g2h3Kd5d6g6h5");
+#&consider_position("Kd4Kd5d6");
+&consider_position("Kb7d4g2h3Kd5d6g6h5");
 
 #&genset("Kb7d4g2h3Kd5d6g6h5");
 &genallsets;
