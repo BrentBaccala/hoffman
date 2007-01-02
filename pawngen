@@ -8,6 +8,11 @@ use Data::Dumper;
 
 my $for_real = 0;
 
+use English;
+$LIST_SEPARATOR = undef;
+
+#open(DEBUG,">&STDOUT");
+
 my $analysis = "analysis4";
 
 @white_pawns = ('a5', 'b2', 'd4', 'g2', 'h3');
@@ -434,23 +439,33 @@ my $black_queens_allowed = 0;
 
 my %positions;
 
+sub isort {
+    return sort {$b cmp $a} @_;
+}
+
 sub consider_position {
     my ($position) = @_;
 
-    return if (exists $positions{$position});
-
-    $positions{$position} = undef;
-
-    #print "Considering $position\n";
-
-    # if we were considering pawn-pieces captured, that would be here
-
     my $white_pawns = $position;
-    $white_pawns =~ s/^K[QRBN]*//;
+    $white_pawns =~ s/^(K[QRBN]*)//;
+    my $white_base = $1;
     $white_pawns =~ s/K.*//;
+    my @white_pawns = sort unpack "(a2)*", $white_pawns;
 
     my $black_pawns = $position;
-    $black_pawns =~ s/^K[^K]*K[QRBN]*//;
+    $black_pawns =~ s/^K[^K]*(K[QRBN]*)//;
+    my $black_base = $1;
+    my @black_pawns = sort unpack "(a2)*", $black_pawns;
+
+    #return if (exists $positions{$position});
+    #$positions{$position} = undef;
+    #print "Considering $position\n";
+
+    return if (exists $positions{"$white_base@white_pawns$black_base@black_pawns"});
+    $positions{"$white_base@white_pawns$black_base@black_pawns"} = undef;
+    print DEBUG "Considering $position as $white_base@white_pawns$black_base@black_pawns\n";
+
+    # if we were considering pawn-pieces captured, that would be here
 
     my $pawns = $white_pawns . $black_pawns;
 
@@ -689,77 +704,49 @@ sub consider_position {
     }
 }
 
-sub checkallpositions {
-    my ($prefix, @sequence) = @_;
+sub assignorcheckallpositions {
+    my ($target, $prefix, @sequence) = @_;
     my $first = shift @sequence;
     my $count = 0;
 
     if (not defined $first) {
+
+	print DEBUG "Assigning $target to $prefix\n" if defined $target;
+	if (not defined $target) {
+	    print DEBUG "Considering $prefix", exists $positions{$prefix} ? " (present)" : "", "\n";
+	}
+
+	$positions{$prefix} = $target if defined $target;
+#	if (exists $positions{$prefix} and not defined $positions{$prefix}) {
+#	    return 1;
+#	} else {
+#	    return 0;
+#	}
 	return exists $positions{$prefix} ? 1 : 0;
-    } elsif ($first =~ m:^K:) {
-	return &checkallpositions($prefix . $first, @sequence);
-    } elsif ($first =~ m:^(..)\+$:) {
-	my $pawn = $1;
-	if ($prefix =~ m:^K[^K]*$:) {
-	    # white plus-pawn
-	    while ($pawn !~ /8/ and "$prefix@sequence" !~ /$pawn/) {
-		my $current = &checkallpositions($prefix . $pawn, @sequence);
-		return 0 if ($current == 0);
-		$count += $current;
-		$pawn =~ tr/[2-7]/[3-8]/;
-	    }
-	} else {
-	    # black plus-pawn
-	    while ($pawn !~ /1/ and "$prefix@sequence" !~ /$pawn/) {
-		my $current = &checkallpositions($prefix . $pawn, @sequence);
-		return 0 if ($current == 0);
-		$count += $current;
-		$pawn =~ tr/[2-7]/[1-6]/;
-	    }
-	}
-
-    } else {
-
-	foreach $square (unpack "(a2)*", $first) {
-	    if ($prefix !~ /$square/) {
-		my $current = &checkallpositions($prefix . $square, @sequence);
-		return 0 if ($current == 0);
-		$count += $current;
-	    }
-	}
-    }
-
-    return $count;
-}
-
-sub assignallpositions {
-    my ($target, $prefix, @sequence) = @_;
-    my $first = shift @sequence;
-
-    if (not defined $first) {
-
-	#print "Assigning $prefix\n";
-	$positions{$prefix} = $target;
 
     } elsif ($first =~ m:^K:) {
 
-	&assignallpositions($target, $prefix . $first, @sequence);
+	return &assignorcheckallpositions($target, $prefix . $first, @sequence);
 
     } elsif ($first =~ m:^(..)\+$:) {
+
+	# plus pawns - advance them as far as they can go without hitting another pawn
 
 	my $pawn = $1;
 	if ($prefix =~ m:^K[^K]*$:) {
 	    # white plus-pawn
 	    #print "white pawn = $pawn\n";
 	    while ($pawn !~ /8/ and "$prefix@sequence" !~ /$pawn/) {
-		&assignallpositions($target, $prefix . $pawn, @sequence);
+		my $current = &assignorcheckallpositions($target, $prefix . $pawn, @sequence);
+		return 0 if ($current == 0);
 		$count += $current;
 		$pawn =~ tr/[2-7]/[3-8]/;
 	    }
 	} else {
 	    # black plus-pawn
 	    while ($pawn !~ /1/ and "$prefix@sequence" !~ /$pawn/) {
-		&assignallpositions($target, $prefix . $pawn, @sequence);
+		my $current = &assignorcheckallpositions($target, $prefix . $pawn, @sequence);
+		return 0 if ($current == 0);
 		$count += $current;
 		$pawn =~ tr/[2-7]/[1-6]/;
 	    }
@@ -769,37 +756,64 @@ sub assignallpositions {
 
 	foreach $square (unpack "(a2)*", $first) {
 	    if ($prefix !~ /$square/) {
-		&assignallpositions($target, $prefix . $square, @sequence);
+		my $current = &assignorcheckallpositions($target, $prefix . $square, @sequence);
+		return 0 if ($current == 0);
+		$count += $current;
 	    }
 	}
 
     }
+
+    return $count;
+}
+
+sub assignallpositions {
+    return &assignorcheckallpositions(@_);
+}
+
+sub checkallpositions {
+    print DEBUG "Checking @_\n";
+    return &assignorcheckallpositions(undef, @_);
 }
 
 sub genset {
     my ($position) = @_;
 
+    print DEBUG "Genset $position\n";
+
+    # We search for plus-pawn positions by trying to back up each pawn as far as it can go,
+    # going through the pawns in order, so we want them sorted so that the trailing pawn
+    # comes first.  For white pawns, this means standard sort order (a4 then a5), for
+    # black pawns this means reverse sort order (a5 then a4)
+
     my $white_pawns = $position;
     $white_pawns =~ s/^(K[QRBN]*)//;
     my $white_base = $1;
     $white_pawns =~ s/K.*//;
-    @white_pawns = unpack "(a2)*", $white_pawns;
+    @white_pawns = sort unpack "(a2)*", $white_pawns;
+    #@white_pawns = sort {$a cmp $b} unpack "(a2)*", $white_pawns;
+    #@white_pawns = sort {$b cmp $a} unpack "(a2)*", $white_pawns;
+    #@white_pawns = sort {(substr($b,0,1) cmp substr($a,0,1)) or (substr($b,0,1) cmp substr($a,0,1))}
+    #unpack "(a2)*", $white_pawns;
 
     my $black_pawns = $position;
     $black_pawns =~ s/^K[^K]*(K[QRBN]*)//;
     my $black_base = $1;
-    @black_pawns = unpack "(a2)*", $black_pawns;
+    @black_pawns = isort unpack "(a2)*", $black_pawns;
+    #@black_pawns = sort {$b cmp $a} unpack "(a2)*", $black_pawns;
+    #@black_pawns = sort {(substr($a,0,1) cmp substr($b,0,1)) or (substr($b,1,1) cmp substr($a,1,1))}
+    #unpack "(a2)*", $black_pawns;
 
-    #print "$white_base $black_base\n";
+    #print "genset: $white_base @white_pawns $black_base @black_pawns\n";
 
     foreach my $white_pawn (@white_pawns) {
 
 	$white_pawn .= "+";
 
-	if (1 and &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+	if (1 and &checkallpositions($white_base, (sort @white_pawns), $black_base, (sort @black_pawns))) {
 	    while ($white_pawn =~ m/^(.[3-7])/) {
 		$white_pawn =~ tr/[3-7]/[2-6]/;
-		if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+		if (not &checkallpositions($white_base, (sort @white_pawns), $black_base, (sort @black_pawns))) {
 		    $white_pawn =~ tr/[2-6]/[3-7]/;
 		    last;
 		}
@@ -817,7 +831,7 @@ sub genset {
 
 	    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
 	    $white_pawn .= $lastpawn;
-	    if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+	    if (not &checkallpositions($white_base, (sort @white_pawns), $black_base, (sort @black_pawns))) {
 		$white_pawn = substr($white_pawn, 0, -2);
 		last;
 	    }
@@ -831,7 +845,7 @@ sub genset {
 
 	    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
 	    $white_pawn = $lastpawn . $white_pawn;
-	    if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+	    if (not &checkallpositions($white_base, (sort @white_pawns), $black_base, (sort @black_pawns))) {
 		$white_pawn = substr($white_pawn, 2);
 		last;
 	    }
@@ -842,10 +856,10 @@ sub genset {
 
 	$black_pawn .= "+";
 
-	if (1 and &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+	if (1 and &checkallpositions($white_base, (sort @white_pawns), $black_base, (sort @black_pawns))) {
 	    while ($black_pawn =~ m/^(.[2-6])/) {
 		$black_pawn =~ tr/[2-6]/[3-7]/;
-		if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+		if (not &checkallpositions($white_base, (sort @white_pawns), $black_base, (sort @black_pawns))) {
 		    $black_pawn =~ tr/[3-7]/[2-6]/;
 		    last;
 		}
@@ -864,7 +878,7 @@ sub genset {
 	    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
 	    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
 	    $black_pawn .= $lastpawn;
-	    if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+	    if (not &checkallpositions($white_base, (sort @white_pawns), $black_base, (sort @black_pawns))) {
 		$black_pawn = substr($black_pawn, 0, -2);
 		last;
 	    }
@@ -879,7 +893,7 @@ sub genset {
 	    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
 	    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
 	    $black_pawn = $lastpawn . $black_pawn;
-	    if (not &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns)) {
+	    if (not &checkallpositions($white_base, (sort @white_pawns), $black_base, (sort @black_pawns))) {
 		$black_pawn = substr($black_pawn, 2);
 		last;
 	    }
@@ -887,15 +901,18 @@ sub genset {
     }
 
     print "$white_base @white_pawns $black_base @black_pawns ",
-    &checkallpositions($white_base, @white_pawns, $black_base, @black_pawns), "\n";
+    &checkallpositions($white_base, (sort @white_pawns), $black_base, (sort @black_pawns)), "\n";
     
     &assignallpositions("$white_base@white_pawns$black_base@black_pawns",
-			$white_base, @white_pawns, $black_base, @black_pawns);
+			$white_base, (sort @white_pawns), $black_base, (sort @black_pawns));
 }
 
 sub genallsets {
     while (($position, $filename) = each %positions) {
-	&genset($position) if not defined $filename;
+	if (not defined $filename) {
+	    #print "Processing $position\n";
+	    &genset($position);
+	}
     }
 }
 
