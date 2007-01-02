@@ -794,126 +794,160 @@ sub genset {
     $white_pawns =~ s/^(K[QRBN]*)//;
     my $white_base = $1;
     $white_pawns =~ s/K.*//;
-    @white_pawns = sort unpack "(a2)*", $white_pawns;
-    #@white_pawns = sort {$a cmp $b} unpack "(a2)*", $white_pawns;
-    #@white_pawns = sort {$b cmp $a} unpack "(a2)*", $white_pawns;
-    #@white_pawns = sort {(substr($b,0,1) cmp substr($a,0,1)) or (substr($b,0,1) cmp substr($a,0,1))}
-    #unpack "(a2)*", $white_pawns;
 
     my $black_pawns = $position;
     $black_pawns =~ s/^K[^K]*(K[QRBN]*)//;
     my $black_base = $1;
-    @black_pawns = isort unpack "(a2)*", $black_pawns;
-    #@black_pawns = sort {$b cmp $a} unpack "(a2)*", $black_pawns;
-    #@black_pawns = sort {(substr($a,0,1) cmp substr($b,0,1)) or (substr($b,1,1) cmp substr($a,1,1))}
-    #unpack "(a2)*", $black_pawns;
 
     #print "genset: $white_base @white_pawns $black_base @black_pawns\n";
 
-    foreach my $white_pawn (@white_pawns) {
+    my $white_limit = (1 << length($white_pawns)/2);
+    my $black_limit = (1 << length($black_pawns)/2);
 
-	$white_pawn .= "+";
+    # There's two different ways we can expand the location of each pawn - by turning it into
+    # a plus-pawn, or by explicitly adding to its list of squares.  It's really not clear
+    # just what combination of these ways is best, so we try them all, keeping count of
+    # which of them could assign the most positions, and use that at the end.
 
-	if (1 and &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
-	    while ($white_pawn =~ m/^(.[3-7])/) {
-		$white_pawn =~ tr/[3-7]/[2-6]/;
-		if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
-		    $white_pawn =~ tr/[2-6]/[3-7]/;
-		    last;
+    my $best_count = 0;
+    my @best_white_pawns;
+    my @best_black_pawns;
+
+    for (my $white_pawn_types = 0; $white_pawn_types < $white_limit; $white_pawn_types ++) {
+	for (my $black_pawn_types = 0; $black_pawn_types < $black_limit; $black_pawn_types ++) {
+
+	    my @white_pawns = sort unpack "(a2)*", $white_pawns;
+	    my @black_pawns = isort unpack "(a2)*", $black_pawns;
+
+	    my $running_white_pawn_types = $white_pawn_types;
+	    my $running_black_pawn_types = $black_pawn_types;
+
+	    foreach my $white_pawn (@white_pawns) {
+
+		if ($running_white_pawn_types & 1) {
+
+		    $white_pawn .= "+";
+
+		    if (&checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			while ($white_pawn =~ m/^(.[3-7])/) {
+			    $white_pawn =~ tr/[3-7]/[2-6]/;
+			    if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+				$white_pawn =~ tr/[2-6]/[3-7]/;
+				last;
+			    }
+			}
+		    }
+
+		} else {
+
+		    # consider advancing white pawn
+
+		    while ($white_pawn =~ m/(.[2-6])$/) {
+			my $lastpawn = $1;
+			$lastpawn =~ tr/[2-6]/[3-7]/;
+
+			#last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+			$white_pawn .= $lastpawn;
+			if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			    $white_pawn = substr($white_pawn, 0, -2);
+			    last;
+			}
+		    }
+
+		    # consider retreating white pawn
+
+		    while ($white_pawn =~ m/^(.[3-7])/) {
+			my $lastpawn = $1;
+			$lastpawn =~ tr/[3-7]/[2-6]/;
+
+			#last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+			$white_pawn = $lastpawn . $white_pawn;
+			if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			    $white_pawn = substr($white_pawn, 2);
+			    last;
+			}
+		    }
 		}
+		$running_white_pawn_types >>= 1;
 	    }
-	    next;
-	}
 
-	$white_pawn = substr($white_pawn, 0, 2);
+	    foreach my $black_pawn (@black_pawns) {
 
-	# consider advancing white pawn
+		if ($running_black_pawn_types & 1) {
 
-	while ($white_pawn =~ m/(.[2-6])$/) {
-	    my $lastpawn = $1;
-	    $lastpawn =~ tr/[2-6]/[3-7]/;
+		    $black_pawn .= "+";
 
-	    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
-	    $white_pawn .= $lastpawn;
-	    if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
-		$white_pawn = substr($white_pawn, 0, -2);
-		last;
+		    if (&checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			while ($black_pawn =~ m/^(.[2-6])/) {
+			    $black_pawn =~ tr/[2-6]/[3-7]/;
+			    if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+				$black_pawn =~ tr/[3-7]/[2-6]/;
+				last;
+			    }
+			}
+		    }
+
+		} else {
+
+		    # consider advancing black pawn
+
+		    while ($black_pawn =~ m/(.[3-7])$/) {
+			my $lastpawn = $1;
+			$lastpawn =~ tr/[3-7]/[2-6]/;
+
+			#last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
+			last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+			$black_pawn .= $lastpawn;
+			if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			    $black_pawn = substr($black_pawn, 0, -2);
+			    last;
+			}
+		    }
+
+		    # consider retreating black pawn
+
+		    while ($black_pawn =~ m/^(.[2-6])/) {
+			my $lastpawn = $1;
+			$lastpawn =~ tr/[2-6]/[3-7]/;
+
+			#last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
+			last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+			$black_pawn = $lastpawn . $black_pawn;
+			if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
+			    $black_pawn = substr($black_pawn, 2);
+			    last;
+			}
+		    }
+		}
+		$running_black_pawn_types >>= 1;
 	    }
-	}
 
-	# consider retreating white pawn
+	    # Save current configuration if it's the best.  The difference between ">=" and ">"
+	    # is to prefer plus-pawns (because they are tested last) over an explicit location
+	    # list.
 
-	while ($white_pawn =~ m/^(.[3-7])/) {
-	    my $lastpawn = $1;
-	    $lastpawn =~ tr/[3-7]/[2-6]/;
-
-	    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
-	    $white_pawn = $lastpawn . $white_pawn;
-	    if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
-		$white_pawn = substr($white_pawn, 2);
-		last;
+	    if (&checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))
+		>= $best_count) {
+		$best_count = &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
+		@best_white_pawns = isort @white_pawns;
+		@best_black_pawns = sort @black_pawns;
 	    }
 	}
     }
 
-    foreach my $black_pawn (@black_pawns) {
+    $LIST_SEPARATOR = " ";
+    print "$white_base @best_white_pawns $black_base @best_black_pawns ",
+    &checkallpositions($white_base, @best_white_pawns, $black_base, @best_black_pawns), "\n";
+    $LIST_SEPARATOR = undef;
 
-	$black_pawn .= "+";
-
-	if (1 and &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
-	    while ($black_pawn =~ m/^(.[2-6])/) {
-		$black_pawn =~ tr/[2-6]/[3-7]/;
-		if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
-		    $black_pawn =~ tr/[3-7]/[2-6]/;
-		    last;
-		}
-	    }
-	    next;
-	}
-
-	$black_pawn = substr($black_pawn, 0, 2);
-
-	# consider advancing black pawn
-
-	while ($black_pawn =~ m/(.[3-7])$/) {
-	    my $lastpawn = $1;
-	    $lastpawn =~ tr/[3-7]/[2-6]/;
-
-	    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
-	    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
-	    $black_pawn .= $lastpawn;
-	    if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
-		$black_pawn = substr($black_pawn, 0, -2);
-		last;
-	    }
-	}
-
-	# consider retreating black pawn
-
-	while ($black_pawn =~ m/^(.[2-6])/) {
-	    my $lastpawn = $1;
-	    $lastpawn =~ tr/[2-6]/[3-7]/;
-
-	    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
-	    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
-	    $black_pawn = $lastpawn . $black_pawn;
-	    if (not &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns))) {
-		$black_pawn = substr($black_pawn, 2);
-		last;
-	    }
-	}
-    }
-
-    print "$white_base @white_pawns $black_base @black_pawns ",
-    &checkallpositions($white_base, (isort @white_pawns), $black_base, (sort @black_pawns)), "\n";
-    
-    &assignallpositions("$white_base@white_pawns$black_base@black_pawns",
-			$white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
+    &assignallpositions("$white_base@best_white_pawns$black_base@best_black_pawns",
+			$white_base, @best_white_pawns, $black_base, @best_black_pawns);
 }
 
 sub genallsets {
     while (($position, $filename) = each %positions) {
-	if (not defined $filename) {
+	#if (not defined $filename) {
+	if (not defined $positions{$position}) {
 	    #print "Processing $position\n";
 	    &genset($position);
 	}
