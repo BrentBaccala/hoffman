@@ -4,6 +4,8 @@
 # analyze a particular pawn configuration
 #
 
+use IO::Zlib;
+
 use Data::Dumper;
 
 my $for_real = 0;
@@ -796,7 +798,9 @@ sub assign_file {
     my @white_pawns;
     my @black_pawns;
 
-    open(FILE, "<$filename");
+    #open(FILE, "<$filename");
+    tie *FILE, 'IO::Zlib', $filename, "rb";
+
     while (<FILE>) {
 	$_ = lc $_;
 	last if m|</tablebase>|;
