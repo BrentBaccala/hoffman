@@ -447,6 +447,12 @@ sub isort {
     return sort {$b cmp $a} @_;
 }
 
+# Critical to the operation of this algorithm is the sorting of the pawn positions.
+# First of all, we keep pawn positions sorted so that there's no way to confuse "a5 b6"
+# with "b6 a5".  Next, we sort white pawn in inverse sort order, so that "a5" comes
+# before "a2".  This makes plus-pawns work easy and well - we just run through
+# the pawns in (inverse) sort order, and advance each plus-pawn until it hits something.
+
 sub consider_position {
     my ($position) = @_;
 
@@ -715,15 +721,28 @@ sub assignorcheckallpositions {
 
     if (not defined $first) {
 
+	my $white_pawns = $prefix;
+	$white_pawns =~ s/^(K[QRBN]*)//;
+	my $white_base = $1;
+	$white_pawns =~ s/K.*//;
+	my @white_pawns = isort unpack "(a2)*", $white_pawns;
+
+	my $black_pawns = $prefix;
+	$black_pawns =~ s/^K[^K]*(K[QRBN]*)//;
+	my $black_base = $1;
+	my @black_pawns = sort unpack "(a2)*", $black_pawns;
+
+	my $position = "$white_base@white_pawns$black_base@black_pawns";
+
 	if (defined $target) {
-	    print DEBUG "Assigning $target to $prefix\n";
-	    $positions{$prefix} = $target;
+	    print DEBUG "Assigning $target to $position\n";
+	    $positions{$position} = $target;
 	    return 1;
-	} elsif (exists $positions{$prefix} and not defined $positions{$prefix}) {
-	    print DEBUG "Considering $prefix (exists and unassigned)\n";
+	} elsif (exists $positions{$position} and not defined $positions{$position}) {
+	    print DEBUG "Considering $position (exists and unassigned)\n";
 	    return 1;
 	} else {
-	    print DEBUG "Considering $prefix (doesn't exist or already assigned)\n";
+	    print DEBUG "Considering $position (doesn't exist or already assigned)\n";
 	    return 0;
 	}
 
@@ -836,7 +855,7 @@ sub assign_file {
     close(FILE);
 
     #print DEBUG "$white_pieces@white_pawns$black_pieces@black_pawns\n";
-    &assignallpositions($filename, $white_pieces, @white_pawns, $black_pieces, @black_pawns);
+    &assignallpositions($filename, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
 }
 
 sub genset {
