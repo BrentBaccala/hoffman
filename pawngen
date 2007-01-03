@@ -753,7 +753,9 @@ sub assignorcheckallpositions {
 	    }
 	}
 
-    } else {
+    } elsif ($first ne "") {
+
+	# conventional restriction
 
 	foreach $square (unpack "(a2)*", $first) {
 	    if ($prefix !~ /$square/) {
@@ -762,6 +764,17 @@ sub assignorcheckallpositions {
 		$count += $current;
 	    }
 	}
+
+    } else {
+
+	# unrestricted pawn
+
+	foreach $row ('2' .. '7') {
+	    foreach $col ('a' .. 'h') {
+		&assignorcheckallpositions($target, $prefix . $col . $row, @sequence);
+	    }
+	}
+	return 1;
 
     }
 
@@ -775,6 +788,51 @@ sub assignallpositions {
 sub checkallpositions {
     print DEBUG "Checking @_\n";
     return &assignorcheckallpositions(undef, @_);
+}
+
+sub assign_file {
+    my ($filename) = @_;
+    my ($white_pieces, $black_pieces);
+    my @white_pawns;
+    my @black_pawns;
+
+    open(FILE, "<$filename");
+    while (<FILE>) {
+	$_ = lc $_;
+	last if m|</tablebase>|;
+	if (m|<piece|) {
+	    my ($color) = m|color="([^"]*)"|;
+	    my ($type) = m|type="([^"]*)"|;
+	    my ($location) = m|location="([^"]*)"|;  #"
+	    $location = "" if not defined $location;
+
+	    die "Can't have non-pawn restrictions ($filename)\n" if ($type ne "pawn" and $location ne "");
+
+	    #print "$color $type $location\n";
+
+	    if ($color eq "white") {
+		if ($type eq "knight") {
+		    $white_pieces .= "N";
+		} elsif ($type ne "pawn") {
+		    $white_pieces .= uc substr($type, 0, 1);
+		} else {
+		    push @white_pawns, $location;
+		}
+	    } else {
+		if ($type eq "knight") {
+		    $black_pieces .= "N";
+		} elsif ($type ne "pawn") {
+		    $black_pieces .= uc substr($type, 0, 1);
+		} else {
+		    push @black_pawns, $location;
+		}
+	    }
+	}
+    }
+    close(FILE);
+
+    #print DEBUG "$white_pieces@white_pawns$black_pieces@black_pawns\n";
+    &assignallpositions($filename, $white_pieces, @white_pawns, $black_pieces, @black_pawns);
 }
 
 sub genset {
@@ -970,10 +1028,12 @@ sub genallsets {
 
 
 #&consider_position("Kh3Kh5");
-#&consider_position("Kg2h3Kg6h5");
+&consider_position("Kg2h3Kg6h5");
 #&consider_position("Kb7g2h3Kg6h5");
 #&consider_position("Kd4Kd5d6");
-&consider_position("Kb7d4g2h3Kd5d6g6h5");
+#&consider_position("Kb7d4g2h3Kd5d6g6h5");
+
+foreach my $file (@ARGV) { &assign_file($file); }
 
 #&genset("Kb7d4g2h3Kd5d6g6h5");
 &genallsets;
