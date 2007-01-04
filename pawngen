@@ -714,10 +714,12 @@ sub consider_position {
     }
 }
 
+# Returns a list of the positions assigned or checked
+
 sub assignorcheckallpositions {
     my ($target, $prefix, @sequence) = @_;
     my $first = shift @sequence;
-    my $count = 0;
+    my @retval = ();
 
     if (not defined $first) {
 
@@ -737,13 +739,13 @@ sub assignorcheckallpositions {
 	if (defined $target) {
 	    print DEBUG "Assigning $target to $position\n";
 	    $positions{$position} = $target;
-	    return 1;
+	    return $position;
 	} elsif (exists $positions{$position} and not defined $positions{$position}) {
 	    print DEBUG "Considering $position (exists and unassigned)\n";
-	    return 1;
+	    return $position;
 	} else {
 	    print DEBUG "Considering $position (doesn't exist or already assigned)\n";
-	    return 0;
+	    return ();
 	}
 
     } elsif ($first =~ m:^K:) {
@@ -759,17 +761,17 @@ sub assignorcheckallpositions {
 	    # white plus-pawn
 	    #print "white pawn = $pawn\n";
 	    while ($pawn !~ /8/ and "$prefix@sequence" !~ /$pawn/) {
-		my $current = &assignorcheckallpositions($target, $prefix . $pawn, @sequence);
-		return 0 if ($current == 0);
-		$count += $current;
+		my @current = &assignorcheckallpositions($target, $prefix . $pawn, @sequence);
+		return () if ($#current == -1);
+		push @retval, @current;
 		$pawn =~ tr/[2-7]/[3-8]/;
 	    }
 	} else {
 	    # black plus-pawn
 	    while ($pawn !~ /1/ and "$prefix@sequence" !~ /$pawn/) {
-		my $current = &assignorcheckallpositions($target, $prefix . $pawn, @sequence);
-		return 0 if ($current == 0);
-		$count += $current;
+		my @current = &assignorcheckallpositions($target, $prefix . $pawn, @sequence);
+		return () if ($#current == -1);
+		push @retval, @current;
 		$pawn =~ tr/[2-7]/[1-6]/;
 	    }
 	}
@@ -780,9 +782,9 @@ sub assignorcheckallpositions {
 
 	foreach $square (unpack "(a2)*", $first) {
 	    if ($prefix !~ /$square/) {
-		my $current = &assignorcheckallpositions($target, $prefix . $square, @sequence);
-		return 0 if ($current == 0);
-		$count += $current;
+		my @current = &assignorcheckallpositions($target, $prefix . $square, @sequence);
+		return () if ($#current == -1);
+		push @retval, @current;
 	    }
 	}
 
@@ -792,23 +794,40 @@ sub assignorcheckallpositions {
 
 	foreach $row ('2' .. '7') {
 	    foreach $col ('a' .. 'h') {
-		&assignorcheckallpositions($target, $prefix . $col . $row, @sequence);
+		my @current = &assignorcheckallpositions($target, $prefix . $col . $row, @sequence);
+		# Can't return here; need to run this through for an assign
+		push @retval, @current;
 	    }
 	}
-	return 1;
 
     }
 
-    return $count;
+    return @retval;
 }
 
 sub assignallpositions {
-    return &assignorcheckallpositions(@_);
+    &assignorcheckallpositions(@_);
 }
 
+# Checks all positions resulting from a given pattern and returns either 0 (if at least one
+# of them either doesn't exist in our table or has already been assigned) or a count
+# of the number of unique positions matched by the pattern.
+
 sub checkallpositions {
-    print DEBUG "Checking @_\n";
-    return &assignorcheckallpositions(undef, @_);
+
+    my @positions = &assignorcheckallpositions(undef, @_);
+
+    print DEBUG "Checking @_ : $#positions @positions\n";
+
+    # This Perl equivalent to "sort | uniq" might not be portable to other versions
+    # of Perl (I'm using 5.8.8), as it modifies the array being sorted.
+
+    my @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
+
+    print DEBUG "Unique: $#unique_positions @unique_positions\n";
+
+    #return 1 + $#positions;
+    return 1 + $#unique_positions;
 }
 
 sub assign_file {
