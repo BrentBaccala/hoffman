@@ -1,4 +1,5 @@
 #! /usr/bin/perl
+# -*- fill-column: 100; -*-
 #
 # PAWNGEN - generates a directory full of Hoffman XML control files to
 # analyze a particular pawn configuration
@@ -63,6 +64,30 @@ $queen_caps{'b'} = 'B';
 $queen_caps{'n'} = 'N';
 
 my @todo_list;
+
+if ($for_real) {
+    open (MAKEFILE, ">makefile") || die "open";
+} else {
+    open (MAKEFILE, ">/dev/null") || die "open";
+}
+
+#push @todo_list, [[1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1],0,0];
+#push @todo_list, [[0,1,0,0,0,0,1,1],[0,0,0,0,0,0,1,1],0,0];
+
+#&generate_todo_list;
+
+# position format - K[pieces][pawn locations]K[pieces][pawn locations]
+
+my $white_queens_allowed = 1;
+my $black_queens_allowed = 0;
+
+my %positions;
+
+# inverse sort
+
+sub isort {
+    return sort {$b cmp $a} @_;
+}
 
 sub filename {
     my ($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen) = @_;
@@ -165,7 +190,24 @@ sub add_futurebase {
     }
 }
 
-sub generate_control_file_rows {
+sub normalize_position {
+    my ($position) = @_;
+
+    my $white_pawns = $position;
+    $white_pawns =~ s/^(K[QRBN]*)//;
+    my $white_base = $1;
+    $white_pawns =~ s/K.*//;
+    my @white_pawns = isort unpack "(a2)*", $white_pawns;
+
+    my $black_pawns = $position;
+    $black_pawns =~ s/^K[^K]*(K[QRBN]*)//;
+    my $black_base = $1;
+    my @black_pawns = sort unpack "(a2)*", $black_pawns;
+
+    return "$white_base@white_pawns$black_base@black_pawns";
+}
+
+sub generate_control_file {
     my ($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen) = @_;
 
     my $total_white_pawns = eval(join('+',@$white_pawns_by_rows));
@@ -417,36 +459,6 @@ sub generate_control_file_rows {
 }
 
 
-sub generate_todo_list {
-    while (my $parameters = pop @todo_list) {
-	&generate_control_file_rows(@$parameters);
-    }
-}
-
-if ($for_real) {
-    open (MAKEFILE, ">makefile") || die "open";
-} else {
-    open (MAKEFILE, ">/dev/null") || die "open";
-}
-
-#push @todo_list, [[1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1],0,0];
-#push @todo_list, [[0,1,0,0,0,0,1,1],[0,0,0,0,0,0,1,1],0,0];
-
-#&generate_todo_list;
-
-# position format - K[pieces][pawn locations]K[pieces][pawn locations]
-
-my $white_queens_allowed = 1;
-my $black_queens_allowed = 0;
-
-my %positions;
-
-# inverse sort
-
-sub isort {
-    return sort {$b cmp $a} @_;
-}
-
 # Critical to the operation of this algorithm is the sorting of the pawn positions.
 # First of all, we keep pawn positions sorted so that there's no way to confuse "a5 b6"
 # with "b6 a5".  Next, we sort white pawn in inverse sort order, so that "a5" comes
@@ -455,6 +467,11 @@ sub isort {
 
 sub consider_position {
     my ($position) = @_;
+
+    my @white_captures, @black_captures;
+    my @white_promotions, @black_promotions;
+    my @white_capture_promotions, @black_capture_promotions;
+    my @white_normals, @black_normals;
 
     my $white_pawns = $position;
     $white_pawns =~ s/^(K[QRBN]*)//;
@@ -488,7 +505,8 @@ sub consider_position {
 		$position2 =~ s/$white_pawn//;
 		$position2 =~ s/^K/KQ/;
 		#print "  $position2\n";
-		&consider_position($position2);
+		#&consider_position($position2);
+		push @white_promotions, $position2;
 	    }
 	    # if other black pieces allowed, consider capture promotions here
 	}
@@ -501,7 +519,8 @@ sub consider_position {
 		# have to consider queening
 		$position2 =~ s/$white_pawn/$forward_move/;
 		#print "  $forward_move $position2\n";
-		&consider_position($position2);
+		#&consider_position($position2);
+		push @white_normals, $position2;
 
 		if ($forward_move =~ /.3/) {
 		    my $forward_move2 = $forward_move;
@@ -510,7 +529,8 @@ sub consider_position {
 			my $position3 = $position;
 			$position3 =~ s/$white_pawn/$forward_move2/;
 			#print "  $forward_move2 $position3\n";
-			&consider_position($position3);
+			#&consider_position($position3);
+			push @white_normals, $position3;
 		    }
 		}
 	    }
@@ -526,7 +546,8 @@ sub consider_position {
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$white_pawn/$capture_move/;
 		    #print "    $position4\n";
-		    &consider_position($position4);
+		    #&consider_position($position4);
+		    push @white_captures, $position4;
 		}
 		# en passant capture?
 		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
@@ -537,7 +558,8 @@ sub consider_position {
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$white_pawn/$capture_move/;
 			#print "    $position5\n";
-			&consider_position($position5);
+			#&consider_position($position5);
+			push @white_captures, $position5;
 		    }
 		}
 	    }
@@ -550,7 +572,8 @@ sub consider_position {
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$white_pawn/$capture_move/;
 		    #print "    $position4\n";
-		    &consider_position($position4);
+		    #&consider_position($position4);
+		    push @white_captures, $position4;
 		}
 		# en passant capture?
 		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
@@ -561,7 +584,8 @@ sub consider_position {
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$white_pawn/$capture_move/;
 			#print "    $position5\n";
-			&consider_position($position5);
+			#&consider_position($position5);
+			push @white_captures, $position5;
 		    }
 		}
 	    }
@@ -585,7 +609,8 @@ sub consider_position {
 	if ($white_pawns !~ /$protector1/ and $white_pawns !~ /$protector2/) {
 	    my $position6 = $position;
 	    $position6 =~ s/$white_pawn//;
-	    &consider_position($position6);
+	    #&consider_position($position6);
+	    push @black_captures, $position6;
 	}
     }
 
@@ -600,12 +625,15 @@ sub consider_position {
 		$position2 =~ s/$black_pawn//;
 		$position2 =~ s/\BK/KQ/;
 		#print "  $position2\n";
-		&consider_position($position2);
+		#&consider_position($position2);
+		push @black_promotions, $position2;
+
 		# consider capture promotions
 		if ($position2 =~ /^K[QRBN]/) {
 		    $position2 =~ s/^K[QRBN]/K/;
 		    #print "  $position2\n";
-		    &consider_position($position2);
+		    #&consider_position($position2);
+		    push @black_capture_promotions, $position2;
 		}
 	    }
 	}
@@ -618,7 +646,8 @@ sub consider_position {
 		# have to consider queening
 		$position2 =~ s/$black_pawn/$forward_move/;
 		#print "  $forward_move $position2\n";
-		&consider_position($position2);
+		#&consider_position($position2);
+		push @black_normals, $position2;
 
 		if ($forward_move =~ /.6/) {
 		    my $forward_move2 = $forward_move;
@@ -627,7 +656,8 @@ sub consider_position {
 			my $position3 = $position;
 			$position3 =~ s/$black_pawn/$forward_move2/;
 			#print "  $forward_move2 $position3\n";
-			&consider_position($position3);
+			#&consider_position($position3);
+			push @black_normals, $position3;
 		    }
 		}
 	    }
@@ -643,7 +673,8 @@ sub consider_position {
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$black_pawn/$capture_move/;
 		    #print "    $position4\n";
-		    &consider_position($position4);
+		    #&consider_position($position4);
+		    push @black_captures, $position4;
 		}
 		# en passant capture?
 		if ($capture_move =~ /.3/ and $pawns !~ /$capture_move/) {
@@ -654,7 +685,8 @@ sub consider_position {
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$black_pawn/$capture_move/;
 			#print "    $position5\n";
-			&consider_position($position5);
+			#&consider_position($position5);
+			push @black_captures, $position5;
 		    }
 		}
 	    }
@@ -667,7 +699,8 @@ sub consider_position {
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$black_pawn/$capture_move/;
 		    #print "     $position4\n";
-		    &consider_position($position4);
+		    #&consider_position($position4);
+		    push @black_captures, $position4;
 		}
 		# en passant capture?
 		if ($capture_move =~ /.3/ and $pawns !~ /$capture_move/) {
@@ -678,7 +711,8 @@ sub consider_position {
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$black_pawn/$capture_move/;
 			#print "    $position5\n";
-			&consider_position($position5);
+			#&consider_position($position5);
+			push @black_captures, $position5;
 		    }
 		}
 	    }
@@ -702,7 +736,8 @@ sub consider_position {
 	if ($black_pawns !~ /$protector1/ and $black_pawns !~ /$protector2/) {
 	    my $position6 = $position;
 	    $position6 =~ s/$black_pawn//;
-	    &consider_position($position6);
+	    #&consider_position($position6);
+	    push @white_captures, $position6;
 	}
     }
 
@@ -710,7 +745,15 @@ sub consider_position {
     if ($position =~ /^K[QRBN]/) {
 	my $position7 = $position;
 	$position7 =~ s/^K[QRBN]/K/;
-	&consider_position($position7);
+	#&consider_position($position7);
+	push @black_captures, $position7;
+    }
+
+    foreach my $new_position (@white_captures, @black_captures,
+			      @white_promotions, @black_promotions,
+			      @white_capture_promotions, @black_capture_promotions,
+			      @white_normals, @black_normals) {
+	&consider_position($new_position);
     }
 }
 
@@ -837,7 +880,7 @@ sub assign_file {
     my @black_pawns;
 
     #open(FILE, "<$filename");
-    tie *FILE, 'IO::Zlib', $filename, "rb";
+    tie *FILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
 
     while (<FILE>) {
 	$_ = lc $_;
@@ -1050,6 +1093,11 @@ sub genset {
 	}
     }
 
+    # multiply $best_count by 64 ^ (number of fully mobile pieces) to get a count
+    # of the number of positions
+
+    $best_count <<= 6*(length($white_base) + length($black_base));
+
     $LIST_SEPARATOR = " ";
     print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count\n";
     $LIST_SEPARATOR = undef;
@@ -1071,7 +1119,7 @@ sub genallsets {
 
 #&consider_position("Kh3Kh5");
 &consider_position("Kg2h3Kg6h5");
-#&consider_position("Kb7g2h3Kg6h5");
+#&consider_position("Kb2g2h3Kg6h5");
 #&consider_position("Kd4Kd5d6");
 #&consider_position("Kb7d4g2h3Kd5d6g6h5");
 
