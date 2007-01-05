@@ -18,63 +18,25 @@ $LIST_SEPARATOR = undef;
 
 my $analysis = "analysis4";
 
-@white_pawns = ('a5', 'b2', 'd4', 'g2', 'h3');
-@black_pawns = ('a6', 'd5', 'd6', 'g6', 'h7');
-
-my @earliest_black_pawns = (6,5,0,6,0,0,6,7);
-my @next_black_pawns = (0,0,0,5,0,0,5,5);
-my @earliest_white_pawns = (5,2,0,4,0,0,2,3);
-my @next_white_pawns = (6,6,0,0,0,0,4,4);
-
-my $max_free_pieces = 4;
-
 my $concede_stalemates = 0;
 
 my $url_prefix = "ftp://vger.freesoft.org/Hoffman/$analysis/";
 my $completion_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=complete&amp;tb=";
 my $error_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=error&amp;tb=";
 
-my @white_queens;
-my @black_queens;
+my %piece_names;
 
-if ($concede_stalemates) {
-    @white_queens = ('', 'q');
-    @black_queens = ('', 'q', 'n');
-} else {
-    @white_queens = ('', 'q');
-    #@white_queens = ('', 'q', 'r', 'b', 'n');
-    @black_queens = ('', 'q', 'r', 'b', 'n');
-}
-
-my $allow_black_to_queen = 0;
-
-
-my %queen_names;
-
-$queen_names{'q'} = "queen";
-$queen_names{'r'} = "rook";
-$queen_names{'b'} = "bishop";
-$queen_names{'n'} = "knight";
-
-my %queen_caps;
-
-$queen_caps{'q'} = 'Q';
-$queen_caps{'r'} = 'R';
-$queen_caps{'b'} = 'B';
-$queen_caps{'n'} = 'N';
-
-my @todo_list;
+$piece_names{'K'} = "king";
+$piece_names{'Q'} = "queen";
+$piece_names{'R'} = "rook";
+$piece_names{'B'} = "bishop";
+$piece_names{'N'} = "knight";
 
 if ($for_real) {
     open (MAKEFILE, ">makefile") || die "open";
 } else {
     open (MAKEFILE, ">/dev/null") || die "open";
 }
-
-#push @todo_list, [[1,1,0,1,0,0,1,1],[1,0,0,2,0,0,1,1],0,0];
-#push @todo_list, [[0,1,0,0,0,0,1,1],[0,0,0,0,0,0,1,1],0,0];
-
-#&generate_todo_list;
 
 # position format - K[pieces][pawn locations]K[pieces][pawn locations]
 
@@ -89,105 +51,8 @@ sub isort {
     return sort {$b cmp $a} @_;
 }
 
-sub filename {
-    my ($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen) = @_;
-
-    my $total_white_pawns = eval(join('+',@$white_pawns_by_rows));
-    my $total_black_pawns = eval(join('+',@$black_pawns_by_rows));
-
-    my $free_pieces =  2 + ($white_queen ? 1 : 0) + ($black_queen ? 1 : 0);
-
-    my $total_pieces = $free_pieces + $total_white_pawns + $total_black_pawns;
-
-    my $filename = "k";
-
-    $filename .= $white_queens[$white_queen];
-
-    if ($total_pieces <= $max_free_pieces) {
-	$filename .= "p" if ($total_white_pawns == 1);
-	$filename .= "pp" if ($total_white_pawns == 2);
-    } else {
-	for (my $row = 0; $row < 8; $row ++) {
-	    if ($$white_pawns_by_rows[$row] >= 1) {
-		$filename .= chr(97 + $row) . chr(48 + $earliest_white_pawns[$row]);
-	    }
-	    if ($$white_pawns_by_rows[$row] >= 2) {
-		$filename .= chr(97 + $row) . chr(48 + $next_white_pawns[$row]);
-	    }
-	}
-    }
-
-    $filename .= "k";
-    $filename .= $black_queens[$black_queen];
-
-    if ($total_pieces <= $max_free_pieces) {
-	$filename .= "p" if ($total_black_pawns == 1);
-	$filename .= "pp" if ($total_black_pawns == 2);
-    } else {
-	for (my $row = 0; $row < 8; $row ++) {
-	    if ($$black_pawns_by_rows[$row] >= 2) {
-		$filename .= chr(97 + $row) . chr(48 + $next_black_pawns[$row]);
-	    }
-	    if ($$black_pawns_by_rows[$row] >= 1) {
-		$filename .= chr(97 + $row) . chr(48 + $earliest_black_pawns[$row]);
-	    }
-	}
-    }
-
-    return $filename . ".htb";
-}
-
-my %generated_filenames;
-
-sub invert_filename {
-    my ($filename) = @_;
-
-    # I don't trust inversion.
-    return undef;
-
-    return undef if ($concede_stalemates);
-
-    if ($filename =~ s/^kk(..)\./k\1k./ or $filename =~ s/^kk(.)\./k\1k./) {
-	return $filename;
-    } elsif ($filename =~ m/^k(.)k(.)\./ and index("qrbnp", $1) > index("qrbnp", $2)) {
-	$filename =~ s/^k(.)k(.)\./k\2k\1./;
-	return $filename;
-    } else {
-	return undef;
-    }
-}
-
-sub deepcopy {
-    my @retval;
-
-    foreach my $val (@_) {
-	if (ref $val) {
-	    my @copy = &deepcopy(@$val);
-	    push @retval, \@copy;
-	} else {
-	    push @retval, $val;
-	}
-    }
-
-    return @retval;
-}
-
-sub add_futurebase {
-    my ($type, $array, @parameters) = @_;
-    my $filename = &filename(@parameters);
-
-    if (not grep(/$filename/, @$array)) {
-	push @$array, $filename;
-	if (defined &invert_filename($filename)) {
-	    $filename = &invert_filename($filename);
-	    print OUT "   <futurebase url=\"$url_prefix$filename\" colors=\"invert\" type=\"$type\"/>\n";
-	} else {
-	    print OUT "   <futurebase url=\"$url_prefix$filename\" type=\"$type\"/>\n";
-	    if (not exists $generated_filenames{$filename}) {
-		push @todo_list, &deepcopy(\@parameters);
-	    }
-	}
-    }
+sub uniqsort {
+    return grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @_;
 }
 
 sub normalize_position {
@@ -207,271 +72,20 @@ sub normalize_position {
     return "$white_base@white_pawns$black_base@black_pawns";
 }
 
-sub generate_control_file {
-    my ($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen) = @_;
-
-    my $total_white_pawns = eval(join('+',@$white_pawns_by_rows));
-    my $total_black_pawns = eval(join('+',@$black_pawns_by_rows));
-
-    my $total_pieces = 2 + $total_white_pawns + $total_black_pawns
-	+ ($white_queen ? 1 : 0) + ($black_queen ? 1 : 0);
-
-    my $queenable_white_pawns = 0;
-    my $queenable_black_pawns = 0;
-
-    my @futurebases;
-
-    return if defined &invert_filename(&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen));
-
-    # print $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen, "\n";
-
-    return if (exists $generated_filenames{&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen)});
-    $generated_filenames{&filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen)} = &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-
-    my $symmetry;
-
-    if ($total_pieces <= $max_free_pieces) {
-	$symmetry = "2-way";
-	$symmetry = "8-way" if ($total_white_pawns == 0 and $total_black_pawns == 0);
-    }
-
-    my $cntl_filename = &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-    $cntl_filename =~ s/htb$/xml/;
-
-    if ($for_real) {
-	open (OUT, ">$cntl_filename") || die "open";
-    } else {
-	open (OUT, ">&STDOUT") || die "open";
-    }
-
-    print OUT "<tablebase>\n";
-    print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
-    print OUT "   <move-restriction color=\"black\" type=\"concede\"/>\n";
-    if (defined $symmetry) {
-	print OUT "   <index type=\"compact\" symmetry=\"$symmetry\"/>\n";
-    } else {
-	print OUT "   <index type=\"compact\"/>\n";
-    }
-    print OUT "   <format><dtm bits=\"8\"/></format>\n";
-    print OUT "   <piece color=\"white\" type=\"king\"/>\n";
-    print OUT "   <piece color=\"black\" type=\"king\"/>\n";
-    print OUT "   <piece color=\"white\" type=\"$queen_names{$white_queens[$white_queen]}\"/>\n" if $white_queen;
-    print OUT "   <piece color=\"black\" type=\"$queen_names{$black_queens[$black_queen]}\"/>\n" if $black_queen;
-
-    for (my $row = 0; $row < 8; $row ++) {
-	if ($$white_pawns_by_rows[$row] >= 1) {
-	    my $location = chr(97 + $row) . chr(48 + $earliest_white_pawns[$row]) . "+";
-	    if ($total_pieces > $max_free_pieces) {
-		print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$location\"/>\n";
-	    } else {
-		print OUT "   <piece color=\"white\" type=\"pawn\"/>\n";
-	    }
-	}
-	if ($$white_pawns_by_rows[$row] >= 2) {
-	    my $location = chr(97 + $row) . chr(48 + $next_white_pawns[$row]) . "+";
-	    if ($total_pieces > $max_free_pieces) {
-		print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$location\"/>\n";
-	    } else {
-		print OUT "   <piece color=\"white\" type=\"pawn\"/>\n";
-	    }
-	}
-	if ($$white_pawns_by_rows[$row] and not $$black_pawns_by_rows[$row]) {
-	    $queenable_white_pawns ++;
-	}
-	if ($$black_pawns_by_rows[$row] and not $$white_pawns_by_rows[$row]) {
-	    $queenable_black_pawns ++;
-	}
-    }
-
-    # Do the black pawns in reverse order here so that doubled pawns appear in board
-    # order, as is (currently) required by Hoffman.
-
-    for (my $row = 0; $row < 8; $row ++) {
-	if ($$black_pawns_by_rows[$row] >= 2) {
-	    my $location = chr(97 + $row) . chr(48 + $next_black_pawns[$row]) . "+";
-	    if ($total_pieces > $max_free_pieces) {
-		print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$location\"/>\n";
-	    } else {
-		print OUT "   <piece color=\"black\" type=\"pawn\"/>\n";
-	    }
-	}
-	if ($$black_pawns_by_rows[$row] >= 1) {
-	    my $location = chr(97 + $row) . chr(48 + $earliest_black_pawns[$row]) . "+";
-	    if ($total_pieces > $max_free_pieces) {
-		print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$location\"/>\n";
-	    } else {
-		print OUT "   <piece color=\"black\" type=\"pawn\"/>\n";
-	    }
-	}
-    }
-
-    if (not $white_queen) {
-	for (my $row = 0; $row < 8; $row ++) {
-	    if ($$white_pawns_by_rows[$row] and not $$black_pawns_by_rows[$row]) {
-		$$white_pawns_by_rows[$row] --;
-		for (my $white_queen = 1; $white_queen <= $#white_queens; $white_queen ++) {
-		    &add_futurebase("promotion", \@futurebases,
-				    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-		    &add_futurebase("capture-promotion", \@futurebases,
-				    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, 0)
-			if $black_queen;
-		}
-		$$white_pawns_by_rows[$row] ++;
-	    }
-	}
-    } else {
-	&add_futurebase("capture", \@futurebases,
-			$white_pawns_by_rows, $black_pawns_by_rows, 0, $black_queen);
-    }
-    for (my $row = 0; $row < 8; $row ++) {
-	if ($$white_pawns_by_rows[$row]) {
-	    $$white_pawns_by_rows[$row] --;
-	    &add_futurebase("capture", \@futurebases,
-			    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-	    $$white_pawns_by_rows[$row] ++;
-	}
-    }
-
-    if (not $black_queen) {
-	if ($allow_black_to_queen) {
-	    for (my $row = 0; $row < 8; $row ++) {
-		if ($$black_pawns_by_rows[$row] and not $$white_pawns_by_rows[$row]) {
-		    $$black_pawns_by_rows[$row] --;
-		    for (my $black_queen = 1; $black_queen <= $#black_queens; $black_queen ++) {
-			&add_futurebase("promotion", \@futurebases,
-					$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-			&add_futurebase("capture-promotion", \@futurebases,
-					$white_pawns_by_rows, $black_pawns_by_rows, 0, $black_queen)
-			    if $white_queen;
-		    }
-		    $$black_pawns_by_rows[$row] ++;
-		}
-	    }
-	}
-    } else {
-	&add_futurebase("capture", \@futurebases,
-			$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, 0);
-    }
-    for (my $row = 0; $row < 8; $row ++) {
-	if ($$black_pawns_by_rows[$row]) {
-	    $$black_pawns_by_rows[$row] --;
-	    &add_futurebase("capture", \@futurebases,
-			    $white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-	    $$black_pawns_by_rows[$row] ++;
-	}
-    }
-
-    # Now check to see if any of our pawns can capture pawns on adjacent files
-
-    for (my $row = 0; $row < 8; $row ++) {
-	if ($$white_pawns_by_rows[$row]) {
-	    if ($row > 0 and $$black_pawns_by_rows[$row - 1]) {
-		$$white_pawns_by_rows[$row] --;
-		$$black_pawns_by_rows[$row - 1] --;
-		$$white_pawns_by_rows[$row - 1] ++;
-		&add_futurebase("capture", \@futurebases,
-				$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-		$$white_pawns_by_rows[$row] ++;
-		$$black_pawns_by_rows[$row - 1] ++;
-		$$white_pawns_by_rows[$row - 1] --;
-	    }
-	    if ($row < 7 and $$black_pawns_by_rows[$row + 1]) {
-		$$white_pawns_by_rows[$row] --;
-		$$black_pawns_by_rows[$row + 1] --;
-		$$white_pawns_by_rows[$row + 1] ++;
-		&add_futurebase("capture", \@futurebases,
-				$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-		$$white_pawns_by_rows[$row] ++;
-		$$black_pawns_by_rows[$row + 1] ++;
-		$$white_pawns_by_rows[$row + 1] --;
-	    }
-	}
-	if ($$black_pawns_by_rows[$row]) {
-	    if ($row > 0 and $$white_pawns_by_rows[$row - 1]) {
-		$$black_pawns_by_rows[$row] --;
-		$$white_pawns_by_rows[$row - 1] --;
-		$$black_pawns_by_rows[$row - 1] ++;
-		&add_futurebase("capture", \@futurebases,
-				$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-		$$black_pawns_by_rows[$row] ++;
-		$$white_pawns_by_rows[$row - 1] ++;
-		$$black_pawns_by_rows[$row - 1] --;
-	    }
-	    if ($row < 7 and $$white_pawns_by_rows[$row + 1]) {
-		$$black_pawns_by_rows[$row] --;
-		$$white_pawns_by_rows[$row + 1] --;
-		$$black_pawns_by_rows[$row + 1] ++;
-		&add_futurebase("capture", \@futurebases,
-				$white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen);
-		$$black_pawns_by_rows[$row] ++;
-		$$white_pawns_by_rows[$row + 1] ++;
-		$$black_pawns_by_rows[$row + 1] --;
-	    }
-	}
-    }
-
-    if ($queenable_white_pawns) {
-	if ($white_queen) {
-	    print OUT "   <prune color=\"white\" move=\"P=any\" type=\"discard\"/>\n";
-	    if ($black_queen) {
-		print OUT "   <prune color=\"white\" move=\"Px$queen_caps{$black_queens[$black_queen]}=any\" type=\"discard\"/>\n";
-	    }
-	} else {
-	    # if we don't consider all white queening possibilities...
-	    foreach my $queen ('q', 'r', 'b', 'n') {
-		if (not grep /$queen/, @white_queens) {
-		    print OUT "   <prune color=\"white\" move=\"P=$queen_caps{$queen}\" type=\"discard\"/>\n";
-		}
-	    }
-	}
-    }
-    if ($queenable_black_pawns) {
-	if ($black_queen or not $allow_black_to_queen) {
-	    print OUT "   <prune color=\"black\" move=\"P=any\" type=\"concede\"/>\n";
-	    if ($white_queen) {
-		print OUT "   <prune color=\"black\" move=\"Px$queen_caps{$white_queens[$white_queen]}=any\" type=\"concede\"/>\n";
-	    }
-	}
-    }
-    print OUT "   <prune color=\"white\" move=\"Px$queen_caps{$black_queens[$black_queen]}\" type=\"discard\"/>\n"
-	if $black_queen and $total_white_pawns;
-    print OUT "   <prune color=\"black\" move=\"Px$queen_caps{$white_queens[$white_queen]}\" type=\"concede\"/>\n"
-	if $white_queen and $total_black_pawns;
-
-    print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n" if $concede_stalemates;
-    print OUT "   <generation-controls>\n";
-    print OUT "      <output url=\"$url_prefix",
-    &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "\"/>\n";
-    print OUT "      <completion-report url=\"$completion_url$cntl_filename\"/>\n";
-    print OUT "      <error-report url=\"$error_url$cntl_filename\"/>\n";
-    print OUT "   </generation-controls>\n";
-    print OUT "</tablebase>\n";
-
-    close OUT;
-
-    print MAKEFILE &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), ":";
-    foreach my $futurebase (@futurebases) {
-	$futurebase = &invert_filename($futurebase) if defined &invert_filename($futurebase);
-	print MAKEFILE " $futurebase";
-    }
-    print MAKEFILE "\n";
-
-}
-
-
 # Critical to the operation of this algorithm is the sorting of the pawn positions.
 # First of all, we keep pawn positions sorted so that there's no way to confuse "a5 b6"
 # with "b6 a5".  Next, we sort white pawn in inverse sort order, so that "a5" comes
 # before "a2".  This makes plus-pawns work easy and well - we just run through
 # the pawns in (inverse) sort order, and advance each plus-pawn until it hits something.
 
-sub consider_position {
+sub compute_futurebases {
     my ($position) = @_;
 
     my @white_captures, @black_captures;
     my @white_promotions, @black_promotions;
     my @white_capture_promotions, @black_capture_promotions;
     my @white_normals, @black_normals;
+    my @white_prunes, @black_prunes;
 
     my $white_pawns = $position;
     $white_pawns =~ s/^(K[QRBN]*)//;
@@ -497,19 +111,22 @@ sub consider_position {
     my $pawns = $white_pawns . $black_pawns;
 
     foreach $white_pawn (unpack "(a2)*", $white_pawns) {
-	#print "$white_pawn\n";
+
 	# first, try to queen the pawn
-	if ($white_queens_allowed and $white_pawn =~ /.7/) {
-	    if ($position !~ /^K[QRBN]/) {
+	if ($white_pawn =~ /.7/) {
+	    if ($white_queens_allowed and ($position !~ /^K[QRBN]/)) {
 		my $position2 = $position;
 		$position2 =~ s/$white_pawn//;
 		$position2 =~ s/^K/KQ/;
 		#print "  $position2\n";
 		#&consider_position($position2);
 		push @white_promotions, $position2;
+	    } else {
+		push @white_prunes, "[P=Q]";
 	    }
 	    # if other black pieces allowed, consider capture promotions here
 	}
+
 	# now try to move the pawn forward
 	if ($white_pawn !~ /.7/) {
 	    my $forward_move = $white_pawn;
@@ -518,8 +135,6 @@ sub consider_position {
 		my $position2 = $position;
 		# have to consider queening
 		$position2 =~ s/$white_pawn/$forward_move/;
-		#print "  $forward_move $position2\n";
-		#&consider_position($position2);
 		push @white_normals, $position2;
 
 		if ($forward_move =~ /.3/) {
@@ -528,13 +143,12 @@ sub consider_position {
 		    if ($pawns !~ /$forward_move2/) {
 			my $position3 = $position;
 			$position3 =~ s/$white_pawn/$forward_move2/;
-			#print "  $forward_move2 $position3\n";
-			#&consider_position($position3);
 			push @white_normals, $position3;
 		    }
 		}
 	    }
 	}
+
 	# can the pawn capture another pawn?
 	if ($white_pawn !~ /.7/) {
 	    if ($white_pawn !~ /a./) {
@@ -545,8 +159,6 @@ sub consider_position {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$white_pawn/$capture_move/;
-		    #print "    $position4\n";
-		    #&consider_position($position4);
 		    push @white_captures, $position4;
 		}
 		# en passant capture?
@@ -557,8 +169,6 @@ sub consider_position {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$white_pawn/$capture_move/;
-			#print "    $position5\n";
-			#&consider_position($position5);
 			push @white_captures, $position5;
 		    }
 		}
@@ -571,8 +181,6 @@ sub consider_position {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$white_pawn/$capture_move/;
-		    #print "    $position4\n";
-		    #&consider_position($position4);
 		    push @white_captures, $position4;
 		}
 		# en passant capture?
@@ -583,13 +191,12 @@ sub consider_position {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$white_pawn/$capture_move/;
-			#print "    $position5\n";
-			#&consider_position($position5);
 			push @white_captures, $position5;
 		    }
 		}
 	    }
 	}
+
 	# can the pawn be captured by the black king?
 	my ($protector1, $protector2);
 	if ($white_pawn !~ /a./) {
@@ -609,34 +216,37 @@ sub consider_position {
 	if ($white_pawns !~ /$protector1/ and $white_pawns !~ /$protector2/) {
 	    my $position6 = $position;
 	    $position6 =~ s/$white_pawn//;
-	    #&consider_position($position6);
 	    push @black_captures, $position6;
 	}
     }
 
-    #print "\n";
-
     foreach $black_pawn (unpack "(a2)*", $black_pawns) {
-	#print "$black_pawn\n";
+
 	# first, try to queen the pawn
-	if ($black_queens_allowed and $black_pawn =~ /.2/) {
-	    if ($position !~ /\BK[QRBN]/) {
+	if ($black_pawn =~ /.2/) {
+	    if ($black_queens_allowed and $position !~ /\BK[QRBN]/) {
 		my $position2 = $position;
 		$position2 =~ s/$black_pawn//;
 		$position2 =~ s/\BK/KQ/;
-		#print "  $position2\n";
-		#&consider_position($position2);
 		push @black_promotions, $position2;
+	    } else {
+		push @black_prunes, "[P=Q]";
+	    }
 
-		# consider capture promotions
-		if ($position2 =~ /^K[QRBN]/) {
+	    # consider capture promotions
+	    if ($position =~ /^K([QRBN])/) {
+		if ($black_queens_allowed and $position !~ /\BK[QRBN]/) {
+		    my $position2 = $position;
+		    $position2 =~ s/$black_pawn//;
+		    $position2 =~ s/\BK/KQ/;
 		    $position2 =~ s/^K[QRBN]/K/;
-		    #print "  $position2\n";
-		    #&consider_position($position2);
 		    push @black_capture_promotions, $position2;
+		} else {
+		    push @black_prunes, "[Px$1=Q]";
 		}
 	    }
 	}
+
 	# now try to move the pawn forward
 	if ($black_pawn !~ /.2/) {
 	    my $forward_move = $black_pawn;
@@ -645,8 +255,6 @@ sub consider_position {
 		my $position2 = $position;
 		# have to consider queening
 		$position2 =~ s/$black_pawn/$forward_move/;
-		#print "  $forward_move $position2\n";
-		#&consider_position($position2);
 		push @black_normals, $position2;
 
 		if ($forward_move =~ /.6/) {
@@ -655,13 +263,12 @@ sub consider_position {
 		    if ($pawns !~ /$forward_move2/) {
 			my $position3 = $position;
 			$position3 =~ s/$black_pawn/$forward_move2/;
-			#print "  $forward_move2 $position3\n";
-			#&consider_position($position3);
 			push @black_normals, $position3;
 		    }
 		}
 	    }
 	}
+
 	# can the pawn capture another pawn?
 	if ($black_pawn !~ /.2/) {
 	    if ($black_pawn !~ /a./) {
@@ -672,8 +279,6 @@ sub consider_position {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$black_pawn/$capture_move/;
-		    #print "    $position4\n";
-		    #&consider_position($position4);
 		    push @black_captures, $position4;
 		}
 		# en passant capture?
@@ -684,8 +289,6 @@ sub consider_position {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$black_pawn/$capture_move/;
-			#print "    $position5\n";
-			#&consider_position($position5);
 			push @black_captures, $position5;
 		    }
 		}
@@ -698,8 +301,6 @@ sub consider_position {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$black_pawn/$capture_move/;
-		    #print "     $position4\n";
-		    #&consider_position($position4);
 		    push @black_captures, $position4;
 		}
 		# en passant capture?
@@ -710,13 +311,12 @@ sub consider_position {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$black_pawn/$capture_move/;
-			#print "    $position5\n";
-			#&consider_position($position5);
 			push @black_captures, $position5;
 		    }
 		}
 	    }
 	}
+
 	# can the pawn be captured by the white king?
 	my ($protector1, $protector2);
 	if ($black_pawn !~ /a./) {
@@ -736,7 +336,6 @@ sub consider_position {
 	if ($black_pawns !~ /$protector1/ and $black_pawns !~ /$protector2/) {
 	    my $position6 = $position;
 	    $position6 =~ s/$black_pawn//;
-	    #&consider_position($position6);
 	    push @white_captures, $position6;
 	}
     }
@@ -745,14 +344,29 @@ sub consider_position {
     if ($position =~ /^K[QRBN]/) {
 	my $position7 = $position;
 	$position7 =~ s/^K[QRBN]/K/;
-	#&consider_position($position7);
 	push @black_captures, $position7;
     }
 
-    foreach my $new_position (@white_captures, @black_captures,
-			      @white_promotions, @black_promotions,
-			      @white_capture_promotions, @black_capture_promotions,
-			      @white_normals, @black_normals) {
+    return (\@white_captures, \@black_captures,
+	    \@white_promotions, \@black_promotions,
+	    \@white_capture_promotions, \@black_capture_promotions,
+	    \@white_normals, \@black_normals,
+	    \@white_prunes, \@black_prunes);
+}
+
+sub consider_position {
+    my ($position) = @_;
+
+    my ($white_captures, $black_captures,
+	$white_promotions, $black_promotions,
+	$white_capture_promotions, $black_capture_promotions,
+	$white_normals, $black_normals,
+	$white_prunes, $black_prunes) = &compute_futurebases($position);
+
+    foreach my $new_position (@$white_captures, @$black_captures,
+			      @$white_promotions, @$black_promotions,
+			      @$white_capture_promotions, @$black_capture_promotions,
+			      @$white_normals, @$black_normals) {
 	&consider_position($new_position);
     }
 }
@@ -911,6 +525,156 @@ sub assign_file {
     #print DEBUG "$white_pieces@white_pawns$black_pieces@black_pawns\n";
     &assignallpositions($filename, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
 }
+
+
+sub generate_control_file {
+    my ($position) = @_;
+
+    if ($for_real) {
+	open (OUT, ">$position.xml") || die "open";
+    } else {
+	open (OUT, ">&STDOUT") || die "open";
+    }
+
+    my $white_pawns = $position;
+    $white_pawns =~ s/^(K[QRBN]*)//;
+    my $white_base = $1;
+    $white_pawns =~ s/K.*//;
+    my @white_pawns = sort unpack "(a2)*", $white_pawns;
+    my @white_pieces = unpack "a*", $white_base;
+
+    # Sort the black pawns in reverse order here so that doubled pawns appear in board
+    # order, as is (currently) required by Hoffman.
+
+    my $black_pawns = $position;
+    $black_pawns =~ s/^K[^K]*(K[QRBN]*)//;
+    my $black_base = $1;
+    my @black_pawns = isort unpack "(a2)*", $black_pawns;
+    my @black_pieces = unpack "a*", $black_base;
+
+    print OUT "<tablebase>\n";
+    print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
+    print OUT "   <move-restriction color=\"black\" type=\"concede\"/>\n";
+    if (defined $symmetry) {
+	print OUT "   <index type=\"compact\" symmetry=\"$symmetry\"/>\n";
+    } else {
+	print OUT "   <index type=\"compact\"/>\n";
+    }
+    print OUT "   <format><dtm bits=\"8\"/></format>\n";
+
+    # XXX want to consider index ordering here
+
+    foreach $white_piece (@white_pieces) {
+	print OUT "   <piece color=\"white\" type=\"$piece_names{$white_piece}\"/>\n";
+    }
+    foreach $black_piece (@white_pieces) {
+	print OUT "   <piece color=\"black\" type=\"$piece_names{$black_piece}\"/>\n";
+    }
+
+    foreach $white_pawn (@white_pawns) {
+	if (defined $white_pawn) {
+	    print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$white_pawn\"/>\n";
+	} else {
+	    print OUT "   <piece color=\"white\" type=\"pawn\"/>\n";
+	}
+    }
+
+    foreach $black_pawn (@black_pawns) {
+	if (defined $black_pawn) {
+	    print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$black_pawn\"/>\n";
+	} else {
+	    print OUT "   <piece color=\"black\" type=\"pawn\"/>\n";
+	}
+    }
+
+    my @positions, @unique_positions;
+    my @white_captures, @black_captures;
+    my @white_promotions, @black_promotions;
+    my @white_capture_promotions, @black_capture_promotions;
+    my @white_normals, @black_normals;
+    my @white_prunes, @black_prunes;
+
+    @positions = &expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
+    @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
+
+    foreach my $subposition (@unique_positions) {
+	my ($white_captures, $black_captures,
+	    $white_promotions, $black_promotions,
+	    $white_capture_promotions, $black_capture_promotions,
+	    $white_normals, $black_normals,
+	    $white_prunes, $black_prunes) = &compute_futurebases($subposition);
+
+	push @white_captures, @$white_captures;
+	push @white_promotions, @$white_promotions;
+	push @white_capture_promotions, @$white_capture_promotions;
+	push @white_normals, @$white_normals;
+	push @white_prunes, @$white_prunes;
+
+	push @black_captures, @$black_captures;
+	push @black_promotions, @$black_promotions;
+	push @black_capture_promotions, @$black_capture_promotions;
+	push @black_normals, @$black_normals;
+	push @black_prunes, @$black_prunes;
+    }
+
+    my @unique_white_captures = uniqsort @white_captures;
+    my @unique_white_promotions = uniqsort @white_promotions;
+    my @unique_white_capture_promotions = uniqsort @white_capture_promotions;
+    my @unique_white_normals = uniqsort @white_normals;
+    my @unique_white_prunes = uniqsort @white_prunes;
+
+    my @unique_black_captures = uniqsort @black_captures;
+    my @unique_black_promotions = uniqsort @black_promotions;
+    my @unique_black_capture_promotions = uniqsort @black_capture_promotions;
+    my @unique_black_normals = uniqsort @black_normals;
+    my @unique_black_prunes = uniqsort @black_prunes;
+
+    foreach my $futurebase (@unique_white_captures, @unique_black_captures) {
+	print OUT "   <futurebase url=\"$url_prefix$futurebase\" type=\"capture\"/>\n";
+    }
+
+    foreach my $futurebase (@unique_white_promotions, @unique_black_promotions) {
+	print OUT "   <futurebase url=\"$url_prefix$futurebase\" type=\"promotion\"/>\n";
+    }
+
+    foreach my $futurebase (@unique_white_capture_promotions, @unique_black_capture_promotions) {
+	print OUT "   <futurebase url=\"$url_prefix$futurebase\" type=\"capture-promotion\"/>\n";
+    }
+
+    foreach my $futurebase (@unique_white_normals, @unique_black_normals) {
+	print OUT "   <futurebase url=\"$url_prefix$futurebase\" type=\"normal\"/>\n";
+    }
+
+    foreach my $white_prune (@unique_white_prunes) {
+	print OUT "   <prune color=\"white\" move=\"$white_prune\" type=\"discard\"/>\n";
+    }
+    foreach my $black_prune (@unique_black_prunes) {
+	print OUT "   <prune color=\"black\" move=\"$white_prune\" type=\"concede\"/>\n";
+    }
+
+
+    print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n" if $concede_stalemates;
+    print OUT "   <generation-controls>\n";
+    print OUT "      <output url=\"$url_prefix",
+    &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "\"/>\n";
+    print OUT "      <completion-report url=\"$completion_url$cntl_filename\"/>\n";
+    print OUT "      <error-report url=\"$error_url$cntl_filename\"/>\n";
+    print OUT "   </generation-controls>\n";
+    print OUT "</tablebase>\n";
+
+    close OUT;
+
+    print MAKEFILE "$position:";
+    foreach my $futurebase (@unique_white_captures, @unique_black_captures,
+			    @unique_white_promotions, @unique_black_promotions,
+			    @unique_white_capture_promotions, @unique_black_capture_promotions,
+			    @unique_white_normals, @unique_black_normals) {
+	print MAKEFILE " $futurebase";
+    }
+    print MAKEFILE "\n";
+
+}
+
 
 sub genset {
     my ($position) = @_;
