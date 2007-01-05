@@ -14,6 +14,8 @@ my $for_real = 0;
 use English;
 $LIST_SEPARATOR = undef;
 
+use strict;
+
 #open(DEBUG,">&STDOUT");
 
 my $analysis = "analysis4";
@@ -81,11 +83,11 @@ sub normalize_position {
 sub compute_futurebases {
     my ($position) = @_;
 
-    my @white_captures, @black_captures;
-    my @white_promotions, @black_promotions;
-    my @white_capture_promotions, @black_capture_promotions;
-    my @white_normals, @black_normals;
-    my @white_prunes, @black_prunes;
+    my (@white_captures, @black_captures);
+    my (@white_promotions, @black_promotions);
+    my (@white_capture_promotions, @black_capture_promotions);
+    my (@white_normals, @black_normals);
+    my (@white_prunes, @black_prunes);
 
     my $white_pawns = $position;
     $white_pawns =~ s/^(K[QRBN]*)//;
@@ -110,7 +112,7 @@ sub compute_futurebases {
 
     my $pawns = $white_pawns . $black_pawns;
 
-    foreach $white_pawn (unpack "(a2)*", $white_pawns) {
+    foreach my $white_pawn (unpack "(a2)*", $white_pawns) {
 
 	# first, try to queen the pawn
 	if ($white_pawn =~ /.7/) {
@@ -220,7 +222,7 @@ sub compute_futurebases {
 	}
     }
 
-    foreach $black_pawn (unpack "(a2)*", $black_pawns) {
+    foreach my $black_pawn (unpack "(a2)*", $black_pawns) {
 
 	# first, try to queen the pawn
 	if ($black_pawn =~ /.2/) {
@@ -421,7 +423,7 @@ sub expand_pattern_list {
 
 	# conventional restriction
 
-	foreach $square (unpack "(a2)*", $first) {
+	foreach my $square (unpack "(a2)*", $first) {
 	    if ($prefix !~ /$square/) {
 		push @retval, &expand_pattern_list($prefix . $square, @sequence);
 	    }
@@ -431,8 +433,8 @@ sub expand_pattern_list {
 
 	# unrestricted pawn
 
-	foreach $row ('2' .. '7') {
-	    foreach $col ('a' .. 'h') {
+	foreach my $row ('2' .. '7') {
+	    foreach my $col ('a' .. 'h') {
 		push @retval, &expand_pattern_list($prefix . $col . $row, @sequence);
 	    }
 	}
@@ -530,8 +532,10 @@ sub assign_file {
 sub generate_control_file {
     my ($position) = @_;
 
+    my $cntl_filename = "$position.xml";
+
     if ($for_real) {
-	open (OUT, ">$position.xml") || die "open";
+	open (OUT, ">$cntl_filename") || die "open";
     } else {
 	open (OUT, ">&STDOUT") || die "open";
     }
@@ -555,23 +559,19 @@ sub generate_control_file {
     print OUT "<tablebase>\n";
     print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
     print OUT "   <move-restriction color=\"black\" type=\"concede\"/>\n";
-    if (defined $symmetry) {
-	print OUT "   <index type=\"compact\" symmetry=\"$symmetry\"/>\n";
-    } else {
-	print OUT "   <index type=\"compact\"/>\n";
-    }
+    print OUT "   <index type=\"compact\"/>\n";
     print OUT "   <format><dtm bits=\"8\"/></format>\n";
 
     # XXX want to consider index ordering here
 
-    foreach $white_piece (@white_pieces) {
+    foreach my $white_piece (@white_pieces) {
 	print OUT "   <piece color=\"white\" type=\"$piece_names{$white_piece}\"/>\n";
     }
-    foreach $black_piece (@white_pieces) {
+    foreach my $black_piece (@white_pieces) {
 	print OUT "   <piece color=\"black\" type=\"$piece_names{$black_piece}\"/>\n";
     }
 
-    foreach $white_pawn (@white_pawns) {
+    foreach my $white_pawn (@white_pawns) {
 	if (defined $white_pawn) {
 	    print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$white_pawn\"/>\n";
 	} else {
@@ -579,7 +579,7 @@ sub generate_control_file {
 	}
     }
 
-    foreach $black_pawn (@black_pawns) {
+    foreach my $black_pawn (@black_pawns) {
 	if (defined $black_pawn) {
 	    print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$black_pawn\"/>\n";
 	} else {
@@ -587,12 +587,12 @@ sub generate_control_file {
 	}
     }
 
-    my @positions, @unique_positions;
-    my @white_captures, @black_captures;
-    my @white_promotions, @black_promotions;
-    my @white_capture_promotions, @black_capture_promotions;
-    my @white_normals, @black_normals;
-    my @white_prunes, @black_prunes;
+    my (@positions, @unique_positions);
+    my (@white_captures, @black_captures);
+    my (@white_promotions, @black_promotions);
+    my (@white_capture_promotions, @black_capture_promotions);
+    my (@white_normals, @black_normals);
+    my (@white_prunes, @black_prunes);
 
     @positions = &expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
     @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
@@ -649,14 +649,13 @@ sub generate_control_file {
 	print OUT "   <prune color=\"white\" move=\"$white_prune\" type=\"discard\"/>\n";
     }
     foreach my $black_prune (@unique_black_prunes) {
-	print OUT "   <prune color=\"black\" move=\"$white_prune\" type=\"concede\"/>\n";
+	print OUT "   <prune color=\"black\" move=\"$black_prune\" type=\"concede\"/>\n";
     }
 
 
     print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n" if $concede_stalemates;
     print OUT "   <generation-controls>\n";
-    print OUT "      <output url=\"$url_prefix",
-    &filename($white_pawns_by_rows, $black_pawns_by_rows, $white_queen, $black_queen), "\"/>\n";
+    print OUT "      <output url=\"$url_prefix$cntl_filename\"/>\n";
     print OUT "      <completion-report url=\"$completion_url$cntl_filename\"/>\n";
     print OUT "      <error-report url=\"$error_url$cntl_filename\"/>\n";
     print OUT "   </generation-controls>\n";
@@ -664,7 +663,7 @@ sub generate_control_file {
 
     close OUT;
 
-    print MAKEFILE "$position:";
+    print MAKEFILE "$cntl_filename:";
     foreach my $futurebase (@unique_white_captures, @unique_black_captures,
 			    @unique_white_promotions, @unique_black_promotions,
 			    @unique_white_capture_promotions, @unique_black_capture_promotions,
@@ -863,7 +862,7 @@ sub genset {
 }
 
 sub genallsets {
-    while (($position, $filename) = each %positions) {
+    while (my ($position, $filename) = each %positions) {
 	#if (not defined $filename) {
 	if (not defined $positions{$position}) {
 	    #print "Processing $position\n";
