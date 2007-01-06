@@ -151,7 +151,7 @@ sub compute_futurebases {
 		$position2 =~ s/^K/KQ/;
 		#print "  $position2\n";
 		#&consider_position($position2);
-		push @white_promotions, $position2;
+		push @white_promotions, &normalize_position($position2);
 	    } else {
 		push @white_prunes, "P=Q";
 	    }
@@ -166,7 +166,7 @@ sub compute_futurebases {
 		my $position2 = $position;
 		# have to consider queening
 		$position2 =~ s/$white_pawn/$forward_move/;
-		push @white_normals, $position2;
+		push @white_normals, &normalize_position($position2);
 
 		if ($forward_move =~ /.3/) {
 		    my $forward_move2 = $forward_move;
@@ -174,7 +174,7 @@ sub compute_futurebases {
 		    if ($pawns !~ /$forward_move2/) {
 			my $position3 = $position;
 			$position3 =~ s/$white_pawn/$forward_move2/;
-			push @white_normals, $position3;
+			push @white_normals, &normalize_position($position3);
 		    }
 		}
 	    }
@@ -190,7 +190,7 @@ sub compute_futurebases {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$white_pawn/$capture_move/;
-		    push @white_captures, $position4;
+		    push @white_captures, &normalize_position($position4);
 		}
 		# en passant capture?
 		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
@@ -200,7 +200,7 @@ sub compute_futurebases {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$white_pawn/$capture_move/;
-			push @white_captures, $position5;
+			push @white_captures, &normalize_position($position5);
 		    }
 		}
 	    }
@@ -212,7 +212,7 @@ sub compute_futurebases {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$white_pawn/$capture_move/;
-		    push @white_captures, $position4;
+		    push @white_captures, &normalize_position($position4);
 		}
 		# en passant capture?
 		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
@@ -222,7 +222,7 @@ sub compute_futurebases {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$white_pawn/$capture_move/;
-			push @white_captures, $position5;
+			push @white_captures, &normalize_position($position5);
 		    }
 		}
 	    }
@@ -247,7 +247,7 @@ sub compute_futurebases {
 	if ($white_pawns !~ /$protector1/ and $white_pawns !~ /$protector2/) {
 	    my $position6 = $position;
 	    $position6 =~ s/$white_pawn//;
-	    push @black_captures, $position6;
+	    push @black_captures, &normalize_position($position6);
 	}
     }
 
@@ -259,7 +259,7 @@ sub compute_futurebases {
 		my $position2 = $position;
 		$position2 =~ s/$black_pawn//;
 		$position2 =~ s/\BK/KQ/;
-		push @black_promotions, $position2;
+		push @black_promotions, &normalize_position($position2);
 	    } else {
 		push @black_prunes, "P=Q";
 	    }
@@ -271,7 +271,7 @@ sub compute_futurebases {
 		    $position2 =~ s/$black_pawn//;
 		    $position2 =~ s/\BK/KQ/;
 		    $position2 =~ s/^K[QRBN]/K/;
-		    push @black_capture_promotions, $position2;
+		    push @black_capture_promotions, &normalize_position($position2);
 		} else {
 		    push @black_prunes, "Px$1=Q";
 		}
@@ -286,7 +286,7 @@ sub compute_futurebases {
 		my $position2 = $position;
 		# have to consider queening
 		$position2 =~ s/$black_pawn/$forward_move/;
-		push @black_normals, $position2;
+		push @black_normals, &normalize_position($position2);
 
 		if ($forward_move =~ /.6/) {
 		    my $forward_move2 = $forward_move;
@@ -294,7 +294,7 @@ sub compute_futurebases {
 		    if ($pawns !~ /$forward_move2/) {
 			my $position3 = $position;
 			$position3 =~ s/$black_pawn/$forward_move2/;
-			push @black_normals, $position3;
+			push @black_normals, &normalize_position($position3);
 		    }
 		}
 	    }
@@ -310,7 +310,7 @@ sub compute_futurebases {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$black_pawn/$capture_move/;
-		    push @black_captures, $position4;
+		    push @black_captures, &normalize_position($position4);
 		}
 		# en passant capture?
 		if ($capture_move =~ /.3/ and $pawns !~ /$capture_move/) {
@@ -320,7 +320,7 @@ sub compute_futurebases {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$black_pawn/$capture_move/;
-			push @black_captures, $position5;
+			push @black_captures, &normalize_position($position5);
 		    }
 		}
 	    }
@@ -332,7 +332,7 @@ sub compute_futurebases {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$black_pawn/$capture_move/;
-		    push @black_captures, $position4;
+		    push @black_captures, &normalize_position($position4);
 		}
 		# en passant capture?
 		if ($capture_move =~ /.3/ and $pawns !~ /$capture_move/) {
@@ -342,7 +342,7 @@ sub compute_futurebases {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$black_pawn/$capture_move/;
-			push @black_captures, $position5;
+			push @black_captures, &normalize_position($position5);
 		    }
 		}
 	    }
@@ -367,7 +367,7 @@ sub compute_futurebases {
 	if ($black_pawns !~ /$protector1/ and $black_pawns !~ /$protector2/) {
 	    my $position6 = $position;
 	    $position6 =~ s/$black_pawn//;
-	    push @white_captures, $position6;
+	    push @white_captures, &normalize_position($position6);
 	}
     }
 
@@ -375,8 +375,10 @@ sub compute_futurebases {
     if ($position =~ /^K[QRBN]/) {
 	my $position7 = $position;
 	$position7 =~ s/^K[QRBN]/K/;
-	push @black_captures, $position7;
+	push @black_captures, &normalize_position($position7);
     }
+
+    die "futurebase" if (grep { not defined $_ } @white_captures, @black_captures);
 
     return (\@white_captures, \@black_captures,
 	    \@white_promotions, \@black_promotions,
@@ -639,6 +641,14 @@ sub generate_control_file {
 	push @black_capture_promotions, map { $positions{$_} } @$black_capture_promotions;
 	push @black_normals, map { $positions{$_} } @$black_normals;
 	push @black_prunes, @$black_prunes;
+
+	if (grep { not defined $_ } @white_captures, @black_captures) {
+	    print "$subposition\n";
+	    foreach my $capture (@$white_captures, @$black_captures) {
+		print "$capture $positions{$capture}\n";
+	    }
+	    die "captures";
+	}
     }
 
     my @unique_captures = &uniqsort(@white_captures, @black_captures);
@@ -726,150 +736,162 @@ sub genset {
 
     #print "genset: $white_base @white_pawns $black_base @black_pawns\n";
 
-    # There's two different ways we can expand the location of each pawn - by turning it into
-    # a plus-pawn, or by explicitly adding to its list of squares.  It's really not clear
-    # just what combination of these ways is best, so we try them all, keeping count of
+    # There's two different ways we can expand the location of each pawn - by turning it into a
+    # plus-pawn, or by explicitly adding to its list of squares.  It's really not clear just what
+    # combination of these ways is best, so we try both possibilties for each file, keeping count of
     # which of them could assign the most positions, and use that at the end.
 
-    my $white_limit = (1 << length($white_pawns)/2);
-    my $black_limit = (1 << length($black_pawns)/2);
+    my $files_in_play;
+
+    foreach my $file ('a' .. 'h') {
+	$files_in_play .= $file if grep /$file/, $white_pawns.$black_pawns;
+    }
+
+    my $num_files_in_play = length($files_in_play);
+    my $file_limit = (1 << $num_files_in_play);
 
     my $best_count = 0;
     my @best_white_pawns;
     my @best_black_pawns;
 
-    for (my $white_pawn_types = 0; $white_pawn_types < $white_limit; $white_pawn_types ++) {
-	for (my $black_pawn_types = 0; $black_pawn_types < $black_limit; $black_pawn_types ++) {
+    for (my $file_types = 0; $file_types < $file_limit; $file_types ++) {
 
-	    my @white_pawns = sort unpack "(a2)*", $white_pawns;
-	    my @black_pawns = isort unpack "(a2)*", $black_pawns;
+	# OK, I just had to get crazy with Perl here.  We want a list of files that we're going to
+	# put plus-pawns on, corresponding to the binary number $file_types.  So we convert
+	# $file_types into a bitstring, transform it into a template (with 'x' to skip a byte and
+	# 'a' to convert it), then use that template on $files_in_play to compute $plus_files.
 
-	    my $running_white_pawn_types = $white_pawn_types;
-	    my $running_black_pawn_types = $black_pawn_types;
+	my $template = unpack "b$num_files_in_play", $file_types;
+	$template =~ tr/01/xa/;
+	my $plus_files = join '', unpack $template, $files_in_play;
 
-	    foreach my $white_pawn (@white_pawns) {
+	#print STDERR "$white_pawns$black_pawns $file_types $num_files_in_play $template $files_in_play $plus_files\n";
 
-		if ($running_white_pawn_types & 1) {
+	my @white_pawns = sort unpack "(a2)*", $white_pawns;
+	my @black_pawns = isort unpack "(a2)*", $black_pawns;
 
-		    $white_pawn .= "+";
+	foreach my $white_pawn (@white_pawns) {
 
-		    if (&checkallpositions($white_base, (isort @white_pawns),
-					   $black_base, (sort @black_pawns))) {
-			while ($white_pawn =~ m/^(.[3-7])/) {
-			    $white_pawn =~ tr/[3-7]/[2-6]/;
-			    if (not &checkallpositions($white_base, (isort @white_pawns),
-						       $black_base, (sort @black_pawns))) {
-				$white_pawn =~ tr/[2-6]/[3-7]/;
-				last;
-			    }
-			}
-		    }
+	    my $white_pawn_file = substr($white_pawn,0,1);
+	    if (grep /$white_pawn_file/, $plus_files) {
 
-		} else {
+		$white_pawn .= "+";
 
-		    # consider advancing white pawn
-
-		    while ($white_pawn =~ m/(.[2-6])$/) {
-			my $lastpawn = $1;
-			$lastpawn =~ tr/[2-6]/[3-7]/;
-
-			#last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
-			$white_pawn .= $lastpawn;
-			if (not &checkallpositions($white_base, (isort @white_pawns),
-						   $black_base, (sort @black_pawns))) {
-			    $white_pawn = substr($white_pawn, 0, -2);
-			    last;
-			}
-		    }
-
-		    # consider retreating white pawn
-
+		if (&checkallpositions($white_base, (isort @white_pawns),
+				       $black_base, (sort @black_pawns))) {
 		    while ($white_pawn =~ m/^(.[3-7])/) {
-			my $lastpawn = $1;
-			$lastpawn =~ tr/[3-7]/[2-6]/;
-
-			#last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
-			$white_pawn = $lastpawn . $white_pawn;
+			$white_pawn =~ tr/[3-7]/[2-6]/;
 			if (not &checkallpositions($white_base, (isort @white_pawns),
 						   $black_base, (sort @black_pawns))) {
-			    $white_pawn = substr($white_pawn, 2);
+			    $white_pawn =~ tr/[2-6]/[3-7]/;
 			    last;
 			}
 		    }
 		}
-		$running_white_pawn_types >>= 1;
+
+	    } else {
+
+		# consider advancing white pawn
+
+		while ($white_pawn =~ m/(.[2-6])$/) {
+		    my $lastpawn = $1;
+		    $lastpawn =~ tr/[2-6]/[3-7]/;
+
+		    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+		    $white_pawn .= $lastpawn;
+		    if (not &checkallpositions($white_base, (isort @white_pawns),
+					       $black_base, (sort @black_pawns))) {
+			$white_pawn = substr($white_pawn, 0, -2);
+			last;
+		    }
+		}
+
+		# consider retreating white pawn
+
+		while ($white_pawn =~ m/^(.[3-7])/) {
+		    my $lastpawn = $1;
+		    $lastpawn =~ tr/[3-7]/[2-6]/;
+
+		    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+		    $white_pawn = $lastpawn . $white_pawn;
+		    if (not &checkallpositions($white_base, (isort @white_pawns),
+					       $black_base, (sort @black_pawns))) {
+			$white_pawn = substr($white_pawn, 2);
+			last;
+		    }
+		}
 	    }
+	}
 
-	    foreach my $black_pawn (@black_pawns) {
+	foreach my $black_pawn (@black_pawns) {
 
-		if ($running_black_pawn_types & 1) {
+	    my $black_pawn_file = substr($black_pawn,0,1);
+	    if (grep /$black_pawn_file/, $plus_files) {
 
-		    $black_pawn .= "+";
+		$black_pawn .= "+";
 
-		    if (&checkallpositions($white_base, (isort @white_pawns),
-					   $black_base, (sort @black_pawns))) {
-			while ($black_pawn =~ m/^(.[2-6])/) {
-			    $black_pawn =~ tr/[2-6]/[3-7]/;
-			    if (not &checkallpositions($white_base, (isort @white_pawns),
-						       $black_base, (sort @black_pawns))) {
-				$black_pawn =~ tr/[3-7]/[2-6]/;
-				last;
-			    }
-			}
-		    }
-
-		} else {
-
-		    # consider advancing black pawn
-
-		    while ($black_pawn =~ m/(.[3-7])$/) {
-			my $lastpawn = $1;
-			$lastpawn =~ tr/[3-7]/[2-6]/;
-
-			#last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
-			last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
-			$black_pawn .= $lastpawn;
-			if (not &checkallpositions($white_base, (isort @white_pawns),
-						   $black_base, (sort @black_pawns))) {
-			    $black_pawn = substr($black_pawn, 0, -2);
-			    last;
-			}
-		    }
-
-		    # consider retreating black pawn
-
+		if (&checkallpositions($white_base, (isort @white_pawns),
+				       $black_base, (sort @black_pawns))) {
 		    while ($black_pawn =~ m/^(.[2-6])/) {
-			my $lastpawn = $1;
-			$lastpawn =~ tr/[2-6]/[3-7]/;
-
-			#last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
-			last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
-			$black_pawn = $lastpawn . $black_pawn;
+			$black_pawn =~ tr/[2-6]/[3-7]/;
 			if (not &checkallpositions($white_base, (isort @white_pawns),
 						   $black_base, (sort @black_pawns))) {
-			    $black_pawn = substr($black_pawn, 2);
+			    $black_pawn =~ tr/[3-7]/[2-6]/;
 			    last;
 			}
 		    }
 		}
-		$running_black_pawn_types >>= 1;
+
+	    } else {
+
+		# consider advancing black pawn
+
+		while ($black_pawn =~ m/(.[3-7])$/) {
+		    my $lastpawn = $1;
+		    $lastpawn =~ tr/[3-7]/[2-6]/;
+
+		    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
+		    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+		    $black_pawn .= $lastpawn;
+		    if (not &checkallpositions($white_base, (isort @white_pawns),
+					       $black_base, (sort @black_pawns))) {
+			$black_pawn = substr($black_pawn, 0, -2);
+			last;
+		    }
+		}
+
+		# consider retreating black pawn
+
+		while ($black_pawn =~ m/^(.[2-6])/) {
+		    my $lastpawn = $1;
+		    $lastpawn =~ tr/[2-6]/[3-7]/;
+
+		    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
+		    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+		    $black_pawn = $lastpawn . $black_pawn;
+		    if (not &checkallpositions($white_base, (isort @white_pawns),
+					       $black_base, (sort @black_pawns))) {
+			$black_pawn = substr($black_pawn, 2);
+			last;
+		    }
+		}
 	    }
+	}
 
-	    # Save current configuration if it's the best.  The difference between ">=" and ">"
-	    # is to prefer plus-pawns (because they are tested last) over an explicit location
-	    # list.
+	# Save current configuration if it's the best.  The difference between ">=" and ">"
+	# is to prefer plus-pawns (because they are tested last) over an explicit location
+	# list.
 
-	    # Sort the black pawns in reverse order here so that doubled pawns appear in board
-	    # order, as is (currently) required by Hoffman.
+	# Sort the black pawns in reverse order here so that doubled pawns appear in board
+	# order, as is (currently) required by Hoffman.
 
-	    if (&checkallpositions($white_base, (isort @white_pawns),
-				   $black_base, (sort @black_pawns))
-		>= $best_count) {
-		$best_count = &checkallpositions($white_base, (isort @white_pawns),
-						 $black_base, (sort @black_pawns));
-		@best_white_pawns = sort @white_pawns;
-		@best_black_pawns = isort @black_pawns;
-	    }
+	if (&checkallpositions($white_base, (isort @white_pawns),
+			       $black_base, (sort @black_pawns))
+	    >= $best_count) {
+	    $best_count = &checkallpositions($white_base, (isort @white_pawns),
+					     $black_base, (sort @black_pawns));
+	    @best_white_pawns = sort @white_pawns;
+	    @best_black_pawns = isort @black_pawns;
 	}
     }
 
