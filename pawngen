@@ -581,8 +581,8 @@ sub generate_control_file {
     my $white_base = $white_base{$position};
     my $black_base = $black_base{$position};
 
-    my @white_pieces = unpack "a*", $white_base;
-    my @black_pieces = unpack "a*", $black_base;
+    my @white_pieces = unpack "(a1)*", $white_base;
+    my @black_pieces = unpack "(a1)*", $black_base;
 
     my @white_pawns = @{$white_pawns{$position}};
     my @black_pawns = @{$black_pawns{$position}};
@@ -593,12 +593,12 @@ sub generate_control_file {
     print OUT "   <index type=\"compact\"/>\n";
     print OUT "   <format><dtm bits=\"8\"/></format>\n";
 
-    # XXX want to consider index ordering here
+    # isort here to make sure a white queen comes first (if present)
 
-    foreach my $white_piece (@white_pieces) {
+    foreach my $white_piece (isort @white_pieces) {
 	print OUT "   <piece color=\"white\" type=\"$piece_names{$white_piece}\"/>\n";
     }
-    foreach my $black_piece (@white_pieces) {
+    foreach my $black_piece (@black_pieces) {
 	print OUT "   <piece color=\"black\" type=\"$piece_names{$black_piece}\"/>\n";
     }
 
@@ -943,10 +943,10 @@ sub genallsets {
 
 
 #&consider_position("Kh3Kh5");
-&consider_position("Kg2h3Kg6h5");
+#&consider_position("Kg2h3Kg6h5");
 #&consider_position("Kb2g2h3Kg6h5");
 #&consider_position("Kd4Kd5d6");
-#&consider_position("Kb7d4g2h3Kd5d6g6h5");
+&consider_position("Kb7d4g2h3Kd5d6g6h5");
 
 foreach my $file (@ARGV) { &assign_file($file); }
 
