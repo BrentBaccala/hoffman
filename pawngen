@@ -520,6 +520,12 @@ sub assign_file {
     my @white_pawns;
     my @black_pawns;
 
+    # To get the tablebase name we'll use, strip off any directory component and file extension.
+    # We'll prepend $url_prefix and append '.htb', just like any other tablebase name.
+
+    $filename =~ m|/([^/]*)\.[^/.]*$|;
+    my $tbname = $1;
+
     #open(FILE, "<$filename");
     tie *FILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
 
@@ -557,8 +563,7 @@ sub assign_file {
     }
     close(FILE);
 
-    #print DEBUG "$white_pieces@white_pawns$black_pieces@black_pawns\n";
-    &assignallpositions($filename, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
+    &assignallpositions($tbname, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
 }
 
 
