@@ -9,7 +9,7 @@ use IO::Zlib;
 
 use Data::Dumper;
 
-my $for_real = 0;
+my $for_real = 1;
 
 use English;
 $LIST_SEPARATOR = undef;
@@ -47,14 +47,27 @@ my $black_queens_allowed = 0;
 
 my %positions;
 
+my %white_base;
+my %white_pawns;
+my %black_base;
+my %black_pawns;
+
 # inverse sort
 
 sub isort {
     return sort {$b cmp $a} @_;
 }
 
+# This Perl equivalent to "sort | uniq" might not be portable to other versions of Perl (I'm using
+# 5.8.8), as it modifies the array being sorted.
+
 sub uniqsort {
-    return grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @_;
+#    return grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @_;
+    my @sorted = sort @_;
+    for (my $i = 0; $i < $#sorted; $i++) {
+	splice @sorted,$i,1 while (($i < $#sorted) and ($sorted[$i] eq $sorted[$i+1]));
+    }
+    return @sorted;
 }
 
 sub normalize_position {
@@ -72,6 +85,12 @@ sub normalize_position {
     my @black_pawns = sort unpack "(a2)*", $black_pawns;
 
     return "$white_base@white_pawns$black_base@black_pawns";
+}
+
+sub pattern_to_name {
+    my @pattern = @_;
+
+    return join '', map { substr($_, 0, 1) eq "K" ? $_ : substr($_, 0, 2) } @pattern;
 }
 
 # Critical to the operation of this algorithm is the sorting of the pawn positions.
@@ -104,8 +123,8 @@ sub compute_futurebases {
     #$positions{$position} = undef;
     #print "Considering $position\n";
 
-    return if (exists $positions{"$white_base@white_pawns$black_base@black_pawns"});
-    $positions{"$white_base@white_pawns$black_base@black_pawns"} = undef;
+    #return if (exists $positions{"$white_base@white_pawns$black_base@black_pawns"});
+    #$positions{"$white_base@white_pawns$black_base@black_pawns"} = undef;
     print DEBUG "Considering $position as $white_base@white_pawns$black_base@black_pawns\n";
 
     # if we were considering pawn-pieces captured, that would be here
@@ -359,6 +378,11 @@ sub compute_futurebases {
 sub consider_position {
     my ($position) = @_;
 
+    $position = &normalize_position($position);
+
+    return if (exists $positions{$position});
+    $positions{$position} = undef;
+
     my ($white_captures, $black_captures,
 	$white_promotions, $black_promotions,
 	$white_capture_promotions, $black_capture_promotions,
@@ -463,10 +487,7 @@ sub checkallpositions {
 
     print DEBUG "Checking @_ : $#positions @positions\n";
 
-    # This Perl equivalent to "sort | uniq" might not be portable to other versions
-    # of Perl (I'm using 5.8.8), as it modifies the array being sorted.
-
-    my @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
+    my @unique_positions = &uniqsort(@positions);
 
     print DEBUG "Unique: $#unique_positions @unique_positions\n";
 
@@ -540,21 +561,14 @@ sub generate_control_file {
 	open (OUT, ">&STDOUT") || die "open";
     }
 
-    my $white_pawns = $position;
-    $white_pawns =~ s/^(K[QRBN]*)//;
-    my $white_base = $1;
-    $white_pawns =~ s/K.*//;
-    my @white_pawns = sort unpack "(a2)*", $white_pawns;
+    my $white_base = $white_base{$position};
+    my $black_base = $black_base{$position};
+
     my @white_pieces = unpack "a*", $white_base;
-
-    # Sort the black pawns in reverse order here so that doubled pawns appear in board
-    # order, as is (currently) required by Hoffman.
-
-    my $black_pawns = $position;
-    $black_pawns =~ s/^K[^K]*(K[QRBN]*)//;
-    my $black_base = $1;
-    my @black_pawns = isort unpack "(a2)*", $black_pawns;
     my @black_pieces = unpack "a*", $black_base;
+
+    my @white_pawns = @{$white_pawns{$position}};
+    my @black_pawns = @{$black_pawns{$position}};
 
     print OUT "<tablebase>\n";
     print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
@@ -604,45 +618,43 @@ sub generate_control_file {
 	    $white_normals, $black_normals,
 	    $white_prunes, $black_prunes) = &compute_futurebases($subposition);
 
-	push @white_captures, @$white_captures;
-	push @white_promotions, @$white_promotions;
-	push @white_capture_promotions, @$white_capture_promotions;
-	push @white_normals, @$white_normals;
-	push @white_prunes, @$white_prunes;
+	push @white_captures, map { $positions{$_} } @$white_captures;
+	push @white_promotions, map { $positions{$_} } @$white_promotions;
+	push @white_capture_promotions, map { $positions{$_} } @$white_capture_promotions;
+	push @white_normals, map { $positions{$_} } @$white_normals;
+	push @white_prunes, map { $positions{$_} } @$white_prunes;
 
-	push @black_captures, @$black_captures;
-	push @black_promotions, @$black_promotions;
-	push @black_capture_promotions, @$black_capture_promotions;
-	push @black_normals, @$black_normals;
-	push @black_prunes, @$black_prunes;
+	push @black_captures, map { $positions{$_} } @$black_captures;
+	push @black_promotions, map { $positions{$_} } @$black_promotions;
+	push @black_capture_promotions, map { $positions{$_} } @$black_capture_promotions;
+	push @black_normals, map { $positions{$_} } @$black_normals;
+	push @black_prunes, map { $positions{$_} } @$black_prunes;
     }
 
-    my @unique_white_captures = uniqsort @white_captures;
-    my @unique_white_promotions = uniqsort @white_promotions;
-    my @unique_white_capture_promotions = uniqsort @white_capture_promotions;
-    my @unique_white_normals = uniqsort @white_normals;
-    my @unique_white_prunes = uniqsort @white_prunes;
+    my @unique_captures = &uniqsort(@white_captures, @black_captures);
+    my @unique_promotions = &uniqsort(@white_promotions, @black_promotions);
+    my @unique_capture_promotions = &uniqsort(@white_capture_promotions, @black_capture_promotions);
+    my @unique_normals = &uniqsort(@white_normals, @black_normals);
 
-    my @unique_black_captures = uniqsort @black_captures;
-    my @unique_black_promotions = uniqsort @black_promotions;
-    my @unique_black_capture_promotions = uniqsort @black_capture_promotions;
-    my @unique_black_normals = uniqsort @black_normals;
-    my @unique_black_prunes = uniqsort @black_prunes;
+    my @unique_white_prunes = &uniqsort(@white_prunes);
+    my @unique_black_prunes = &uniqsort(@black_prunes);
 
-    foreach my $futurebase (@unique_white_captures, @unique_black_captures) {
-	print OUT "   <futurebase url=\"$url_prefix$futurebase\" type=\"capture\"/>\n";
+    foreach my $futurebase (@unique_captures) {
+	print OUT "   <futurebase url=\"$url_prefix$futurebase.htb\" type=\"capture\"/>\n";
     }
 
-    foreach my $futurebase (@unique_white_promotions, @unique_black_promotions) {
-	print OUT "   <futurebase url=\"$url_prefix$futurebase\" type=\"promotion\"/>\n";
+    foreach my $futurebase (@unique_promotions) {
+	print OUT "   <futurebase url=\"$url_prefix$futurebase.htb\" type=\"promotion\"/>\n";
     }
 
-    foreach my $futurebase (@unique_white_capture_promotions, @unique_black_capture_promotions) {
-	print OUT "   <futurebase url=\"$url_prefix$futurebase\" type=\"capture-promotion\"/>\n";
+    foreach my $futurebase (@unique_capture_promotions) {
+	print OUT "   <futurebase url=\"$url_prefix$futurebase.htb\" type=\"capture-promotion\"/>\n";
     }
 
-    foreach my $futurebase (@unique_white_normals, @unique_black_normals) {
-	print OUT "   <futurebase url=\"$url_prefix$futurebase\" type=\"normal\"/>\n";
+    foreach my $futurebase (@unique_normals) {
+	if ($futurebase ne $position) {
+	    print OUT "   <futurebase url=\"$url_prefix$futurebase.htb\" type=\"normal\"/>\n";
+	}
     }
 
     foreach my $white_prune (@unique_white_prunes) {
@@ -655,7 +667,7 @@ sub generate_control_file {
 
     print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n" if $concede_stalemates;
     print OUT "   <generation-controls>\n";
-    print OUT "      <output url=\"$url_prefix$cntl_filename\"/>\n";
+    print OUT "      <output url=\"$url_prefix$position.htb\"/>\n";
     print OUT "      <completion-report url=\"$completion_url$cntl_filename\"/>\n";
     print OUT "      <error-report url=\"$error_url$cntl_filename\"/>\n";
     print OUT "   </generation-controls>\n";
@@ -664,10 +676,10 @@ sub generate_control_file {
     close OUT;
 
     print MAKEFILE "$cntl_filename:";
-    foreach my $futurebase (@unique_white_captures, @unique_black_captures,
-			    @unique_white_promotions, @unique_black_promotions,
-			    @unique_white_capture_promotions, @unique_black_capture_promotions,
-			    @unique_white_normals, @unique_black_normals) {
+    foreach my $futurebase (@unique_captures,
+			    @unique_promotions,
+			    @unique_capture_promotions,
+			    @unique_normals) {
 	print MAKEFILE " $futurebase";
     }
     print MAKEFILE "\n";
@@ -837,13 +849,16 @@ sub genset {
 	    # is to prefer plus-pawns (because they are tested last) over an explicit location
 	    # list.
 
+	    # Sort the black pawns in reverse order here so that doubled pawns appear in board
+	    # order, as is (currently) required by Hoffman.
+
 	    if (&checkallpositions($white_base, (isort @white_pawns),
 				   $black_base, (sort @black_pawns))
 		>= $best_count) {
 		$best_count = &checkallpositions($white_base, (isort @white_pawns),
 						 $black_base, (sort @black_pawns));
-		@best_white_pawns = isort @white_pawns;
-		@best_black_pawns = sort @black_pawns;
+		@best_white_pawns = sort @white_pawns;
+		@best_black_pawns = isort @black_pawns;
 	    }
 	}
     }
@@ -853,20 +868,36 @@ sub genset {
 
     $best_count <<= 6*(length($white_base) + length($black_base));
 
+    my $cntl_filename = &pattern_to_name($white_base, @best_white_pawns, $black_base, @best_black_pawns);
+
+    $white_base{$cntl_filename} = $white_base;
+    $white_pawns{$cntl_filename} = \@best_white_pawns;
+    $black_base{$cntl_filename} = $black_base;
+    $black_pawns{$cntl_filename} = \@best_black_pawns;
+
     $LIST_SEPARATOR = " ";
-    print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count from $position\n";
+    print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count as $cntl_filename from $position\n";
     $LIST_SEPARATOR = undef;
 
-    &assignallpositions("$white_base@best_white_pawns$black_base@best_black_pawns",
-			$white_base, @best_white_pawns, $black_base, @best_black_pawns);
+    &assignallpositions($cntl_filename, $white_base, @best_white_pawns, $black_base, @best_black_pawns);
+
+    return $cntl_filename;
 }
 
 sub genallsets {
+    my @cntl_files_needed;
+
     while (my ($position, $filename) = each %positions) {
 	#if (not defined $filename) {
 	if (not defined $positions{$position}) {
 	    #print "Processing $position\n";
-	    &genset($position);
+	    push @cntl_files_needed, &genset($position);
+	}
+    }
+
+    if ($for_real) {
+	foreach my $cntl_file (@cntl_files_needed) {
+	    &generate_control_file($cntl_file);
 	}
     }
 }
