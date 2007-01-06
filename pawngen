@@ -70,6 +70,16 @@ sub uniqsort {
     return @sorted;
 }
 
+sub debuguniqsort {
+#    return grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @_;
+    my @sorted = sort @_;
+    for (my $i = 0; $i < $#sorted; $i++) {
+	print " @sorted\n";
+	splice @sorted,$i,1 while (($i < $#sorted) and ($sorted[$i] eq $sorted[$i+1]));
+    }
+    return @sorted;
+}
+
 sub normalize_position {
     my ($position) = @_;
 
@@ -143,7 +153,7 @@ sub compute_futurebases {
 		#&consider_position($position2);
 		push @white_promotions, $position2;
 	    } else {
-		push @white_prunes, "[P=Q]";
+		push @white_prunes, "P=Q";
 	    }
 	    # if other black pieces allowed, consider capture promotions here
 	}
@@ -251,7 +261,7 @@ sub compute_futurebases {
 		$position2 =~ s/\BK/KQ/;
 		push @black_promotions, $position2;
 	    } else {
-		push @black_prunes, "[P=Q]";
+		push @black_prunes, "P=Q";
 	    }
 
 	    # consider capture promotions
@@ -263,7 +273,7 @@ sub compute_futurebases {
 		    $position2 =~ s/^K[QRBN]/K/;
 		    push @black_capture_promotions, $position2;
 		} else {
-		    push @black_prunes, "[Px$1=Q]";
+		    push @black_prunes, "Px$1=Q";
 		}
 	    }
 	}
@@ -622,13 +632,13 @@ sub generate_control_file {
 	push @white_promotions, map { $positions{$_} } @$white_promotions;
 	push @white_capture_promotions, map { $positions{$_} } @$white_capture_promotions;
 	push @white_normals, map { $positions{$_} } @$white_normals;
-	push @white_prunes, map { $positions{$_} } @$white_prunes;
+	push @white_prunes, @$white_prunes;
 
 	push @black_captures, map { $positions{$_} } @$black_captures;
 	push @black_promotions, map { $positions{$_} } @$black_promotions;
 	push @black_capture_promotions, map { $positions{$_} } @$black_capture_promotions;
 	push @black_normals, map { $positions{$_} } @$black_normals;
-	push @black_prunes, map { $positions{$_} } @$black_prunes;
+	push @black_prunes, @$black_prunes;
     }
 
     my @unique_captures = &uniqsort(@white_captures, @black_captures);
@@ -668,14 +678,14 @@ sub generate_control_file {
     print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n" if $concede_stalemates;
     print OUT "   <generation-controls>\n";
     print OUT "      <output url=\"$url_prefix$position.htb\"/>\n";
-    print OUT "      <completion-report url=\"$completion_url$cntl_filename\"/>\n";
-    print OUT "      <error-report url=\"$error_url$cntl_filename\"/>\n";
+    print OUT "      <completion-report url=\"$completion_url$position\"/>\n";
+    print OUT "      <error-report url=\"$error_url$position\"/>\n";
     print OUT "   </generation-controls>\n";
     print OUT "</tablebase>\n";
 
     close OUT;
 
-    print MAKEFILE "$cntl_filename:";
+    print MAKEFILE "$position:";
     foreach my $futurebase (@unique_captures,
 			    @unique_promotions,
 			    @unique_capture_promotions,
@@ -879,7 +889,9 @@ sub genset {
     print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count as $cntl_filename from $position\n";
     $LIST_SEPARATOR = undef;
 
-    &assignallpositions($cntl_filename, $white_base, @best_white_pawns, $black_base, @best_black_pawns);
+    &assignallpositions($cntl_filename, $white_base, (isort @best_white_pawns), $black_base, (sort @best_black_pawns));
+
+    die "$position wasn't defined" if not defined $positions{$position};
 
     return $cntl_filename;
 }
