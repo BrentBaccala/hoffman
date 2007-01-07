@@ -536,8 +536,11 @@ sub assign_file {
 	if (m|<piece|) {
 	    my ($color) = m|color="([^"]*)"|;
 	    my ($type) = m|type="([^"]*)"|;
-	    my ($location) = m|location="([^"]*)"|;  #"
+	    my ($location) = m|location="([^"]*)"|;
 	    $location = "" if not defined $location;
+
+	    # Hoffman XML location format allows spaces - this script does not
+	    $location =~ s/ //g;
 
 	    die "Can't have non-pawn restrictions ($filename)\n" if ($type ne "pawn" and $location ne "");
 
@@ -708,7 +711,7 @@ sub generate_control_file {
 			    @unique_promotions,
 			    @unique_capture_promotions,
 			    @unique_normals) {
-	print MAKEFILE " $futurebase";
+	print MAKEFILE " $futurebase" if ($futurebase ne $position);
     }
     print MAKEFILE "\n";
 
