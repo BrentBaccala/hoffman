@@ -4813,7 +4813,7 @@ tablebase_t * parse_XML_control_file(char *filename)
      * or parsing fails.
      */
 
-    context = xmlXPathNewContext(current_tb->xml);
+    context = xmlXPathNewContext(doc);
     result = xmlXPathEvalExpression(BAD_CAST "//error-report", context);
     if (result->nodesetval->nodeNr > 0) {
 	error_report_url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
@@ -4821,7 +4821,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    context = xmlXPathNewContext(current_tb->xml);
+    context = xmlXPathNewContext(doc);
     result = xmlXPathEvalExpression(BAD_CAST "//completion-report", context);
     if (result->nodesetval->nodeNr > 0) {
 	completion_report_url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
@@ -5300,7 +5300,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.400 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.401 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12044,7 +12044,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.400 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.401 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
