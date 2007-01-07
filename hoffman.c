@@ -695,51 +695,37 @@ int verbose = 1;
 
 int fatal_errors = 0;
 
+char * error_report_url = NULL;
+char * completion_report_url = NULL;
+
 #define MAX_FATAL_ERRORS 10
 
 void terminate (void)
 {
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
+    void * file;
     xmlChar *buf;
     int size;
-    char * url;
-    void * file;
 
     if (fatal_errors > 0) {
-	if ((current_tb != NULL) && (current_tb->xml != NULL)) {
-	    context = xmlXPathNewContext(current_tb->xml);
-	    result = xmlXPathEvalExpression(BAD_CAST "//error-report", context);
-
-	    if (result->nodesetval->nodeNr > 0) {
-		url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
-		if (url != NULL) {
-		    file = url_open(url, "w");
-		    xmlDocDumpMemory(current_tb->xml, &buf, &size);
-		    url_write(file, buf, size);
-		    url_close(file);
-		    xmlFree(buf);
-		    xmlFree(url);
-		}
+	if (error_report_url != NULL) {
+	    file = url_open(error_report_url, "w");
+	    if ((current_tb != NULL) && (current_tb->xml != NULL)) {
+		xmlDocDumpMemory(current_tb->xml, &buf, &size);
+		url_write(file, (char *) buf, size);
+		xmlFree(buf);
 	    }
+	    url_close(file);
 	}
 	exit(EXIT_FAILURE);
     } else {
-	if ((current_tb != NULL) && (current_tb->xml != NULL)) {
-	    context = xmlXPathNewContext(current_tb->xml);
-	    result = xmlXPathEvalExpression(BAD_CAST "//completion-report", context);
-
-	    if (result->nodesetval->nodeNr > 0) {
-		url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
-		if (url != NULL) {
-		    file = url_open(url, "w");
-		    xmlDocDumpMemory(current_tb->xml, &buf, &size);
-		    url_write(file, buf, size);
-		    url_close(file);
-		    xmlFree(buf);
-		    xmlFree(url);
-		}
+	if (completion_report_url != NULL) {
+	    file = url_open(completion_report_url, "w");
+	    if ((current_tb != NULL) && (current_tb->xml != NULL)) {
+		xmlDocDumpMemory(current_tb->xml, &buf, &size);
+		url_write(file, (char *) buf, size);
+		xmlFree(buf);
 	    }
+	    url_close(file);
 	}
 	exit(EXIT_SUCCESS);
     }
@@ -4802,6 +4788,8 @@ tablebase_t * parse_XML_control_file(char *filename)
     xmlParserInputBufferPtr dtd_input_buffer;
     xmlDtdPtr dtd;
     xmlDocPtr doc;
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
     tablebase_t *tb;
 
     /* load the DTD from memory */
@@ -4819,6 +4807,27 @@ tablebase_t * parse_XML_control_file(char *filename)
 	fatal("'%s' failed XML read\n", filename);
 	return NULL;
     }
+
+    /* Does the tablebase specify URLs to report errors or successful completion to?  If so, extract
+     * them now, as early as possible, because we want to report to the error URL in case validation
+     * or parsing fails.
+     */
+
+    context = xmlXPathNewContext(current_tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//error-report", context);
+    if (result->nodesetval->nodeNr > 0) {
+	error_report_url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
+    }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
+    context = xmlXPathNewContext(current_tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//completion-report", context);
+    if (result->nodesetval->nodeNr > 0) {
+	completion_report_url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
+    }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
     /* check if validation suceeded */
     if (! xmlValidateDtd(xmlNewValidCtxt(), doc, dtd)) {
@@ -5291,7 +5300,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.399 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.400 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12035,7 +12044,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.399 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.400 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
