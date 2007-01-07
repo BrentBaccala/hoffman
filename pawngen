@@ -602,7 +602,9 @@ sub generate_control_file {
 	print OUT "   <piece color=\"black\" type=\"$piece_names{$black_piece}\"/>\n";
     }
 
-    foreach my $white_pawn (@white_pawns) {
+    # Sort the pawns here to make sure that doubled pawns appear in "board order"
+
+    foreach my $white_pawn (isort @white_pawns) {
 	if (defined $white_pawn) {
 	    print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$white_pawn\"/>\n";
 	} else {
@@ -610,7 +612,7 @@ sub generate_control_file {
 	}
     }
 
-    foreach my $black_pawn (@black_pawns) {
+    foreach my $black_pawn (sort @black_pawns) {
 	if (defined $black_pawn) {
 	    print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$black_pawn\"/>\n";
 	} else {
