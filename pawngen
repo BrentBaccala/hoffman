@@ -152,8 +152,9 @@ sub compute_futurebases {
 		#print "  $position2\n";
 		#&consider_position($position2);
 		push @white_promotions, &normalize_position($position2);
+		push @white_prunes, "P=[RBN]";
 	    } else {
-		push @white_prunes, "P=Q";
+		push @white_prunes, "P=*";
 	    }
 	    # if other black pieces allowed, consider capture promotions here
 	}
@@ -261,7 +262,7 @@ sub compute_futurebases {
 		$position2 =~ s/\BK/KQ/;
 		push @black_promotions, &normalize_position($position2);
 	    } else {
-		push @black_prunes, "P=Q";
+		push @black_prunes, "P=*";
 	    }
 
 	    # consider capture promotions
@@ -273,7 +274,7 @@ sub compute_futurebases {
 		    $position2 =~ s/^K[QRBN]/K/;
 		    push @black_capture_promotions, &normalize_position($position2);
 		} else {
-		    push @black_prunes, "Px$1=Q";
+		    push @black_prunes, "Px$1=*";
 		}
 	    }
 	}
