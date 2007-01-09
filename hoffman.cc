@@ -256,7 +256,21 @@ typedef uint16 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 
-/* These arrays hold the bit locations in the futurevector of various futuremoves. */
+/* These arrays hold the bit locations in the futurevector of various futuremoves - captures,
+ * capture-promotions, promotions, and normal movements of a piece to a square.  The values are
+ * either a bit location (starting at 0), or one of three negative numbers: -1 means that the move
+ * in question isn't a futuremove in the given tablebase (for example, promotion of a non-pawn, or
+ * movement of a piece to a legal square) and that any attempt to assign that futuremove is
+ * therefore an error.  -2 means that no futurebase exists for the futuremove, and that a 'discard'
+ * pruning statement exists for it, so the futuremove can be immediately discarded when it is
+ * encountered during initialization.  -3 means that no futurebase exists and a 'concede' pruning
+ * statement is present, so the futuremove can be immedidiately conceded during initialization.
+ *
+ * num_futuremoves[WHITE] and num_futuremoves[BLACK] are the total number of futurevector bits
+ * assigned for each color, NOT the total number of possible futuremoves, since futuremoves can be
+ * multiply assigned to bits (if two futuremoves can't both happen from the same position, they can
+ * be safely assigned to the same bit), or completely pruned with a -2 or -3 (no bit position).
+ */
 
 int num_futuremoves[2] = {0, 0};
 int futurecaptures[MAX_PIECES][MAX_PIECES];
@@ -5300,7 +5314,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.402 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.403 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11032,11 +11046,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
 					  piece_char[tb->piece_type[piece]],
 					  'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
+				} else if (futurevector
+					   & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
+				    fatal("Duplicate futuremove!\n");
 				} else {
-				    if (futurevector
-					& FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-					fatal("Duplicate futuremove!\n");
-				    }
 				    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
 				    futuremovecnt ++;
 				}
@@ -11091,20 +11104,25 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 				if (! PTM_in_check(tb, &position)) {
 
-				    if (futurecaptures[piece][i] < 0) {
+				    if (futurecaptures[piece][i] == -2) {
+					/* discard prune - do nothing */
+				    } else if (futurecaptures[piece][i] == -3) {
+					/* concede prune */
+					initialize_entry_with_DTM(tb, index, 2);
+					return 0;
+				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
 					      piece_char[tb->piece_type[piece]],
 					      piece_char[tb->piece_type[i]]);
-				    }
-				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 					fatal("Duplicate futuremove!\n");
+				    } else {
+					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+					futuremovecnt ++;
+					movecnt ++;
 				    }
-
-				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-				    futuremovecnt ++;
-				    movecnt ++;
 				}
 
 				position.piece_position[i] = movementptr->square;
@@ -11149,18 +11167,25 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
-			    if (promotions[piece] < 0) {
+			    if (promotions[piece] == -2) {
+				/* discard prune - do nothing */
+			    } else if (promotions[piece] == -3) {
+				/* concede prune */
+				initialize_entry_with_DTM(tb, index, 2);
+				return 0;
+			    } else if (promotions[piece] < 0) {
 				global_position_t global;
 				index_to_global_position(tb, index, &global);
 				fatal("No futuremove: %s %c=?\n", global_position_to_FEN(&global),
 				      piece_char[tb->piece_type[piece]]);
-			    }
-			    if (futurevector & FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES)) {
+			    } else if (futurevector
+				       & FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES)) {
 				fatal("Duplicate futuremove!\n");
+			    } else {
+				futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
+				futuremovecnt += PROMOTION_POSSIBILITIES;
+				movecnt += PROMOTION_POSSIBILITIES;
 			    }
-			    futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
-			    futuremovecnt += PROMOTION_POSSIBILITIES;
-			    movecnt += PROMOTION_POSSIBILITIES;
 
 			} else {
 
@@ -11172,18 +11197,26 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
 				&& (local_position_to_index(tb, &position) == -1)) {
 
-				if (futuremoves[piece][movementptr->square] < 0) {
+				if (futuremoves[piece][movementptr->square] == -2) {
+				    /* discard prune */
+				    movecnt --;
+				} else if (futuremoves[piece][movementptr->square] == -3) {
+				    /* concede prune */
+				    initialize_entry_with_DTM(tb, index, 2);
+				    return 0;
+				} else if (futuremoves[piece][movementptr->square] < 0) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
 				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
 					  piece_char[tb->piece_type[piece]],
 					  'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-				}
-				if (futurevector & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
+				} else if (futurevector
+					   & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
 				    fatal("Duplicate futuremove!\n");
+				} else {
+				    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
+				    futuremovecnt ++;
 				}
-				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-				futuremovecnt ++;
 			    }
 
 			    movecnt ++;
@@ -11228,19 +11261,25 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				position.piece_position[i] = -1;
 
 				if (! PTM_in_check(tb, &position)) {
-				    if (futurecaptures[piece][i] < 0) {
+				    if (futurecaptures[piece][i] == -2) {
+					/* discard prune - do nothing */
+				    } else if (futurecaptures[piece][i] == -3) {
+					/* concede prune */
+					initialize_entry_with_DTM(tb, index, 2);
+					return 0;
+				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
 					      piece_char[tb->piece_type[piece]],
 					      piece_char[tb->piece_type[i]]);
-				    }
-				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 					fatal("Duplicate futuremove!\n");
+				    } else {
+					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+					futuremovecnt ++;
+					movecnt ++;
 				    }
-				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-				    futuremovecnt ++;
-				    movecnt ++;
 				}
 
 				position.piece_position[i] = position.en_passant_square
@@ -11269,36 +11308,48 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			    if (! PTM_in_check(tb, &position)) {
 				if (! is_promotion_capture) {
-				    if (futurecaptures[piece][i] < 0) {
+				    if (futurecaptures[piece][i] == -2) {
+					/* discard prune - do nothing */
+				    } else if (futurecaptures[piece][i] == -3) {
+					/* concede prune */
+					initialize_entry_with_DTM(tb, index, 2);
+					return 0;
+				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
 					      piece_char[tb->piece_type[piece]],
 					      piece_char[tb->piece_type[i]]);
-				    }
-				    if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
+				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 					fatal("Duplicate futuremove!\n");
+				    } else {
+					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
+					futuremovecnt ++;
+					movecnt ++;
 				    }
-				    futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-				    futuremovecnt ++;
-				    movecnt ++;
 				} else {
-				    if (promotion_captures[piece][i] < 0) {
+				    if (promotion_captures[piece][i] == -2) {
+					/* discard prune - do nothing */
+				    } else if (promotion_captures[piece][i] == -3) {
+					/* concede prune */
+					initialize_entry_with_DTM(tb, index, 2);
+					return 0;
+				    } else if (promotion_captures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c=*\n", global_position_to_FEN(&global),
 					      piece_char[tb->piece_type[piece]],
 					      piece_char[tb->piece_type[i]]);
-				    }
-				    if (futurevector
-					& FUTUREVECTORS(promotion_captures[piece][i],
-							PROMOTION_POSSIBILITIES)) {
+				    } else if (futurevector
+					       & FUTUREVECTORS(promotion_captures[piece][i],
+							       PROMOTION_POSSIBILITIES)) {
 					fatal("Duplicate futuremove!\n");
+				    } else {
+					futurevector |= FUTUREVECTORS(promotion_captures[piece][i],
+								      PROMOTION_POSSIBILITIES);
+					futuremovecnt += PROMOTION_POSSIBILITIES;
+					movecnt += PROMOTION_POSSIBILITIES;
 				    }
-				    futurevector |= FUTUREVECTORS(promotion_captures[piece][i],
-								  PROMOTION_POSSIBILITIES);
-				    futuremovecnt += PROMOTION_POSSIBILITIES;
-				    movecnt += PROMOTION_POSSIBILITIES;
 				}
 			    }
 
@@ -12058,7 +12109,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.402 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.403 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
