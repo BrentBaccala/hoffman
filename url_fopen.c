@@ -59,6 +59,7 @@
 struct curl_cookie
 {
     CURL *curl;
+    CURLM *multi_handle;
 
     char operation;		/* read (r), write (w), or append (a) */
     char *URL;			/* we malloc this ourselves */
@@ -69,9 +70,6 @@ struct curl_cookie
     int still_running;          /* Is background url fetch still in progress */
 };
 
-
-/* we use a global one for convenience */
-static CURLM *multi_handle;
 
 /* curl calls this routine to get more data */
 static size_t
@@ -166,41 +164,29 @@ fill_buffer(struct curl_cookie *cookie,int want,int waittime)
         timeout.tv_usec = 0;
 
         /* get file descriptors from the transfers */
-        curl_multi_fdset(multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
-
-	if (maxfd == -1) {
-	  break;
-	}
+        curl_multi_fdset(cookie->multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
 
         /* In a real-world program you OF COURSE check the return code of the
            function calls, *and* you make sure that maxfd is bigger than -1
            so that the call to select() below makes sense! */
 
-        rc = select(maxfd+1, &fdread, &fdwrite, &fdexcep, &timeout);
+	if (maxfd >= 0) {
 
-	if ((rc == -1) && (errno != EINTR)) {
-	    perror("select");
-	    break;
+	    rc = select(maxfd+1, &fdread, &fdwrite, &fdexcep, &timeout);
+
+	    if ((rc == -1) && (errno != EINTR)) {
+		perror("select");
+		break;
+	    }
 	}
 
-        switch(rc) {
-        case -1:
-            /* select error */
-            break;
+	/* no sockets to wait on or timeout or readable/writable sockets */
+	/* note we *could* be more efficient and not wait for
+	 * CURLM_CALL_MULTI_PERFORM to clear here and check it on re-entry
+	 * but that gets messy */
+	while(curl_multi_perform(cookie->multi_handle, &cookie->still_running) ==
+	      CURLM_CALL_MULTI_PERFORM);
 
-        case 0:
-            break;
-
-        default:
-            /* timeout or readable/writable sockets */
-            /* note we *could* be more efficient and not wait for
-             * CURLM_CALL_MULTI_PERFORM to clear here and check it on re-entry
-             * but that gets messy */
-            while(curl_multi_perform(multi_handle, &cookie->still_running) ==
-                  CURLM_CALL_MULTI_PERFORM);
-
-            break;
-        }
     } while(cookie->still_running && (cookie->buffer_pos < want));
     return 1;
 }
@@ -245,55 +231,43 @@ int url_close (void *ptr)
 
     /* fprintf(stderr, "Cleaner\n"); */
 
-    /* Block until transfer done */
+    /* For a write or append, block until transfer done */
 
-    while(cookie->still_running)
+    while((cookie->operation != 'r') && cookie->still_running)
     {
         FD_ZERO(&fdread);
         FD_ZERO(&fdwrite);
         FD_ZERO(&fdexcep);
 
         /* get file descriptors from the transfers */
-        curl_multi_fdset(multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
-
-	if (maxfd == -1) {
-	  break;
-	}
+        curl_multi_fdset(cookie->multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
 
         /* In a real-world program you OF COURSE check the return code of the
            function calls, *and* you make sure that maxfd is bigger than -1
            so that the call to select() below makes sense! */
 
-        rc = select(maxfd+1, &fdread, &fdwrite, &fdexcep, NULL);
+	if (maxfd >= 0) {
 
-	if ((rc == -1) && (errno != EINTR)) {
-	    perror("select");
-	    ret = -1;
-	    break;
+	    rc = select(maxfd+1, &fdread, &fdwrite, &fdexcep, NULL);
+
+	    if ((rc == -1) && (errno != EINTR)) {
+		perror("select");
+		ret = -1;
+		break;
+	    }
 	}
 
-        switch(rc) {
-        case -1:
-            /* select error */
-            break;
-
-        case 0:
-            break;
-
-        default:
-            /* timeout or readable/writable sockets */
-            /* note we *could* be more efficient and not wait for
-             * CURLM_CALL_MULTI_PERFORM to clear here and check it on re-entry
-             * but that gets messy */
-            while(curl_multi_perform(multi_handle, &cookie->still_running) ==
-                  CURLM_CALL_MULTI_PERFORM);
-
-            break;
-        }
+	/* no sockets to wait on or timeout or readable/writable sockets */
+	/* note we *could* be more efficient and not wait for
+	 * CURLM_CALL_MULTI_PERFORM to clear here and check it on re-entry
+	 * but that gets messy */
+	while(curl_multi_perform(cookie->multi_handle, &cookie->still_running) ==
+	      CURLM_CALL_MULTI_PERFORM);
     }
 
     /* make sure the easy handle is not in the multi handle anymore */
-    curl_multi_remove_handle(multi_handle, cookie->curl);
+    curl_multi_remove_handle(cookie->multi_handle, cookie->curl);
+    curl_multi_cleanup(cookie->multi_handle);
 
     /* cleanup */
     curl_easy_cleanup(cookie->curl);
@@ -331,7 +305,7 @@ ssize_t url_read(void *ptr, char *buffer, size_t size)
 
     use_buffer(cookie,want);
 
-    /* printf("(fread) return %d bytes %d left\n", want,cookie->buffer_pos); */
+    /* fprintf(stderr, "(fread) return %d bytes %d left\n", want,cookie->buffer_pos); */
 
     return want;
 }
@@ -348,7 +322,8 @@ int url_seekptr64 (void *ptr, off64_t *position, int whence)
 
     if ((whence != SEEK_SET) || (*position != 0)) return -1;
 
-    curl_multi_remove_handle(multi_handle, cookie->curl);
+    curl_multi_remove_handle(cookie->multi_handle, cookie->curl);
+    curl_multi_cleanup(cookie->multi_handle);
     curl_easy_cleanup(cookie->curl);
     cookie->still_running = 0;
     cookie->buffer_pos = 0;
@@ -374,7 +349,8 @@ int url_seekptr (void *ptr, off_t *position, int whence)
 
     if ((whence != SEEK_SET) || (*position != 0)) return -1;
 
-    curl_multi_remove_handle(multi_handle, cookie->curl);
+    curl_multi_remove_handle(cookie->multi_handle, cookie->curl);
+    curl_multi_cleanup(cookie->multi_handle);
     curl_easy_cleanup(cookie->curl);
     cookie->still_running = 0;
     cookie->buffer_pos = 0;
@@ -409,7 +385,7 @@ ssize_t url_write(void *ptr, const char *buffer, size_t size)
 
     /* Try to transfer without blocking */
 
-    while((curl_multi_perform(multi_handle, &cookie->still_running) ==
+    while((curl_multi_perform(cookie->multi_handle, &cookie->still_running) ==
 	   CURLM_CALL_MULTI_PERFORM) && (cookie->buffer_len > 0));
 
     /* Now block until we've transfered the entire buffer */
@@ -423,7 +399,7 @@ ssize_t url_write(void *ptr, const char *buffer, size_t size)
 	/* fprintf(stderr, "Blocking in writer\n"); */
 
         /* get file descriptors from the transfers */
-        curl_multi_fdset(multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
+        curl_multi_fdset(cookie->multi_handle, &fdread, &fdwrite, &fdexcep, &maxfd);
 
 	if (maxfd == -1) break;
 
@@ -448,7 +424,7 @@ ssize_t url_write(void *ptr, const char *buffer, size_t size)
             /* note we *could* be more efficient and not wait for
              * CURLM_CALL_MULTI_PERFORM to clear here and check it on re-entry
              * but that gets messy */
-            while(curl_multi_perform(multi_handle, &cookie->still_running) ==
+            while(curl_multi_perform(cookie->multi_handle, &cookie->still_running) ==
                   CURLM_CALL_MULTI_PERFORM);
 
             break;
@@ -500,17 +476,16 @@ static int start_cookie(struct curl_cookie *cookie)
 	}
     }
 
-    if(!multi_handle)
-	multi_handle = curl_multi_init();
+    cookie->multi_handle = curl_multi_init();
 
-    curl_multi_add_handle(multi_handle, cookie->curl);
+    curl_multi_add_handle(cookie->multi_handle, cookie->curl);
 
     cookie->still_running = 1;
 
     if (cookie->operation == 'r') {
 
 	/* lets start the fetch */
-	while(curl_multi_perform(multi_handle, &cookie->still_running) ==
+	while(curl_multi_perform(cookie->multi_handle, &cookie->still_running) ==
 	      CURLM_CALL_MULTI_PERFORM );
 
 	if((cookie->buffer_pos == 0) && (!cookie->still_running))
@@ -518,7 +493,8 @@ static int start_cookie(struct curl_cookie *cookie)
 	    /* if still_running is 0 now, we should return NULL */
 
 	    /* make sure the easy handle is not in the multi handle anymore */
-	    curl_multi_remove_handle(multi_handle, cookie->curl);
+	    curl_multi_remove_handle(cookie->multi_handle, cookie->curl);
+	    curl_multi_cleanup(cookie->multi_handle);
 
 	    /* cleanup */
 	    curl_easy_cleanup(cookie->curl);
