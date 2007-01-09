@@ -4931,7 +4931,6 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     }
 
     tb->filename = filename;
-    tb->file = file;
 
     tablebase = xmlDocGetRootElement(doc);
 
@@ -4939,19 +4938,61 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     tb->offset = strtol((const char *) offsetstr, NULL, 0);
     if (offsetstr != NULL) xmlFree(offsetstr);
 
-#if 0
-    if (zlib_seek64(file, tb->offset, SEEK_SET) != 0) {
-	fatal("Seek failed in preload_futurebase_from_file()\n");
-	terminate();
-    }
-#else
-    xml_size ++; /* we read one zero byte */
-    while (xml_size < tb->offset) {
-	zlib_read(file, &fileptr[xml_size ++], 1);
-    }
-#endif
+    zlib_close(file);
 
     return tb;
+}
+
+void open_futurebase(tablebase_t * tb)
+{
+    /* already open? */
+    if (tb->file != NULL) return;
+
+    if (rindex(tb->filename, ':') == NULL) {
+	int fd;
+#ifdef O_LARGEFILE
+	fd = open(tb->filename, O_RDONLY|O_LARGEFILE, 0);
+	if (fd != -1) {
+	    tb->file = zlib_open((void *) fd, read, write, lseek, close, "r");
+	}
+#else
+	fd = open(tb->filename, O_RDONLY, 0);
+	if (fd != -1) {
+	    tb->file = zlib_open((void *) fd, read, write, lseek, close, "r");
+	}
+#endif
+    } else {
+	void *ptr = url_open(tb->filename, "r");
+#ifdef O_LARGEFILE
+	if (ptr != NULL) {
+	    tb->file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "r");
+	}
+#else
+	if (ptr != NULL) {
+	    tb->file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "r");
+	}
+#endif
+    }
+
+    if (tb->file == NULL) {
+	fatal("Can't open tablebase '%s'\n", tb->filename);
+    }
+
+    if (zlib_seek(tb->file, tb->offset, SEEK_SET) != tb->offset) {
+	fatal("Seek failed in open_futurebase()\n");
+    }
+
+    tb->next_read_index = 0;
+}
+
+void close_futurebase(tablebase_t * tb)
+{
+    if (tb->file != NULL) {
+	if (zlib_close(tb->file) != 0) {
+	    warning("zlib_close failed in close_futurebase()\n");
+	}
+    }
+    tb->file = NULL;
 }
 
 void unload_futurebase(tablebase_t *tb)
@@ -4962,12 +5003,7 @@ void unload_futurebase(tablebase_t *tb)
     if (tb->xml != NULL) xmlFreeDoc(tb->xml);
     tb->xml = NULL;
 
-    if (tb->file != NULL) {
-	if (zlib_close(tb->file) != 0) {
-	    warning("fclose failed during unload_futurebase()\n");
-	}
-    }
-    tb->file = NULL;
+    close_futurebase(tb);
 }
 
 /* compute_extra_and_missing_piece()
@@ -5314,7 +5350,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.403 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.404 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -9267,6 +9303,8 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
 	tablebase_t * futurebase = futurebases[fbnum];
 
+	open_futurebase(futurebase);
+
 	switch (futurebase->futurebase_type) {
 
 	case FUTUREBASE_CAPTURE:
@@ -9313,6 +9351,8 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    break;
 
 	}
+
+	close_futurebase(futurebase);
     }
 
     return (fatal_errors == 0);
@@ -12109,7 +12149,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.403 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.404 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12198,6 +12238,7 @@ int main(int argc, char *argv[])
     for (argi=optind; argi<argc; argi++) {
 	info("Loading '%s'\n", argv[argi]);
 	tbs[i] = preload_futurebase_from_file(argv[argi]);
+	open_futurebase(tbs[i]);
 	if (dump_info) xmlDocDump(stdout, tbs[i]->xml);
 	if (tbs[i] == NULL) {
 	    fatal("Error loading '%s'\n", argv[argi]);
