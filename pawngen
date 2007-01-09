@@ -22,6 +22,12 @@ my $analysis = "analysis4";
 
 my $concede_stalemates = 0;
 
+# Consider pawn positions that arise after we queen, then capture with a pawn (moving the pawn to a
+# different file), then queen, then capture again to a different file, etc., or just those pawn
+# positions that arise directly from the current position?
+
+my $consider_all_captures = 0;
+
 my $url_prefix = "ftp://vger.freesoft.org/Hoffman/$analysis/";
 my $completion_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=complete&amp;tb=";
 my $error_url = "http://vger.freesoft.org/cgi-bin/hoffman.cgi?status=error&amp;tb=";
@@ -301,12 +307,23 @@ sub compute_futurebases {
 	    }
 	}
 
-	# can the pawn capture another pawn?
+	# can the pawn capture something else (without promoting?)
 	if ($black_pawn !~ /.2/) {
+	    my @capture_moves;
 	    if ($black_pawn !~ /a./) {
 		my $capture_move = $black_pawn;
 		$capture_move =~ tr/[2-7]/[1-6]/;
 		$capture_move =~ tr/[b-h]/[a-g]/;
+		push @capture_moves, $capture_move;
+	    }
+	    if ($black_pawn !~ /h./) {
+		my $capture_move = $black_pawn;
+		$capture_move =~ tr/[2-7]/[1-6]/;
+		$capture_move =~ tr/[a-g]/[b-h]/;
+		push @capture_moves, $capture_move;
+	    }
+	    foreach my $capture_move (@capture_moves) {
+		# is there another pawn there to be taken?
 		if ($white_pawns =~ /$capture_move/) {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
@@ -324,26 +341,16 @@ sub compute_futurebases {
 			push @black_captures, &normalize_position($position5);
 		    }
 		}
-	    }
-	    if ($black_pawn !~ /h./) {
-		my $capture_move = $black_pawn;
-		$capture_move =~ tr/[2-7]/[1-6]/;
-		$capture_move =~ tr/[a-g]/[b-h]/;
-		if ($white_pawns =~ /$capture_move/) {
-		    my $position4 = $position;
-		    $position4 =~ s/$capture_move//;
-		    $position4 =~ s/$black_pawn/$capture_move/;
-		    push @black_captures, &normalize_position($position4);
-		}
-		# en passant capture?
-		if ($capture_move =~ /.3/ and $pawns !~ /$capture_move/) {
-		    my $oldpawn = $capture_move;
-		    $oldpawn =~ s/3/4/;
-		    if ($white_pawns =~ /$oldpawn/) {
-			my $position5 = $position;
-			$position5 =~ s/$oldpawn//;
-			$position5 =~ s/$black_pawn/$capture_move/;
+		# capture of a mobile white piece?
+		if ($white_base ne "K" and $pawns !~ /$capture_move/) {
+		    my $position5 = $position;
+		    $position5 =~ s/$black_pawn/$capture_move/;
+		    $position5 =~ s/^K([QRBN])/K/;
+		    my $captured_piece = $1;
+		    if ($consider_all_captures or exists $positions{&normalize_position($position5)}) {
 			push @black_captures, &normalize_position($position5);
+		    } else {
+			push @black_prunes, "Px$captured_piece";
 		    }
 		}
 	    }
