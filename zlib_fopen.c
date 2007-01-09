@@ -175,9 +175,15 @@ int zlib_seekptr (void *ptr, off_t *position, int whence)
 
     if (*position < cookie->zstream.total_out) {
 	/* rewind the underlying file and restart decompressing from the beginning */
-	if (cookie->seek(cookie->ptr, 0, SEEK_SET) == -1) return -1;
+	if (cookie->seek(cookie->ptr, 0, SEEK_SET) == -1) {
+	    fprintf(stderr, "zlib_seekptr: can't reset underlying stream\n");
+	    return -1;
+	}
 	memset(&cookie->zstream, 0, sizeof(z_stream));
-	if (inflateInit2(&cookie->zstream, 32 + MAX_WBITS) != Z_OK) return -1;
+	if (inflateInit2(&cookie->zstream, 32 + MAX_WBITS) != Z_OK) {
+	    fprintf(stderr, "zlib_seekptr: can't inflatInit2\n");
+	    return -1;
+	}
     }
 
     while (*position > cookie->zstream.total_out) {
@@ -191,9 +197,15 @@ int zlib_seekptr (void *ptr, off_t *position, int whence)
 	if (cookie->zstream.avail_in == 0) {
 	    cookie->zstream.next_in = cookie->buffer;
 	    cookie->zstream.avail_in = cookie->read(cookie->ptr, cookie->buffer, cookie->bufsize);
-	    if (cookie->zstream.avail_in == 0) break;
+	    if (cookie->zstream.avail_in == 0) {
+		fprintf(stderr, "zlib_seekptr: underlying read failed\n");
+		break;
+	    }
 	}
-	if ((ret = inflate(&cookie->zstream, Z_NO_FLUSH)) != Z_OK) break;
+	if ((ret = inflate(&cookie->zstream, Z_NO_FLUSH)) != Z_OK) {
+	    fprintf(stderr, "zlib_seekptr: inflate failed\n");
+	    break;
+	}
     }
 
     ret = (*position == cookie->zstream.total_out) ? 0 : -1;
