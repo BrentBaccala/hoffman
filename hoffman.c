@@ -5300,7 +5300,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.401 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.402 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6390,6 +6390,13 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
 
+#if 0
+	if (((z_stream *) ((unsigned char *) tb->file + 24))->total_out != tb->offset + tb->next_read_index) {
+	    fprintf(stderr, "zstream total_out (%d) != offset (%d) + next_read_index (%d)\n",
+		    ((z_stream *) ((unsigned char *) tb->file + 24))->total_out, tb->offset, tb->next_read_index);
+	}
+#endif
+
 	if (index < tb->next_read_index) {
 #ifdef O_LARGEFILE
 	    if (zlib_seek64(tb->file, tb->offset + index, SEEK_SET) != tb->offset + index) {
@@ -6405,6 +6412,13 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	    }
 #endif
 	}
+
+#if 0
+	if (((z_stream *) ((unsigned char *) tb->file + 24))->total_out != tb->offset + tb->next_read_index) {
+	    fprintf(stderr, "zstream total_out (%d) != offset (%d) + next_read_index (%d)\n",
+		    ((z_stream *) ((unsigned char *) tb->file + 24))->total_out, tb->offset, tb->next_read_index);
+	}
+#endif
 
 	do {
 
@@ -7599,7 +7613,7 @@ void proptable_finalize(int target_dtm)
 #if 0
 		global_position_t global;
 		index_to_global_position(current_tb, index, &global);
-		fprintf(stderr, "Futuremove discrepancy: %d %s\n", index, global_position_to_FEN(&global)); /* BREAKPOINT */
+		fprintf(stderr, "Futuremove discrepancy: %d %s\n", index, global_position_to_FEN(&global));
 #endif
 	    } else {
 		finalize_futuremove(current_tb, index, possible_futuremoves ^ futurevector);
@@ -12044,7 +12058,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.401 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.402 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
