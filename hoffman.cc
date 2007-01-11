@@ -150,6 +150,10 @@
 
 #include "url_fopen.h"
 
+/* The public face of ftplib */
+
+#include "ftp_fopen.h"
+
 /* The public face of zlib */
 
 #include "zlib_fopen.h"
@@ -4896,14 +4900,17 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 	}
 #endif
     } else {
-	void *ptr = url_open(filename, "r");
+	/* void *ptr = url_open(filename, "r"); */
+	void *ptr = ftp_openurl(filename, "r");
 #ifdef O_LARGEFILE
 	if (ptr != NULL) {
-	    file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "r");
+	    /* file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "r"); */
+	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek64, ftp_close, "r");
 	}
 #else
 	if (ptr != NULL) {
-	    file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "r");
+	    /* file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "r"); */
+	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
 #endif
     }
@@ -4962,14 +4969,14 @@ void open_futurebase(tablebase_t * tb)
 	}
 #endif
     } else {
-	void *ptr = url_open(tb->filename, "r");
+	void *ptr = ftp_openurl(tb->filename, "r");
 #ifdef O_LARGEFILE
 	if (ptr != NULL) {
-	    tb->file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "r");
+	    tb->file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek64, ftp_close, "r");
 	}
 #else
 	if (ptr != NULL) {
-	    tb->file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "r");
+	    tb->file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
 #endif
     }
@@ -5350,7 +5357,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.404 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.405 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11545,14 +11552,14 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	    }
 #endif
 	} else {
-	    void *ptr = url_open(filename, "w");
+	    void *ptr = ftp_openurl(filename, "w");
 #ifdef O_LARGEFILE
 	    if (ptr != NULL) {
-		file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "w");
+		file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek64, ftp_close, "w");
 	    }
 #else
 	    if (ptr != NULL) {
-		file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "w");
+		file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
 	    }
 #endif
 	}
@@ -11581,14 +11588,14 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 		filename_needs_xmlFree = 1;
 	    } else if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url"))
 		       != NULL) {
-		void *ptr = url_open(filename, "w");
+		void *ptr = ftp_openurl(filename, "w");
 #ifdef O_LARGEFILE
 		if (ptr != NULL) {
-		    file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "w");
+		    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek64, ftp_close, "w");
 		}
 #else
 		if (ptr != NULL) {
-		    file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "w");
+		    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
 		}
 #endif
 		filename_needs_xmlFree = 1;
@@ -11832,17 +11839,19 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * The #ifdef keeps this from even being attempted on a Windows system.
 	 */
 
+#if 0
 #ifdef RLIMIT_MEMLOCK
 
 	if (getrlimit(RLIMIT_MEMLOCK, &rlimit) == -1) {
 	    warning("Can't getrlimit RLIMIT_MEMLOCK: %s\n", strerror(errno));
 	} else if (rlimit.rlim_cur != 0) {
-	    if (mlockall(MCL_CURRENT) == -1) {
+	    if ((mlockall(MCL_CURRENT) == -1) && (errno != EPERM)) {
 		fatal("Can't mlockall memory: %s\n", strerror(errno));
 		return 0;
 	    }
 	}
 
+#endif
 #endif
 
 	gettimeofday(&pass_start_times[total_passes], NULL);
@@ -12149,7 +12158,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.404 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.405 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
