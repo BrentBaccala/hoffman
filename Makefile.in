@@ -1,15 +1,18 @@
 
 # Debugging
-CFLAGS=-g -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+
+# Optimization
+CFLAGS=-O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Debugging w/optimization
-#CFLAGS=-g -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV -pthread
+#CFLAGS=-g -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Debugging w/optimization and profiling
-#CFLAGS=-g -pg -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV -pthread
+#CFLAGS=-g -pg -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Debugging w/profiling
-#CFLAGS=-g -pg -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV -pthread
+#CFLAGS=-g -pg -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
 
 CPPFLAGS=$(CFLAGS)
 
