@@ -1,23 +1,23 @@
 
 # Debugging
-#CFLAGS=-g -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Optimization
-CFLAGS=-O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+CFLAGS=-O3 -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Debugging w/optimization
-#CFLAGS=-g -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -O3 -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Debugging w/optimization and profiling
-#CFLAGS=-g -pg -O3 -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -pg -O3 -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Debugging w/profiling
-#CFLAGS=-g -pg -Wall -march=pentium-m -I ~/src/readline-5.0 -I /usr/include/libxml2 -DUSE_NALIMOV
+#CFLAGS=-g -pg -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
 
 CPPFLAGS=$(CFLAGS)
 
 hoffman: hoffman.o probe.o egtb.o url_fopen.o zlib_fopen.o
-	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++ -lposix-aio `curl-config --libs`
+	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++ `curl-config --libs`
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
