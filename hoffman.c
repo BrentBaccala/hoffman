@@ -35,7 +35,7 @@
  * possibility of all pawns queening, requires the K+Q+Q vs K+Q endgame to be solved before it can
  * be calculated.
  *
- * Hoffman takes a somewhat different approach, one pioneered by the Eiko Bleicher's Freezer, now a
+ * Hoffman takes a somewhat different approach, one pioneered by Eiko Bleicher's Freezer, now a
  * commercial program. When faced with something like K+P+P vs K+P, rather than calculate all
  * possible resulting positions, it may ignore the possibility of more than two pawns queening at
  * the same time, thus computing nothing more complex than K+Q+P vs K+Q.  While incomplete, such a
@@ -110,12 +110,13 @@
 /* If we're using proptables, then the program uses POSIX asynchronous I/O extensively.  Right now
  * (November 2006), there are basically two different Linux implementations available for this.  The
  * native interface in the 2.6 kernel series looks great on paper, but still seems to block at
- * critical places.  GLIBC does asynchronous I/O using threads, which works better right now but
- * incurs the overhead of context switches between the threads.  I've got both versions installed on
- * my system and pick which one I want to use by selecting the appropriate header file here and the
- * appropriate library (-lposix-aio for the native interface; -lrt for the GLIBC threads version) in
- * the Makefile.  The two selections have to match up; if they don't things will compile without
- * warnings but fail with various mysterious errors at runtime.
+ * critical places if there aren't enough kernel request structures.  GLIBC does asynchronous I/O
+ * using threads, which works better right now but incurs the overhead of context switches between
+ * the threads.  I've got both versions installed on my system and pick which one I want to use by
+ * selecting the appropriate header file here and the appropriate library (-lposix-aio for the
+ * native interface; -lrt for the GLIBC threads version) in the Makefile.  The two selections have
+ * to match up; if they don't things will compile without warnings but fail with various mysterious
+ * errors at runtime.
  */
 
 #if USE_PROPTABLES
@@ -5357,7 +5358,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.405 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.406 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12158,7 +12159,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.405 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.406 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
