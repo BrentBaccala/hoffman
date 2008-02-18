@@ -78,7 +78,7 @@
  *        hoffman -p <tablebase> ...                              (probe mode)
  */
 
-#define USE_PROPTABLES 0
+#define USE_PROPTABLES 1
 
 
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
@@ -120,8 +120,8 @@
  */
 
 #if USE_PROPTABLES
-#include </usr/local/include/aio.h>
-/* #include </usr/include/aio.h> */
+/* #include </usr/local/include/aio.h> */
+#include </usr/include/aio.h>
 #endif
 
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
@@ -257,7 +257,7 @@ struct timeval proptable_preload_time = {0, 0};
  * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move.
  */
 
-typedef uint16 futurevector_t;
+typedef uint8 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 
@@ -4750,7 +4750,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 
     /* See if an index modulus was specified for inversion in a finite field */
 
-    modulus = xmlGetProp(tablebase, BAD_CAST "modulus");
+    modulus = xmlGetProp(index_node, BAD_CAST "modulus");
     if (modulus != NULL) {
 	tb->modulus = strtoll((const char *) modulus, NULL, 0);
 	if (tb->modulus <= tb->max_index) {
@@ -5358,7 +5358,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.406 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.407 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12159,7 +12159,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.406 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.407 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
