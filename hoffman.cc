@@ -5389,7 +5389,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.412 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.413 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12262,7 +12262,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.412 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.413 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12335,6 +12335,13 @@ int main(int argc, char *argv[])
 	fatal("An output filename can not be specified when probing or verifying\n");
 	terminate();
     }
+
+#if !USE_NALIMOV
+    if (verify) {
+	fatal("Can't verify - program compiled without Nalimov support\n");
+	terminate();
+    }
+#endif
 
     /* Generating */
 
