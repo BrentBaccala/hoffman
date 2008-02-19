@@ -159,6 +159,15 @@
 
 #include "zlib_fopen.h"
 
+/* If we're going to run multi-threaded, we need the POSIX threads library */
+
+#define USE_THREADS 1
+
+#if USE_THREADS
+#include <pthread.h>
+int num_threads = 1;
+#endif
+
 
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
@@ -5358,7 +5367,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.408 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.409 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11468,14 +11477,69 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
     }
 }
 
-void initialize_tablebase(tablebase_t *tb)
+/* Tablebase initialization is the first important place where we can use threads to speed things up
+ * on a multi-processor machine, though my experience is that actual gains are highly architecture
+ * specific.  We break the tablebase up into sections, and assign each section to its own thread.
+ * Since initialization only touches single entries in the tablebase (no propagation at this point),
+ * thread synchronization is trivial.
+ */
+
+typedef struct {
+    tablebase_t *tb;
+    index_t start_index;
+    index_t end_index;
+} initialization_control_t;
+
+void initialize_tablebase_section(initialization_control_t *control)
 {
     index_t index;
 
-    for (index=0; index <= tb->max_index; index++) {
-	tb->futurevectors[index] = initialize_tablebase_entry(tb, index);
+    for (index=control->start_index; index <= control->end_index; index++) {
+	control->tb->futurevectors[index] = initialize_tablebase_entry(control->tb, index);
     }
 }
+
+#if !USE_THREADS
+
+void initialize_tablebase(tablebase_t *tb)
+{
+    initialization_control_t control = {tb, 0, tb->max_index};
+
+    initialize_tablebase_section(&control);
+}
+
+#else
+
+void initialize_tablebase(tablebase_t *tb)
+{
+    initialization_control_t *controls;
+    pthread_t *threads;
+    int thread;
+
+    /* XXX check for malloc failure */
+    controls = malloc(sizeof(initialization_control_t) * num_threads);
+    threads = malloc(sizeof(pthread_t) * num_threads);
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	controls[thread].tb = tb;
+	controls[thread].start_index = ((tb->max_index+1)*thread)/num_threads;
+	if (thread != num_threads-1) {
+	    controls[thread].end_index = ((tb->max_index+1)*(thread+1))/num_threads - 1;
+	} else {
+	    controls[thread].end_index = tb->max_index;
+	}
+	pthread_create(&threads[thread], NULL, &initialize_tablebase_section, &controls[thread]);
+    }
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	pthread_join(threads[thread], NULL);
+    }
+
+    free(threads);
+    free(controls);
+}
+
+#endif
 
 /* Intra-table propagation is almost trivial.  Keep making passes over the tablebase first until
  * we've hit dtm_limit, which means we've processed everything from the futurebases, then until no
@@ -12169,7 +12233,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.408 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.409 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12187,7 +12251,7 @@ int main(int argc, char *argv[])
     verify_movements();
 
     while (1) {
-	c = getopt(argc, argv, "iqgpvo:n:P:");
+	c = getopt(argc, argv, "iqgpvo:n:P:t:");
 
 	if (c == -1) break;
 
@@ -12220,6 +12284,11 @@ int main(int argc, char *argv[])
 	    /* set size of proptable in megabytes */
 	    proptable_MBs = strtol(optarg, NULL, 0);
 	    break;
+#if USE_THREADS
+	case 't':
+	    num_threads = strtol(optarg, NULL, 0);
+	    break;
+#endif
 	}
     }
 
