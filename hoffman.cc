@@ -4918,8 +4918,6 @@ tablebase_t * parse_XML_control_file(char *filename)
 tablebase_t * preload_futurebase_from_file(char *filename)
 {
     FILE * file;
-    int xml_size;
-    char fileptr[16384];	/* XXX hardwired max size of XML */
     xmlDocPtr doc;
     tablebase_t *tb = NULL;
     xmlNodePtr tablebase;
@@ -4959,15 +4957,10 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 	return NULL;
     }
 
-    for (xml_size = 0; xml_size < sizeof(fileptr); xml_size ++) {
-	if (zlib_read(file, &fileptr[xml_size], 1) != 1) {
-	    fatal("%s reading '%s'\n", strerror(errno), filename);
-	    return NULL;
-	}
-	if (fileptr[xml_size] == '\0') break;
-    }
-
-    doc = xmlReadMemory(fileptr, xml_size, NULL, NULL, 0);
+    /* My experiments with xmlReadIO indicate that it only calls its read function enough times to
+     * get the XML document, which is good, because we don't want it reading the entire file.
+     */
+    doc = xmlReadIO(&zlib_read, NULL, file, NULL, NULL, 0);
 
     tb = parse_XML_into_tablebase(doc);
 
@@ -5396,7 +5389,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.411 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.412 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12269,7 +12262,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.411 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.412 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
