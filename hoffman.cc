@@ -78,7 +78,7 @@
  *        hoffman -p <tablebase> ...                              (probe mode)
  */
 
-#define USE_PROPTABLES 1
+#define USE_PROPTABLES 0
 
 
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
@@ -5358,7 +5358,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.407 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.408 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -11756,8 +11756,13 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #else
 	tb->entries = (entry_t *) malloc(LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
 	if (tb->entries == NULL) {
-	    fatal("Can't malloc tablebase entries: %s\n", strerror(errno));
+	    fatal("Can't malloc %dMB for tablebase entries: %s\n",
+		  LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/(1024*1024),
+		  strerror(errno));
 	    return 0;
+	} else {
+	    info("Malloced %dMB for tablebase entries\n",
+		 LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/(1024*1024));
 	}
 	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
 #endif
@@ -11821,8 +11826,13 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	/* tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t)); */
 	tb->futurevectors = (futurevector_t *) malloc((tb->max_index + 1) * sizeof(futurevector_t));
 	if (tb->futurevectors == NULL) {
-	    fatal("Can't malloc tablebase futurevectors: %s\n", strerror(errno));
+	    fatal("Can't malloc %dMB for tablebase futurevectors: %s\n",
+		  ((tb->max_index + 1) * sizeof(futurevector_t))/(1024*1024),
+		  strerror(errno));
 	    return 0;
+	} else {
+	    info("Malloced %dMB for tablebase futurevectors\n",
+		 ((tb->max_index + 1) * sizeof(futurevector_t))/(1024*1024));
 	}
 	memset(tb->futurevectors, 0, (tb->max_index + 1) * sizeof(futurevector_t));
 
@@ -12159,7 +12169,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.407 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.408 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
