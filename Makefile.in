@@ -3,7 +3,7 @@
 #CFLAGS=-g -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
 
 # Optimization
-CFLAGS=-O3 -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
+CFLAGS=-O3 -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV -pthread
 
 # Debugging w/optimization
 #CFLAGS=-g -O3 -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
