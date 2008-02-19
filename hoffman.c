@@ -946,6 +946,17 @@ void expand_per_pass_statistics(void) {
     /* we actually need these two arrays to be only half the size they are, because they are split like this */
     positive_passes_needed = realloc(positive_passes_needed, max_passes * sizeof(uint8));
     negative_passes_needed = realloc(negative_passes_needed, max_passes * sizeof(uint8));
+
+    bzero(pass_start_times + total_passes, (max_passes-total_passes)*sizeof(struct timeval));
+    bzero(pass_end_times + total_passes, (max_passes-total_passes)*sizeof(struct timeval));
+    bzero(pass_type + total_passes, (max_passes-total_passes)*sizeof(char *));
+    bzero(pass_target_dtms + total_passes, (max_passes-total_passes)*sizeof(int));
+    bzero(positions_finalized + total_passes, (max_passes-total_passes)*sizeof(int));
+    bzero(backproped_moves + total_passes, (max_passes-total_passes)*sizeof(uint64));
+
+    bzero(positive_passes_needed + total_passes, (max_passes-total_passes)*sizeof(uint8));
+    bzero(negative_passes_needed + total_passes, (max_passes-total_passes)*sizeof(uint8));
+
 }
 
 /***** DYNAMIC STRUCTURES *****/
@@ -5322,16 +5333,16 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(tablebase, BAD_CAST "   ");
     node = xmlNewChild(tablebase, NULL, BAD_CAST "tablebase-statistics", NULL);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%d", tb->max_index + 1);
+    snprintf(strbuf, sizeof(strbuf), "%d", tb->max_index + 1);
     xmlNewChild(node, NULL, BAD_CAST "indices", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", total_PNTM_mated_positions);
+    snprintf(strbuf, sizeof(strbuf), "%lld", total_PNTM_mated_positions);
     xmlNewChild(node, NULL, BAD_CAST "PNTM-mated-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", total_legal_positions);
+    snprintf(strbuf, sizeof(strbuf), "%lld", total_legal_positions);
     xmlNewChild(node, NULL, BAD_CAST "legal-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", total_stalemate_positions);
+    snprintf(strbuf, sizeof(strbuf), "%lld", total_stalemate_positions);
     xmlNewChild(node, NULL, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
 
     /* If we generating a full tablebase, report both white-wins-positions and black-wins-positions.
@@ -5341,32 +5352,32 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 
     if ((tb->format.dtm_bits > 0) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprintf(strbuf, "%lld", player_wins[0]);
+	snprintf(strbuf, sizeof(strbuf), "%lld", player_wins[0]);
 	xmlNewChild(node, NULL, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
     }
     if (tb->format.dtm_bits > 0) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprintf(strbuf, "%lld", player_wins[1]);
+	snprintf(strbuf, sizeof(strbuf), "%lld", player_wins[1]);
 	xmlNewChild(node, NULL, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
     }
     if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprintf(strbuf, "%lld", total_legal_positions - player_wins[1]);
+	snprintf(strbuf, sizeof(strbuf), "%lld", total_legal_positions - player_wins[1]);
 	xmlNewChild(node, NULL, BAD_CAST "white-wins-or-draws-positions", BAD_CAST strbuf);
     }
 
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", total_moves);
+    snprintf(strbuf, sizeof(strbuf), "%lld", total_moves);
     xmlNewChild(node, NULL, BAD_CAST "forward-moves", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%lld", total_futuremoves);
+    snprintf(strbuf, sizeof(strbuf), "%lld", total_futuremoves);
     xmlNewChild(node, NULL, BAD_CAST "futuremoves", BAD_CAST strbuf);
     if (tb->format.dtm_bits > 0) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprintf(strbuf, "%d", max_dtm);
+	snprintf(strbuf, sizeof(strbuf), "%d", max_dtm);
 	xmlNewChild(node, NULL, BAD_CAST "max-dtm", BAD_CAST strbuf);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprintf(strbuf, "%d", min_dtm);
+	snprintf(strbuf, sizeof(strbuf), "%d", min_dtm);
 	xmlNewChild(node, NULL, BAD_CAST "min-dtm", BAD_CAST strbuf);
     }
     xmlNodeAddContent(node, BAD_CAST "\n   ");
@@ -5385,7 +5396,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.410 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.411 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5406,24 +5417,24 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     sprint_timeval(strbuf, &program_end_time);
     xmlNewChild(node, NULL, BAD_CAST "real-time", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%ld", rusage.ru_majflt);
+    snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_majflt);
     xmlNewChild(node, NULL, BAD_CAST "page-faults", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprintf(strbuf, "%ld", rusage.ru_minflt);
+    snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_minflt);
     xmlNewChild(node, NULL, BAD_CAST "page-reclaims", BAD_CAST strbuf);
 
     if (USE_PROPTABLES) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprintf(strbuf, "%d", entries_write_stalls);
+	snprintf(strbuf, sizeof(strbuf), "%d", entries_write_stalls);
 	xmlNewChild(node, NULL, BAD_CAST "entries-write-stalls", BAD_CAST strbuf);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprintf(strbuf, "%d", entries_read_stalls);
+	snprintf(strbuf, sizeof(strbuf), "%d", entries_read_stalls);
 	xmlNewChild(node, NULL, BAD_CAST "entries-read-stalls", BAD_CAST strbuf);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprintf(strbuf, "%d", proptable_read_stalls);
+	snprintf(strbuf, sizeof(strbuf), "%d", proptable_read_stalls);
 	xmlNewChild(node, NULL, BAD_CAST "proptable-read-stalls", BAD_CAST strbuf);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprintf(strbuf, "%d", proptable_writes);
+	snprintf(strbuf, sizeof(strbuf), "%d", proptable_writes);
 	xmlNewChild(node, NULL, BAD_CAST "proptable-writes", BAD_CAST strbuf);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprint_timeval(strbuf, &entries_write_stall_time);
@@ -5456,12 +5467,12 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 
 	if (! strcmp(pass_type[passnum], "intratable")) {
 	    if (ENTRIES_FORMAT_DTM_BITS > 0) {
-		sprintf(strbuf, "%d", pass_target_dtms[passnum]);
+		snprintf(strbuf, sizeof(strbuf), "%d", pass_target_dtms[passnum]);
 		xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
 	    }
-	    sprintf(strbuf, "%d", positions_finalized[passnum]);
+	    snprintf(strbuf, sizeof(strbuf), "%d", positions_finalized[passnum]);
 	    xmlNewProp(passNode, BAD_CAST "positions-finalized", BAD_CAST strbuf);
-	    sprintf(strbuf, "%lld", backproped_moves[passnum]);
+	    snprintf(strbuf, sizeof(strbuf), "%lld", backproped_moves[passnum]);
 	    xmlNewProp(passNode, BAD_CAST "moves-generated", BAD_CAST strbuf);
 	}
     }
@@ -7238,11 +7249,11 @@ void proptable_full(void)
 #if 0
     xmlNodeAddContent(current_tb->current_pass_stats, BAD_CAST "\n      ");
     node = xmlNewChild(current_tb->current_pass_stats, NULL, BAD_CAST "proptable", NULL);
-    sprintf(strbuf, "%d", proptable_entries);
+    snprintf(strbuf, sizeof(strbuf), "%d", proptable_entries);
     xmlNewProp(node, BAD_CAST "entries", BAD_CAST strbuf);
-    sprintf(strbuf, "%d", proptable_merges);
+    snprintf(strbuf, sizeof(strbuf), "%d", proptable_merges);
     xmlNewProp(node, BAD_CAST "merges", BAD_CAST strbuf);
-    sprintf(strbuf, "%d%%", (100*proptable_entries)/num_propentries);
+    snprintf(strbuf, sizeof(strbuf), "%d%%", (100*proptable_entries)/num_propentries);
     xmlNewProp(node, BAD_CAST "occupancy", BAD_CAST strbuf);
 #endif
 
@@ -12258,7 +12269,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.410 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.411 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
