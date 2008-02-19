@@ -1,0 +1,46 @@
+dnl Process this file with autoconf to produce a configure script.
+AC_INIT(hoffman, VERSION)
+
+#AM_INIT_AUTOMAKE([dist-bzip2 1.6])
+#AM_CONFIG_HEADER(config.h)
+
+dnl Checks for programs.
+AC_PROG_CC
+AC_PROG_CPP
+AC_PROG_CXX
+#AC_PROG_INSTALL
+AC_PROG_LN_S
+AC_PROG_MAKE_SET
+AC_PROG_RANLIB
+
+if test x"$GCC" = xyes; then
+        CFLAGS="$CFLAGS -Wall"
+fi
+
+dnl Checks for libraries.
+
+AC_CHECK_LIB(curl, curl_easy_init)
+AC_CHECK_LIB(readline, readline)
+AC_CHECK_LIB(xml2, xmlReadFile)
+AC_CHECK_LIB(ftp, FtpConnect)
+
+dnl Checks for header files.
+AC_HEADER_STDC
+AC_CHECK_HEADERS(fcntl.h sys/time.h unistd.h)
+
+dnl Checks for typedefs, structures, and compiler characteristics.
+AC_C_CONST
+AC_TYPE_OFF_T
+AC_TYPE_SIZE_T
+AC_HEADER_TIME
+
+dnl Checks for library functions.
+AC_FUNC_MMAP
+AC_CHECK_FUNCS(gettimeofday select socket strcspn strdup strspn strtoul)
+
+AC_CHECK_HEADERS(stdint.h)
+
+AC_TRY_LINK([#include <sys/types.h>],u_int16_t i16;,
+  AC_DEFINE(HAVE_U_INTXX_T, 1, Define if you have u_int16_t and friends.))
+
+AC_OUTPUT(Makefile)
