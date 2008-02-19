@@ -233,18 +233,20 @@ int min_dtm = 0;
 struct timeval program_start_time;
 struct timeval program_end_time;
 
-#define MAX_PASSES 200
+/* per-pass statistics */
 
 int total_passes = 0;
-struct timeval pass_start_times[MAX_PASSES];
-struct timeval pass_end_times[MAX_PASSES];
-char * pass_type[MAX_PASSES];
-int pass_target_dtms[MAX_PASSES];
-int positions_finalized[MAX_PASSES];
-uint64 backproped_moves[MAX_PASSES];
+int max_passes = 0;
 
-uint8 positive_passes_needed[MAX_PASSES];
-uint8 negative_passes_needed[MAX_PASSES];
+struct timeval * pass_start_times = NULL;
+struct timeval * pass_end_times = NULL;
+char ** pass_type = NULL;
+int * pass_target_dtms = NULL;
+int * positions_finalized = NULL;
+uint64 * backproped_moves = NULL;
+
+uint8 * positive_passes_needed = NULL;
+uint8 * negative_passes_needed = NULL;
 
 int entries_write_stalls = 0;
 int entries_read_stalls = 0;
@@ -929,6 +931,22 @@ void fprint_system_time(void)
     fprintf(stderr, "System time: %s\n", strbuf);
 }
 
+void expand_per_pass_statistics(void) {
+
+    if (max_passes == 0) max_passes = 100;
+    else max_passes *= 2;
+
+    pass_start_times = realloc(pass_start_times, max_passes * sizeof(struct timeval));
+    pass_end_times = realloc(pass_end_times, max_passes * sizeof(struct timeval));
+    pass_type = realloc(pass_type, max_passes * sizeof(char *));
+    pass_target_dtms = realloc(pass_target_dtms, max_passes * sizeof(int));
+    positions_finalized = realloc(positions_finalized, max_passes * sizeof(int));
+    backproped_moves = realloc(backproped_moves, max_passes * sizeof(uint64));
+
+    /* we actually need these two arrays to be only half the size they are, because they are split like this */
+    positive_passes_needed = realloc(positive_passes_needed, max_passes * sizeof(uint8));
+    negative_passes_needed = realloc(negative_passes_needed, max_passes * sizeof(uint8));
+}
 
 /***** DYNAMIC STRUCTURES *****/
 
@@ -5367,7 +5385,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.409 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.410 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7955,6 +7973,7 @@ int propagation_pass(int target_dtm)
     info("Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized[total_passes]);
 
     total_passes ++;
+    if (total_passes == max_passes) expand_per_pass_statistics();
 
     return positions_finalized[total_passes-1];
 }
@@ -11929,6 +11948,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #endif
 #endif
 
+	/* This actually initializes the statistics arrays the first time it's called, and it
+	 * initializes for 100 passes, so these first few passes here don't need any extra checks to
+	 * see if they would overflow the arrays.
+	 */
+	expand_per_pass_statistics();
+
 	gettimeofday(&pass_start_times[total_passes], NULL);
 	pass_type[total_passes] = "initialization";
 
@@ -12233,7 +12258,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.409 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.410 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
