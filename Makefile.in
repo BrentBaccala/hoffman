@@ -16,8 +16,8 @@ CFLAGS=-O3 -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
 
 CPPFLAGS=$(CFLAGS)
 
-hoffman: hoffman.o probe.o egtb.o url_fopen.o zlib_fopen.o
-	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++ `curl-config --libs`
+hoffman: hoffman.o probe.o egtb.o url_fopen.o zlib_fopen.o ftp_fopen.o
+	gcc $(CFLAGS) -o hoffman $^ -L . -lreadline -lxml2 -lstdc++ `curl-config --libs` -lftp
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
@@ -27,6 +27,9 @@ tablebase_dtd.h: tablebase.dtd
 	echo "char * tablebase_dtd = \"\\" > $@
 	sed -e 's/"/\\"/g' -e 's/$$/\\/' $< >> $@
 	echo "\";" >> $@
+
+tarball:
+	tar czhf hoffman.tgz Makefile hoffman.c probe.c egtb.cpp lock.h tbdecode.h url_fopen.c ftp_fopen.c zlib_fopen.c url_fopen.h ftp_fopen.h zlib_fopen.h tablebase.dtd
 
 %.htb: %.xml
 	./hoffman -g -o $@ $<
