@@ -5389,7 +5389,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.413 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.414 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6978,6 +6978,21 @@ void back_propagate_index(index_t index, int target_dtm)
 
 }
 
+typedef struct {
+    index_t start_index;
+    index_t end_index;
+    int target_dtm;
+} intratable_propagation_control_t;
+
+void back_propagate_section(intratable_propagation_control_t *control)
+{
+    index_t index;
+
+    for (index = control->start_index; index <= control->end_index; index ++) {
+	back_propagate_index(index, control->target_dtm);
+    }
+}
+
 #if USE_PROPTABLES
 
 /* When propagating a change from one position to another, we go through this table to do it.  By
@@ -7879,6 +7894,17 @@ void insert_into_proptable(proptable_entry_t *pentry)
 
 #endif /* USE_PROPTABLES */
 
+/* If we're running multi-threaded, then there is a possibility that 1) two different positions will
+ * try to backprop into the same position (if we're not using proptables), or that 2) two different
+ * threads will try to insert into the proptable at the same time (if we're using proptables).
+ *
+ * A mutex lock on this next routine resolves both race conditions.
+ */
+
+#if USE_THREADS
+pthread_mutex_t commit_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
 void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 				futurevector_t futurevector)
 {
@@ -7886,6 +7912,10 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 #if USE_PROPTABLES
     char entry[MAX_FORMAT_BYTES];
     void *ptr = entry;
+#endif
+
+#if USE_THREADS
+    pthread_mutex_lock(&commit_lock);
 #endif
 
 #ifdef DEBUG_MOVE
@@ -7936,6 +7966,10 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 
 #endif
 
+#if USE_THREADS
+    pthread_mutex_unlock(&commit_lock);
+#endif
+
 }
 
 
@@ -7960,9 +7994,37 @@ int propagation_pass(int target_dtm)
 #if USE_PROPTABLES
     proptable_finalize(target_dtm);
 #else
+#if !USE_THREADS
     for (index = 0; index <= current_tb->max_index; index ++) {
 	back_propagate_index(index, target_dtm);
     }
+#else
+    intratable_propagation_control_t *controls;
+    pthread_t *threads;
+    int thread;
+
+    /* XXX check for malloc failure */
+    controls = malloc(sizeof(intratable_propagation_control_t) * num_threads);
+    threads = malloc(sizeof(pthread_t) * num_threads);
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	controls[thread].target_dtm = target_dtm;
+	controls[thread].start_index = ((current_tb->max_index+1)*thread)/num_threads;
+	if (thread != num_threads-1) {
+	    controls[thread].end_index = ((current_tb->max_index+1)*(thread+1))/num_threads - 1;
+	} else {
+	    controls[thread].end_index = current_tb->max_index;
+	}
+	pthread_create(&threads[thread], NULL, &back_propagate_section, &controls[thread]);
+    }
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	pthread_join(threads[thread], NULL);
+    }
+
+    free(threads);
+    free(controls);
+#endif
 #endif
 
     gettimeofday(&pass_end_times[total_passes], NULL);
@@ -12262,7 +12324,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.413 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.414 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
