@@ -29,6 +29,10 @@
 <!ATTLIST movecnt
 	offset CDATA				#IMPLIED
 	bits CDATA				#REQUIRED>
+<!ELEMENT locking-bit EMPTY>
+<!ATTLIST locking-bit
+	offset CDATA				#IMPLIED
+	bits (1)				#IMPLIED>
 <!ELEMENT in-check-flag EMPTY>
 <!ATTLIST in-check-flag
 	offset CDATA				#IMPLIED
