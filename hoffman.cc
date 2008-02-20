@@ -425,6 +425,7 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 struct format {
     uint8 bits;
     uint8 bytes;
+    int locking_bit_offset;
     uint32 dtm_mask;
     int dtm_offset;
     uint8 dtm_bits;
@@ -442,7 +443,7 @@ struct format {
     int PTM_wins_flag_offset;
 };
 
-char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag", "ptm-wins-flag", NULL};
+char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag", "ptm-wins-flag", "locking-bit", NULL};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_MOVECNT 1
@@ -450,6 +451,7 @@ char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag
 #define FORMAT_FIELD_FUTUREVECTOR 3
 #define FORMAT_FIELD_FLAG 4
 #define FORMAT_FIELD_PTM_WINS_FLAG 5
+#define FORMAT_FIELD_LOCKING_BIT 6
 
 char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
@@ -463,18 +465,22 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
  *
  * <entries-format>
  *    <dtm bits="8" offset="0"/>
- *    <movecnt bits="8" offset="8"/>
+ *    <locking-bit offset="8"/>
+ *    <movecnt bits="7" offset="9"/>
  * </entries-format>
  */
 
 #define USE_CONST_ENTRIES_FORMAT 1
 
-#if !USE_CONST_ENTRIES_FORMAT
+struct format entries_format = {4,2, 8, 0xff,0,8, 0x7f,9,7,
+				0,-1,0, 0,-1,0,
+				-1,FORMAT_FLAG_NONE, -1};
 
-struct format entries_format = {4,2, 0xff,0,8, 0xff,8,8};
+#if !USE_CONST_ENTRIES_FORMAT
 
 #define ENTRIES_FORMAT_BITS (entries_format.bits)
 #define ENTRIES_FORMAT_BYTES (entries_format.bytes)
+#define ENTRIES_FORMAT_LOCKING_BIT_OFFSET (entries_format.locking_bit_offset)
 #define ENTRIES_FORMAT_DTM_MASK (entries_format.dtm_mask)
 #define ENTRIES_FORMAT_DTM_OFFSET (entries_format.dtm_offset)
 #define ENTRIES_FORMAT_DTM_BITS (entries_format.dtm_bits)
@@ -487,19 +493,20 @@ struct format entries_format = {4,2, 0xff,0,8, 0xff,8,8};
 
 #define ENTRIES_FORMAT_BITS 4
 #define ENTRIES_FORMAT_BYTES 2
+#define ENTRIES_FORMAT_LOCKING_BIT_OFFSET 8
 #define ENTRIES_FORMAT_DTM_MASK 0xff
 #define ENTRIES_FORMAT_DTM_OFFSET 0
 #define ENTRIES_FORMAT_DTM_BITS 8
-#define ENTRIES_FORMAT_MOVECNT_MASK 0xff
-#define ENTRIES_FORMAT_MOVECNT_OFFSET 8
-#define ENTRIES_FORMAT_MOVECNT_BITS 8
+#define ENTRIES_FORMAT_MOVECNT_MASK 0x7f
+#define ENTRIES_FORMAT_MOVECNT_OFFSET 9
+#define ENTRIES_FORMAT_MOVECNT_BITS 7
 #define ENTRIES_FORMAT_FLAG_OFFSET 0
 
 #endif
 
 /* This is the "one-byte-dtm" format */
 
-struct format one_byte_dtm_format = {3,1, 0xff,0,8};
+struct format one_byte_dtm_format = {3,1, -1, 0xff,0,8};
 
 /* And this is the sixteen byte format we use by default for proptable entries.  Equivalent to:
  *
@@ -515,7 +522,7 @@ struct format one_byte_dtm_format = {3,1, 0xff,0,8};
 
 #if !USE_CONST_PROPTABLE_FORMAT
 
-const struct format proptable_format = {7,16, 0xffff,32,16, 0xff,56,8,
+const struct format proptable_format = {7,16, -1, 0xffff,32,16, 0xff,56,8,
 					0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
 					-1,FORMAT_FLAG_NONE, -1};
 
@@ -1084,6 +1091,28 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
     *ptr |= (val & mask) << offset;
 }
 
+
+/* These next two functions use GNU built-ins for atomic memory access */
+
+inline void lock_bit(uint32 *ptr, int offset)
+{
+    while (offset >= 32) {
+	offset -= 32;
+	ptr ++;
+    }
+
+    while (__sync_fetch_and_or(ptr, 1 << offset) & (1 << offset));
+}
+
+inline void unlock_bit(uint32 *ptr, int offset)
+{
+    while (offset >= 32) {
+	offset -= 32;
+	ptr ++;
+    }
+
+    __sync_fetch_and_xor(ptr, 1 << offset);
+}
 
 /***** MOVEMENT VECTORS *****/
 
@@ -3611,6 +3640,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 
     memset(format, 0, sizeof(struct format));
 
+    format->locking_bit_offset = -1;
     format->dtm_offset = -1;
     format->movecnt_offset = -1;
     format->index_offset = -1;
@@ -3627,11 +3657,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	    int offset = (offsetstr != NULL) ? atoi(offsetstr) : -1;
 	    int format_field = find_name_in_array((char *) child->name, format_fields);
 
-	    if ((bitstr == NULL) &&
-		((format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG))) {
-		bits = 1;
-	    }
-
 	    if (bitstr != NULL) xmlFree(bitstr);
 	    if (offsetstr != NULL) xmlFree(offsetstr);
 
@@ -3639,18 +3664,25 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		fatal("Unknown field in format: %s\n", (char *) child->name);
 		return 0;
 	    }
-	    if ((bits == 0)
-		&& (format_field != FORMAT_FIELD_FLAG) && (format_field != FORMAT_FIELD_PTM_WINS_FLAG)) {
+
+	    if ((format_field == FORMAT_FIELD_FLAG)
+		|| (format_field == FORMAT_FIELD_PTM_WINS_FLAG)
+		|| (format_field == FORMAT_FIELD_LOCKING_BIT)) {
+
+		if (bitstr == NULL) {
+		    bits = 1;
+		}
+		if (bits != 1) {
+		    fatal("Format field '%s' only accepts bits=\"1\"\n", (char *) child->name);
+		    return 0;
+		}
+	    }
+
+	    if (bits == 0) {
 		fatal("Non-zero 'bits' value must be specified in format field '%s'\n",
 		      (char *) child->name);
 		return 0;
 	    }
-	    if ((bits != 1)
-		&& ((format_field == FORMAT_FIELD_FLAG) || (format_field == FORMAT_FIELD_PTM_WINS_FLAG))) {
-		fatal("Format fields 'flag' and 'PTM-wins-flag' only accept bits=\"1\"\n");
-		return 0;
-	    }
-
 	    if ((offset == -1) && (auto_offset == -1)) {
 		fatal("Can't mix explicit and implicit offsets in format\n");
 		return 0;
@@ -3731,6 +3763,9 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		break;
 	    case FORMAT_FIELD_PTM_WINS_FLAG:
 		format->PTM_wins_flag_offset = offset;
+		break;
+	    case FORMAT_FIELD_LOCKING_BIT:
+		format->locking_bit_offset = offset;
 		break;
 	    default:
 		fatal("Unknown field in format\n");
@@ -4305,8 +4340,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	    return NULL;
 	}
 #else
-	fatal("Entries format constant in this version of Hoffman\n");
-	return NULL;
+	struct format tmp_format;
+	if (! parse_format(result->nodesetval->nodeTab[0], &tmp_format)) return NULL;
+	if (memcmp(&tmp_format, &entries_format, sizeof(struct format))) {
+	    fatal("Entries format incompatible with compiled-in constant format in this version of Hoffman\n");
+	    return NULL;
+	}
 #endif
     }
     xmlXPathFreeObject(result);
@@ -5391,7 +5430,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.416 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.417 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6623,6 +6662,36 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
 #define MOVECNT_MAX (ENTRIES_FORMAT_MOVECNT_MASK - 4)
 #define MOVECNT_PNTM_WINS_UNPROPED (0)
 
+/* If the entries format contains a locking bit, spinlock on it to acquire a lock on an entry;
+ * otherwise, we have to lock on the entire entries table.
+ */
+
+#if USE_THREADS
+pthread_mutex_t entries_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
+inline void lock_entry(tablebase_t *tb, index_t index)
+{
+#if USE_THREADS
+    if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
+	lock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET);
+    } else {
+	pthread_mutex_lock(&entries_lock);
+    }
+#endif
+}
+
+inline void unlock_entry(tablebase_t *tb, index_t index)
+{
+#if USE_THREADS
+    if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
+	unlock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET);
+    } else {
+	pthread_mutex_unlock(&entries_lock);
+    }
+#endif
+}
+
 inline int get_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_signed_field(fetch_entry_pointer(tb, index),
@@ -6897,6 +6966,8 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
     if (get_entry_raw_DTM(index) == 1) return;
 #endif
 
+    lock_entry(current_tb, index);
+
     /* Somewhat of a special case here.  First of all, futurevector is non-zero only on the first
      * back-propagation pass, when we back prop from the futurebases.  Also, if we're not using
      * proptables, then I use a seperate array for the futurevectors, which got filled in when we
@@ -6915,6 +6986,7 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
 	    index_to_global_position(current_tb, index, &global);
 	    fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
 #endif
+	    unlock_entry(current_tb, index);
 	    return;
 	}
 
@@ -6940,6 +7012,8 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
     } else {
 	fatal("Can't handle proptable formats without either a DTM field or PTM wins flag\n");
     }
+
+    unlock_entry(current_tb, index);
 }
 
 void back_propagate_index_within_table(tablebase_t *tb, index_t index, int reflection);
@@ -7909,17 +7983,12 @@ void insert_into_proptable(proptable_entry_t *pentry)
  * try to backprop into the same position (if we're not using proptables), or that 2) two different
  * threads will try to insert into the proptable at the same time (if we're using proptables).
  *
- * A mutex lock on this next routine resolves both race conditions.  I've tried to improve on this
- * in the non-proptable case by only locking on a table of locked indices, but I still get a lock of
- * lock contention, so there's still room for improvement (maybe try adding a single bit spinlock to
- * each tablebase entry).
+ * The first case is handled by a lock/unlock sequence in commit_entry; the second case is handled
+ * by a mutex lock on this next routine.
  */
 
-#if USE_THREADS
+#if USE_THREADS && USE_PROPTABLES
 pthread_mutex_t commit_lock = PTHREAD_MUTEX_INITIALIZER;
-
-index_t * locked_indices = NULL;
-pthread_cond_t locked_index_released = PTHREAD_COND_INITIALIZER;
 #endif
 
 void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
@@ -7931,39 +8000,11 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
     void *ptr = entry;
 #endif
 
-#if USE_THREADS
+#if USE_THREADS && USE_PROPTABLES
     if (pthread_mutex_trylock(&commit_lock) != 0) {
 	pthread_mutex_lock(&commit_lock);
 	contended_locks ++;
     }
-#endif
-
-#if USE_THREADS && !USE_PROPTABLES
-    int i;
-
-    if (locked_indices == NULL) {
-	/* XXX check for malloc failure */
-	locked_indices = malloc(sizeof(index_t) * num_threads);
-	memset(locked_indices, 0xff, sizeof(index_t) * num_threads);
-    }
-
- verify_index_unlocked:
-    for (i=0; i<num_threads; i++) {
-	if (locked_indices[i] == index) {
-	    contended_indices ++;
-	    pthread_cond_wait(&locked_index_released, &commit_lock);
-	    goto verify_index_unlocked;
-	}
-    }
-
-    for (i=0; i<num_threads; i++) {
-	if (locked_indices[i] == -1) {
-	    locked_indices[i] = index;
-	    break;
-	}
-    }
-
-    pthread_mutex_unlock(&commit_lock);
 #endif
 
 #ifdef DEBUG_MOVE
@@ -8016,17 +8057,6 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 
 #if USE_THREADS && USE_PROPTABLES
     pthread_mutex_unlock(&commit_lock);
-#endif
-
-#if USE_THREADS && !USE_PROPTABLES
-    if (pthread_mutex_trylock(&commit_lock) != 0) {
-	pthread_mutex_lock(&commit_lock);
-	contended_locks ++;
-    }
-    locked_indices[i] = -1;
-    pthread_mutex_unlock(&commit_lock);
-
-    pthread_cond_signal(&locked_index_released);
 #endif
 
 }
@@ -12383,7 +12413,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.416 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.417 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
