@@ -10,10 +10,10 @@ threes="k[qrbn]k.xml kpk.xml"
 
 fours="k[qrbn]k[qrbn].xml k[qrbnp]kp.xml kpkp.xml k[qrbn][qrbn]k.xml k[qrbn]pk.xml kppk.xml"
 
-fives="k[qrbn][qrbn]k[qrbn].xml k[qrbnp]pk[qrbn].xml kppk[qrbn].xml k[qrbn][qrbn]kp.xml k[qrbn]pkp.xml kppkp.xml k[qrbn][qrbn][qrbn]k.xml k[qrbn][qrbn]pk.xml k[qrbn]ppk.xml kpppk.xml"
+fives="k[qrbn][qrbn]k[qrbn].xml k[qrbn]pk[qrbn].xml kppk[qrbn].xml k[qrbn][qrbn]kp.xml k[qrbn]pkp.xml kppkp.xml k[qrbn][qrbn][qrbn]k.xml k[qrbn][qrbn]pk.xml k[qrbn]ppk.xml kpppk.xml"
 #fives="k[qrbn][qrbn]k[qrbn].xml"
 
-for xml in $(cd $XMLDIR; ls $twos $threes $fours $fives 2>/dev/null); do
+for xml in $(cd $XMLDIR; for i in $twos $threes $fours $fives; do ls $i 2>/dev/null; done); do
     htb=`echo $xml | sed s/xml/htb/`;
     xml=$XMLDIR/$xml
     if [ -f $xml -a ! -f $htb ]; then
