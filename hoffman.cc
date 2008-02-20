@@ -166,6 +166,7 @@
 #if USE_THREADS
 #include <pthread.h>
 int num_threads = 1;
+long contended_locks = 0;
 #endif
 
 
@@ -5389,7 +5390,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.414 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.415 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5415,6 +5416,12 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_minflt);
     xmlNewChild(node, NULL, BAD_CAST "page-reclaims", BAD_CAST strbuf);
+
+#if USE_THREADS
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
+    xmlNewChild(node, NULL, BAD_CAST "contended-locks", BAD_CAST strbuf);
+#endif
 
     if (USE_PROPTABLES) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7915,7 +7922,10 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 #endif
 
 #if USE_THREADS
-    pthread_mutex_lock(&commit_lock);
+    if (pthread_mutex_trylock(&commit_lock) != 0) {
+	pthread_mutex_lock(&commit_lock);
+	contended_locks ++;
+    }
 #endif
 
 #ifdef DEBUG_MOVE
@@ -12324,7 +12334,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.414 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.415 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
