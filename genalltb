@@ -1,61 +1,22 @@
 #!/bin/sh
 
+XMLDIR=xml
+
 # make sure the pawn configurations always come last, since they depend on the others
 
 twos=kk.xml
-threes=k[qrbn]k.xml kpk.xml
-fours=k[qrbn]k[qrbn].xml k[qrbnp]kp.xml kpkp.xml k[qrbn][qrbn]k.xml k[qrbn]pk.xml kppk.xml
-fives=k[qrbn][qrbn]k[qrbn].xml k[qrbnp]pk[qrbn].xml kppk[qrbn].xml k[qrbn][qrbn]kp.xml k[qrbn]pkp.xml kppkp.xml k[qrbn][qrbn][qrbn]k.xml k[qrbn][qrbn]pk.xml k[qrbn]ppk.xml kpppk.xml
 
-for xml in *.xml; do
+threes="k[qrbn]k.xml kpk.xml"
+
+fours="k[qrbn]k[qrbn].xml k[qrbnp]kp.xml kpkp.xml k[qrbn][qrbn]k.xml k[qrbn]pk.xml kppk.xml"
+
+fives="k[qrbn][qrbn]k[qrbn].xml k[qrbnp]pk[qrbn].xml kppk[qrbn].xml k[qrbn][qrbn]kp.xml k[qrbn]pkp.xml kppkp.xml k[qrbn][qrbn][qrbn]k.xml k[qrbn][qrbn]pk.xml k[qrbn]ppk.xml kpppk.xml"
+#fives="k[qrbn][qrbn]k[qrbn].xml"
+
+for xml in $(cd $XMLDIR; ls $twos $threes $fours $fives 2>/dev/null); do
     htb=`echo $xml | sed s/xml/htb/`;
-    if [ ! -f $htb ]; then
-	echo $xml;
-	./hoffman -g $xml
+    xml=$XMLDIR/$xml
+    if [ -f $xml -a ! -f $htb ]; then
+	echo ./hoffman $* -g $xml
     fi
 done
-
-exit
-
-hoffman -g kk.xml
-
-hoffman -g kqk.xml
-hoffman -g krk.xml
-hoffman -g kbk.xml
-hoffman -g knk.xml
-hoffman -g kpk.xml
-
-hoffman -g kqkq.xml
-hoffman -g kqkr.xml
-hoffman -g kqkb.xml
-hoffman -g kqkn.xml
-hoffman -g krkr.xml
-hoffman -g krkb.xml
-hoffman -g krkn.xml
-hoffman -g kbkb.xml
-hoffman -g kbkn.xml
-hoffman -g knkn.xml
-
-hoffman -g kqkp.xml
-hoffman -g krkp.xml
-hoffman -g kbkp.xml
-hoffman -g knkp.xml
-hoffman -g kpkp.xml
-
-hoffman -g kqqk.xml
-hoffman -g kqrk.xml
-hoffman -g kqbk.xml
-hoffman -g kqnk.xml
-hoffman -g krrk.xml
-hoffman -g krbk.xml
-hoffman -g krnk.xml
-hoffman -g kbbk.xml
-hoffman -g kbnk.xml
-hoffman -g knnk.xml
-
-hoffman -g kqpk.xml
-hoffman -g krpk.xml
-hoffman -g kbpk.xml
-hoffman -g knpk.xml
-
-hoffman -g kppk.xml
