@@ -66,10 +66,11 @@ sub print_cntl_file {
     printnl '<tablebase>';
     if (index($filename, 'p') == -1) {
 	printnl '   <index type="compact" symmetry="8-way"/>';
+	printnl '   <format><dtm bits="8"/></format>';
     } else {
 	printnl '   <index type="compact" symmetry="2-way"/>';
+	printnl '   <format><dtm bits="16"/></format>';
     }
-    printnl '   <format><dtm bits="8"/></format>';
     printnl '   <piece color="white" type="king"/>';
     printnl '   <piece color="black" type="king"/>';
     printnl '   <piece color="white" type="' . $pieces{$white_piece1} . '"/>';
