@@ -472,11 +472,15 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 #define USE_CONST_ENTRIES_FORMAT 1
 
+#if USE_CONST_ENTRIES_FORMAT
+const
+#endif
+
 struct format entries_format = {4,2, 8, 0xff,0,8, 0x7f,9,7,
 				0,-1,0, 0,-1,0,
 				-1,FORMAT_FLAG_NONE, -1};
 
-#if !USE_CONST_ENTRIES_FORMAT
+#if 1
 
 #define ENTRIES_FORMAT_BITS (entries_format.bits)
 #define ENTRIES_FORMAT_BYTES (entries_format.bytes)
@@ -5430,7 +5434,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.417 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.418 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12413,7 +12417,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.417 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.418 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
