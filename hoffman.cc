@@ -461,24 +461,17 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 #define MAX_FORMAT_BYTES 16
 
-/* This is the format that we use for in-memory tablebase arrays.  The default is equivalent to:
+/* This is the format that we use for in-memory tablebase arrays.  It's 'const' for efficiency, and in a separate
+ * file for convenience.
  *
- * <entries-format>
- *    <dtm bits="8" offset="0"/>
- *    <locking-bit offset="8"/>
- *    <movecnt bits="7" offset="9"/>
- * </entries-format>
+ * If the program wants it changed, it will let you know ;-)
  */
 
 #define USE_CONST_ENTRIES_FORMAT 1
 
-#if USE_CONST_ENTRIES_FORMAT
-const
-#endif
+#include "formats.h"
 
-struct format entries_format = {4,2, 8, 0xff,0,8, 0x7f,9,7,
-				0,-1,0, 0,-1,0,
-				-1,FORMAT_FLAG_NONE, -1};
+
 
 #if 1
 
@@ -4347,7 +4340,15 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	struct format tmp_format;
 	if (! parse_format(result->nodesetval->nodeTab[0], &tmp_format)) return NULL;
 	if (memcmp(&tmp_format, &entries_format, sizeof(struct format))) {
-	    fatal("Entries format incompatible with compiled-in constant format in this version of Hoffman\n");
+	    fatal("Entries format incompatible with compiled-in format\n");
+	    fatal("Recompile using this \"formats.h\":\n");
+	    fatal("   const struct format entries_format = {%d,%d, %d, 0x%x,%d,%d, 0x%x,%d,%d, 0x%x,%d,%d, 0x%llx,%d,%d, %d,%d, %d};\n",
+		  tmp_format.bits, tmp_format.bytes, tmp_format.locking_bit_offset,
+		  tmp_format.dtm_mask, tmp_format.dtm_offset, tmp_format.dtm_bits,
+		  tmp_format.movecnt_mask, tmp_format.movecnt_offset, tmp_format.movecnt_bits,
+		  tmp_format.index_mask, tmp_format.index_offset, tmp_format.index_bits,
+		  tmp_format.futurevector_mask, tmp_format.futurevector_offset, tmp_format.futurevector_bits,
+		  tmp_format.flag_offset, tmp_format.flag_type, tmp_format.PTM_wins_flag_offset);
 	    return NULL;
 	}
 #endif
@@ -5434,7 +5435,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.418 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.419 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12417,7 +12418,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.418 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.419 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
