@@ -113,6 +113,19 @@ sub print_cntl_file {
 
     printnl '   <generation-controls>';
     printnl '      <output filename ="' . $filename . '.htb"/>';
+    if (index($filename, 'p') == -1) {
+	printnl '      <entries-format>';
+	printnl '         <dtm bits="8" offset="0"/>';
+	printnl '         <locking-bit offset="8"/>';
+	printnl '         <movecnt bits="7" offset="9"/>';
+	printnl '      </entries-format>';
+    } else {
+	printnl '      <entries-format>';
+	printnl '         <dtm bits="24" offset="0"/>';
+	printnl '         <locking-bit offset="24"/>';
+	printnl '         <movecnt bits="7" offset="25"/>';
+	printnl '      </entries-format>';
+    }
     printnl '   </generation-controls>';
 
     printnl '</tablebase>';
