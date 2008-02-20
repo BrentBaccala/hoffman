@@ -167,6 +167,7 @@
 #include <pthread.h>
 int num_threads = 1;
 long contended_locks = 0;
+long contended_indices = 0;
 #endif
 
 
@@ -5390,7 +5391,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.415 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.416 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5421,6 +5422,9 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
     xmlNewChild(node, NULL, BAD_CAST "contended-locks", BAD_CAST strbuf);
+    xmlNodeAddContent(node, BAD_CAST "\n      ");
+    snprintf(strbuf, sizeof(strbuf), "%ld", contended_indices);
+    xmlNewChild(node, NULL, BAD_CAST "contended-indices", BAD_CAST strbuf);
 #endif
 
     if (USE_PROPTABLES) {
@@ -7905,11 +7909,17 @@ void insert_into_proptable(proptable_entry_t *pentry)
  * try to backprop into the same position (if we're not using proptables), or that 2) two different
  * threads will try to insert into the proptable at the same time (if we're using proptables).
  *
- * A mutex lock on this next routine resolves both race conditions.
+ * A mutex lock on this next routine resolves both race conditions.  I've tried to improve on this
+ * in the non-proptable case by only locking on a table of locked indices, but I still get a lock of
+ * lock contention, so there's still room for improvement (maybe try adding a single bit spinlock to
+ * each tablebase entry).
  */
 
 #if USE_THREADS
 pthread_mutex_t commit_lock = PTHREAD_MUTEX_INITIALIZER;
+
+index_t * locked_indices = NULL;
+pthread_cond_t locked_index_released = PTHREAD_COND_INITIALIZER;
 #endif
 
 void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
@@ -7926,6 +7936,34 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 	pthread_mutex_lock(&commit_lock);
 	contended_locks ++;
     }
+#endif
+
+#if USE_THREADS && !USE_PROPTABLES
+    int i;
+
+    if (locked_indices == NULL) {
+	/* XXX check for malloc failure */
+	locked_indices = malloc(sizeof(index_t) * num_threads);
+	memset(locked_indices, 0xff, sizeof(index_t) * num_threads);
+    }
+
+ verify_index_unlocked:
+    for (i=0; i<num_threads; i++) {
+	if (locked_indices[i] == index) {
+	    contended_indices ++;
+	    pthread_cond_wait(&locked_index_released, &commit_lock);
+	    goto verify_index_unlocked;
+	}
+    }
+
+    for (i=0; i<num_threads; i++) {
+	if (locked_indices[i] == -1) {
+	    locked_indices[i] = index;
+	    break;
+	}
+    }
+
+    pthread_mutex_unlock(&commit_lock);
 #endif
 
 #ifdef DEBUG_MOVE
@@ -7976,8 +8014,19 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 
 #endif
 
-#if USE_THREADS
+#if USE_THREADS && USE_PROPTABLES
     pthread_mutex_unlock(&commit_lock);
+#endif
+
+#if USE_THREADS && !USE_PROPTABLES
+    if (pthread_mutex_trylock(&commit_lock) != 0) {
+	pthread_mutex_lock(&commit_lock);
+	contended_locks ++;
+    }
+    locked_indices[i] = -1;
+    pthread_mutex_unlock(&commit_lock);
+
+    pthread_cond_signal(&locked_index_released);
 #endif
 
 }
@@ -12334,7 +12383,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.415 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.416 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
