@@ -242,6 +242,7 @@ int max_passes = 0;
 
 struct timeval * pass_start_times = NULL;
 struct timeval * pass_end_times = NULL;
+struct rusage * pass_rusage = NULL;
 char ** pass_type = NULL;
 int * pass_target_dtms = NULL;
 int * positions_finalized = NULL;
@@ -892,7 +893,7 @@ int vertical_reflection(int square)
 void subtract_timeval(struct timeval *dest, struct timeval *src)
 {
     dest->tv_sec -= src->tv_sec;
-    if (dest->tv_usec > src->tv_usec) {
+    if (dest->tv_usec >= src->tv_usec) {
 	dest->tv_usec -= src->tv_usec;
     } else {
 	dest->tv_usec = 1000000 + dest->tv_usec - src->tv_usec;
@@ -944,6 +945,7 @@ void expand_per_pass_statistics(void) {
 
     pass_start_times = realloc(pass_start_times, max_passes * sizeof(struct timeval));
     pass_end_times = realloc(pass_end_times, max_passes * sizeof(struct timeval));
+    pass_rusage = realloc(pass_rusage, max_passes * sizeof(struct rusage));
     pass_type = realloc(pass_type, max_passes * sizeof(char *));
     pass_target_dtms = realloc(pass_target_dtms, max_passes * sizeof(int));
     positions_finalized = realloc(positions_finalized, max_passes * sizeof(int));
@@ -953,8 +955,10 @@ void expand_per_pass_statistics(void) {
     positive_passes_needed = realloc(positive_passes_needed, max_passes * sizeof(uint8));
     negative_passes_needed = realloc(negative_passes_needed, max_passes * sizeof(uint8));
 
+    /* not all of these arrays are cumulative, but just zero them all to be on the safe size */
     bzero(pass_start_times + total_passes, (max_passes-total_passes)*sizeof(struct timeval));
     bzero(pass_end_times + total_passes, (max_passes-total_passes)*sizeof(struct timeval));
+    bzero(pass_rusage + total_passes, (max_passes-total_passes)*sizeof(struct rusage));
     bzero(pass_type + total_passes, (max_passes-total_passes)*sizeof(char *));
     bzero(pass_target_dtms + total_passes, (max_passes-total_passes)*sizeof(int));
     bzero(positions_finalized + total_passes, (max_passes-total_passes)*sizeof(int));
@@ -5447,7 +5451,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.424 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.425 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5515,6 +5519,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 
     for (passnum = 0; passnum < total_passes; passnum ++) {
 	xmlNodePtr passNode;
+	struct timeval tmptime;
 
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	passNode = xmlNewChild(node, NULL, BAD_CAST "pass", NULL);
@@ -5524,6 +5529,11 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 	subtract_timeval(&pass_end_times[passnum], &pass_start_times[passnum]);
 	sprint_timeval(strbuf, &pass_end_times[passnum]);
 	xmlNewProp(passNode, BAD_CAST "real-time", BAD_CAST strbuf);
+
+	tmptime = pass_rusage[passnum].ru_utime;
+	if (passnum > 0) subtract_timeval(&tmptime, &pass_rusage[passnum-1].ru_utime);
+	sprint_timeval(strbuf, &tmptime);
+	xmlNewProp(passNode, BAD_CAST "user-time", BAD_CAST strbuf);
 
 	if (! strcmp(pass_type[passnum], "intratable")) {
 	    if (ENTRIES_FORMAT_DTM_BITS > 0) {
@@ -8191,6 +8201,7 @@ int propagation_pass(int target_dtm)
 #endif
 
     gettimeofday(&pass_end_times[total_passes], NULL);
+    getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
 
     total_backproped_moves += backproped_moves[total_passes];
 
@@ -12276,6 +12287,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	initialize_tablebase(tb);
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
+	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
 	total_passes ++;
 
 	info("Total legal positions: %lld\n", total_legal_positions);
@@ -12287,6 +12299,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	if (! back_propagate_all_futurebases(tb)) return 0;
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
+	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
 	total_passes ++;
 
 	gettimeofday(&pass_start_times[total_passes], NULL);
@@ -12298,6 +12311,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	info("All futuremoves handled under move restrictions\n");
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
+	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
 	total_passes ++;
 
 	free(tb->futurevectors);
@@ -12318,6 +12332,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	finalize_proptable_write();
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
+	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
 	total_passes ++;
 
 	info("Initializing tablebase...\n");
@@ -12573,7 +12588,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.424 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.425 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
