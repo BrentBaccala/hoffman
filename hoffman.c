@@ -270,7 +270,7 @@ struct timeval proptable_preload_time = {0, 0};
  * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move.
  */
 
-typedef uint8 futurevector_t;
+typedef uint16 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 
@@ -5435,7 +5435,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.419 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.420 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6514,11 +6514,8 @@ void twister(tablebase_t *tb, index_t index)
  * (possibly over the network)
  */
 
-inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
+inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 {
-    static char entry[MAX_FORMAT_BYTES];
-    static tablebase_t *cached_tb = NULL;
-    static index_t cached_index = 0;
     int retval;
 
     if (tb->file == NULL) {
@@ -6529,8 +6526,6 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     if (tb->format.bits == 3) {
 
 	/* Special case for the very common one-byte-DTM format */
-
-	if ((cached_tb == tb) && (index == cached_index)) return entry;
 
 	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
 
@@ -6566,7 +6561,7 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	do {
 
-	    if (zlib_read(tb->file, &entry[0], 1) != 1) {
+	    if (zlib_read(tb->file, entry, 1) != 1) {
 		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	    }
 	    tb->next_read_index ++;
@@ -6574,9 +6569,6 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	} while (tb->next_read_index <= index);
 
     } else {
-
-	if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
-				  == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
 
 	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
 
@@ -6616,6 +6608,20 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	} while (LEFTSHIFT(index, tb->format.bits - 3)
 		 >= LEFTSHIFT(tb->next_read_index, tb->format.bits - 3));
     }
+}
+
+inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
+{
+    static char entry[MAX_FORMAT_BYTES];
+    static tablebase_t *cached_tb = NULL;
+    static index_t cached_index = 0;
+
+    if ((cached_tb == tb) && (index == cached_index)) return entry;
+
+    if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
+			      == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
+
+    prefetch_entry_pointer(tb, index, entry);
 
     cached_tb = tb;
     cached_index = index;
@@ -12418,7 +12424,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.419 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.420 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
