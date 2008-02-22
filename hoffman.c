@@ -6511,7 +6511,22 @@ void twister(tablebase_t *tb, index_t index)
 #endif /* USE_PROPTABLES */
 
 /* Fetch an entry pointer from a preloaded tablebase - we're reading from a compressed file
- * (possibly over the network)
+ * (possibly over the network).
+ *
+ * There's a whole lot of complexity here to achieve caching and also handle variable size tablebase
+ * formats.  We keep a variable sized cache of variable sized entries, and have a version of our
+ * fetch routine that writes into one particular numbered cache entry, but only after searching all
+ * of them for a matching entry.  Then we have a default version that writes into entry 0 (after
+ * searching them all), and that's what we use, except when we're prefetching during a multi-task
+ * backprop, when we prefetch into the entry number corresponding to the task that will require the
+ * entry later.  That way, we insure that the entry is always there when that particular task
+ * requests it later (using the default routine), and also that the actual reads occur in order.
+ *
+ * I know, there's got to be a better way of doing this... maybe by exposing the buffering a little
+ * more, and then either stalling the threads when they get to the end of a buffer and need to
+ * decompress the next one, or by having a special thread just to do the decompression and try to
+ * keep ahead of the others, though that could probably be implemented by having a double buffer
+ * approach, and the last thread out of the tail buffer decompresses a new head buffer.
  */
 
 inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
@@ -6610,22 +6625,61 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
     }
 }
 
+tablebase_t *cached_tb = NULL;
+void *cached_entries = NULL;
+index_t *cached_indices = NULL;
+int num_cached_entries = 0;
+
+inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
+{
+    /* First, check to see if we've got the requested index in ANY cache entry */
+
+    if (cached_tb == tb) {
+
+	int i;
+
+	for (i=0; i<num_cached_entries; i++) {
+
+	    if (index == cached_indices[i])
+		return cached_entries + i*tb->format.bytes;
+
+	    if (LEFTSHIFT(index, tb->format.bits - 3) == LEFTSHIFT(cached_indices[i], tb->format.bits - 3))
+		return cached_entries + i*tb->format.bytes;
+	}
+
+    } else if (cached_entries != NULL) {
+
+	/* If we're switching tablebases, discard old cache */
+
+	free(cached_entries);
+	free(cached_indices);
+	cached_entries = NULL;
+	cached_indices = NULL;
+	num_cached_entries = 0;
+
+	cached_tb = tb;
+    }
+
+    /* If cache isn't big enough, build it or expand it */
+
+    if (n >= num_cached_entries) {
+	cached_entries = realloc(cached_entries, tb->format.bytes * (n+1));
+	cached_indices = realloc(cached_indices, sizeof(index_t) * (n+1));
+	memset(cached_indices + num_cached_entries, 0xff, sizeof(index_t) * ((n+1) - num_cached_entries));
+	num_cached_entries = n+1;
+    }
+
+    /* It's not there, so fetch it and cache it */
+
+    prefetch_entry_pointer(tb, index, cached_entries + n*tb->format.bytes);
+    cached_indices[n] = index;
+
+    return (cached_entries + n*tb->format.bytes);
+}
+
 inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 {
-    static char entry[MAX_FORMAT_BYTES];
-    static tablebase_t *cached_tb = NULL;
-    static index_t cached_index = 0;
-
-    if ((cached_tb == tb) && (index == cached_index)) return entry;
-
-    if ((cached_tb == tb) && (LEFTSHIFT(index, tb->format.bits - 3)
-			      == LEFTSHIFT(cached_index, tb->format.bits - 3))) return entry;
-
-    prefetch_entry_pointer(tb, index, entry);
-
-    cached_tb = tb;
-    cached_index = index;
-    return entry;
+    return fetch_entry_pointer_n(tb, index, 0);
 }
 
 inline entry_t * fetch_current_entry_pointer(index_t index)
