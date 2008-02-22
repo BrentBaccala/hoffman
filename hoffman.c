@@ -5435,7 +5435,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.422 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.423 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8490,6 +8490,14 @@ int first_back_rank_square;
 int last_back_rank_square;
 int promotion_move;
 
+tablebase_t * futurebase;
+int invert_colors_of_futurebase;
+
+index_t next_future_index;
+
+#if USE_THREADS
+pthread_mutex_t next_future_index_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
 
 /* Back propagate promotion moves
  *
@@ -8497,8 +8505,7 @@ int promotion_move;
  * futurebase for positions with that piece on the last rank and back-props.
  */
 
-void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-					       int invert_colors_of_futurebase)
+void propagate_moves_from_promotion_futurebase(int threadno)
 {
     index_t future_index;
     local_position_t foreign_position;
@@ -8510,7 +8517,22 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
     /* We could limit the range of future_index here */
 
-    for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
+    while (1) {
+
+#if USE_THREADS
+	pthread_mutex_lock(&next_future_index_lock);
+#endif
+
+	future_index = next_future_index ++;
+	if (future_index <= futurebase->max_index) {
+	    fetch_entry_pointer_n(futurebase, future_index, threadno);
+	}
+
+#if USE_THREADS
+	pthread_mutex_unlock(&next_future_index_lock);
+#endif
+
+	if (future_index > futurebase->max_index) break;
 
 	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
@@ -8530,7 +8552,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 					  &foreign_position)) continue;
 
 	    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
-									     tb, &position,
+									     current_tb, &position,
 									     invert_colors_of_futurebase);
 
 	    if (conversion_result != -1) {
@@ -8599,7 +8621,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 		     */
 
 		    if (!(position.board_vector & BITVECTOR(promotion_sq - promotion_move))
-			&& (tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
+			&& (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
 
 			/* Because the promoted piece was 'extra' it doesn't appear in the local
 			 * position, so we don't have to worry about taking it off the board.  Put
@@ -8610,7 +8632,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 			/* Normalize the position, and back prop it. */
 
-			normalize_position(tb, &position);
+			normalize_position(current_tb, &position);
 
 			true_pawn = position.permuted_piece[pawn];
 
@@ -8619,25 +8641,25 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 			 */
 
 			if ((futurebase->stalemate_prune_type == RESTRICTION_CONCEDE)
-			    && (futurebase->stalemate_prune_color == tb->piece_color[pawn])
+			    && (futurebase->stalemate_prune_color == current_tb->piece_color[pawn])
 			    && (! futurebase->invert_colors)
 			    && futurebase->piece_type[extra_piece] == QUEEN) {
 
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotions[true_pawn]
 									  + QUEEN - 1,
 									  &position);
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotions[true_pawn]
 									  + ROOK - 1,
 									  &position);
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotions[true_pawn]
 									  + BISHOP - 1,
 									  &position);
 
 			} else {
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotions[true_pawn]
 									  + futurebase->piece_type[extra_piece] - 1,
 									  &position);
@@ -8645,7 +8667,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 
 			/* We may be about to use this position again, so put the board_vector back... */
 
-			denormalize_position(tb, &position);
+			denormalize_position(current_tb, &position);
 			position.board_vector &=~ BITVECTOR(position.piece_position[pawn]);
 		    }
 
@@ -8664,14 +8686,14 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
 			if (invert_colors_of_futurebase)
 			    new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
 
-			for (piece = 0; piece < tb->num_pieces; piece ++) {
+			for (piece = 0; piece < current_tb->num_pieces; piece ++) {
 			    if (position.piece_position[piece] == new_promotion_sq) {
 				position.piece_position[piece] = promotion_sq;
 				break;
 			    }
 			}
 
-			if (piece == tb->num_pieces) {
+			if (piece == current_tb->num_pieces) {
 			    fatal("Couldn't back up to an identical piece in promotion back prop\n");
 			    break;
 			}
@@ -8685,8 +8707,7 @@ void propagate_moves_from_promotion_futurebase(tablebase_t *tb, tablebase_t *fut
     }
 }
 
-void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-						       int invert_colors_of_futurebase)
+void propagate_moves_from_promotion_capture_futurebase(int threadno)
 {
     index_t future_index;
     local_position_t foreign_position;
@@ -8699,7 +8720,22 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
     /* We could limit the range of future_index here */
 
-    for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
+    while (1) {
+
+#if USE_THREADS
+	pthread_mutex_lock(&next_future_index_lock);
+#endif
+
+	future_index = next_future_index ++;
+	if (future_index <= futurebase->max_index) {
+	    fetch_entry_pointer_n(futurebase, future_index, threadno);
+	}
+
+#if USE_THREADS
+	pthread_mutex_unlock(&next_future_index_lock);
+#endif
+
+	if (future_index > futurebase->max_index) break;
 
 	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
@@ -8719,7 +8755,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 					  &foreign_position)) continue;
 
 	    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
-									     tb, &position,
+									     current_tb, &position,
 									     invert_colors_of_futurebase);
 
 	    if (conversion_result != -1) {
@@ -8794,7 +8830,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    if ((COL(promotion_sq) != 0)
 			&& !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
-			&& (tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
+			&& (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
 
 			/* Because the promoted piece was 'extra' it doesn't appear in the local
 			 * position, so we don't have to worry about taking it off the board.  Put
@@ -8805,7 +8841,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 			/* Back propagate the resulting position */
 
-			normalize_position(tb, &position);
+			normalize_position(current_tb, &position);
 
 			true_captured_piece = position.permuted_piece[missing_piece2];
 			true_pawn = position.permuted_piece[pawn];
@@ -8815,29 +8851,29 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			 */
 
 			if ((futurebase->stalemate_prune_type == RESTRICTION_CONCEDE)
-			    && (futurebase->stalemate_prune_color == tb->piece_color[pawn])
+			    && (futurebase->stalemate_prune_color == current_tb->piece_color[pawn])
 			    && (! futurebase->invert_colors)
 			    && futurebase->piece_type[extra_piece] == QUEEN) {
 
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece] + QUEEN - 1,
 									  &position);
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece] + ROOK - 1,
 									  &position);
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece] + BISHOP - 1,
 									  &position);
 
 			} else {
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 									  &position);
 			}
 
 			/* We're about to use this position again, so put the board_vector back... */
 
-			denormalize_position(tb, &position);
+			denormalize_position(current_tb, &position);
 			position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
 		    }
 
@@ -8847,7 +8883,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 		    if ((COL(promotion_sq) != 7)
 			&& !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
-			&& (tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
+			&& (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
 
 			/* Because the promoted piece was 'extra' it doesn't appear in the local
 			 * position, so we don't have to worry about taking it off the board.  Put
@@ -8856,36 +8892,36 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 
 			position.piece_position[pawn] = promotion_sq - promotion_move + 1;
 
-			normalize_position(tb, &position);
+			normalize_position(current_tb, &position);
 
 			true_captured_piece = position.permuted_piece[missing_piece2];
 			true_pawn = position.permuted_piece[pawn];
 
 			if ((futurebase->stalemate_prune_type == RESTRICTION_CONCEDE)
-			    && (futurebase->stalemate_prune_color == tb->piece_color[pawn])
+			    && (futurebase->stalemate_prune_color == current_tb->piece_color[pawn])
 			    && (! futurebase->invert_colors)
 			    && futurebase->piece_type[extra_piece] == QUEEN) {
 
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece] + QUEEN - 1,
 									  &position);
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece] + ROOK - 1,
 									  &position);
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece] + BISHOP - 1,
 									  &position);
 
 			} else {
 
-			    propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
 									  &position);
 			}
 
 			/* We're about to use this position again, so put the board_vector back... */
 
-			denormalize_position(tb, &position);
+			denormalize_position(current_tb, &position);
 			position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
 		    }
 
@@ -8911,14 +8947,14 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
 			if (invert_colors_of_futurebase)
 			    new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
 
-			for (piece = 0; piece < tb->num_pieces; piece ++) {
+			for (piece = 0; piece < current_tb->num_pieces; piece ++) {
 			    if (position.piece_position[piece] == new_promotion_sq) {
 				position.piece_position[piece] = promotion_sq;
 				break;
 			    }
 			}
 
-			if (piece == tb->num_pieces) {
+			if (piece == current_tb->num_pieces) {
 			    fatal("Couldn't back up to an identical piece in promotion back prop\n");
 			    break;
 			}
@@ -8941,8 +8977,7 @@ void propagate_moves_from_promotion_capture_futurebase(tablebase_t *tb, tablebas
  * on invert_colors_of_global position.
  */
 
-void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
-				local_position_t *position,
+void consider_possible_captures(index_t future_index, local_position_t *position,
 				int capturing_piece, int captured_piece)
 {
     int dir;
@@ -8952,7 +8987,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 
     /* We only want to consider pieces of the side which captured... */
 
-    if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) return;
+    if (current_tb->piece_color[capturing_piece] == current_tb->piece_color[captured_piece]) return;
 
     /* Put the captured piece on the capturing piece's square (from the future position).  */
 
@@ -8967,7 +9002,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 
     /* Now consider all possible backwards movements of the capturing piece. */
 
-    if (tb->piece_type[capturing_piece] != PAWN) {
+    if (current_tb->piece_type[capturing_piece] != PAWN) {
 
 	/* If the square we put the captured piece on isn't semilegal for it, then don't consider
 	 * this capturing piece in this future position any more.  This is after the "if" instead of
@@ -8975,18 +9010,18 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 	 * ends up on a different square from the captured piece.
 	 */
 
-	if (!(tb->semilegal_squares[captured_piece]
+	if (!(current_tb->semilegal_squares[captured_piece]
 	      & BITVECTOR(position->piece_position[captured_piece]))) {
 	    return;
 	}
 
-	for (dir = 0; dir < number_of_movement_directions[tb->piece_type[capturing_piece]]; dir++) {
+	for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[capturing_piece]]; dir++) {
 
 	    /* Make sure we start each movement of the capturing piece from the capture square */
 
 	    position->piece_position[capturing_piece] = position->piece_position[captured_piece];
 
-	    for (movementptr = movements[tb->piece_type[capturing_piece]][position->piece_position[capturing_piece]][dir];
+	    for (movementptr = movements[current_tb->piece_type[capturing_piece]][position->piece_position[capturing_piece]][dir];
 		 (movementptr->vector & position->board_vector) == 0;
 		 movementptr++) {
 
@@ -8994,7 +9029,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 		 * check the capturing piece.
 		 */
 
-		if (! (tb->semilegal_squares[capturing_piece] & movementptr->vector)) continue;
+		if (! (current_tb->semilegal_squares[capturing_piece] & movementptr->vector)) continue;
 
 		/* Move the capturing piece, normalize the position, and back prop it.
 		 *
@@ -9013,16 +9048,16 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 
 		position->piece_position[capturing_piece] = movementptr->square;
 
-		normalize_position(tb, position);
+		normalize_position(current_tb, position);
 
 		true_capturing_piece = position->permuted_piece[capturing_piece];
 		true_captured_piece = position->permuted_piece[captured_piece];
 
-		propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+		propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 							      futurecaptures[true_capturing_piece][true_captured_piece],
 							      position);
 
-		denormalize_position(tb, position);
+		denormalize_position(current_tb, position);
 		position->board_vector &= ~BITVECTOR(movementptr->square);
 	    }
 	}
@@ -9031,7 +9066,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 
 	/* Yes, pawn captures are special */
 
-	for (movementptr = capture_pawn_movements_bkwd[position->piece_position[capturing_piece]][tb->piece_color[capturing_piece]];
+	for (movementptr = capture_pawn_movements_bkwd[position->piece_position[capturing_piece]][current_tb->piece_color[capturing_piece]];
 	     movementptr->square != -1;
 	     movementptr++) {
 
@@ -9042,23 +9077,23 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 	    /* Move back the capturing pawn and see if it came from a semilegal square for it. */
 
 	    position->piece_position[capturing_piece] = movementptr->square;
-	    if (! (tb->semilegal_squares[capturing_piece] & movementptr->vector)) continue;
+	    if (! (current_tb->semilegal_squares[capturing_piece] & movementptr->vector)) continue;
 
 	    /* And if the captured piece is also on a semilegal square for it... */
 
-	    if ((tb->semilegal_squares[captured_piece]
+	    if ((current_tb->semilegal_squares[captured_piece]
 		 & BITVECTOR(position->piece_position[captured_piece]))) {
 
-		normalize_position(tb, position);
+		normalize_position(current_tb, position);
 
 		true_capturing_piece = position->permuted_piece[capturing_piece];
 		true_captured_piece = position->permuted_piece[captured_piece];
 
-		propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+		propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 							      futurecaptures[true_capturing_piece][true_captured_piece],
 							      position);
 
-		denormalize_position(tb, position);
+		denormalize_position(current_tb, position);
 
 		position->board_vector &= ~BITVECTOR(movementptr->square);
 
@@ -9073,11 +9108,11 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 	     * en passant move was even possible.
 	     */
 
-	    if ((tb->piece_type[captured_piece] == PAWN)
+	    if ((current_tb->piece_type[captured_piece] == PAWN)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]-8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]+8))) {
 
-		if ((tb->piece_color[capturing_piece] == BLACK) && (ROW(movementptr->square) == 3)) {
+		if ((current_tb->piece_color[capturing_piece] == BLACK) && (ROW(movementptr->square) == 3)) {
 
 		    /* A black pawn capturing a white one (en passant)
 		     *
@@ -9087,23 +9122,23 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 		    position->en_passant_square = position->piece_position[captured_piece];
 		    position->piece_position[captured_piece] += 8;
 
-		    if ((tb->semilegal_squares[captured_piece]
+		    if ((current_tb->semilegal_squares[captured_piece]
 			 & BITVECTOR(position->piece_position[captured_piece]))) {
 
 			position->board_vector &= ~BITVECTOR(position->en_passant_square);
 			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
 			position->board_vector |= BITVECTOR(movementptr->square);
 
-			normalize_position(tb, position);
+			normalize_position(current_tb, position);
 
 			true_capturing_piece = position->permuted_piece[capturing_piece];
 			true_captured_piece = position->permuted_piece[captured_piece];
 
-			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 								      futurecaptures[true_capturing_piece][true_captured_piece],
 								      position);
 
-			denormalize_position(tb, position);
+			denormalize_position(current_tb, position);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
 			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
@@ -9118,7 +9153,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 		    position->piece_position[captured_piece] -= 8;
 		}
 
-		if ((tb->piece_color[capturing_piece] == WHITE) && (ROW(movementptr->square) == 4)) {
+		if ((current_tb->piece_color[capturing_piece] == WHITE) && (ROW(movementptr->square) == 4)) {
 
 		    /* A white pawn capturing a black one (en passant)
 		     *
@@ -9128,23 +9163,23 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 		    position->en_passant_square = position->piece_position[captured_piece];
 		    position->piece_position[captured_piece] -= 8;
 
-		    if ((tb->semilegal_squares[captured_piece]
+		    if ((current_tb->semilegal_squares[captured_piece]
 			 & BITVECTOR(position->piece_position[captured_piece]))) {
 
 			position->board_vector &= ~BITVECTOR(position->en_passant_square);
 			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
 			position->board_vector |= BITVECTOR(movementptr->square);
 
-			normalize_position(tb, position);
+			normalize_position(current_tb, position);
 
 			true_capturing_piece = position->permuted_piece[capturing_piece];
 			true_captured_piece = position->permuted_piece[captured_piece];
 
-			propagate_normalized_position_from_futurebase(tb, futurebase, future_index,
+			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 								 futurecaptures[true_capturing_piece][true_captured_piece],
 								 position);
 
-			denormalize_position(tb, position);
+			denormalize_position(current_tb, position);
 
 			position->board_vector |= BITVECTOR(position->en_passant_square);
 			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
@@ -9174,8 +9209,7 @@ void consider_possible_captures(tablebase_t *tb, tablebase_t *futurebase, index_
 
 }
 
-void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-					     int invert_colors_of_futurebase)
+void propagate_moves_from_capture_futurebase(int threadno)
 {
     index_t future_index;
     local_position_t position;
@@ -9184,7 +9218,22 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
     int extra_piece, restricted_piece, captured_piece, missing_piece2;
     int reflection;
 
-    for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
+    while (1) {
+
+#if USE_THREADS
+	pthread_mutex_lock(&next_future_index_lock);
+#endif
+
+	future_index = next_future_index ++;
+	if (future_index <= futurebase->max_index) {
+	    fetch_entry_pointer_n(futurebase, future_index, threadno);
+	}
+
+#if USE_THREADS
+	pthread_mutex_unlock(&next_future_index_lock);
+#endif
+
+	if (future_index > futurebase->max_index) break;
 
 	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
@@ -9206,7 +9255,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 
 	    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
 									  reflections[reflection],
-									  tb, &position,
+									  current_tb, &position,
 									  invert_colors_of_futurebase);
 
 #ifdef DEBUG_FUTUREMOVE
@@ -9239,7 +9288,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		 * positions where the side to move is not the side that captured.
 		 */
 
-		if (position.side_to_move != tb->piece_color[captured_piece])
+		if (position.side_to_move != current_tb->piece_color[captured_piece])
 		    continue;
 
 		/* We're going to back step a half move now */
@@ -9252,10 +9301,9 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 		     * capturing piece.
 		     */
 
-		    for (piece = 0; piece < tb->num_pieces; piece++) {
+		    for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
-			consider_possible_captures(tb, futurebase, future_index, &position,
-						   piece, captured_piece);
+			consider_possible_captures(future_index, &position, piece, captured_piece);
 		    }
 
 		} else {
@@ -9274,20 +9322,18 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
 
 		    int restricted_square = position.piece_position[restricted_piece];
 
-		    consider_possible_captures(tb, futurebase, future_index, &position,
-					       restricted_piece, captured_piece);
+		    consider_possible_captures(future_index, &position, restricted_piece, captured_piece);
 
-		    for (piece = 0; piece < tb->num_pieces; piece++) {
+		    for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
-			if ((tb->piece_color[piece] == tb->piece_color[restricted_piece])
-			    && (tb->piece_type[piece] == tb->piece_type[restricted_piece])
-			    && (tb->semilegal_squares[piece] & BITVECTOR(restricted_square))) {
+			if ((current_tb->piece_color[piece] == current_tb->piece_color[restricted_piece])
+			    && (current_tb->piece_type[piece] == current_tb->piece_type[restricted_piece])
+			    && (current_tb->semilegal_squares[piece] & BITVECTOR(restricted_square))) {
 
 			    position.piece_position[restricted_piece] = position.piece_position[piece];
 			    position.piece_position[piece] = restricted_square;
 
-			    consider_possible_captures(tb, futurebase, future_index, &position,
-						       restricted_piece, captured_piece);
+			    consider_possible_captures(future_index, &position, restricted_piece, captured_piece);
 
 			    position.piece_position[piece] = position.piece_position[restricted_piece];
 			}
@@ -9305,8 +9351,7 @@ void propagate_moves_from_capture_futurebase(tablebase_t *tb, tablebase_t *futur
  * don't allow frozen pieces in symmetric tablebases.
  */
 
-void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *futurebase,
-					    int invert_colors_of_futurebase)
+void propagate_moves_from_normal_futurebase(int threadno)
 {
     index_t future_index;
     local_position_t parent_position;
@@ -9318,7 +9363,22 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
     struct movement *movementptr;
     int origin_square;
 
-    for (future_index = 0; future_index <= futurebase->max_index; future_index ++) {
+    while (1) {
+
+#if USE_THREADS
+	pthread_mutex_lock(&next_future_index_lock);
+#endif
+
+	future_index = next_future_index ++;
+	if (future_index <= futurebase->max_index) {
+	    fetch_entry_pointer_n(futurebase, future_index, threadno);
+	}
+
+#if USE_THREADS
+	pthread_mutex_unlock(&next_future_index_lock);
+#endif
+
+	if (future_index > futurebase->max_index) break;
 
 	/* Translate the futurebase index into a local position.  We have exactly the same number
 	 * and type of pieces here, but exactly one of them is on a restricted square (according to
@@ -9334,7 +9394,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
 								      REFLECTION_NONE,
-								      tb, &current_position,
+								      current_tb, &current_position,
 								      invert_colors_of_futurebase);
 
 	if (conversion_result != -1) {
@@ -9357,7 +9417,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 	     * NOT TO PLAY here - this is the LAST move we're considering, not the next move.
 	     */
 
-	    if (tb->piece_color[piece] == current_position.side_to_move)
+	    if (current_tb->piece_color[piece] == current_position.side_to_move)
 		continue;
 
 
@@ -9368,11 +9428,11 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 	    if (current_position.en_passant_square != -1) {
 
-		if (tb->piece_type[piece] != PAWN) continue;
+		if (current_tb->piece_type[piece] != PAWN) continue;
 
-		if (((tb->piece_color[piece] == WHITE)
+		if (((current_tb->piece_color[piece] == WHITE)
 		     && (current_position.piece_position[piece] != current_position.en_passant_square + 8))
-		    || ((tb->piece_color[piece] == BLACK)
+		    || ((current_tb->piece_color[piece] == BLACK)
 			&& (current_position.piece_position[piece] != current_position.en_passant_square - 8))) {
 
 		    /* No reason to complain here.  Maybe some other pawn was the en passant pawn. */
@@ -9387,7 +9447,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 		 */
 
 		current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
-		if (tb->piece_color[piece] == WHITE)
+		if (current_tb->piece_color[piece] == WHITE)
 		    current_position.piece_position[piece] -= 16;
 		else
 		    current_position.piece_position[piece] += 16;
@@ -9398,12 +9458,12 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 		 * that this is the only possible back-move from this point, well...
 		 */
 
-		if (! (tb->semilegal_squares[piece]
+		if (! (current_tb->semilegal_squares[piece]
 		       & BITVECTOR(current_position.piece_position[piece]))) {
 		    continue;
 		}
 
-		propagate_local_position_from_futurebase(tb, futurebase, future_index,
+		propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
 							 futuremoves[piece][origin_square],
 							 &current_position);
 
@@ -9417,9 +9477,9 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 	    parent_position = current_position;
 
-	    if (tb->piece_type[piece] != PAWN) {
+	    if (current_tb->piece_type[piece] != PAWN) {
 
-		for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+		for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[piece]]; dir++) {
 
 		    /* What about captures?  Well, first of all, there are no captures here!  We're
 		     * moving BACKWARDS in the game... and pieces don't appear out of thin air.
@@ -9430,13 +9490,13 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 		     */
 
 		    for (movementptr
-			     = movements[tb->piece_type[piece]][parent_position.piece_position[piece]][dir];
+			     = movements[current_tb->piece_type[piece]][parent_position.piece_position[piece]][dir];
 			 (movementptr->vector & parent_position.board_vector) == 0;
 			 movementptr++) {
 
 			/* We never back out into a restricted position (obviously) */
 
-			if (! (tb->semilegal_squares[piece] & movementptr->vector)) continue;
+			if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
 
 			/* Back stepping a half move here involves several things: flipping the
 			 * side-to-move flag, clearing any en passant pawns into regular pawns, moving
@@ -9462,7 +9522,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 			current_position.board_vector |= BITVECTOR(movementptr->square);
 
-			propagate_local_position_from_futurebase(tb, futurebase, future_index,
+			propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
 								 futuremoves[piece][origin_square],
 								 &current_position);
 		    }
@@ -9472,13 +9532,13 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		/* Usual special case for pawns */
 
-		for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][tb->piece_color[piece]];
+		for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][current_tb->piece_color[piece]];
 		     (movementptr->vector & parent_position.board_vector) == 0;
 		     movementptr++) {
 
 		    /* We never back out into a restricted position (obviously) */
 
-		    if (! (tb->semilegal_squares[piece] & movementptr->vector)) continue;
+		    if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
 
 		    /* Do we have a backwards pawn move here?
 		     *
@@ -9518,7 +9578,7 @@ void propagate_moves_from_normal_futurebase(tablebase_t *tb, tablebase_t *future
 
 		    current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
 
-		    propagate_local_position_from_futurebase(tb, futurebase, future_index,
+		    propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
 							     futuremoves[piece][origin_square],
 							     &current_position);
 
@@ -9544,11 +9604,14 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 
-	tablebase_t * futurebase = futurebases[fbnum];
+	futurebase = futurebases[fbnum];
 
 	open_futurebase(futurebase);
 
 	max_reflection = compute_reflections(tb, futurebase, reflections);
+	invert_colors_of_futurebase = futurebase->invert_colors;
+
+	next_future_index = 0;
 
 	switch (futurebase->futurebase_type) {
 
@@ -9556,7 +9619,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename);
-		propagate_moves_from_capture_futurebase(tb, futurebase, futurebase->invert_colors);
+		propagate_moves_from_capture_futurebase(0);
 	    }
 
 	    break;
@@ -9572,7 +9635,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
-		propagate_moves_from_promotion_futurebase(tb, futurebase, futurebase->invert_colors);
+		propagate_moves_from_promotion_futurebase(0);
 	    }
 
 	    break;
@@ -9588,7 +9651,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
-		propagate_moves_from_promotion_capture_futurebase(tb, futurebase, futurebase->invert_colors);
+		propagate_moves_from_promotion_capture_futurebase(0);
 	    }
 
 	    break;
@@ -9597,7 +9660,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename);
-		propagate_moves_from_normal_futurebase(tb, futurebase, futurebase->invert_colors);
+		propagate_moves_from_normal_futurebase(0);
 	    }
 
 	    break;
@@ -12479,7 +12542,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.422 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.423 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
