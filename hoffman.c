@@ -965,6 +965,18 @@ void expand_per_pass_statistics(void) {
 
 }
 
+#if USE_THREADS
+
+inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
+{
+    if (pthread_mutex_trylock(mutex) != 0) {
+	pthread_mutex_lock(mutex);
+	contended_locks ++;
+    }
+}
+
+#endif
+
 /***** DYNAMIC STRUCTURES *****/
 
 /* Hoffman uses "dynamic structures" extensively, for its entries and proptable arrays.  A dynamic
@@ -5435,7 +5447,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.423 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.424 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8066,10 +8078,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 #endif
 
 #if USE_THREADS && USE_PROPTABLES
-    if (pthread_mutex_trylock(&commit_lock) != 0) {
-	pthread_mutex_lock(&commit_lock);
-	contended_locks ++;
-    }
+    pthread_mutex_lock_instrumented(&commit_lock);
 #endif
 
 #ifdef DEBUG_MOVE
@@ -8520,7 +8529,7 @@ void propagate_moves_from_promotion_futurebase(int threadno)
     while (1) {
 
 #if USE_THREADS
-	pthread_mutex_lock(&next_future_index_lock);
+	pthread_mutex_lock_instrumented(&next_future_index_lock);
 #endif
 
 	future_index = next_future_index ++;
@@ -8723,7 +8732,7 @@ void propagate_moves_from_promotion_capture_futurebase(int threadno)
     while (1) {
 
 #if USE_THREADS
-	pthread_mutex_lock(&next_future_index_lock);
+	pthread_mutex_lock_instrumented(&next_future_index_lock);
 #endif
 
 	future_index = next_future_index ++;
@@ -9221,7 +9230,7 @@ void propagate_moves_from_capture_futurebase(int threadno)
     while (1) {
 
 #if USE_THREADS
-	pthread_mutex_lock(&next_future_index_lock);
+	pthread_mutex_lock_instrumented(&next_future_index_lock);
 #endif
 
 	future_index = next_future_index ++;
@@ -9366,7 +9375,7 @@ void propagate_moves_from_normal_futurebase(int threadno)
     while (1) {
 
 #if USE_THREADS
-	pthread_mutex_lock(&next_future_index_lock);
+	pthread_mutex_lock_instrumented(&next_future_index_lock);
 #endif
 
 	future_index = next_future_index ++;
@@ -9601,6 +9610,7 @@ void propagate_moves_from_normal_futurebase(int threadno)
 boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
     int fbnum;
+    void (* backprop_function)(int);
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 
@@ -9612,6 +9622,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	invert_colors_of_futurebase = futurebase->invert_colors;
 
 	next_future_index = 0;
+	backprop_function = NULL;
 
 	switch (futurebase->futurebase_type) {
 
@@ -9619,7 +9630,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename);
-		propagate_moves_from_capture_futurebase(0);
+		backprop_function = &propagate_moves_from_capture_futurebase;
 	    }
 
 	    break;
@@ -9635,7 +9646,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
-		propagate_moves_from_promotion_futurebase(0);
+		backprop_function = &propagate_moves_from_promotion_futurebase;
 	    }
 
 	    break;
@@ -9651,7 +9662,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
-		propagate_moves_from_promotion_capture_futurebase(0);
+		backprop_function = &propagate_moves_from_promotion_capture_futurebase;
 	    }
 
 	    break;
@@ -9660,7 +9671,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename);
-		propagate_moves_from_normal_futurebase(0);
+		backprop_function = propagate_moves_from_normal_futurebase;
 	    }
 
 	    break;
@@ -9670,6 +9681,26 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    fatal("Unknown back propagation type for futurebase '%s'\n", futurebase->filename);
 	    break;
 
+	}
+
+	if (backprop_function != NULL) {
+
+#if USE_THREADS
+	    pthread_t *threads;
+	    int thread;
+
+	    /* XXX check for malloc failure */
+	    threads = malloc(sizeof(pthread_t) * num_threads);
+
+	    for (thread = 0; thread < num_threads; thread ++) {
+		pthread_create(&threads[thread], NULL, backprop_function, (void *)thread);
+	    }
+	    for (thread = 0; thread < num_threads; thread ++) {
+		pthread_join(threads[thread], NULL);
+	    }
+#else
+	    (*backprop_function)(0);
+#endif
 	}
 
 	close_futurebase(futurebase);
@@ -12542,7 +12573,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.423 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.424 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
