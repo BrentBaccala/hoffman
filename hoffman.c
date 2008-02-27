@@ -2599,7 +2599,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 {
     int piece;
     uint8 vals[MAX_PIECES];
-    int king_index;
+    int king_index = 0;
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
@@ -2873,7 +2873,7 @@ boolean standard_index_to_local_position(tablebase_t *tb, index_t index, local_p
 {
     int piece;
     uint8 vals[MAX_PIECES];
-    int king_index;
+    int king_index = 0;
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
@@ -5451,7 +5451,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.429 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.430 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12610,7 +12610,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.429 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.430 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
