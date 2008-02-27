@@ -9,6 +9,7 @@ void * zlib_open(void *ptr, void *read, void *write, void *seek, void *close, ch
 #endif
 
 ssize_t zlib_read(void *ptr, char *buffer, size_t size);
+int zlib_read_int(void *ptr, char *buffer, int size);
 #ifdef O_LARGEFILE
 int zlib_seekptr64 (void *ptr, off64_t *position, int whence);
 off64_t zlib_seek64 (void *ptr, off64_t position, int whence);

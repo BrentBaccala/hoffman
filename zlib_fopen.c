@@ -39,6 +39,11 @@ static ssize_t fwrite_wrapper(void *ptr, const char *buffer, size_t size)
     return fwrite(buffer, 1, size, (FILE *) ptr);
 }
 
+int zlib_read_int(void *ptr, char *buffer, int size)
+{
+    return zlib_read(ptr, buffer, size);
+}
+
 ssize_t zlib_read(void *ptr, char *buffer, size_t size)
 {
     struct cookie *cookie = ptr;
