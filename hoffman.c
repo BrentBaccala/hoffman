@@ -271,7 +271,7 @@ struct timeval proptable_preload_time = {0, 0};
  * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move.
  */
 
-typedef uint32 futurevector_t;
+typedef uint16 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 
@@ -851,6 +851,35 @@ int do_write(int fd, void *ptr, int length)
 	length -= writ;
     }
     return 0;
+}
+
+/* These next few functions are here to make sure we don't get into pointer size issues on different
+ * architectures, since the compression library interface in zlib_fopen.c takes pointers, and if
+ * we're working with native files (and not a network URL), we just want to use file descriptors.
+ */
+
+ssize_t read_ptr(void * ptr, char * buf, size_t count)
+{
+    int fd = (size_t) ptr;
+    return read(fd, buf, count);
+}
+
+ssize_t write_ptr(void * ptr, char * buf, size_t count)
+{
+    int fd = (size_t) ptr;
+    return write(fd, buf, count);
+}
+
+off_t lseek_ptr(void * ptr, off_t offset, int whence)
+{
+    int fd = (size_t) ptr;
+    return lseek(fd, offset, whence);
+}
+
+ssize_t close_ptr(void * ptr)
+{
+    int fd = (size_t) ptr;
+    return close(fd);
 }
 
 #define ROW(square) ((square) / 8)
@@ -4990,12 +5019,12 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 #ifdef O_LARGEFILE
 	fd = open(filename, O_RDONLY|O_LARGEFILE, 0);
 	if (fd != -1) {
-	    file = zlib_open((void *) fd, read, write, lseek, close, "r");
+	    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	}
 #else
 	fd = open(filename, O_RDONLY, 0);
 	if (fd != -1) {
-	    file = zlib_open((void *) fd, read, write, lseek, close, "r");
+	    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	}
 #endif
     } else {
@@ -5054,12 +5083,12 @@ void open_futurebase(tablebase_t * tb)
 #ifdef O_LARGEFILE
 	fd = open(tb->filename, O_RDONLY|O_LARGEFILE, 0);
 	if (fd != -1) {
-	    tb->file = zlib_open((void *) fd, read, write, lseek, close, "r");
+	    tb->file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	}
 #else
 	fd = open(tb->filename, O_RDONLY, 0);
 	if (fd != -1) {
-	    tb->file = zlib_open((void *) fd, read, write, lseek, close, "r");
+	    tb->file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	}
 #endif
     } else {
@@ -5451,7 +5480,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.430 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.431 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8531,7 +8560,7 @@ pthread_mutex_t next_future_index_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void * propagate_moves_from_promotion_futurebase(void * ptr)
 {
-    int threadno = (int) ptr;
+    int threadno = (size_t) ptr;
     index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
@@ -8736,7 +8765,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 
 void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 {
-    int threadno = (int) ptr;
+    int threadno = (size_t) ptr;
     index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
@@ -9241,7 +9270,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 void * propagate_moves_from_capture_futurebase(void * ptr)
 {
-    int threadno = (int) ptr;
+    int threadno = (size_t) ptr;
     index_t future_index;
     local_position_t position;
     int piece;
@@ -9386,7 +9415,7 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
 
 void * propagate_moves_from_normal_futurebase(void * ptr)
 {
-    int threadno = (int) ptr;
+    int threadno = (size_t) ptr;
     index_t future_index;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
@@ -9720,7 +9749,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    threads = malloc(sizeof(pthread_t) * num_threads);
 
 	    for (thread = 0; thread < num_threads; thread ++) {
-		pthread_create(&threads[thread], NULL, backprop_function, (void *)thread);
+		pthread_create(&threads[thread], NULL, backprop_function, (void *)((size_t)thread));
 	    }
 	    for (thread = 0; thread < num_threads; thread ++) {
 		pthread_join(threads[thread], NULL);
@@ -11972,12 +12001,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 #ifdef O_LARGEFILE
 	    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
 	    if (fd != -1) {
-		file = zlib_open((void *) fd, read, write, lseek64, close, "w");
+		/* XXX should this be lseek64? */
+		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 	    }
 #else
 	    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
 	    if (fd != -1) {
-		file = zlib_open((void *) fd, read, write, lseek, close, "w");
+		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 	    }
 #endif
 	} else {
@@ -12006,12 +12036,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 #ifdef O_LARGEFILE
 		fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
 		if (fd != -1) {
-		    file = zlib_open((void *) fd, read, write, lseek64, close, "w");
+		    /* XXX should this be lseek64? */
+		    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 		}
 #else
 		fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
 		if (fd != -1) {
-		    file = zlib_open((void *) fd, read, write, lseek, close, "w");
+		    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 		}
 #endif
 		filename_needs_xmlFree = 1;
@@ -12610,7 +12641,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.430 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.431 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
