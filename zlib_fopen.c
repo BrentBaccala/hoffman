@@ -274,15 +274,27 @@ void * zlib_open(void *ptr,
 
 #ifdef __GLIBC__
 
+#if O_LARGEFILE
+static cookie_io_functions_t read_functions = {zlib_read, NULL, zlib_seekptr64, zlib_close};
+#else
 static cookie_io_functions_t read_functions = {zlib_read, NULL, zlib_seekptr, zlib_close};
+#endif
+
 static cookie_io_functions_t write_functions = {NULL, zlib_write, NULL, zlib_close};
+
+/* Wrap fseek to get the types correct */
+
+off_t fseek_off_t(void *stream, off_t offset, int whence)
+{
+    return fseek(stream, offset, whence);
+}
 
 FILE * zlib_fopen(FILE *file, char *operation)
 {
     struct cookie *cookie;
 
     cookie = zlib_open(file, fread_wrapper, fwrite_wrapper,
-		       (int (*)(void *, off_t, int)) fseek, (int (*)(void *)) fclose, operation);
+		       fseek_off_t, (int (*)(void *)) fclose, operation);
 
     if (operation[0] == 'r') {
 	return fopencookie(cookie, operation, read_functions);
