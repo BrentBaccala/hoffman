@@ -3820,9 +3820,12 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
  *
  * I use a DTD and validate the XML input, so there's very little error checking here.  The idea is
  * that the validation provides most of the error checks.
+ *
+ * There very little difference between the futurebase and control file cases, except that we pay
+ * attention to the generation controls in the control file but ignore them in futurebases.
  */
 
-tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
+tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 {
     tablebase_t *tb;
     int generating_version = 0;
@@ -4343,50 +4346,56 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc)
 	xmlXPathFreeContext(context);
     }
 
-    /* If a custom entries format has been specified, get it too */
+    /* If this is a control file, get the generation controls */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//entries-format", context);
-    if (result->nodesetval->nodeNr == 1) {
+    if (! is_futurebase) {
+
+	/* If a custom entries format has been specified, get it too */
+
+	context = xmlXPathNewContext(tb->xml);
+	result = xmlXPathEvalExpression(BAD_CAST "//entries-format", context);
+	if (result->nodesetval->nodeNr == 1) {
 #if (!USE_CONST_ENTRIES_FORMAT)
-	if (! parse_format(result->nodesetval->nodeTab[0], &entries_format)) return NULL;
-	if (ENTRIES_FORMAT_MOVECNT_BITS == 0) {
-	    fatal("Entries format must contain a movecnt field\n");
-	    return NULL;
-	}
+	    if (! parse_format(result->nodesetval->nodeTab[0], &entries_format)) return NULL;
+	    if (ENTRIES_FORMAT_MOVECNT_BITS == 0) {
+		fatal("Entries format must contain a movecnt field\n");
+		return NULL;
+	    }
 #else
-	struct format tmp_format;
-	if (! parse_format(result->nodesetval->nodeTab[0], &tmp_format)) return NULL;
-	if (memcmp(&tmp_format, &entries_format, sizeof(struct format))) {
-	    fatal("Entries format incompatible with compiled-in format\n");
-	    fatal("Recompile using this \"formats.h\":\n");
-	    fatal("   const struct format entries_format = {%d,%d, %d, 0x%x,%d,%d, 0x%x,%d,%d, 0x%x,%d,%d, 0x%llx,%d,%d, %d,%d, %d};\n",
-		  tmp_format.bits, tmp_format.bytes, tmp_format.locking_bit_offset,
-		  tmp_format.dtm_mask, tmp_format.dtm_offset, tmp_format.dtm_bits,
-		  tmp_format.movecnt_mask, tmp_format.movecnt_offset, tmp_format.movecnt_bits,
-		  tmp_format.index_mask, tmp_format.index_offset, tmp_format.index_bits,
-		  tmp_format.futurevector_mask, tmp_format.futurevector_offset, tmp_format.futurevector_bits,
-		  tmp_format.flag_offset, tmp_format.flag_type, tmp_format.PTM_wins_flag_offset);
-	    return NULL;
-	}
+	    struct format tmp_format;
+	    if (! parse_format(result->nodesetval->nodeTab[0], &tmp_format)) return NULL;
+	    if (memcmp(&tmp_format, &entries_format, sizeof(struct format))) {
+		fatal("Entries format incompatible with compiled-in format\n");
+		fatal("Recompile using this \"formats.h\":\n");
+		fatal("   const struct format entries_format = {%d,%d, %d, 0x%x,%d,%d, 0x%x,%d,%d, 0x%x,%d,%d, 0x%llx,%d,%d, %d,%d, %d};\n",
+		      tmp_format.bits, tmp_format.bytes, tmp_format.locking_bit_offset,
+		      tmp_format.dtm_mask, tmp_format.dtm_offset, tmp_format.dtm_bits,
+		      tmp_format.movecnt_mask, tmp_format.movecnt_offset, tmp_format.movecnt_bits,
+		      tmp_format.index_mask, tmp_format.index_offset, tmp_format.index_bits,
+		      tmp_format.futurevector_mask, tmp_format.futurevector_offset, tmp_format.futurevector_bits,
+		      tmp_format.flag_offset, tmp_format.flag_type, tmp_format.PTM_wins_flag_offset);
+		return NULL;
+	    }
 #endif
-    }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
+	}
+	xmlXPathFreeObject(result);
+	xmlXPathFreeContext(context);
 
     /* custom proptable format? */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//proptable-format", context);
-    if (result->nodesetval->nodeNr == 1) {
-	if (! parse_format(result->nodesetval->nodeTab[0], &proptable_format)) return NULL;
-	if (proptable_format.index_bits == 0) {
-	    fatal("Proptable format must contain an index field\n");
-	    return NULL;
+	context = xmlXPathNewContext(tb->xml);
+	result = xmlXPathEvalExpression(BAD_CAST "//proptable-format", context);
+	if (result->nodesetval->nodeNr == 1) {
+	    if (! parse_format(result->nodesetval->nodeTab[0], &proptable_format)) return NULL;
+	    if (proptable_format.index_bits == 0) {
+		fatal("Proptable format must contain an index field\n");
+		return NULL;
+	    }
 	}
+	xmlXPathFreeObject(result);
+	xmlXPathFreeContext(context);
+
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     /* Extract index symmetry (if it was specified) */
 
@@ -4956,7 +4965,7 @@ tablebase_t * parse_XML_control_file(char *filename)
 	return NULL;
     }
 
-    tb = parse_XML_into_tablebase(doc);
+    tb = parse_XML_into_tablebase(doc, 0);
     if (tb == NULL) return NULL;
 
     /* We don't free the XML doc because the tablebase struct contains a pointer to it */
@@ -5026,7 +5035,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
      */
     doc = xmlReadIO(&zlib_read, NULL, file, NULL, NULL, 0);
 
-    tb = parse_XML_into_tablebase(doc);
+    tb = parse_XML_into_tablebase(doc, 1);
 
     if (tb == NULL) {
 	fatal("Futurebase preload failed: '%s'\n", filename);
@@ -5453,7 +5462,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.427 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.428 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12175,7 +12184,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    info("Malloced %dMB for tablebase entries\n",
 		 LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/(1024*1024));
 	}
-	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
+	/* Don't really need this, since they will all get initialized anyway */
+	/* memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)); */
 #endif
 
 #if USE_PROPTABLES
@@ -12245,7 +12255,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    info("Malloced %dMB for tablebase futurevectors\n",
 		 ((tb->max_index + 1) * sizeof(futurevector_t))/(1024*1024));
 	}
-	memset(tb->futurevectors, 0, (tb->max_index + 1) * sizeof(futurevector_t));
+	/* Don't really need this, since they will all get initialized anyway */
+	/* memset(tb->futurevectors, 0, (tb->max_index + 1) * sizeof(futurevector_t)); */
 
 	/* Due to the heavily random access pattern of memory during back propagation, this
 	 * application performs horribly if required to swap.  Attempt to lock all of its pages into
@@ -12590,7 +12601,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.427 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.428 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
