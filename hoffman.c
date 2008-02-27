@@ -474,8 +474,6 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 
 
-#if 1
-
 #define ENTRIES_FORMAT_BITS (entries_format.bits)
 #define ENTRIES_FORMAT_BYTES (entries_format.bytes)
 #define ENTRIES_FORMAT_LOCKING_BIT_OFFSET (entries_format.locking_bit_offset)
@@ -487,20 +485,6 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 #define ENTRIES_FORMAT_MOVECNT_BITS (entries_format.movecnt_bits)
 #define ENTRIES_FORMAT_FLAG_OFFSET (entries_format.flag_offset)
 
-#else
-
-#define ENTRIES_FORMAT_BITS 4
-#define ENTRIES_FORMAT_BYTES 2
-#define ENTRIES_FORMAT_LOCKING_BIT_OFFSET 8
-#define ENTRIES_FORMAT_DTM_MASK 0xff
-#define ENTRIES_FORMAT_DTM_OFFSET 0
-#define ENTRIES_FORMAT_DTM_BITS 8
-#define ENTRIES_FORMAT_MOVECNT_MASK 0x7f
-#define ENTRIES_FORMAT_MOVECNT_OFFSET 9
-#define ENTRIES_FORMAT_MOVECNT_BITS 7
-#define ENTRIES_FORMAT_FLAG_OFFSET 0
-
-#endif
 
 /* This is the "one-byte-dtm" format */
 
@@ -520,9 +504,9 @@ struct format one_byte_dtm_format = {3,1, -1, 0xff,0,8};
 
 #if !USE_CONST_PROPTABLE_FORMAT
 
-const struct format proptable_format = {7,16, -1, 0xffff,32,16, 0xff,56,8,
-					0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
-					-1,FORMAT_FLAG_NONE, -1};
+struct format proptable_format = {7,16, -1, 0xffff,32,16, 0xff,56,8,
+				  0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
+				  -1,FORMAT_FLAG_NONE, -1};
 
 #define PROPTABLE_FORMAT_BYTES (proptable_format.bytes)
 #define PROPTABLE_FORMAT_INDEX_MASK (proptable_format.index_mask)
@@ -622,7 +606,7 @@ typedef struct tablebase {
 
     /* for futurebases only */
     FILE * file;
-    xmlChar * filename;
+    char * filename;
     int futurebase_type;
     index_t next_read_index;
     long offset;
@@ -714,6 +698,8 @@ int num_propentries = 0;
 #define SEPERATE_PROPTABLE_FILES 0
 
 #define USE_DUAL_PROPTABLES 1
+
+#define LOCK_MEMORY 0
 
 #define CHECK_KING_LEGALITY_EARLY 1
 
@@ -1674,6 +1660,9 @@ void verify_movements()
 			fwd_movement = capture_pawn_movements_bkwd[squareA][color];
 			rev_movement = capture_pawn_movements[squareB][color];
 			break;
+		    default:
+			fatal("Internal error: pawn_option not in [0,3]");
+			return;
 		    }
 
 		    /* check for self-movement */
@@ -5033,7 +5022,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     /* My experiments with xmlReadIO indicate that it only calls its read function enough times to
      * get the XML document, which is good, because we don't want it reading the entire file.
      */
-    doc = xmlReadIO(&zlib_read, NULL, file, NULL, NULL, 0);
+    doc = xmlReadIO(&zlib_read_int, NULL, file, NULL, NULL, 0);
 
     tb = parse_XML_into_tablebase(doc, 1);
 
@@ -5462,7 +5451,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.428 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.429 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6564,7 +6553,6 @@ void twister(tablebase_t *tb, index_t index)
 
 inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 {
-    int retval;
 
     if (tb->file == NULL) {
 	fatal("fetch_entry_pointer() called on a non-preloaded tablebase\n");
@@ -7167,13 +7155,16 @@ typedef struct {
     int target_dtm;
 } intratable_propagation_control_t;
 
-void back_propagate_section(intratable_propagation_control_t *control)
+void * back_propagate_section(void * ptr)
 {
+    intratable_propagation_control_t * control = ptr;
     index_t index;
 
     for (index = control->start_index; index <= control->end_index; index ++) {
 	back_propagate_index(index, control->target_dtm);
     }
+
+    return NULL;
 }
 
 #if USE_PROPTABLES
@@ -8163,7 +8154,9 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 
 int propagation_pass(int target_dtm)
 {
+#if !USE_THREADS
     index_t index;
+#endif
 
     if (((target_dtm > 0) && (target_dtm > (ENTRIES_FORMAT_DTM_MASK >> 1)))
 	|| ((target_dtm < 0) && (target_dtm < -(ENTRIES_FORMAT_DTM_MASK >> 1)))) {
@@ -8536,8 +8529,9 @@ pthread_mutex_t next_future_index_lock = PTHREAD_MUTEX_INITIALIZER;
  * futurebase for positions with that piece on the last rank and back-props.
  */
 
-void propagate_moves_from_promotion_futurebase(int threadno)
+void * propagate_moves_from_promotion_futurebase(void * ptr)
 {
+    int threadno = (int) ptr;
     index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
@@ -8736,15 +8730,18 @@ void propagate_moves_from_promotion_futurebase(int threadno)
 	    }
 	}
     }
+
+    return NULL;
 }
 
-void propagate_moves_from_promotion_capture_futurebase(int threadno)
+void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 {
+    int threadno = (int) ptr;
     index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
     uint32 conversion_result;
-    int pawn, extra_piece, restricted_piece, missing_piece1, missing_piece2;
+    int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_captured_piece;
     int true_pawn;
     int reflection;
@@ -8997,6 +8994,8 @@ void propagate_moves_from_promotion_capture_futurebase(int threadno)
 	    }
 	}
     }
+
+    return NULL;
 }
 
 /* Propagate moves from a futurebase that resulted from capturing one of the pieces in the current
@@ -9240,8 +9239,9 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 }
 
-void propagate_moves_from_capture_futurebase(int threadno)
+void * propagate_moves_from_capture_futurebase(void * ptr)
 {
+    int threadno = (int) ptr;
     index_t future_index;
     local_position_t position;
     int piece;
@@ -9373,6 +9373,8 @@ void propagate_moves_from_capture_futurebase(int threadno)
 	    }
 	}
     }
+
+    return NULL;
 }
 
 /* A "normal" futurebase is one that's identical to our own in terms of the number and types
@@ -9382,8 +9384,9 @@ void propagate_moves_from_capture_futurebase(int threadno)
  * don't allow frozen pieces in symmetric tablebases.
  */
 
-void propagate_moves_from_normal_futurebase(int threadno)
+void * propagate_moves_from_normal_futurebase(void * ptr)
 {
+    int threadno = (int) ptr;
     index_t future_index;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
@@ -9617,6 +9620,8 @@ void propagate_moves_from_normal_futurebase(int threadno)
 	    }
 	}
     }
+
+    return NULL;
 }
 
 /* Back propagates from all the futurebases.
@@ -9632,7 +9637,7 @@ void propagate_moves_from_normal_futurebase(int threadno)
 boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
     int fbnum;
-    void (* backprop_function)(int);
+    void * (* backprop_function)(void *);
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 
@@ -11846,13 +11851,16 @@ typedef struct {
     index_t end_index;
 } initialization_control_t;
 
-void initialize_tablebase_section(initialization_control_t *control)
+void * initialize_tablebase_section(void * ptr)
 {
+    initialization_control_t *control = ptr;
     index_t index;
 
     for (index=control->start_index; index <= control->end_index; index++) {
 	control->tb->futurevectors[index] = initialize_tablebase_entry(control->tb, index);
     }
+
+    return NULL;
 }
 
 #if !USE_THREADS
@@ -12061,7 +12069,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 	terminate();
     }
 
-    if (zlib_write(file, buf, padded_size) != padded_size) {
+    if (zlib_write(file, (char *) buf, padded_size) != padded_size) {
 	fatal("Tablebase write failed\n");
 	terminate();
     }
@@ -12140,7 +12148,10 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     int min_dtm = 0;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
+
+#if defined(RLIMIT_MEMLOCK) && LOCK_MEMORY
     struct rlimit rlimit;
+#endif
 
     tb = parse_XML_control_file(control_filename);
     if (tb == NULL) return 0;
@@ -12272,8 +12283,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * The #ifdef keeps this from even being attempted on a Windows system.
 	 */
 
-#if 0
-#ifdef RLIMIT_MEMLOCK
+#if defined(RLIMIT_MEMLOCK) && LOCK_MEMORY
 
 	if (getrlimit(RLIMIT_MEMLOCK, &rlimit) == -1) {
 	    warning("Can't getrlimit RLIMIT_MEMLOCK: %s\n", strerror(errno));
@@ -12284,7 +12294,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    }
 	}
 
-#endif
 #endif
 
 	/* This actually initializes the statistics arrays the first time it's called, and it
@@ -12601,7 +12610,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.428 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.429 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
