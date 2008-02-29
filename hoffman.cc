@@ -274,6 +274,7 @@ struct timeval proptable_preload_time = {0, 0};
 typedef uint16 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
+#define NO_FUTUREMOVE -1
 
 /* These arrays hold the bit locations in the futurevector of various futuremoves - captures,
  * capture-promotions, promotions, and normal movements of a piece to a square.  The values are
@@ -5480,7 +5481,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.431 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.432 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8109,17 +8110,12 @@ void insert_into_proptable(proptable_entry_t *pentry)
 pthread_mutex_t commit_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
-void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
-				futurevector_t futurevector)
+void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int futuremove)
 {
+#if USE_PROPTABLES 
     uint8 PTM_wins_flag;
-#if USE_PROPTABLES
     char entry[MAX_FORMAT_BYTES];
     void *ptr = entry;
-#endif
-
-#if USE_THREADS && USE_PROPTABLES
-    pthread_mutex_lock_instrumented(&commit_lock);
 #endif
 
 #ifdef DEBUG_MOVE
@@ -8127,6 +8123,53 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 	printf("insert_or_commit_proptable; index=%d; dtm=%d; movecnt=%d; futurevector=0x%llx\n",
 	       index, dtm, movecnt, futurevector);
 #endif
+
+    backproped_moves[total_passes] ++;
+
+#if !USE_PROPTABLES
+
+    lock_entry(current_tb, index);
+
+    /* Somewhat of a special case here.  First of all, we only have futuremoves during the first
+     * back-propagation pass, when we back prop from the futurebases.  Also, if we're not using
+     * proptables, then I use a seperate array for the futurevectors, which got filled in when we
+     * initialized the tablebase.  In that case, we now check off the futurevectors in that array as
+     * we back prop.  If we are using proptables, then this gets done during the initialization pass
+     * and we don't use the seperate array.
+     */
+
+    if (futuremove != NO_FUTUREMOVE) {
+
+	futurevector_t futurevector = FUTUREVECTOR(futuremove);
+
+	if ((futurevector & current_tb->futurevectors[index]) != futurevector) {
+	    /* This could happen simply if the futuremove has already been considered */
+	    /* XXX In particular, I need to turn this off right now for symmetric tablebases */
+#if 0
+	    global_position_t global;
+	    index_to_global_position(current_tb, index, &global);
+	    fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
+#endif
+	    unlock_entry(current_tb, index);
+	    return;
+	}
+
+	current_tb->futurevectors[index] ^= futurevector;
+    }
+
+    if (dtm > 0) {
+	PTM_wins(current_tb, index, dtm);
+    } else if (dtm < 0) {
+	int i;
+
+	for (i=0; i<movecnt; i++) {
+	    add_one_to_PNTM_wins(current_tb, index, dtm);
+	}
+    }
+	
+    unlock_entry(current_tb, index);
+
+#else
 
     /* The only time it makes sense to use a PTM-wins-flag in the proptable is if we're generating a
      * bitbase (because otherwise we need a DTM field in the proptable).  Positive or negative DTM
@@ -8143,14 +8186,9 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 	PTM_wins_flag = (index_to_side_to_move(current_tb, index) == win_side) ? 0 : 1;
     }
 
-    backproped_moves[total_passes] ++;
-
-#if !USE_PROPTABLES
-
-    commit_entry(index, dtm, PTM_wins_flag, movecnt, futurevector);
-
-#else
-
+#if USE_THREADS
+    pthread_mutex_lock_instrumented(&commit_lock);
+#endif
 
     memset(ptr, 0, PROPTABLE_FORMAT_BYTES);
 
@@ -8168,10 +8206,10 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt,
 
     insert_into_proptable(ptr);
 
-#endif
-
 #if USE_THREADS && USE_PROPTABLES
     pthread_mutex_unlock(&commit_lock);
+#endif
+
 #endif
 
 }
@@ -8290,11 +8328,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	int dtm = get_raw_DTM(futurebase, future_index);
 
 	if (dtm > 0) {
-	    insert_or_commit_propentry(current_index, -dtm, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, -dtm, movecnt, futuremove);
 	} else if (dtm < 0) {
-	    insert_or_commit_propentry(current_index, -dtm+1, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, -dtm+1, movecnt, futuremove);
 	} else {
-	    insert_or_commit_propentry(current_index, 0, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, 0, movecnt, futuremove);
 	}
 
     } else {
@@ -8315,9 +8353,9 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	/* I use twos here because there's a lot of stuff that gets cut out for the special case of 1 */
 
 	if ((flag && (stm == WHITE)) || (!flag && (stm == BLACK))) {
-	    insert_or_commit_propentry(current_index, -2, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, -2, movecnt, futuremove);
 	} else {
-	    insert_or_commit_propentry(current_index, 2, movecnt, FUTUREVECTOR(futuremove));
+	    insert_or_commit_propentry(current_index, 2, movecnt, futuremove);
 	}
 
     }
@@ -9837,7 +9875,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	/* PTM_wins(tb, index, 1, 1); */
 	/* We insert here with DTM=2 (mate in one), movecnt=1 (XXX), and no futuremove */
 	/* XXX I bet we want to insert with position's multiplicity as movecnt */
-	insert_or_commit_propentry(index, 2, 1, 0);
+	insert_or_commit_propentry(index, 2, 1, NO_FUTUREMOVE);
     }
 
     /* discard - we ignore these unhandled futuremoves by decrementing movecnt */
@@ -9849,7 +9887,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 
 		/* tb->entries[index].movecnt --; */
 		/* XXX this isn't handled right - a draw is different from a discard */
-		insert_or_commit_propentry(index, 0, 0, 0);
+		insert_or_commit_propentry(index, 0, 0, NO_FUTUREMOVE);
 	    }
 	}
     }
@@ -10875,13 +10913,13 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
      */
 
     if (dtm > 0) {
-	insert_or_commit_propentry(current_index, -dtm, 1, 0);
+	insert_or_commit_propentry(current_index, -dtm, 1, NO_FUTUREMOVE);
     } else if (dtm < 0) {
-	insert_or_commit_propentry(current_index, -dtm+1, 1, 0);
+	insert_or_commit_propentry(current_index, -dtm+1, 1, NO_FUTUREMOVE);
     } else if (get_entry_movecnt(future_index) == MOVECNT_PTM_WINS_UNPROPED) {
-	insert_or_commit_propentry(current_index, -2, 1, 0);
+	insert_or_commit_propentry(current_index, -2, 1, NO_FUTUREMOVE);
     } else if (get_entry_movecnt(future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
-	insert_or_commit_propentry(current_index, 2, 1, 0);
+	insert_or_commit_propentry(current_index, 2, 1, NO_FUTUREMOVE);
     } else {
 	fatal("Intra-table back prop doesn't match dtm or movecnt\n");
     }
@@ -12641,7 +12679,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.431 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.432 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
