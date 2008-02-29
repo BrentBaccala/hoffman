@@ -5485,7 +5485,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.434 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.435 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12226,7 +12226,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     int min_dtm = 0;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
-    long futurevector_bytes;
+    long long futurevector_bytes;
 
 #if defined(RLIMIT_MEMLOCK) && LOCK_MEMORY
     struct rlimit rlimit;
@@ -12340,7 +12340,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	else
 	    tb->futurevector_bits = num_futuremoves[BLACK];
 
-	futurevector_bytes = (((tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3;
+	futurevector_bytes = (((long long)(tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3;
 	tb->futurevectors = (char *) malloc(futurevector_bytes);
 	if (tb->futurevectors == NULL) {
 	    fatal("Can't malloc %dMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
@@ -12693,7 +12693,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.434 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.435 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
