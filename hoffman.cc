@@ -268,10 +268,12 @@ struct timeval proptable_preload_time = {0, 0};
 /* 'futurevectors' are bit vector used to track which futuremoves have been handled in a particular
  * position.  They are of type futurevector_t, and the primary operations used to construct them are
  * FUTUREVECTOR(move) to get a futurevector with a bit set in move's position, and
- * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move.
+ * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move, although the
+ * actual tables are now stored in a more compact format that only uses as many bits as are needed
+ * for the particular tablebase being generated.
  */
 
-typedef uint16 futurevector_t;
+typedef uint32 futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 #define NO_FUTUREMOVE -1
@@ -653,7 +655,9 @@ typedef struct tablebase {
 
     int entries_fd;
     entry_t *entries;
-    futurevector_t *futurevectors;
+
+    char *futurevectors;
+    int futurevector_bits;
 } tablebase_t;
 
 /* Propagation table
@@ -5481,7 +5485,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.432 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.433 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7084,31 +7088,6 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
 
     lock_entry(current_tb, index);
 
-    /* Somewhat of a special case here.  First of all, futurevector is non-zero only on the first
-     * back-propagation pass, when we back prop from the futurebases.  Also, if we're not using
-     * proptables, then I use a seperate array for the futurevectors, which got filled in when we
-     * initialized the tablebase.  In that case, we now check off the futurevectors in that array as
-     * we back prop.  If we are using proptables, then this gets done during the initialization pass
-     * and we don't use the seperate array.
-     */
-
-    if ((! USE_PROPTABLES) && (futurevector != 0)) {
-
-	if ((futurevector & current_tb->futurevectors[index]) != futurevector) {
-	    /* This could happen simply if the futuremove has already been considered */
-	    /* XXX In particular, I need to turn this off right now for symmetric tablebases */
-#if 0
-	    global_position_t global;
-	    index_to_global_position(current_tb, index, &global);
-	    fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
-#endif
-	    unlock_entry(current_tb, index);
-	    return;
-	}
-
-	current_tb->futurevectors[index] ^= futurevector;
-    }
-
     if (PROPTABLE_FORMAT_DTM_BITS > 0) {
 	if (dtm > 0) {
 	    PTM_wins(current_tb, index, dtm);
@@ -8140,21 +8119,30 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
     if (futuremove != NO_FUTUREMOVE) {
 
-	futurevector_t futurevector = FUTUREVECTOR(futuremove);
+	long bit_offset = (index * current_tb->futurevector_bits);
+	futurevector_t * futurevectorptr = ((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
 
-	if ((futurevector & current_tb->futurevectors[index]) != futurevector) {
+#if 0
+	if (! (*futurevectorptr & (1 << ((bit_offset & 7) + futuremove)))) {
 	    /* This could happen simply if the futuremove has already been considered */
 	    /* XXX In particular, I need to turn this off right now for symmetric tablebases */
-#if 0
 	    global_position_t global;
 	    index_to_global_position(current_tb, index, &global);
 	    fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
+	    unlock_entry(current_tb, index);
+	    return;
+	}
 #endif
+
+	/* This has to be atomically, because there will be other indices in this bit vector */
+	/* *futurevectorptr ^= (1 << ((bit_offset & 7) + futuremove)); */
+
+	if ((__sync_fetch_and_and(futurevectorptr, ~(1 << ((bit_offset & 7) + futuremove)))
+	     & (1 << ((bit_offset & 7) + futuremove))) == 0) {
 	    unlock_entry(current_tb, index);
 	    return;
 	}
 
-	current_tb->futurevectors[index] ^= futurevector;
     }
 
     if (dtm > 0) {
@@ -9897,9 +9885,19 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 
     index_t index;
 
+    /* XXX this code is probably inefficient, and though it appears to assume a little-endian
+     * architecture, I've tried to do it the same way everywhere, so I think it should work no
+     * matter the endianness.  Might have alignment problems, though.
+     */
+
     for (index = 0; index <= tb->max_index; index ++) {
 	if (get_entry_DTM(index) != 1) {
-	    finalize_futuremove(tb, index, tb->futurevectors[index]);
+	    long bit_offset = (index * current_tb->futurevector_bits);
+	    futurevector_t futurevector = *((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
+
+	    futurevector >>= bit_offset & 7;
+	    futurevector &= (1 << current_tb->futurevector_bits) - 1;
+	    finalize_futuremove(tb, index, futurevector);
 	}
     }
 
@@ -11913,7 +11911,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
  */
 
 typedef struct {
-    tablebase_t *tb;
     index_t start_index;
     index_t end_index;
 } initialization_control_t;
@@ -11924,7 +11921,20 @@ void * initialize_tablebase_section(void * ptr)
     index_t index;
 
     for (index=control->start_index; index <= control->end_index; index++) {
-	control->tb->futurevectors[index] = initialize_tablebase_entry(control->tb, index);
+
+	long bit_offset = (index * current_tb->futurevector_bits);
+	futurevector_t * futurevectorptr = ((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
+
+	/* We do this atomically, "just in case" there's a threading conflict, although the only
+	 * places there would be conflicts would be between the start of one thread and the end of
+	 * another, so it's unlikely.
+	 */
+
+	/* *futurevectorptr &= (-1 << (current_tb->futurevector_bits + (bit_offset & 7))) | ((1 << (bit_offset & 7))-1); */
+	/* *futurevectorptr |= initialize_tablebase_entry(current_tb, index) << (bit_offset & 7); */
+
+	__sync_fetch_and_and(futurevectorptr, (-1 << (current_tb->futurevector_bits + (bit_offset & 7))) | ((1 << (bit_offset & 7))-1));
+	__sync_fetch_and_or(futurevectorptr, initialize_tablebase_entry(current_tb, index) << (bit_offset & 7));
     }
 
     return NULL;
@@ -11932,16 +11942,16 @@ void * initialize_tablebase_section(void * ptr)
 
 #if !USE_THREADS
 
-void initialize_tablebase(tablebase_t *tb)
+void initialize_tablebase(void)
 {
-    initialization_control_t control = {tb, 0, tb->max_index};
+    initialization_control_t control = {0, tb->max_index};
 
     initialize_tablebase_section(&control);
 }
 
 #else
 
-void initialize_tablebase(tablebase_t *tb)
+void initialize_tablebase(void)
 {
     initialization_control_t *controls;
     pthread_t *threads;
@@ -11952,12 +11962,11 @@ void initialize_tablebase(tablebase_t *tb)
     threads = malloc(sizeof(pthread_t) * num_threads);
 
     for (thread = 0; thread < num_threads; thread ++) {
-	controls[thread].tb = tb;
-	controls[thread].start_index = ((tb->max_index+1)*thread)/num_threads;
+	controls[thread].start_index = ((current_tb->max_index+1)*thread)/num_threads;
 	if (thread != num_threads-1) {
-	    controls[thread].end_index = ((tb->max_index+1)*(thread+1))/num_threads - 1;
+	    controls[thread].end_index = ((current_tb->max_index+1)*(thread+1))/num_threads - 1;
 	} else {
-	    controls[thread].end_index = tb->max_index;
+	    controls[thread].end_index = current_tb->max_index;
 	}
 	pthread_create(&threads[thread], NULL, &initialize_tablebase_section, &controls[thread]);
     }
@@ -12217,6 +12226,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     int min_dtm = 0;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
+    int futurevector_bytes;
 
 #if defined(RLIMIT_MEMLOCK) && LOCK_MEMORY
     struct rlimit rlimit;
@@ -12325,18 +12335,22 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 */
 
 	/* tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t)); */
-	tb->futurevectors = (futurevector_t *) malloc((tb->max_index + 1) * sizeof(futurevector_t));
+        if (num_futuremoves[WHITE] > num_futuremoves[BLACK])
+	    tb->futurevector_bits = num_futuremoves[WHITE];
+	else
+	    tb->futurevector_bits = num_futuremoves[BLACK];
+
+	futurevector_bytes = (((tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3;
+	tb->futurevectors = (char *) malloc(futurevector_bytes);
 	if (tb->futurevectors == NULL) {
-	    fatal("Can't malloc %dMB for tablebase futurevectors: %s\n",
-		  ((tb->max_index + 1) * sizeof(futurevector_t))/(1024*1024),
+	    fatal("Can't malloc %dMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
 		  strerror(errno));
 	    return 0;
 	} else {
-	    info("Malloced %dMB for tablebase futurevectors\n",
-		 ((tb->max_index + 1) * sizeof(futurevector_t))/(1024*1024));
+	    info("Malloced %dMB for tablebase futurevectors\n", futurevector_bytes/(1024*1024));
 	}
 	/* Don't really need this, since they will all get initialized anyway */
-	/* memset(tb->futurevectors, 0, (tb->max_index + 1) * sizeof(futurevector_t)); */
+	memset(tb->futurevectors, 0, futurevector_bytes);
 
 	/* Due to the heavily random access pattern of memory during back propagation, this
 	 * application performs horribly if required to swap.  Attempt to lock all of its pages into
@@ -12375,7 +12389,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	pass_type[total_passes] = "initialization";
 
 	info("Initializing tablebase\n");
-	initialize_tablebase(tb);
+	initialize_tablebase();
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
 	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
@@ -12679,7 +12693,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.432 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.433 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
