@@ -5485,7 +5485,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.435 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.436 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8119,7 +8119,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
     if (futuremove != NO_FUTUREMOVE) {
 
-	long bit_offset = (index * current_tb->futurevector_bits);
+	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 	futurevector_t * futurevectorptr = ((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
 
 #if 0
@@ -9892,7 +9892,7 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
 
     for (index = 0; index <= tb->max_index; index ++) {
 	if (get_entry_DTM(index) != 1) {
-	    long bit_offset = (index * current_tb->futurevector_bits);
+	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 	    futurevector_t futurevector = *((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
 
 	    futurevector >>= bit_offset & 7;
@@ -11922,7 +11922,7 @@ void * initialize_tablebase_section(void * ptr)
 
     for (index=control->start_index; index <= control->end_index; index++) {
 
-	long bit_offset = (index * current_tb->futurevector_bits);
+	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 	futurevector_t * futurevectorptr = ((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
 
 	/* We do this atomically, "just in case" there's a threading conflict, although the only
@@ -12693,7 +12693,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.435 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.436 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
