@@ -5487,7 +5487,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.440 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.441 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7401,10 +7401,13 @@ void proptable_finalize(int target_dtm)
     for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
 	sprintf(infilename, "propfile%04d_in", tablenum);
 	sprintf(outfilename, "propfile%04d_out", tablenum);
-	rename(outfilename, infilename);
+	if (rename(outfilename, infilename) == -1) {
+	    fatal("Can't rename '%s' to '%s': %s\n", outfilename, infilename, strerror(errno));
+	    return;
+	}
 	proptable_input_fds[tablenum] = open(infilename, O_RDONLY | O_LARGEFILE | O_DIRECT);
 	if (proptable_input_fds[tablenum] == -1) {
-	    fatal("Can't open '%s' for reading propfile\n", infilename);
+	    fatal("Can't open '%s' for reading propfile: %s\n", infilename, strerror(errno));
 	    return;
 	}
     }
@@ -7417,16 +7420,17 @@ void proptable_finalize(int target_dtm)
 
 	if (posix_memalign((void **) &proptable_buffer[tablenum],
 			   alignment, PROPTABLE_BUFFER_BYTES) != 0) {
-	    fatal("Can't posix_memalign proptable buffer\n");
+	    fatal("Can't posix_memalign proptable buffer: %s\n", strerror(errno));
 	    return;
 	}
 
 	ret = read(proptable_input_fds[tablenum], proptable_buffer[tablenum], PROPTABLE_BUFFER_BYTES);
 	if (ret == -1) {
-	    perror("reading proptable");
+	    fatal("initial read on proptable: %s\n", strerror(errno));
 	    return;
 	}
 	if (ret == 0) {
+	    warning("Empty input proptable ?\n");
 	    proptable_buffer_ptr[tablenum] = NULL;
 	} else {
 	    proptable_buffer_ptr[tablenum] = proptable_buffer[tablenum];
@@ -7447,6 +7451,27 @@ void proptable_finalize(int target_dtm)
 	fatal("Can't malloc sorting network in proptable_finalize()\n");
 	return;
     }
+
+    /* The sorting network.
+     *
+     * We need to read a bunch of proptables in sorted order.  Each proptable is itself sorted, but
+     * now we need to impose a total sort on all of them.  We do this by maintaining a binary tree
+     * (the sorting network), each node a proptable entry, with the input proptables 'feeding' the
+     * leaves and each non-leaf the less-than comparison of the two nodes below it.  We also track
+     * which proptable each entry came from originally.  Once initialized, we just read the root of
+     * the tree to get the next proptable entry, then refill whichever leaf we got the entry from
+     * (that's why we track proptables for each entry), and run back up the tree from that leaf
+     * only, recomputing the comparisons.  And it's laid out in memory as an array, like this:
+     *
+     *                    /4
+     *                /-2--5
+     *               1
+     *                \-3--6
+     *                    \7
+     *
+     * so that we can run that last step (backing up the tree, from right to left, in the diagram),
+     * just by right shifting the index.  I got this idea from Knuth.
+     */
 
     /* Initialize the sorting network.
      *
@@ -12320,7 +12345,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.440 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.441 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
