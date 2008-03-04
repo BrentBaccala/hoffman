@@ -5487,7 +5487,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.439 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.440 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7185,7 +7185,6 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 
 
 int num_proptables = 0;
-int proptable_output_fd = -1;
 
 /* proptable_full() - dump out to disk and empty table
  *
@@ -7197,18 +7196,18 @@ void proptable_full(void)
 {
     char outfilename[256];
     struct timeval tv1, tv2;
+    int proptable_output_fd = -1;
 
     if (proptable_entries == 0) return;
 
     sprintf(outfilename, "propfile%04d_out", num_proptables);
 
-    if (proptable_output_fd == -1) {
 #ifdef O_LARGEFILE
-	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
+    proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
 #else
-	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
+    proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 #endif
-    }
+
     if (proptable_output_fd == -1) {
 	fatal("Can't open '%s' for writing propfile\n", outfilename);
 	return;
@@ -7259,7 +7258,6 @@ void proptable_full(void)
     proptable_merges = 0;
 
     close(proptable_output_fd);
-    proptable_output_fd = -1;
 }
 
 /* proptable_finalize()
@@ -7383,11 +7381,6 @@ void proptable_finalize(int target_dtm)
     proptable_full();
 
     num_input_proptables = num_proptables;
-
-    if (proptable_output_fd != -1) {
-	close(proptable_output_fd);
-	proptable_output_fd = -1;
-    }
 
     num_proptables = 0;
 
@@ -12327,7 +12320,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.439 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.440 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
