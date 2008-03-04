@@ -78,7 +78,7 @@
  *        hoffman -p <tablebase> ...                              (probe mode)
  */
 
-#define USE_PROPTABLES 0
+#define USE_PROPTABLES 1
 
 
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
@@ -106,23 +106,6 @@
 #include <sys/mman.h>	/* for mmap() */
 
 #include <errno.h>	/* for EINPROGRESS */
-
-/* If we're using proptables, then the program uses POSIX asynchronous I/O extensively.  Right now
- * (November 2006), there are basically two different Linux implementations available for this.  The
- * native interface in the 2.6 kernel series looks great on paper, but still seems to block at
- * critical places if there aren't enough kernel request structures.  GLIBC does asynchronous I/O
- * using threads, which works better right now but incurs the overhead of context switches between
- * the threads.  I've got both versions installed on my system and pick which one I want to use by
- * selecting the appropriate header file here and the appropriate library (-lposix-aio for the
- * native interface; -lrt for the GLIBC threads version) in the Makefile.  The two selections have
- * to match up; if they don't things will compile without warnings but fail with various mysterious
- * errors at runtime.
- */
-
-#if USE_PROPTABLES
-/* #include </usr/local/include/aio.h> */
-#include </usr/include/aio.h>
-#endif
 
 /* The GNU readline library, used for prompting the user during the probe code.  By defining
  * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
@@ -659,7 +642,6 @@ typedef struct tablebase {
     int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
     int stalemate_prune_color;
 
-    int entries_fd;
     entry_t *entries;
 
     char *futurevectors;
@@ -706,9 +688,7 @@ int num_propentries = 0;
 
 #define MAX_ZEROOFFSET 25
 
-#define SEPERATE_PROPTABLE_FILES 0
-
-#define USE_DUAL_PROPTABLES 1
+#define USE_DUAL_PROPTABLES 0
 
 #define LOCK_MEMORY 0
 
@@ -860,6 +840,23 @@ int do_write(int fd, void *ptr, int length)
 	}
 	ptr += writ;
 	length -= writ;
+    }
+    return 0;
+}
+
+/* do_write_or_suspend() is like do_write(), but suspends the program on an error (like ENOSPC) */
+
+int do_write_or_suspend(int fd, void *ptr, int length)
+{
+    while (length > 0) {
+	int writ = write(fd, ptr, length);
+	if (writ == -1) {
+	    perror("do_write");
+	    kill(getpid(), SIGSTOP);
+	} else {
+	    ptr += writ;
+	    length -= writ;
+	}
     }
     return 0;
 }
@@ -5491,7 +5488,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.437 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.438 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6307,270 +6304,9 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 }
 
 
-/* ENTRY RING BUFFERS
- *
- * In order to avoid copying file buffers in the kernel, which would really hurt our performance, we
- * turn off kernel buffering on the entries and proptable files by passing O_DIRECT to open().  This
- * makes disk read/write DMA operations go directly to user space buffers (which must now be page
- * aligned) and avoids any copying in the kernel.  It also means that we must now do our own
- * buffering, making extensive use of POSIX asynchronous I/O operations.  For the entries file,
- * which we update in memory and so must write back to disk, I use a ring buffering scheme.
- *
- * Donald Knuth's description of ring buffers in section 1.4.4 of AOCP (3ed) uses four colors to
- * illustrate the concept.  I'll use five - blue (input started but not yet complete), green (input
- * complete), yellow (currently processing), red (output started but not yet complete), and purple
- * (output done; input not yet started).  In our case, the buffers turn from blue to green and from
- * red to purple by themselves and we can detect the color difference between blue and green and
- * between red and purple by looking to see if their asynchronous read or write operation completed.
- * So we need two pointers, one to the single yellow buffer, and one to the first red or purple
- * buffer.  If the red/purple pointer catches up to the yellow pointer, then it means that there are
- * no read or purple buffers at the moment.
- *
- * The only functions "exported" from this section are the singly called init_entry_buffers(),
- * fetch_entry(), and store_entry().
- *
- * I'm aiming right now for a target buffer size of 128 KB, since that's my kernel's maximum
- * internal request size.  So, 128 KB / 4 byte entries = 32 K entries = 1<<15
- */
+/***** THE ENTRIES TABLE *****/
 
 #define LEFTSHIFT(val,bits) (((bits) > 0) ? ((val) << (bits)) : ((val) >> (-(bits))))
-
-#if USE_PROPTABLES
-
-#define NUM_ENTRY_BUFFERS 4
-#define ENTRY_BUFFER_ENTRIES (1<<12)
-#define ENTRY_BUFFER_BYTES LEFTSHIFT(ENTRY_BUFFER_ENTRIES, ENTRIES_FORMAT_BITS - 3)
-
-struct entry_buffer {
-    entry_t *buffer;
-    index_t start;
-    struct aiocb aiocb;
-};
-
-struct entry_buffer entry_buffers[NUM_ENTRY_BUFFERS];
-
-int yellow_entry_buffer = 0;
-int first_purple_red_entry_buffer = 0;
-
-/* Arrange to read buffernum (i.e, turn it blue).  'buffer' must be allocated (and page aligned),
- * and 'start' must indicate the index number (not the byte number) at which we want to start our
- * read, always of ENTRY_BUFFER_BYTES bytes.
- */
-
-void turn_entry_buffer_blue(int fd, int buffernum)
-{
-    memset(&entry_buffers[buffernum].aiocb, 0, sizeof(struct aiocb));
-    entry_buffers[buffernum].aiocb.aio_fildes = fd;
-    entry_buffers[buffernum].aiocb.aio_buf = entry_buffers[buffernum].buffer;
-    entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
-    entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
-    entry_buffers[buffernum].aiocb.aio_offset
-	= LEFTSHIFT(entry_buffers[buffernum].start, ENTRIES_FORMAT_BITS - 3);
-
-    if (aio_read(& entry_buffers[buffernum].aiocb) != 0) {
-	fprintf(stderr, "Can't enqueue aio_read for entry buffer\n");
-	kill(getpid(), SIGSTOP);
-    }
-}
-
-void wait_for_entry_buffer_green(int buffernum)
-{
-    const struct aiocb * aiocbs[1];
-    int retval;
-
-    if (aio_error(&entry_buffers[buffernum].aiocb) == EINPROGRESS) {
-	struct timeval tv1, tv2;
-	gettimeofday(&tv1, NULL);
-
-	/* fprintf(stderr, "Waiting for entry buffer read to complete\n"); */
-	aiocbs[0] = &entry_buffers[buffernum].aiocb;
-	aio_suspend(aiocbs, 1, NULL);
-
-	gettimeofday(&tv2, NULL);
-	subtract_timeval(&tv2, &tv1);
-	add_timeval(&entries_read_stall_time, &tv2);
-	entries_read_stalls ++;
-    }
-
-    retval = aio_return(&entry_buffers[buffernum].aiocb);
-
-    if (retval == 0) {
-	/* zero byte read - this is OK the first time through */
-	memset(entry_buffers[buffernum].buffer, 0, ENTRY_BUFFER_BYTES);
-    } else if ((retval != ENTRY_BUFFER_BYTES)
-	       && (retval != LEFTSHIFT(current_tb->max_index % ENTRY_BUFFER_ENTRIES,
-				       ENTRIES_FORMAT_BITS - 3)))  {
-	fprintf(stderr, "entry buffer aio_read didn't return ENTRY_BUFFER_BYTES\n");
-	kill(getpid(), SIGSTOP);
-    }
-}
-
-/* Arrange to write buffernum (i.e, turn it red).  Again, 'buffer' must be allocated and 'start'
- * must indicate the index number at which we want to start our write.
- */
-
-void turn_entry_buffer_red(int fd, int buffernum)
-{
-    memset(&entry_buffers[buffernum].aiocb, 0, sizeof(struct aiocb));
-    entry_buffers[buffernum].aiocb.aio_fildes = fd;
-    entry_buffers[buffernum].aiocb.aio_buf = entry_buffers[buffernum].buffer;
-    entry_buffers[buffernum].aiocb.aio_nbytes = ENTRY_BUFFER_BYTES;
-    entry_buffers[buffernum].aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
-    entry_buffers[buffernum].aiocb.aio_offset
-	= LEFTSHIFT(entry_buffers[buffernum].start, ENTRIES_FORMAT_BITS - 3);
-
-    if (aio_write(& entry_buffers[buffernum].aiocb) != 0) {
-	fprintf(stderr, "Can't enqueue aio_write for entry buffer\n");
-	kill(getpid(), SIGSTOP);
-    }
-}
-
-void wait_for_entry_buffer_purple(int buffernum)
-{
-    const struct aiocb * aiocbs[1];
-
-    if (aio_error(&entry_buffers[buffernum].aiocb) == EINPROGRESS) {
-	struct timeval tv1, tv2;
-	gettimeofday(&tv1, NULL);
-
-	/* fprintf(stderr, "Waiting for entry buffer write to complete\n"); */
-	aiocbs[0] = &entry_buffers[buffernum].aiocb;
-	aio_suspend(aiocbs, 1, NULL);
-
-	gettimeofday(&tv2, NULL);
-	subtract_timeval(&tv2, &tv1);
-	add_timeval(&entries_write_stall_time, &tv2);
-	entries_write_stalls ++;
-    }
-
-    if (aio_return(&entry_buffers[buffernum].aiocb) != ENTRY_BUFFER_BYTES) {
-	fprintf(stderr, "entry buffer aio_write didn't return ENTRY_BUFFER_BYTES\n");
-	kill(getpid(), SIGSTOP);
-    }
-}
-
-void init_entry_buffers(tablebase_t *tb)
-{
-    int alignment = fpathconf(tb->entries_fd, _PC_REC_XFER_ALIGN);
-    int buffernum;
-
-    for (buffernum = 0; buffernum < NUM_ENTRY_BUFFERS; buffernum ++) {
-	if (posix_memalign((void **) &entry_buffers[buffernum], alignment, ENTRY_BUFFER_BYTES) != 0) {
-	    fatal("Can't posix_memalign entries buffer\n");
-	    terminate();
-	}
-	entry_buffers[buffernum].start = buffernum * ENTRY_BUFFER_ENTRIES;
-	turn_entry_buffer_blue(tb->entries_fd, buffernum);
-    }
-
-    wait_for_entry_buffer_green(0);
-}
-
-/* Make sure that 'index' is in the yellow entry buffer.  All these colors remind me of the game
- * Twister, thus the name of this function...
- */
-
-void twister(tablebase_t *tb, index_t index)
-{
-    if ((index < entry_buffers[yellow_entry_buffer].start)
-	|| (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
-
-	/* The index we're looking for isn't in the yellow buffer.  Play Twister. */
-
-	int next_entry_buffer = yellow_entry_buffer + 1;
-	if (next_entry_buffer >= NUM_ENTRY_BUFFERS) next_entry_buffer = 0;
-
-	/* Have we caught up with our first purple/red buffer?  Wait until the write has finished
-	 * and start the read.
-	 */
-
-	if (next_entry_buffer == first_purple_red_entry_buffer) {
-
-	    wait_for_entry_buffer_purple(first_purple_red_entry_buffer);
-
-	    /* arrange to read first_purple_red_entry_buffer (i.e, turn it blue) */
-
-	    entry_buffers[first_purple_red_entry_buffer].start += ENTRY_BUFFER_ENTRIES * NUM_ENTRY_BUFFERS;
-	    if (entry_buffers[first_purple_red_entry_buffer].start > tb->max_index) {
-		entry_buffers[first_purple_red_entry_buffer].start -= tb->max_index + 1;
-		entry_buffers[first_purple_red_entry_buffer].start /= ENTRY_BUFFER_ENTRIES;
-		entry_buffers[first_purple_red_entry_buffer].start *= ENTRY_BUFFER_ENTRIES;
-	    }
-
-	    turn_entry_buffer_blue(tb->entries_fd, first_purple_red_entry_buffer);
-
-	    /* advance first_purple_red_entry_buffer */
-
-	    first_purple_red_entry_buffer ++;
-	    if (first_purple_red_entry_buffer >= NUM_ENTRY_BUFFERS) first_purple_red_entry_buffer = 0;
-	}
-
-	/* Now, next_entry_buffer is at least blue.  Wait for it to turn green. */
-
-	wait_for_entry_buffer_green(next_entry_buffer);
-
-	/* Check to see if any of the trailing red buffers have turned purple.  If so, turn them
-	 * blue.  We do this towards the end here, because if we had to block waiting for
-	 * next_entry_buffer to become green, some of the reds might have turned purple.
-	 */
-
-	while ((first_purple_red_entry_buffer != yellow_entry_buffer)
-	       && (aio_error(&entry_buffers[first_purple_red_entry_buffer].aiocb) != EINPROGRESS)) {
-
-	    /* arrange to read first_purple_red_entry_buffer (i.e, turn it blue) */
-
-	    entry_buffers[first_purple_red_entry_buffer].start += ENTRY_BUFFER_ENTRIES * NUM_ENTRY_BUFFERS;
-	    if (entry_buffers[first_purple_red_entry_buffer].start > tb->max_index) {
-		entry_buffers[first_purple_red_entry_buffer].start -= tb->max_index + 1;
-		entry_buffers[first_purple_red_entry_buffer].start /= ENTRY_BUFFER_ENTRIES;
-		entry_buffers[first_purple_red_entry_buffer].start *= ENTRY_BUFFER_ENTRIES;
-	    }
-
-	    turn_entry_buffer_blue(tb->entries_fd, first_purple_red_entry_buffer);
-
-	    /* advance first_purple_red_entry_buffer */
-
-	    first_purple_red_entry_buffer ++;
-	    if (first_purple_red_entry_buffer >= NUM_ENTRY_BUFFERS) first_purple_red_entry_buffer = 0;
-	}
-
-	/* queue a write operation for yellow_entry_buffer (i.e, turn it red) */
-
-	turn_entry_buffer_red(tb->entries_fd, yellow_entry_buffer);
-
-	/* Move on to the next buffer to be processed.  We waited for it to be green, remember? */
-
-	yellow_entry_buffer = next_entry_buffer;
-    }
-
-    /* Now, as silly as this sounds, we might have done all of that and still not have a valid
-     * buffer if the calling routine isn't going through the index numbers in order.  Complain, and
-     * wait for a special read to finish on the buffer.  We don't bother with a write because we
-     * just flipped buffers above, so our yellow buffer was green a split second ago.
-     */
-
-    if ((index < entry_buffers[yellow_entry_buffer].start)
-	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
-
-	fprintf(stderr, "fetch_entry_pointer(): special read; needed %d had %d\n",
-		index, entry_buffers[yellow_entry_buffer].start);
-
-	entry_buffers[yellow_entry_buffer].start = (index / ENTRY_BUFFER_ENTRIES) * ENTRY_BUFFER_ENTRIES;
-
-	turn_entry_buffer_blue(tb->entries_fd, yellow_entry_buffer);
-
-	wait_for_entry_buffer_green(yellow_entry_buffer);
-    }
-
-    /* If we STILL don't have a valid buffer, well, give up, I guess. */
-
-    if ((index < entry_buffers[yellow_entry_buffer].start)
-	       || (index >= (entry_buffers[yellow_entry_buffer].start + ENTRY_BUFFER_ENTRIES))) {
-	fprintf(stderr, "Can't fetch in fetch_entry_pointer\n");
-    }
-}
-
-#endif /* USE_PROPTABLES */
 
 /* Fetch an entry pointer from a preloaded tablebase - we're reading from a compressed file
  * (possibly over the network).
@@ -6743,17 +6479,95 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     return fetch_entry_pointer_n(tb, index, 0);
 }
 
+#if USE_PROPTABLES
+
+int entries_read_fd = -1;
+int entries_write_fd = -1;
+
+entry_t *entry_buffer = NULL;
+index_t entry_buffer_start = 0;
+int entry_buffer_size = 4096;
+
+#endif
+
 inline entry_t * fetch_current_entry_pointer(index_t index)
 {
+    int ret;
 
 #if USE_PROPTABLES
 
     /* we're using proptables, so make sure we've got the right buffer and then return the pointer */
 
-    twister(current_tb, index);
+    /* first, malloc the entries buffer if it doesn't already exist */
 
-    return (void *) (entry_buffers[yellow_entry_buffer].buffer)
-	+ LEFTSHIFT(index - entry_buffers[yellow_entry_buffer].start, ENTRIES_FORMAT_BITS - 3);
+    if (entry_buffer == NULL) {
+	entry_buffer = malloc(entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	if (entry_buffer == NULL) {
+	    fatal("Can't malloc entries buffer\n");
+	    return 0;
+	}
+	memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+    }
+
+    /* create entries file for writing if it isn't already open */
+
+    if (entries_write_fd == -1) {
+	entries_write_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
+	if (entries_write_fd == -1) {
+	    fatal("Can't open 'entries' for read-write: %s\n", strerror(errno));
+	    return 0;
+	}
+    }
+
+    /* we're reseting back to the beginning - write the current buffer out, close and reopen both
+     * file descriptors, and read the first buffer in
+     */
+
+    if (entry_buffer_start > index) {
+	do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+
+	if (entries_read_fd != -1) close(entries_read_fd);
+	close(entries_write_fd);
+
+	entries_read_fd = open("entries", O_RDONLY | O_LARGEFILE, 0666);
+	entries_write_fd = open("entries", O_RDWR | O_LARGEFILE, 0666);
+
+	if (entries_read_fd == -1) {
+	    fatal("Can't open 'entries' for reading: %s\n", strerror(errno));
+	    return 0;
+	}
+	if (entries_write_fd == -1) {
+	    fatal("Can't open 'entries' for writing: %s\n", strerror(errno));
+	    return 0;
+	}
+
+	entry_buffer_start = 0;
+	ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+	    fatal("initial entries read: %s\n", strerror(errno));
+	    return 0;
+	}
+    }
+
+    /* if we're moving past the entry buffer, write it to disk */
+
+    /* XXX multithreading a problem here? */
+
+    while (index >= entry_buffer_start + entry_buffer_size) {
+	do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	if (entries_read_fd != -1) {
+	    ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	    if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+		fatal("entries read: %s\n", strerror(errno));
+		return 0;
+	    }
+	} else {
+	    memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	}
+	entry_buffer_start += entry_buffer_size;
+    }
+
+    return (void *) (entry_buffer + LEFTSHIFT(index - entry_buffer_start, ENTRIES_FORMAT_BITS - 3));
 #else
 
     /* entries array exists in memory - so just return a pointer into it */
@@ -7381,41 +7195,11 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 int num_proptables = 0;
 int proptable_output_fd = -1;
 
-struct aiocb proptable_output_aiocb;
-int proptable_write_in_progress = 0;
-
 /* proptable_full() - dump out to disk and empty table
  *
  * If we're using dual proptables, then we switch to the empty table and start background async
  * operations to dump the full one out to disk, and then zero it out.
  */
-
-void finalize_proptable_write(void)
-{
-    const struct aiocb * aiocbs[1];
-    int ret;
-
-    if (!proptable_write_in_progress) return;
-
-    aiocbs[0] = &proptable_output_aiocb;
-    aio_suspend(aiocbs, 1, NULL);
-
-    ret = aio_return(&proptable_output_aiocb);
-
-    if (ret != num_propentries * PROPTABLE_FORMAT_BYTES) {
-	fprintf(stderr, "proptable aio_write returned %d, not PROPTABLE_BYTES\n", ret);
-	kill(getpid(), SIGSTOP);
-    }
-
-    /* Whichever proptable is in use, we just finished writing the other one, so zero it out.
-     * If we don't USE_DUAL_PROPTABLES, then proptable1 and proptable2 have the same value.
-     */
-
-    if (proptable == proptable1) memset(proptable2, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
-    else memset(proptable1, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
-
-    proptable_write_in_progress = 0;
-}
 
 void proptable_full(void)
 {
@@ -7424,17 +7208,13 @@ void proptable_full(void)
 
     if (proptable_entries == 0) return;
 
-#if SEPERATE_PROPTABLE_FILES
     sprintf(outfilename, "propfile%04d_out", num_proptables);
-#else
-    sprintf(outfilename, "propfile_out");
-#endif
 
     if (proptable_output_fd == -1) {
 #ifdef O_LARGEFILE
-	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
+	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
 #else
-	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_DIRECT, 0666);
+	proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
 #endif
     }
     if (proptable_output_fd == -1) {
@@ -7457,9 +7237,6 @@ void proptable_full(void)
     fprintf(stderr, "Writing proptable block %d with %d entries (%d%% occupancy)\n",
 	    num_proptables, proptable_entries, (100*proptable_entries)/num_propentries);
 
-    /* If we USE_DUAL_PROPTABLES, and there was a write already running, make sure it's done. */
-    finalize_proptable_write();
-
     gettimeofday(&tv1, NULL);
 
     /* Hitting a disk full condition is by no means out of the question here!
@@ -7471,31 +7248,13 @@ void proptable_full(void)
      * break the write down into a series of smaller ones that we can scatter with the reads.
      */
 
-    /* do_write(proptable_output_fd, proptable, num_propentries * sizeof(proptable_entry_t)); */
+    /* XXX this next line doesn't handle dual proptables right */
 
-    memset(&proptable_output_aiocb, 0, sizeof(struct aiocb));
-    proptable_output_aiocb.aio_fildes = proptable_output_fd;
-    proptable_output_aiocb.aio_buf = proptable;
-    proptable_output_aiocb.aio_nbytes = num_propentries * PROPTABLE_FORMAT_BYTES;
-#if SEPERATE_PROPTABLE_FILES
-    proptable_output_aiocb.aio_offset = 0;
-#else
-    proptable_output_aiocb.aio_offset = num_proptables * num_propentries * PROPTABLE_FORMAT_BYTES;
-#endif
-    proptable_output_aiocb.aio_sigevent.sigev_notify = SIGEV_NONE;
-
-    if (aio_write(& proptable_output_aiocb) != 0) {
-	fprintf(stderr, "Can't enqueue aio_write for proptable\n");
-	kill(getpid(), SIGSTOP);
-    }
-
-    proptable_write_in_progress = 1;
+    do_write_or_suspend(proptable_output_fd, proptable, num_propentries * PROPTABLE_FORMAT_BYTES);
 
 #if USE_DUAL_PROPTABLES
     if (proptable == proptable1) proptable = proptable2;
     else proptable = proptable1;
-#else
-    finalize_proptable_write();
 #endif
 
     gettimeofday(&tv2, NULL);
@@ -7507,10 +7266,8 @@ void proptable_full(void)
     proptable_entries = 0;
     proptable_merges = 0;
 
-#if SEPERATE_PROPTABLE_FILES
     close(proptable_output_fd);
     proptable_output_fd = -1;
-#endif
 }
 
 /* proptable_finalize()
@@ -7532,9 +7289,8 @@ void proptable_full(void)
 
 int *proptable_input_fds;
 proptable_entry_t **proptable_buffer;
-struct aiocb *proptable_aiocb;
-int *proptable_buffer_index;
-int *proptable_current_buffernum;
+proptable_entry_t **proptable_buffer_ptr;
+proptable_entry_t **proptable_buffer_limit;
 
 /* Proptable buffering settings.
  *
@@ -7561,16 +7317,9 @@ int *proptable_current_buffernum;
 
 #define PROPTABLE_BUFFER_ENTRIES (1<<13)
 #define PROPTABLE_BUFFER_BYTES (PROPTABLE_BUFFER_ENTRIES * PROPTABLE_FORMAT_BYTES)
-#define BUFFERS_PER_PROPTABLE 4
-
-#define propbuf(tablenum, buffernum) (((tablenum) * BUFFERS_PER_PROPTABLE) + buffernum)
-
-#define current_propbuf(tablenum) propbuf(tablenum, proptable_current_buffernum[tablenum])
 
 void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 {
-    const struct aiocb * aiocbs[1];
-    uint32 offset;
     int ret;
 
     do {
@@ -7579,95 +7328,37 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 	 * index are empty slots and are skipped.
 	 */
 
-	while (proptable_buffer_index[tablenum] < PROPTABLE_BUFFER_ENTRIES) {
+	while (proptable_buffer_ptr[tablenum] + PROPTABLE_FORMAT_BYTES <= proptable_buffer_limit[tablenum]) {
 
-	    if (get_propentry_index(proptable_buffer[current_propbuf(tablenum)]
-				    + PROPTABLE_FORMAT_BYTES * (proptable_buffer_index[tablenum])) != 0) {
-		memcpy(dest,
-		       proptable_buffer[current_propbuf(tablenum)]
-		       + PROPTABLE_FORMAT_BYTES * (proptable_buffer_index[tablenum]),
-		       PROPTABLE_FORMAT_BYTES);
-
-		proptable_buffer_index[tablenum] ++;
+	    if (get_propentry_index(proptable_buffer_ptr[tablenum]) != 0) {
+		memcpy(dest, proptable_buffer_ptr[tablenum], PROPTABLE_FORMAT_BYTES);
+		proptable_buffer_ptr[tablenum] += PROPTABLE_FORMAT_BYTES;
 		return;
 	    }
 
-	    proptable_buffer_index[tablenum] ++;
+	    proptable_buffer_ptr[tablenum] += PROPTABLE_FORMAT_BYTES;
 	}
 
 	/* Finished with this buffer.  Issue a read request for what its next contents should be
 	 * (unless we've reached EOF).
 	 */
 
-	/* I'm reading Donald Knuth's description of ring buffers in section 1.4.4 of AOCP (3ed).
-	 * He uses three colors to illustrate the operation of these things - red (read not yet
-	 * complete), green (read complete), and yellow (currently processing).  In our case, the
-	 * buffers turn from red to green themselves and we can detect their color (by looking to
-	 * see if their asynchronous read operation completed).  So we only need a single pointer,
-	 * to the single yellow buffer.
-	 */
-
-	offset = proptable_aiocb[current_propbuf(tablenum)].aio_offset
-	    + PROPTABLE_BUFFER_BYTES * BUFFERS_PER_PROPTABLE;
-	if (offset % (num_propentries * PROPTABLE_FORMAT_BYTES)
-	    < PROPTABLE_BUFFER_BYTES * BUFFERS_PER_PROPTABLE) offset = 0;
-
-	memset(&proptable_aiocb[current_propbuf(tablenum)], 0, sizeof(struct aiocb));
-	proptable_aiocb[current_propbuf(tablenum)].aio_fildes = proptable_input_fds[tablenum];
-	proptable_aiocb[current_propbuf(tablenum)].aio_buf = proptable_buffer[current_propbuf(tablenum)];
-	proptable_aiocb[current_propbuf(tablenum)].aio_nbytes = PROPTABLE_BUFFER_BYTES;
-	proptable_aiocb[current_propbuf(tablenum)].aio_sigevent.sigev_notify = SIGEV_NONE;
-	proptable_aiocb[current_propbuf(tablenum)].aio_offset = offset;
-
-	if (proptable_aiocb[current_propbuf(tablenum)].aio_offset != 0) {
-
-	    if (aio_read(& proptable_aiocb[current_propbuf(tablenum)]) != 0) {
-		fprintf(stderr, "Can't enqueue aio_read for proptable\n");
-		kill(getpid(), SIGSTOP);
-	    }
-
+	ret = read(proptable_input_fds[tablenum], proptable_buffer[tablenum], PROPTABLE_BUFFER_BYTES);
+	if (ret == -1) {
+	    perror("reading proptable");
+	    return;
 	}
-
-	/* On to the next buffer. */
-
-	proptable_current_buffernum[tablenum] ++;
-	proptable_current_buffernum[tablenum] %= BUFFERS_PER_PROPTABLE;
-
-	/* Wait for it to finish its disk read, if necessary */
-
-	if (proptable_aiocb[current_propbuf(tablenum)].aio_offset != 0) {
-
-	    ret = aio_error(&proptable_aiocb[current_propbuf(tablenum)]);
-
-	    if (ret == EINPROGRESS) {
-		struct timeval tv1, tv2;
-		gettimeofday(&tv1, NULL);
-
-		/* fprintf(stderr, "Waiting for proptable buffer read to complete\n"); */
-		aiocbs[0] = &proptable_aiocb[current_propbuf(tablenum)];
-		aio_suspend(aiocbs, 1, NULL);
-
-		gettimeofday(&tv2, NULL);
-		subtract_timeval(&tv2, &tv1);
-		add_timeval(&proptable_read_stall_time, &tv2);
-		proptable_read_stalls ++;
-	    } else if (ret != 0) {
-		fprintf(stderr, "Error return %d from proptable aio_read\n", ret);
-	    }
-
-	    ret = aio_return(&proptable_aiocb[current_propbuf(tablenum)]);
-
-	    if (ret != PROPTABLE_BUFFER_BYTES) {
-		fprintf(stderr, "proptable aio_read returned %d, not PROPTABLE_BUFFER_BYTES\n", ret);
-		kill(getpid(), SIGSTOP);
+	if (ret == 0) {
+	    proptable_buffer_ptr[tablenum] = NULL;
+	} else {
+	    proptable_buffer_ptr[tablenum] = proptable_buffer[tablenum];
+	    proptable_buffer_limit[tablenum] = proptable_buffer[tablenum] + ret;
+	    if (ret % PROPTABLE_FORMAT_BYTES != 0) {
+		fatal("Proptable read split a proptable entry\n");
 	    }
 	}
 
-	/* Start at the beginning of the buffer, and keep looking */
-
-	proptable_buffer_index[tablenum] = 0;
-
-    } while (proptable_aiocb[current_propbuf(tablenum)].aio_offset != 0);
+    } while (proptable_buffer_ptr[tablenum] != NULL);
 
     /* No, we're really at the end! */
 
@@ -7681,21 +7372,16 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 void proptable_finalize(int target_dtm)
 {
     int i;
-    int tablenum, bufnum;
+    int tablenum;
     int num_input_proptables;
-    struct timeval tv1, tv2;
 
     void *sorting_network;
     int *proptable_num;
     int highbit;
     int network_node;
 
-#if SEPERATE_PROPTABLE_FILES
     char infilename[256];
     char outfilename[256];
-#else
-    int proptable_input_fd;
-#endif
 
 #define SORTING_NETWORK_ELEM(n)  (sorting_network + PROPTABLE_FORMAT_BYTES * (n))
 
@@ -7703,7 +7389,6 @@ void proptable_finalize(int target_dtm)
 
     /* Flush out anything in the last proptable, and wait for its write to complete */
     proptable_full();
-    finalize_proptable_write();
 
     num_input_proptables = num_proptables;
 
@@ -7716,33 +7401,19 @@ void proptable_finalize(int target_dtm)
 
     for (highbit = 1; highbit <= num_input_proptables; highbit <<= 1);
 
-    proptable_buffer = (proptable_entry_t **)
-	malloc(BUFFERS_PER_PROPTABLE * num_input_proptables * PROPTABLE_FORMAT_BYTES);
-    proptable_aiocb = (struct aiocb *)
-	calloc(BUFFERS_PER_PROPTABLE * num_input_proptables, sizeof(struct aiocb));
-    proptable_buffer_index = (int *) calloc(num_input_proptables, sizeof(int));
-    proptable_current_buffernum = (int *) calloc(num_input_proptables, sizeof(int));
+    proptable_buffer = (proptable_entry_t **) calloc(num_input_proptables, sizeof(proptable_entry_t *));
+    proptable_buffer_ptr = (proptable_entry_t **) calloc(num_input_proptables, sizeof(proptable_entry_t *));
+    proptable_buffer_limit = (proptable_entry_t **) calloc(num_input_proptables, sizeof(proptable_entry_t *));
+
     proptable_input_fds = (int *) calloc(num_input_proptables, sizeof(int));
 
     if ((proptable_buffer == NULL) || (proptable_input_fds == NULL)
-	|| (proptable_buffer_index == NULL)) {
+	|| (proptable_buffer_ptr == NULL) || (proptable_buffer_limit == NULL)) {
 	fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
 	return;
     }
 
-#if !SEPERATE_PROPTABLE_FILES
-    if (num_input_proptables > 0) {
-	rename("propfile_out", "propfile_in");
-	proptable_input_fd = open("propfile_in", O_RDONLY | O_LARGEFILE | O_DIRECT);
-	if (proptable_input_fd == -1) {
-	    fatal("Can't open 'propfile_in' for reading propfile\n");
-	    return;
-	}
-    }
-#endif
-
     for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
-#if SEPERATE_PROPTABLE_FILES
 	sprintf(infilename, "propfile%04d_in", tablenum);
 	sprintf(outfilename, "propfile%04d_out", tablenum);
 	rename(outfilename, infilename);
@@ -7751,60 +7422,38 @@ void proptable_finalize(int target_dtm)
 	    fatal("Can't open '%s' for reading propfile\n", infilename);
 	    return;
 	}
-#else
-	proptable_input_fds[tablenum] = proptable_input_fd;
-#endif
     }
+
+    /* Alloc and read initial buffers for all input proptables */
 
     for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
 	int alignment = fpathconf(proptable_input_fds[tablenum], _PC_REC_XFER_ALIGN);
+	int ret;
 
-	for (bufnum = 0; bufnum < BUFFERS_PER_PROPTABLE; bufnum ++) {
-	    if (posix_memalign((void **) &proptable_buffer[propbuf(tablenum, bufnum)],
-			       alignment, PROPTABLE_BUFFER_BYTES) != 0) {
-		fatal("Can't posix_memalign proptable buffer\n");
-		return;
+	if (posix_memalign((void **) &proptable_buffer[tablenum],
+			   alignment, PROPTABLE_BUFFER_BYTES) != 0) {
+	    fatal("Can't posix_memalign proptable buffer\n");
+	    return;
+	}
+
+	ret = read(proptable_input_fds[tablenum], proptable_buffer[tablenum], PROPTABLE_BUFFER_BYTES);
+	if (ret == -1) {
+	    perror("reading proptable");
+	    return;
+	}
+	if (ret == 0) {
+	    proptable_buffer_ptr[tablenum] = NULL;
+	} else {
+	    proptable_buffer_ptr[tablenum] = proptable_buffer[tablenum];
+	    proptable_buffer_limit[tablenum] = proptable_buffer[tablenum] + ret;
+	    if (ret % PROPTABLE_FORMAT_BYTES != 0) {
+		fatal("Proptable read split a proptable entry\n");
 	    }
 	}
     }
 
-    /* I run this loop in the opposite direction from the last one because I want the reads
-     * for the initial buffers for all the tables to be first in the queue.
-     */
 
-    for (bufnum = 0; bufnum < BUFFERS_PER_PROPTABLE; bufnum ++) {
-	for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
-	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_fildes = proptable_input_fds[tablenum];
-	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_buf = proptable_buffer[propbuf(tablenum, bufnum)];
-	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_nbytes = PROPTABLE_BUFFER_BYTES;
-	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_sigevent.sigev_notify = SIGEV_NONE;
-#if SEPERATE_PROPTABLE_FILES
-	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_offset = PROPTABLE_BUFFER_BYTES * bufnum;
-#else
-	    proptable_aiocb[propbuf(tablenum, bufnum)].aio_offset
-		= tablenum * num_propentries * PROPTABLE_FORMAT_BYTES + PROPTABLE_BUFFER_BYTES * bufnum;
-#endif
-
-	    if (aio_read(& proptable_aiocb[propbuf(tablenum, bufnum)]) != 0) {
-		fprintf(stderr, "Can't enqueue aio_read for proptable\n");
-		kill(getpid(), SIGSTOP);
-	    }
-	}
-    }
-
-    /* Wait for initial read to finish on each input proptable */
-
-    gettimeofday(&tv1, NULL);
-
-    for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
-	const struct aiocb * aiocbs[1];
-	aiocbs[0] = &proptable_aiocb[current_propbuf(tablenum)];
-	aio_suspend(aiocbs, 1, NULL);
-    }
-
-    gettimeofday(&tv2, NULL);
-    subtract_timeval(&tv2, &tv1);
-    add_timeval(&proptable_preload_time, &tv2);
+    /* Malloc the sorting network */
 
     sorting_network = malloc(2*highbit * PROPTABLE_FORMAT_BYTES);
     proptable_num = malloc(2*highbit * sizeof(int));
@@ -7917,33 +7566,26 @@ void proptable_finalize(int target_dtm)
 
     }
 
-    for (i = 0; i < num_input_proptables * BUFFERS_PER_PROPTABLE; i ++) {
-	free(proptable_buffer[i]);
+    for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
+	close(proptable_input_fds[tablenum]);
+	sprintf(infilename, "propfile%04d_in", tablenum);
+	unlink(infilename);
     }
 
-    free(proptable_buffer_index);
+    for (tablenum = 0; i < num_input_proptables; tablenum ++) {
+	free(proptable_buffer[tablenum]);
+    }
+
+    free(proptable_buffer_limit);
+    free(proptable_buffer_ptr);
     free(proptable_buffer);
     free(proptable_input_fds);
 
     free(sorting_network);
     free(proptable_num);
 
-#if !SEPERATE_PROPTABLE_FILES
-    if (num_input_proptables > 0) {
-	close(proptable_input_fd);
-	unlink("propfile_in");
-    }
-#else
-    for (i = 0; i < num_input_proptables; i ++) {
-	close(proptable_input_fds[i]);
-	sprintf(infilename, "propfile%04d_in", i);
-	unlink(infilename);
-    }
-#endif
-
     /* Flush out anything in the last proptable, and wait for its write to complete */
     proptable_full();
-    finalize_proptable_write();
 }
 
 void insert_into_proptable(proptable_entry_t *pentry)
@@ -12263,12 +11905,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    fatal("Using proptables, but proptable size not specified\n");
 	    return 0;
 	}
-	tb->entries_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE | O_DIRECT, 0666);
-	if (tb->entries_fd == -1) {
-	    fatal("Can't open 'entries' for read-write: %s\n", strerror(errno));
-	    return 0;
-	}
-	init_entry_buffers(tb);
 #else
 	tb->entries = (entry_t *) malloc(LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
 	if (tb->entries == NULL) {
@@ -12315,7 +11951,10 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	if (posix_memalign((void **) &proptable, 1024, num_propentries * PROPTABLE_FORMAT_BYTES) != 0) {
 	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
 	    return 0;
+	} else {
+	    info("Malloced %dMB for proptable\n", (num_propentries * PROPTABLE_FORMAT_BYTES)/(1024*1024));
 	}
+
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
 	memset(proptable, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
 
@@ -12332,6 +11971,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     if (! check_1000_indices(tb)) return 0;
     /* check_1000_positions(tb); */  /* This becomes a problem with symmetry, among other things */
+
+    /* This actually initializes the statistics arrays the first time it's called, and it
+     * initializes for 100 passes, so these first few passes below here don't need any extra checks
+     * to see if they would overflow the arrays.
+     */
+    expand_per_pass_statistics();
 
 #if !USE_PROPTABLES
 
@@ -12385,12 +12030,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 #endif
 
-	/* This actually initializes the statistics arrays the first time it's called, and it
-	 * initializes for 100 passes, so these first few passes here don't need any extra checks to
-	 * see if they would overflow the arrays.
-	 */
-	expand_per_pass_statistics();
-
 	gettimeofday(&pass_start_times[total_passes], NULL);
 	pass_type[total_passes] = "initialization";
 
@@ -12440,7 +12079,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	if (! back_propagate_all_futurebases(tb)) return 0;
 	proptable_full();  /* flush moves out to disk */
-	finalize_proptable_write();
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
 	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
@@ -12450,7 +12088,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	pass_type[total_passes] = "initialization";
 	propagation_pass(0);
 	proptable_full();  /* flush moves out to disk */
-	finalize_proptable_write();
 
 	info("Total legal positions: %lld\n", total_legal_positions);
 	info("Total moves: %lld\n", total_moves);
@@ -12699,7 +12336,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.437 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.438 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
