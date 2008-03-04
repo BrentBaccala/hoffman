@@ -170,6 +170,12 @@ long contended_locks = 0;
 long contended_indices = 0;
 #endif
 
+#if !USE_THREADS
+#define __sync_fetch_and_or(ptr, val) (*(ptr) |= (val))
+#define __sync_fetch_and_and(ptr, val) (*(ptr) &= (val))
+#define __sync_fetch_and_xor(ptr, val) (*(ptr) ^= (val))
+#endif
+
 
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
@@ -5485,7 +5491,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.436 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.437 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -8099,8 +8105,8 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("insert_or_commit_proptable; index=%d; dtm=%d; movecnt=%d; futurevector=0x%llx\n",
-	       index, dtm, movecnt, futurevector);
+	printf("insert_or_commit_proptable; index=%d; dtm=%d; movecnt=%d; futuremove=%d\n",
+	       index, dtm, movecnt, futuremove);
 #endif
 
     backproped_moves[total_passes] ++;
@@ -8183,7 +8189,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
     set_propentry_index(ptr, index);
     set_propentry_dtm(ptr, dtm);
     set_propentry_movecnt(ptr, movecnt);
-    set_propentry_futurevector(ptr, futurevector);
+    set_propentry_futurevector(ptr, FUTUREVECTOR(futuremove));
 
     set_propentry_PTM_wins_flag(ptr, PTM_wins_flag);
 
@@ -11944,7 +11950,7 @@ void * initialize_tablebase_section(void * ptr)
 
 void initialize_tablebase(void)
 {
-    initialization_control_t control = {0, tb->max_index};
+    initialization_control_t control = {0, current_tb->max_index};
 
     initialize_tablebase_section(&control);
 }
@@ -12693,7 +12699,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.436 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.437 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
