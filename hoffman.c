@@ -78,9 +78,6 @@
  *        hoffman -p <tablebase> ...                              (probe mode)
  */
 
-#define USE_PROPTABLES 1
-
-
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
 
 #define _XOPEN_SOURCE 600	/* for posix_memalign() and posix_fadvise() */
@@ -677,6 +674,8 @@ int num_futurebases;
 
 int proptable_MBs = 0;
 int num_propentries = 0;
+
+int using_proptables = 0;
 
 /* PROPTABLE_BITS for 16 byte entries:
  *
@@ -5488,7 +5487,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.438 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.439 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5524,7 +5523,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, BAD_CAST "contended-indices", BAD_CAST strbuf);
 #endif
 
-    if (USE_PROPTABLES) {
+    if (using_proptables) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	snprintf(strbuf, sizeof(strbuf), "%d", entries_write_stalls);
 	xmlNewChild(node, NULL, BAD_CAST "entries-write-stalls", BAD_CAST strbuf);
@@ -6479,8 +6478,6 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     return fetch_entry_pointer_n(tb, index, 0);
 }
 
-#if USE_PROPTABLES
-
 int entries_read_fd = -1;
 int entries_write_fd = -1;
 
@@ -6488,13 +6485,16 @@ entry_t *entry_buffer = NULL;
 index_t entry_buffer_start = 0;
 int entry_buffer_size = 4096;
 
-#endif
-
 inline entry_t * fetch_current_entry_pointer(index_t index)
 {
     int ret;
 
-#if USE_PROPTABLES
+    if (!using_proptables) {
+
+	/* entries array exists in memory - so just return a pointer into it */
+	return (void *)(current_tb->entries) + LEFTSHIFT(index, ENTRIES_FORMAT_BITS - 3);
+
+    }
 
     /* we're using proptables, so make sure we've got the right buffer and then return the pointer */
 
@@ -6568,13 +6568,6 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
     }
 
     return (void *) (entry_buffer + LEFTSHIFT(index - entry_buffer_start, ENTRIES_FORMAT_BITS - 3));
-#else
-
-    /* entries array exists in memory - so just return a pointer into it */
-
-    return (void *)(current_tb->entries) + LEFTSHIFT(index, ENTRIES_FORMAT_BITS - 3);
-
-#endif
 
 }
 
@@ -6996,7 +6989,6 @@ void * back_propagate_section(void * ptr)
     return NULL;
 }
 
-#if USE_PROPTABLES
 
 /* When propagating a change from one position to another, we go through this table to do it.  By
  * maintaining this table sorted, we avoid the random accesses that would be required to propagate
@@ -7723,7 +7715,6 @@ void insert_into_proptable(proptable_entry_t *pentry)
     goto retry;
 }
 
-#endif /* USE_PROPTABLES */
 
 /* If we're running multi-threaded, then there is a possibility that 1) two different positions will
  * try to backprop into the same position (if we're not using proptables), or that 2) two different
@@ -7733,17 +7724,15 @@ void insert_into_proptable(proptable_entry_t *pentry)
  * by a mutex lock on this next routine.
  */
 
-#if USE_THREADS && USE_PROPTABLES
+#if USE_THREADS
 pthread_mutex_t commit_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
 void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int futuremove)
 {
-#if USE_PROPTABLES 
     uint8 PTM_wins_flag;
     char entry[MAX_FORMAT_BYTES];
     void *ptr = entry;
-#endif
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -7753,100 +7742,103 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
     backproped_moves[total_passes] ++;
 
-#if !USE_PROPTABLES
+    if (!using_proptables) {
 
-    lock_entry(current_tb, index);
+	lock_entry(current_tb, index);
 
-    /* Somewhat of a special case here.  First of all, we only have futuremoves during the first
-     * back-propagation pass, when we back prop from the futurebases.  Also, if we're not using
-     * proptables, then I use a seperate array for the futurevectors, which got filled in when we
-     * initialized the tablebase.  In that case, we now check off the futurevectors in that array as
-     * we back prop.  If we are using proptables, then this gets done during the initialization pass
-     * and we don't use the seperate array.
-     */
+	/* Somewhat of a special case here.  First of all, we only have futuremoves during the first
+	 * back-propagation pass, when we back prop from the futurebases.  Also, if we're not using
+	 * proptables, then I use a seperate array for the futurevectors, which got filled in when
+	 * we initialized the tablebase.  In that case, we now check off the futurevectors in that
+	 * array as we back prop.  If we are using proptables, then this gets done during the
+	 * initialization pass and we don't use the seperate array.
+	 */
 
-    if (futuremove != NO_FUTUREMOVE) {
+	if (futuremove != NO_FUTUREMOVE) {
 
-	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
-	futurevector_t * futurevectorptr = ((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
+	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
+	    futurevector_t * futurevectorptr = ((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
 
 #if 0
-	if (! (*futurevectorptr & (1 << ((bit_offset & 7) + futuremove)))) {
-	    /* This could happen simply if the futuremove has already been considered */
-	    /* XXX In particular, I need to turn this off right now for symmetric tablebases */
-	    global_position_t global;
-	    index_to_global_position(current_tb, index, &global);
-	    fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
-	    unlock_entry(current_tb, index);
-	    return;
-	}
+	    if (! (*futurevectorptr & (1 << ((bit_offset & 7) + futuremove)))) {
+		/* This could happen simply if the futuremove has already been considered */
+		/* XXX In particular, I need to turn this off right now for symmetric tablebases */
+		global_position_t global;
+		index_to_global_position(current_tb, index, &global);
+		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
+		unlock_entry(current_tb, index);
+		return;
+	    }
 #endif
 
-	/* This has to be atomically, because there will be other indices in this bit vector */
-	/* *futurevectorptr ^= (1 << ((bit_offset & 7) + futuremove)); */
+	    /* This has to be atomically, because there will be other indices in this bit vector */
+	    /* *futurevectorptr ^= (1 << ((bit_offset & 7) + futuremove)); */
 
-	if ((__sync_fetch_and_and(futurevectorptr, ~(1 << ((bit_offset & 7) + futuremove)))
-	     & (1 << ((bit_offset & 7) + futuremove))) == 0) {
-	    unlock_entry(current_tb, index);
-	    return;
+	    if ((__sync_fetch_and_and(futurevectorptr, ~(1 << ((bit_offset & 7) + futuremove)))
+		 & (1 << ((bit_offset & 7) + futuremove))) == 0) {
+		unlock_entry(current_tb, index);
+		return;
+	    }
+
 	}
 
-    }
+	if (dtm > 0) {
+	    PTM_wins(current_tb, index, dtm);
+	} else if (dtm < 0) {
+	    int i;
 
-    if (dtm > 0) {
-	PTM_wins(current_tb, index, dtm);
-    } else if (dtm < 0) {
-	int i;
-
-	for (i=0; i<movecnt; i++) {
-	    add_one_to_PNTM_wins(current_tb, index, dtm);
+	    for (i=0; i<movecnt; i++) {
+		add_one_to_PNTM_wins(current_tb, index, dtm);
+	    }
 	}
-    }
 	
-    unlock_entry(current_tb, index);
+	unlock_entry(current_tb, index);
 
-#else
-
-    /* The only time it makes sense to use a PTM-wins-flag in the proptable is if we're generating a
-     * bitbase (because otherwise we need a DTM field in the proptable).  Positive or negative DTM
-     * values translate directly through to PTM wins or to its inverse, PNTM wins.  The oddball is
-     * zero DTM, a draw, which only happens here if we're back propagating from a DTM futurebase.
-     * In that case, we need to look at the sense of the bitbase (white-wins or white-draws), as
-     * well as which player is PTM to decide if we should set or clear the propentry's flag.
-     */
-
-    if (dtm != 0) {
-	PTM_wins_flag = (dtm > 0) ? 1 : 0;
     } else {
-	int win_side = ((current_tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) ? WHITE : BLACK);
-	PTM_wins_flag = (index_to_side_to_move(current_tb, index) == win_side) ? 0 : 1;
-    }
+
+	/* The proptable case.
+	 *
+	 * The only time it makes sense to use a PTM-wins-flag in the proptable is if we're
+	 * generating a bitbase (because otherwise we need a DTM field in the proptable).  Positive
+	 * or negative DTM values translate directly through to PTM wins or to its inverse, PNTM
+	 * wins.  The oddball is zero DTM, a draw, which only happens here if we're back propagating
+	 * from a DTM futurebase.  In that case, we need to look at the sense of the bitbase
+	 * (white-wins or white-draws), as well as which player is PTM to decide if we should set or
+	 * clear the propentry's flag.
+	 */
+
+	if (dtm != 0) {
+	    PTM_wins_flag = (dtm > 0) ? 1 : 0;
+	} else {
+	    int win_side = ((current_tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) ? WHITE : BLACK);
+	    PTM_wins_flag = (index_to_side_to_move(current_tb, index) == win_side) ? 0 : 1;
+	}
 
 #if USE_THREADS
-    pthread_mutex_lock_instrumented(&commit_lock);
+	pthread_mutex_lock_instrumented(&commit_lock);
 #endif
 
-    memset(ptr, 0, PROPTABLE_FORMAT_BYTES);
+	memset(ptr, 0, PROPTABLE_FORMAT_BYTES);
 
-    set_propentry_index(ptr, index);
-    set_propentry_dtm(ptr, dtm);
-    set_propentry_movecnt(ptr, movecnt);
-    set_propentry_futurevector(ptr, FUTUREVECTOR(futuremove));
+	set_propentry_index(ptr, index);
+	set_propentry_dtm(ptr, dtm);
+	set_propentry_movecnt(ptr, movecnt);
+	set_propentry_futurevector(ptr, FUTUREVECTOR(futuremove));
 
-    set_propentry_PTM_wins_flag(ptr, PTM_wins_flag);
+	set_propentry_PTM_wins_flag(ptr, PTM_wins_flag);
 
 #ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
+	if (index == DEBUG_MOVE)
+	    fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
 #endif
 
-    insert_into_proptable(ptr);
+	insert_into_proptable(ptr);
 
-#if USE_THREADS && USE_PROPTABLES
-    pthread_mutex_unlock(&commit_lock);
+#if USE_THREADS
+	pthread_mutex_unlock(&commit_lock);
 #endif
 
-#endif
+    }
 
 }
 
@@ -7871,41 +7863,41 @@ int propagation_pass(int target_dtm)
     if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
     pass_target_dtms[total_passes] = target_dtm;
 
-#if USE_PROPTABLES
-    proptable_finalize(target_dtm);
-#else
+    if (using_proptables) {
+	proptable_finalize(target_dtm);
+    } else {
 #if !USE_THREADS
-    for (index = 0; index <= current_tb->max_index; index ++) {
-	back_propagate_index(index, target_dtm);
-    }
-#else
-    intratable_propagation_control_t *controls;
-    pthread_t *threads;
-    int thread;
-
-    /* XXX check for malloc failure */
-    controls = malloc(sizeof(intratable_propagation_control_t) * num_threads);
-    threads = malloc(sizeof(pthread_t) * num_threads);
-
-    for (thread = 0; thread < num_threads; thread ++) {
-	controls[thread].target_dtm = target_dtm;
-	controls[thread].start_index = ((current_tb->max_index+1)*thread)/num_threads;
-	if (thread != num_threads-1) {
-	    controls[thread].end_index = ((current_tb->max_index+1)*(thread+1))/num_threads - 1;
-	} else {
-	    controls[thread].end_index = current_tb->max_index;
+	for (index = 0; index <= current_tb->max_index; index ++) {
+	    back_propagate_index(index, target_dtm);
 	}
-	pthread_create(&threads[thread], NULL, &back_propagate_section, &controls[thread]);
-    }
+#else
+	intratable_propagation_control_t *controls;
+	pthread_t *threads;
+	int thread;
 
-    for (thread = 0; thread < num_threads; thread ++) {
-	pthread_join(threads[thread], NULL);
-    }
+	/* XXX check for malloc failure */
+	controls = malloc(sizeof(intratable_propagation_control_t) * num_threads);
+	threads = malloc(sizeof(pthread_t) * num_threads);
 
-    free(threads);
-    free(controls);
+	for (thread = 0; thread < num_threads; thread ++) {
+	    controls[thread].target_dtm = target_dtm;
+	    controls[thread].start_index = ((current_tb->max_index+1)*thread)/num_threads;
+	    if (thread != num_threads-1) {
+		controls[thread].end_index = ((current_tb->max_index+1)*(thread+1))/num_threads - 1;
+	    } else {
+		controls[thread].end_index = current_tb->max_index;
+	    }
+	    pthread_create(&threads[thread], NULL, &back_propagate_section, &controls[thread]);
+	}
+
+	for (thread = 0; thread < num_threads; thread ++) {
+	    pthread_join(threads[thread], NULL);
+	}
+
+	free(threads);
+	free(controls);
 #endif
-#endif
+    }
 
     gettimeofday(&pass_end_times[total_passes], NULL);
     getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
@@ -10055,18 +10047,18 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     info("%d possible WHITE futuremoves\n", num_futuremoves[WHITE]);
     info("%d possible BLACK futuremoves\n", num_futuremoves[BLACK]);
 
-    if (! USE_PROPTABLES) {
-	if (num_futuremoves[WHITE] > sizeof(futurevector_t)*8) {
-	    fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-		  num_futuremoves[WHITE], sizeof(futurevector_t)*8);
-	    terminate();
-	}
-	if (num_futuremoves[BLACK] > sizeof(futurevector_t)*8) {
-	    fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-		  num_futuremoves[BLACK], sizeof(futurevector_t)*8);
-	    terminate();
-	}
-    } else {
+    if (num_futuremoves[WHITE] > sizeof(futurevector_t)*8) {
+	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
+	      num_futuremoves[WHITE], sizeof(futurevector_t)*8);
+	terminate();
+    }
+    if (num_futuremoves[BLACK] > sizeof(futurevector_t)*8) {
+	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
+	      num_futuremoves[BLACK], sizeof(futurevector_t)*8);
+	terminate();
+    }
+
+    if (using_proptables) {
 	if (num_futuremoves[WHITE] > PROPTABLE_FORMAT_FUTUREVECTOR_BITS) {
 	    fatal("Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
 		  num_futuremoves[WHITE], PROPTABLE_FORMAT_FUTUREVECTOR_BITS);
@@ -11898,14 +11890,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    num_propentries = proptable_MBs * 1024 * 1024 / PROPTABLE_FORMAT_BYTES;
+    if (proptable_MBs > 0) {
+	using_proptables = 1;
+	num_propentries = proptable_MBs * 1024 * 1024 / PROPTABLE_FORMAT_BYTES;
+    }
 
-#if USE_PROPTABLES
-	if (num_propentries == 0) {
-	    fatal("Using proptables, but proptable size not specified\n");
-	    return 0;
-	}
-#else
+    if (!using_proptables) {
 	tb->entries = (entry_t *) malloc(LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
 	if (tb->entries == NULL) {
 	    fatal("Can't malloc %dMB for tablebase entries: %s\n",
@@ -11917,10 +11907,11 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 		 LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/(1024*1024));
 	}
 	/* Don't really need this, since they will all get initialized anyway */
-	/* memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)); */
-#endif
+	/* XXX actually do this need right now, because initialization isn't complete */
+	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
+    }
 
-#if USE_PROPTABLES
+    if (using_proptables) {
 #if USE_DUAL_PROPTABLES
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
 	if (posix_memalign((void **) &proptable1, 1024, num_propentries * PROPTABLE_FORMAT_BYTES) != 0) {
@@ -11961,7 +11952,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	proptable1 = proptable;
 	proptable2 = proptable;
 #endif
-#endif
+    }
 
     if (! preload_all_futurebases(tb, &max_dtm, &min_dtm)) return 0;
     assign_numbers_to_futuremoves(tb);
@@ -11978,7 +11969,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
      */
     expand_per_pass_statistics();
 
-#if !USE_PROPTABLES
+    if (!using_proptables) {
 
 	/* No proptables.  Allocate a futurevectors array, initialize the tablebase, back propagate
 	 * the futurebases (noting which futuremoves have been handled in the futurevectors array),
@@ -12067,7 +12058,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	free(tb->futurevectors);
 	tb->futurevectors=NULL;
 
-#else
+    } else {
 
 	/* Using proptables.  No futurevectors array.  We back propagate the futurebases into the
 	 * proptable, then in a single pass initialize the entries array and commit the proptable
@@ -12094,7 +12085,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	info("All futuremoves handled under move restrictions\n");
 
-#endif
+    }
 
     unload_all_futurebases();
 
@@ -12336,7 +12327,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.438 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.439 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
