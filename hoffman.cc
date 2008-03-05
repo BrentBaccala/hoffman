@@ -5485,7 +5485,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.444 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.445 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7210,6 +7210,10 @@ void proptable_full(void)
     char outfilename[256];
     struct timeval tv1, tv2;
     int proptable_output_fd = -1;
+    int propentry;
+    char *output_buffer;
+    int output_buffer_size = 4096;
+    int output_buffer_next;
 
     if (proptable_entries == 0) return;
 
@@ -7238,26 +7242,47 @@ void proptable_full(void)
     xmlNewProp(node, BAD_CAST "occupancy", BAD_CAST strbuf);
 #endif
 
+    /* Write the proptable out to disk, and zero it out in memory as we go.
+     *
+     * Due to the sparsity of the proptable (rarely more than 50% occupancy), we only write the
+     * non-zero propentries.  Makes this code a little more complex because I do the buffering
+     * myself, but tends to produce a big speed gain.
+     *
+     * Hitting a disk full condition is by no means out of the question here, so we use
+     * do_write_or_suspend().
+     */
+
     fprintf(stderr, "Writing proptable %d with %d entries (%d%% occupancy)\n",
 	    num_proptables, proptable_entries, (100*proptable_entries)/num_propentries);
 
     gettimeofday(&tv1, NULL);
 
-    /* Hitting a disk full condition is by no means out of the question here!
-     *
-     * And I haven't really dealt with that yet, so XXX.
-     *
-     * We do fire off an asynchronous write if we're using dual proptables.  That makes the most
-     * sense if the output proptables are on their own disk; otherwise, it might more more sense to
-     * break the write down into a series of smaller ones that we can scatter with the reads.
-     */
+    output_buffer = malloc(output_buffer_size);
+    if (output_buffer == NULL) {
+	fatal("Can't malloc proptable output buffer\n");
+	return;
+    }
 
-    /* XXX this next line doesn't handle dual proptables right */
+    output_buffer_next = 0;
 
-    do_write_or_suspend(proptable_output_fd, proptable, num_propentries * PROPTABLE_FORMAT_BYTES);
+    for (propentry = 0; propentry < num_propentries; propentry ++) {
+	if (get_propentry_index(PROPTABLE_ELEM(propentry)) != 0) {
+	    memcpy(output_buffer + output_buffer_next, PROPTABLE_ELEM(propentry), PROPTABLE_FORMAT_BYTES);
+	    output_buffer_next += PROPTABLE_FORMAT_BYTES;
+	    if (output_buffer_next == output_buffer_size) {
+		do_write_or_suspend(proptable_output_fd, output_buffer, output_buffer_size);
+		output_buffer_next = 0;
+	    }
+	    memset(PROPTABLE_ELEM(propentry), 0, PROPTABLE_FORMAT_BYTES);
+	}
+    }
 
-    /* XXX it would be faster to merge this with the previous step */
-    memset(proptable, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
+    if (output_buffer_next != 0) {
+	do_write_or_suspend(proptable_output_fd, output_buffer, output_buffer_next);
+    }
+
+    close(proptable_output_fd);
+    free(output_buffer);
 
     gettimeofday(&tv2, NULL);
     subtract_timeval(&tv2, &tv1);
@@ -7267,8 +7292,6 @@ void proptable_full(void)
     num_proptables ++;
     proptable_entries = 0;
     proptable_merges = 0;
-
-    close(proptable_output_fd);
 }
 
 /* proptable_finalize()
@@ -12367,7 +12390,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.444 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.445 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
