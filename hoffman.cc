@@ -260,6 +260,7 @@ struct timeval proptable_preload_time = {0, 0};
  */
 
 typedef uint32 futurevector_t;
+#define FUTUREVECTOR_HEX_FORMAT "0x%x"
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 #define NO_FUTUREMOVE -1
@@ -695,11 +696,12 @@ int using_proptables = 0;
 
 int verbose = 1;
 
-/* DEBUG_MOVE can be used to print more verbose debugging information about what the program is
- * doing to process a single move.
+/* Set DEBUG_MOVE to an index in the current tablebase, or set DEBUG_FUTUREMOVE to an index in a
+ * futurebase to print more verbose debugging information about what the program is doing to process
+ * a single move.
  */
 
-/* #define DEBUG_MOVE 1 */
+/* #define DEBUG_MOVE 34061 */
 
 /* #define DEBUG_FUTUREMOVE 798 */
 
@@ -5487,7 +5489,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.441 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.442 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6876,9 +6878,16 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 	}
 
 	if (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED) {  /* i.e, zero */
-	    /* The DTM passed in was the one that pushed movecnt to zero, but it might be the best
-	     * line, so that's why we fetch entry DTM here.
+	    /* The DTM passed in was the one that pushed movecnt to zero, but it might not be the
+	     * best line, so that's why we fetch entry DTM here.
 	     */
+#ifdef DEBUG_PASS_DEPENDANCIES
+	    if (negative_passes_needed[-get_entry_raw_DTM(index)] == 0) {
+		global_position_t global;
+		index_to_global_position(current_tb, index, &global);
+		printf("%d pass needed by %d %s\n", get_entry_raw_DTM(index), index, global_position_to_FEN(&global));
+	    }
+#endif
 	    negative_passes_needed[-get_entry_raw_DTM(index)] = 1;
 	}
     }
@@ -6945,10 +6954,14 @@ void back_propagate_index(index_t index, int target_dtm)
      * assumed like the horizontal or vertical cases.
      */
 
+    /* static FILE *outfile = NULL; */
+    /* if (outfile == NULL) outfile = fopen("indices", "w"); */
+
     if (((get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)
 	 || (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED))
 	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (get_entry_DTM(index) == target_dtm))) {
 
+	/* fprintf(outfile, "%d\n", index); */
 	back_propagate_index_within_table(current_tb, index, REFLECTION_NONE);
 	if (current_tb->symmetry == 8) {
 	    back_propagate_index_within_table(current_tb, index, REFLECTION_DIAGONAL);
@@ -7144,11 +7157,19 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 	}
     } else if (src_dtm < 0) {
 	/* DTM < 0 - this move lets PNTM mate from this position.  Update the proptable entry only
-	 * if we don't have any PTM mates (table's dtm <= 0) and this PNTM mate is slower than the
-	 * old one.
+	 * if we don't have any PTM mates or draws (table's dtm < 0) and this PNTM mate is slower
+	 * than the old one.
 	 */
-	if ((dest_dtm <= 0) && (src_dtm < dest_dtm)) {
+	if ((dest_dtm < 0) && (src_dtm < dest_dtm)) {
 	    set_propentry_dtm(dest, src_dtm);
+	}
+    } else {
+	/* DTM == 0 - this kind of move, which only shows up during futurebase backprop, since
+	 * intratable is only done when positions are finalized as mates, lets PTM draw.  Update if
+	 * everything we have so far is PNTM mates.
+	 */
+	if (dest_dtm < 0) {
+	    set_propentry_dtm(dest, 0);
 	}
     }
 
@@ -7159,14 +7180,14 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 
     set_propentry_movecnt(dest, get_propentry_movecnt(dest) + get_propentry_movecnt(src));
 
+#if 0
+    /* This might happen just because of symmetry issues */
     if (get_propentry_futurevector(dest) & get_propentry_futurevector(src)) {
 	global_position_t global;
 	index_to_global_position(current_tb, get_propentry_index(PROPTABLE_ELEM(propentry)), &global);
-	/* This might happen just because of symmetry issues */
-#if 0
 	fprintf(stderr, "Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
-#endif
     }
+#endif
 
     set_propentry_futurevector(dest, get_propentry_futurevector(dest) | get_propentry_futurevector(src));
 }
@@ -7225,7 +7246,7 @@ void proptable_full(void)
     xmlNewProp(node, BAD_CAST "occupancy", BAD_CAST strbuf);
 #endif
 
-    fprintf(stderr, "Writing proptable block %d with %d entries (%d%% occupancy)\n",
+    fprintf(stderr, "Writing proptable %d with %d entries (%d%% occupancy)\n",
 	    num_proptables, proptable_entries, (100*proptable_entries)/num_propentries);
 
     gettimeofday(&tv1, NULL);
@@ -7242,6 +7263,9 @@ void proptable_full(void)
     /* XXX this next line doesn't handle dual proptables right */
 
     do_write_or_suspend(proptable_output_fd, proptable, num_propentries * PROPTABLE_FORMAT_BYTES);
+
+    /* XXX it would be faster to merge this with the previous step */
+    memset(proptable, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
 
 #if USE_DUAL_PROPTABLES
     if (proptable == proptable1) proptable = proptable2;
@@ -7527,15 +7551,58 @@ void proptable_finalize(int target_dtm)
 			*((uint64 *) SORTING_NETWORK_ELEM(1)), *(((uint64 *) SORTING_NETWORK_ELEM(1)) + 1));
 #endif
 
-	    commit_proptable_entry(SORTING_NETWORK_ELEM(1));
+	    /* These futuremoves might be moves into check, in which case they were discarded back
+	     * during initialization.  So only commit if they are possible...
+	     */
 
-	    if (get_propentry_futurevector(SORTING_NETWORK_ELEM(1)) & futurevector) {
-		global_position_t global;
-		index_to_global_position(current_tb, get_propentry_index(SORTING_NETWORK_ELEM(1)), &global);
-		fatal("Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
+	    if (target_dtm != 0) {
+
+		commit_proptable_entry(SORTING_NETWORK_ELEM(1));
+
+	    } else if (get_propentry_futurevector(SORTING_NETWORK_ELEM(1)) & possible_futuremoves) {
+
+		if ((get_propentry_futurevector(SORTING_NETWORK_ELEM(1)) & possible_futuremoves)
+		    != get_propentry_futurevector(SORTING_NETWORK_ELEM(1))) {
+
+		    int propentry_futuremoves=0;
+		    futurevector_t propentry_futurevector = get_propentry_futurevector(SORTING_NETWORK_ELEM(1));
+
+		    while (propentry_futurevector != 0) {
+			if ((propentry_futurevector & 1) != 0) propentry_futuremoves ++;
+			propentry_futurevector >>= 1;
+		    }
+
+		    if (get_propentry_movecnt(SORTING_NETWORK_ELEM(1)) == propentry_futuremoves) {
+
+			int propentry_possible_futuremoves = 0;
+			futurevector_t propentry_possible_futurevector
+			    = get_propentry_futurevector(SORTING_NETWORK_ELEM(1)) & possible_futuremoves;
+			set_propentry_futurevector(SORTING_NETWORK_ELEM(1), propentry_possible_futurevector);
+
+			while (propentry_possible_futurevector != 0) {
+			    if ((propentry_possible_futurevector & 1) != 0) propentry_possible_futuremoves ++;
+			    propentry_possible_futurevector >>= 1;
+			}
+
+			set_propentry_movecnt(SORTING_NETWORK_ELEM(1), propentry_possible_futuremoves);
+		    } else {
+			global_position_t global;
+			index_to_global_position(current_tb, get_propentry_index(SORTING_NETWORK_ELEM(1)), &global);
+			warning("Mixed possible/impossible futuremoves: %s\n", global_position_to_FEN(&global));
+		    }
+		}
+
+		commit_proptable_entry(SORTING_NETWORK_ELEM(1));
+
+		if (get_propentry_futurevector(SORTING_NETWORK_ELEM(1)) & futurevector) {
+		    global_position_t global;
+		    index_to_global_position(current_tb, get_propentry_index(SORTING_NETWORK_ELEM(1)), &global);
+		    fatal("Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
+		}
+
+		futurevector |= get_propentry_futurevector(SORTING_NETWORK_ELEM(1));
+
 	    }
-
-	    futurevector |= get_propentry_futurevector(SORTING_NETWORK_ELEM(1));
 
 	    fetch_next_propentry(proptable_num[1], SORTING_NETWORK_ELEM(highbit + proptable_num[1]));
 
@@ -10837,6 +10904,8 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
  * propagation, so it stands to reason that we need an accurate count to start with.  Thus the
  * importance of this function.
  *
+ * We don't count moves into check at all.
+ *
  * Basically, there are two types of moves we need to consider in each position:
  *
  * 1. non-capture, non-promotion, non-restricted moves
@@ -10855,19 +10924,8 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
  * everything fine.  Otherwise, during our first pass through the current tablebase, we'll find that
  * some of the futuremoves remain unaccounted for.  If they occur with the "good guys" as PTM, we
  * just double-check that the restriction is OK, subtract the remaining futuremoves out from the
- * standard count, and keep going.  But if the "bad guys" are PTM, then some more work is needed.
- * The position is marked won for PTM, unless we want to step forward another half move.  In this
- * case, we compute all possible next moves (or maybe just captures), and search for them in our
- * tablebases.  If any of them are marked drawn or won, we can safely back-propagate this.
- * Otherwise, the position has to be marked won for PTM, as before.
- *
- * There's a real serious speed penalty here, because this half-move-forward algorithm requires
- * random access lookups in the futurebases.  A possible way to address this would be to create an
- * intermediate tablebase for the half move following the capture/promotion.  This could be done by
- * building a tablebase with a queen (and another one with a knight) frozen on the queening square.
- * Any possible move of the queen or knight would result in a win for the moving side.  A similar
- * shortcut could be done for a capture, though the only real justification (from a performance
- * perspective) would be on promotions.
+ * standard count, and keep going.  But if the "bad guys" are PTM, then the position has to be
+ * assumed won for PTM.
  *
  */
 
@@ -11552,7 +11610,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE) {
 		/* other fields were printed by DEBUG_MOVE statement in initialize_entry() */
-		info("   futurevector 0x%llx\n", futurevector);
+		info("   futurevector " FUTUREVECTOR_HEX_FORMAT "\n", futurevector);
 	    }
 #endif
 
@@ -11642,11 +11700,14 @@ void initialize_tablebase(void)
 /* Intra-table propagation is almost trivial.  Keep making passes over the tablebase first until
  * we've hit dtm_limit, which means we've processed everything from the futurebases, then until no
  * more progress is made on a given pass.
+ *
+ * XXX need to re-examine the pass skipping logic
  */
 
 void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, int upper_dtm_limit)
 {
     int dtm = 1;
+    int positions_finalized_on_last_pass = 0;
 
     /* DTM 1 positions are illegal (PNTM is in check), so back prop from these positions is not
      * necessary because we don't count moves into check as part of movecnt.
@@ -11657,10 +11718,12 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, 
     while ((dtm <= upper_dtm_limit) || (-dtm >= lower_dtm_limit)) {
 
 	/* PTM wins */
-	if (positive_passes_needed[dtm]) propagation_pass(dtm);
+	if ((using_proptables || positive_passes_needed[dtm]) && dtm > 1)
+	    positions_finalized_on_last_pass = propagation_pass(dtm);
 
 	/* PNTM wins */
-	if (negative_passes_needed[dtm]) propagation_pass(-dtm);
+	if (using_proptables || negative_passes_needed[dtm])
+	    positions_finalized_on_last_pass = propagation_pass(-dtm);
 
 	dtm ++;
     }
@@ -11668,11 +11731,13 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, 
     while (1) {
 
 	/* PTM wins */
-	if (positive_passes_needed[dtm]) propagation_pass(dtm);
+	if (positions_finalized_on_last_pass > 0 || positive_passes_needed[dtm])
+	    positions_finalized_on_last_pass = propagation_pass(dtm);
 	else break;
 
 	/* PNTM wins */
-	if (negative_passes_needed[dtm]) propagation_pass(-dtm);
+	if (positions_finalized_on_last_pass > 0 || negative_passes_needed[dtm])
+	    positions_finalized_on_last_pass = propagation_pass(-dtm);
 	else break;
 
 	dtm ++;
@@ -11903,7 +11968,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	return 0;
     }
     if ((result->nodesetval->nodeNr > 0) && (output_filename != NULL)) {
-	warning("WARNING: Output filename specified on command line overrides <output> tag\n");
+	warning("Output filename specified on command line overrides <output> tag\n");
     }
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
@@ -12345,7 +12410,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.441 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.442 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
