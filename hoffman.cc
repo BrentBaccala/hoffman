@@ -5485,7 +5485,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.443 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.444 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7203,11 +7203,7 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 
 int num_proptables = 0;
 
-/* proptable_full() - dump out to disk and empty table
- *
- * If we're using dual proptables, then we switch to the empty table and start background async
- * operations to dump the full one out to disk, and then zero it out.
- */
+/* proptable_full() - dump out to disk and empty table */
 
 void proptable_full(void)
 {
@@ -12371,7 +12367,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.443 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.444 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
