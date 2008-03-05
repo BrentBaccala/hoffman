@@ -664,8 +664,6 @@ typedef void proptable_entry_t;
 
 proptable_entry_t *proptable = NULL;
 
-proptable_entry_t *proptable1 = NULL;
-proptable_entry_t *proptable2 = NULL;
 int zeros_fd = -1;
 
 tablebase_t *current_tb = NULL;
@@ -687,8 +685,6 @@ int using_proptables = 0;
  */
 
 #define MAX_ZEROOFFSET 25
-
-#define USE_DUAL_PROPTABLES 0
 
 #define LOCK_MEMORY 0
 
@@ -5489,7 +5485,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.442 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.443 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7266,11 +7262,6 @@ void proptable_full(void)
 
     /* XXX it would be faster to merge this with the previous step */
     memset(proptable, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
-
-#if USE_DUAL_PROPTABLES
-    if (proptable == proptable1) proptable = proptable2;
-    else proptable = proptable1;
-#endif
 
     gettimeofday(&tv2, NULL);
     subtract_timeval(&tv2, &tv1);
@@ -11995,32 +11986,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 
     if (using_proptables) {
-#if USE_DUAL_PROPTABLES
-	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
-	if (posix_memalign((void **) &proptable1, 1024, num_propentries * PROPTABLE_FORMAT_BYTES) != 0) {
-	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
-	    return 0;
-	}
-	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
-	memset(proptable1, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
-
-	if (posix_memalign((void **) &proptable2, 1024, num_propentries * PROPTABLE_FORMAT_BYTES) != 0) {
-	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
-	    return 0;
-	}
-	memset(proptable2, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
-
-	proptable = proptable1;
-
-#if ZERO_PROPTABLES_USING_DISK
-	zeros_fd = open("zeros", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
-	if (zeros_fd == -1) {
-	    fatal("Can't open 'zeros' for writing zero propfile: %s\n", strerror(errno));
-	    return 0;
-	}
-	do_write(zeros_fd, proptable1, num_propentries * PROPTABLE_FORMAT_BYTES);
-#endif
-#else
 	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
 	if (posix_memalign((void **) &proptable, 1024, num_propentries * PROPTABLE_FORMAT_BYTES) != 0) {
 	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
@@ -12031,10 +11996,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
 	memset(proptable, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
-
-	proptable1 = proptable;
-	proptable2 = proptable;
-#endif
     }
 
     if (! preload_all_futurebases(tb, &max_dtm, &min_dtm)) return 0;
@@ -12410,7 +12371,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.442 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.443 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
