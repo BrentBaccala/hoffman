@@ -237,16 +237,8 @@ uint64 * backproped_moves = NULL;
 uint8 * positive_passes_needed = NULL;
 uint8 * negative_passes_needed = NULL;
 
-int entries_write_stalls = 0;
-int entries_read_stalls = 0;
-int proptable_read_stalls = 0;
 int proptable_writes = 0;
-
-struct timeval entries_write_stall_time = {0, 0};
-struct timeval entries_read_stall_time = {0, 0};
-struct timeval proptable_read_stall_time = {0, 0};
 struct timeval proptable_write_time = {0, 0};
-struct timeval proptable_preload_time = {0, 0};
 
 
 /***** DATA STRUCTURES *****/
@@ -5485,7 +5477,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.445 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.446 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5513,42 +5505,23 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNewChild(node, NULL, BAD_CAST "page-reclaims", BAD_CAST strbuf);
 
 #if USE_THREADS
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
-    xmlNewChild(node, NULL, BAD_CAST "contended-locks", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%ld", contended_indices);
-    xmlNewChild(node, NULL, BAD_CAST "contended-indices", BAD_CAST strbuf);
+    if (num_threads > 1) {
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
+	xmlNewChild(node, NULL, BAD_CAST "contended-locks", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	snprintf(strbuf, sizeof(strbuf), "%ld", contended_indices);
+	xmlNewChild(node, NULL, BAD_CAST "contended-indices", BAD_CAST strbuf);
+    }
 #endif
 
     if (using_proptables) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%d", entries_write_stalls);
-	xmlNewChild(node, NULL, BAD_CAST "entries-write-stalls", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%d", entries_read_stalls);
-	xmlNewChild(node, NULL, BAD_CAST "entries-read-stalls", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%d", proptable_read_stalls);
-	xmlNewChild(node, NULL, BAD_CAST "proptable-read-stalls", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	snprintf(strbuf, sizeof(strbuf), "%d", proptable_writes);
 	xmlNewChild(node, NULL, BAD_CAST "proptable-writes", BAD_CAST strbuf);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprint_timeval(strbuf, &entries_write_stall_time);
-	xmlNewChild(node, NULL, BAD_CAST "entries-write-stall-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprint_timeval(strbuf, &entries_read_stall_time);
-	xmlNewChild(node, NULL, BAD_CAST "entries-read-stall-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprint_timeval(strbuf, &proptable_read_stall_time);
-	xmlNewChild(node, NULL, BAD_CAST "proptable-read-stall-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	sprint_timeval(strbuf, &proptable_write_time);
 	xmlNewChild(node, NULL, BAD_CAST "proptable-write-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprint_timeval(strbuf, &proptable_preload_time);
-	xmlNewChild(node, NULL, BAD_CAST "proptable-preload-time", BAD_CAST strbuf);
     }
 
     for (passnum = 0; passnum < total_passes; passnum ++) {
@@ -12390,7 +12363,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.445 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.446 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
