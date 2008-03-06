@@ -568,6 +568,7 @@ typedef struct tablebase {
     int index_type;
     int index_offset;
     index_t max_index;
+    index_t max_uninverted_index;
     index_t modulus;
     int white_king;
     int black_king;
@@ -3392,6 +3393,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 	index = invert_in_finite_field(index, tb->modulus);
     }
 
+    if (index > tb->max_uninverted_index) return 0;
     if (index < tb->index_offset) return 0;
     index -= tb->index_offset;
 
@@ -4873,6 +4875,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     }
 
     tb->max_index += tb->index_offset;
+    tb->max_uninverted_index = tb->max_index;
 
     /* See if an index modulus was specified for inversion in a finite field */
 
@@ -5477,7 +5480,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.446 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.447 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12363,7 +12366,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.446 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.447 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
