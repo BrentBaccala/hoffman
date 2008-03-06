@@ -150,12 +150,17 @@ long contended_locks = 0;
 long contended_indices = 0;
 #endif
 
+/* If we're multithreaded, we use gcc 4's built-ins for atomic memory access, which are identical to
+ * Intel's.  If the compiler doesn't feature these built-ins, then the simplest way to fix that is
+ * to turn off multithreading, and use these #defines instead:
+ */
+
 #if !USE_THREADS
 #define __sync_fetch_and_or(ptr, val) (*(ptr) |= (val))
 #define __sync_fetch_and_and(ptr, val) (*(ptr) &= (val))
 #define __sync_fetch_and_xor(ptr, val) (*(ptr) ^= (val))
+#define __sync_fetch_and_add(ptr, val) (*(ptr) += (val))
 #endif
-
 
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
@@ -176,6 +181,18 @@ typedef unsigned char uint8;
 typedef short boolean;
 
 typedef uint32 index_t;
+
+/* XXX I don't have an 8-byte sync_fetch_and_add on i686, so I use this instead.  It uses the high
+ * bit as a spinlock.
+ */
+
+inline uint64 __sync_fetch_and_add_8(uint64 *ptr, uint64 val) {
+    uint64 ret = *ptr;
+    while (__sync_fetch_and_or(((uint32 *)ptr)+1, 0x80000000));
+    *ptr += val;
+    __sync_fetch_and_and(((uint32 *)ptr)+1, 0x7fffffff);
+    return ret;
+}
 
 
 /***** GLOBAL CONSTANTS *****/
@@ -990,7 +1007,9 @@ inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
 {
     if (pthread_mutex_trylock(mutex) != 0) {
 	pthread_mutex_lock(mutex);
-	contended_locks ++;
+
+	/* contended_locks ++; */
+	(void) __sync_fetch_and_add(&contended_locks, 1);
     }
 }
 
@@ -1120,16 +1139,23 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
 }
 
 
-/* These next two functions use GNU built-ins for atomic memory access */
+/* lock_bit() spinlocks on a single bit, and returns non-zero if it actually had to wait for the
+ * lock.
+ */
 
-inline void lock_bit(uint32 *ptr, int offset)
+inline int lock_bit(uint32 *ptr, int offset)
 {
     while (offset >= 32) {
 	offset -= 32;
 	ptr ++;
     }
 
-    while (__sync_fetch_and_or(ptr, 1 << offset) & (1 << offset));
+    if (__sync_fetch_and_or(ptr, 1 << offset) & (1 << offset)) {
+	while (__sync_fetch_and_or(ptr, 1 << offset) & (1 << offset));
+	return 1;
+    } else {
+	return 0;
+    }
 }
 
 inline void unlock_bit(uint32 *ptr, int offset)
@@ -5480,7 +5506,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.447 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.448 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6581,7 +6607,10 @@ inline void lock_entry(tablebase_t *tb, index_t index)
 {
 #if USE_THREADS
     if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
-	lock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET);
+	if (lock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET)) {
+	    /* contended_indices ++; */
+	    (void) __sync_fetch_and_add(&contended_indices, 1);
+	}
     } else {
 	pthread_mutex_lock(&entries_lock);
     }
@@ -6733,7 +6762,9 @@ void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
      */
 
     initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, -1);
-    total_legal_positions ++;
+
+    /* total_legal_positions ++; */
+    (void) __sync_fetch_and_add(&total_legal_positions, 1);
 }
 
 void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
@@ -6745,7 +6776,9 @@ void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
      */
 
     initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, 1);
-    total_PNTM_mated_positions ++;
+
+    /* total_PNTM_mated_positions ++; */
+    (void) __sync_fetch_and_add(&total_PNTM_mated_positions, 1);
 }
 
 void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
@@ -6768,10 +6801,12 @@ void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
 	}
     } else {
 	initialize_entry(tb, index, MOVECNT_STALEMATE, 0);
-	total_stalemate_positions ++;
+	/* total_stalemate_positions ++; */
+	(void) __sync_fetch_and_add(&total_stalemate_positions, 1);
     }
 
-    total_legal_positions ++;
+    /* total_legal_positions ++; */
+    (void) __sync_fetch_and_add(&total_legal_positions, 1);
 }
 
 void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt)
@@ -6781,7 +6816,9 @@ void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt)
     }
 
     initialize_entry(tb, index, movecnt, 0);
-    total_legal_positions ++;
+
+    /* total_legal_positions ++; */
+    (void) __sync_fetch_and_add(&total_legal_positions, 1);
 }
 
 void initialize_entry_with_DTM(tablebase_t *tb, index_t index, int dtm)
@@ -6797,7 +6834,9 @@ void initialize_entry_with_DTM(tablebase_t *tb, index_t index, int dtm)
     } else {
 	initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, dtm);
     }
-    total_legal_positions ++;
+
+    /* total_legal_positions ++; */
+    (void) __sync_fetch_and_add(&total_legal_positions, 1);
 }
 
 inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
@@ -11570,8 +11609,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	    return 0;
 	} else {
 
-	    total_moves += movecnt;
-	    total_futuremoves += futuremovecnt;
+	    /* total_moves += movecnt; */
+	    (void) __sync_fetch_and_add(&total_moves, movecnt);
+
+	    /* total_futuremoves += futuremovecnt; */
+	    (void) __sync_fetch_and_add(&total_futuremoves, futuremovecnt);
 
 	    /* What's this?  Well, diagonal symmetry is more difficult to handle than other types of
 	     * symmetry because the piece along the diagonal don't actually move when you reflect
@@ -12366,7 +12408,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.447 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.448 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
