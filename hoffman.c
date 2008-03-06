@@ -182,17 +182,19 @@ typedef short boolean;
 
 typedef uint32 index_t;
 
-/* XXX I don't have an 8-byte sync_fetch_and_add on i686, so I use this instead.  It uses the high
- * bit as a spinlock.
- */
+/* XXX I don't have an 8-byte sync_fetch_and_add on i686, so I use this instead. */
 
+#if USE_THREADS
 inline uint64 __sync_fetch_and_add_8(uint64 *ptr, uint64 val) {
-    uint64 ret = *ptr;
-    while (__sync_fetch_and_or(((uint32 *)ptr)+1, 0x80000000));
+    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
+    uint64 ret;
+    pthread_mutex_lock(&lock);
+    ret = *ptr;
     *ptr += val;
-    __sync_fetch_and_and(((uint32 *)ptr)+1, 0x7fffffff);
+    pthread_mutex_unlock(&lock);
     return ret;
 }
+#endif
 
 
 /***** GLOBAL CONSTANTS *****/
@@ -5506,7 +5508,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.448 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.449 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12408,7 +12410,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.448 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.449 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
