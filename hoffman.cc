@@ -5508,7 +5508,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.449 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.450 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7311,10 +7311,28 @@ void proptable_full(void)
     proptable_merges = 0;
 }
 
-/* proptable_finalize()
- *
- * Start a new set of proptables and commit the old set into the entries array.
- */
+void finalize_proptable_pass(void)
+{
+    int tablenum;
+    char infilename[256];
+    char outfilename[256];
+
+    /* Flush out anything in the last proptable, and wait for its write to complete */
+    proptable_full();
+
+    /* Rename output propfiles to become the next pass's input propfiles */
+
+    for (tablenum = 0; tablenum < num_proptables; tablenum ++) {
+	sprintf(infilename, "propfile%04d_in", tablenum);
+	sprintf(outfilename, "propfile%04d_out", tablenum);
+	if (rename(outfilename, infilename) == -1) {
+	    fatal("Can't rename '%s' to '%s': %s\n", outfilename, infilename, strerror(errno));
+	    return;
+	}
+    }
+
+    num_proptables = 0;
+}
 
 /* fetch_next_propentry()
  *
@@ -7328,7 +7346,7 @@ void proptable_full(void)
  *         current buffernum (from 0 to BUFFERS_PER_PROPTABLE) for this table
  */
 
-int *proptable_input_fds;
+int *proptable_input_fds = NULL;
 proptable_entry_t **proptable_buffer;
 proptable_entry_t **proptable_buffer_ptr;
 proptable_entry_t **proptable_buffer_limit;
@@ -7410,11 +7428,16 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
 
+/* proptable_finalize()
+ *
+ * Commit an old set of proptables into the entries array while writing a new set.
+ */
+
 void proptable_finalize(int target_dtm)
 {
     int i;
     int tablenum;
-    int num_input_proptables;
+    int num_input_proptables = 0;
 
     void *sorting_network;
     int *proptable_num;
@@ -7422,18 +7445,26 @@ void proptable_finalize(int target_dtm)
     int network_node;
 
     char infilename[256];
-    char outfilename[256];
 
 #define SORTING_NETWORK_ELEM(n)  (sorting_network + PROPTABLE_FORMAT_BYTES * (n))
 
     index_t index;
 
-    /* Flush out anything in the last proptable, and wait for its write to complete */
-    proptable_full();
+    /* Count up (and open) input propfiles. */
 
-    num_input_proptables = num_proptables;
+    for (tablenum = 0; ; tablenum ++) {
+	int fd;
+	sprintf(infilename, "propfile%04d_in", tablenum);
+	if ((fd = open(infilename, O_RDONLY | O_LARGEFILE | O_DIRECT)) == -1) break;
+	proptable_input_fds = realloc(proptable_input_fds, (tablenum+1)*sizeof(int));
+	if (proptable_input_fds == NULL) {
+	    fatal("Can't realloc proptable_input_fds in proptable_finalize()\n");
+	    return;
+	}
+	proptable_input_fds[tablenum] = fd;
+    }
 
-    num_proptables = 0;
+    num_input_proptables = tablenum;
 
     for (highbit = 1; highbit <= num_input_proptables; highbit <<= 1);
 
@@ -7441,26 +7472,9 @@ void proptable_finalize(int target_dtm)
     proptable_buffer_ptr = (proptable_entry_t **) calloc(num_input_proptables, sizeof(proptable_entry_t *));
     proptable_buffer_limit = (proptable_entry_t **) calloc(num_input_proptables, sizeof(proptable_entry_t *));
 
-    proptable_input_fds = (int *) calloc(num_input_proptables, sizeof(int));
-
-    if ((proptable_buffer == NULL) || (proptable_input_fds == NULL)
-	|| (proptable_buffer_ptr == NULL) || (proptable_buffer_limit == NULL)) {
-	fprintf(stderr, "Can't malloc proptable buffers in proptable_finalize()\n");
+    if ((proptable_buffer == NULL) || (proptable_buffer_ptr == NULL) || (proptable_buffer_limit == NULL)) {
+	fatal("Can't malloc proptable buffers in proptable_finalize()\n");
 	return;
-    }
-
-    for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
-	sprintf(infilename, "propfile%04d_in", tablenum);
-	sprintf(outfilename, "propfile%04d_out", tablenum);
-	if (rename(outfilename, infilename) == -1) {
-	    fatal("Can't rename '%s' to '%s': %s\n", outfilename, infilename, strerror(errno));
-	    return;
-	}
-	proptable_input_fds[tablenum] = open(infilename, O_RDONLY | O_LARGEFILE | O_DIRECT);
-	if (proptable_input_fds[tablenum] == -1) {
-	    fatal("Can't open '%s' for reading propfile: %s\n", infilename, strerror(errno));
-	    return;
-	}
     }
 
     /* Alloc and read initial buffers for all input proptables */
@@ -7680,10 +7694,15 @@ void proptable_finalize(int target_dtm)
 	free(proptable_buffer[tablenum]);
     }
 
-    free(proptable_buffer_limit);
-    free(proptable_buffer_ptr);
     free(proptable_buffer);
+    free(proptable_buffer_ptr);
+    free(proptable_buffer_limit);
     free(proptable_input_fds);
+
+    proptable_buffer = NULL;
+    proptable_buffer_ptr = NULL;
+    proptable_buffer_limit = NULL;
+    proptable_input_fds = NULL;
 
     free(sorting_network);
     free(proptable_num);
@@ -7977,6 +7996,7 @@ int propagation_pass(int target_dtm)
 
     if (using_proptables) {
 	proptable_finalize(target_dtm);
+	finalize_proptable_pass();
     } else {
 #if !USE_THREADS
 	for (index = 0; index <= current_tb->max_index; index ++) {
@@ -12152,7 +12172,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	pass_type[total_passes] = "futurebase backprop";
 
 	if (! back_propagate_all_futurebases(tb)) return 0;
-	proptable_full();  /* flush moves out to disk */
+	finalize_proptable_pass();
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
 	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
@@ -12161,7 +12181,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	info("Initializing tablebase...\n");
 	pass_type[total_passes] = "initialization";
 	propagation_pass(0);
-	proptable_full();  /* flush moves out to disk */
 
 	info("Total legal positions: %lld\n", total_legal_positions);
 	info("Total moves: %lld\n", total_moves);
@@ -12410,7 +12429,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.449 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.450 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
