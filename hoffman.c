@@ -688,6 +688,8 @@ int num_propentries = 0;
 
 int using_proptables = 0;
 
+int do_restart = 0;
+
 /* PROPTABLE_BITS for 16 byte entries:
  *
  * 8 = 256 entries = 4KB (testing)
@@ -5508,7 +5510,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.450 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.451 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7706,9 +7708,6 @@ void proptable_finalize(int target_dtm)
 
     free(sorting_network);
     free(proptable_num);
-
-    /* Flush out anything in the last proptable, and wait for its write to complete */
-    proptable_full();
 }
 
 void insert_into_proptable(proptable_entry_t *pentry)
@@ -9583,9 +9582,9 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
  * We might want to "partially" prune a move like Pg1=X by looking a half-move into the future to
  * see if we can immediately take the new piece and simplify that way.  To do so, we would construct
  * a futurebase for the piece combination resulting after Pg1=X, probably leaving X frozen on g1,
- * make one pass through that futurebase (this is currently unimplemented) and flag everything else
- * a win for black.  This approach avoids having to step a half-move into the future during back
- * propagation.  The advantages of this are three-fold.  First, it simplifies the program, and
+ * make one pass through that futurebase (XXX this is currently unimplemented) and flag everything
+ * else a win for black.  This approach avoids having to step a half-move into the future during
+ * back propagation.  The advantages of this are three-fold.  First, it simplifies the program, and
  * that's a big plus from a quality control standpoint.  Second, it avoids the random accesses that
  * would be required to probe into the tablebase, replacing them with a series of sequential sweeps,
  * and for a big tablebase that's probably a significant performance win.  Finally, it's a lot more
@@ -9594,11 +9593,11 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
  *
  * For example, let's say we're looking at a Q-and-P vs. Q-and-P endgame.  There are four completely
  * mobile pieces (2 Ks and 2 Qs), and this is easy.  But if one of the pawns queens, then we've got
- * a more complex game with five mobile pieces, and that's too complex.  But we don't want to
- * completely discard all possible enemy promotions, if we can immediately capture the new queen (or
- * the old one).  So we construct a special tablebase for a queen frozen on the queening square,
- * back prop a tablebase for a Q-and-P vs. Q endgame into it, make a pass or two through it, then
- * feed it into our current tablebase.
+ * a more complex game with five mobile pieces.  But we don't want to completely discard all
+ * possible enemy promotions, if we can immediately capture the new queen (or the old one).  So we
+ * construct a special tablebase for a queen frozen on the queening square, back prop a tablebase
+ * for a Q-and-P vs. Q endgame into it, make a pass or two through it, then feed it into our current
+ * tablebase.
  *
  * And finally, we want to label in the file header that this pruning was done.  In particular, if
  * we use a pruned tablebase to compute another (earlier) pruned tablebase, we want to make sure the
@@ -9635,6 +9634,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	/* PTM_wins(tb, index, 1, 1); */
 	/* We insert here with DTM=2 (mate in one), movecnt=1 (XXX), and no futuremove */
 	/* XXX I bet we want to insert with position's multiplicity as movecnt */
+	/* XXX we can modify the entry directly here - no need to use a proptable */
 	insert_or_commit_propentry(index, 2, 1, NO_FUTUREMOVE);
     }
 
@@ -9647,6 +9647,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 
 		/* tb->entries[index].movecnt --; */
 		/* XXX this isn't handled right - a draw is different from a discard */
+		/* XXX we can modify the entry directly here - no need to use a proptable */
 		insert_or_commit_propentry(index, 0, 0, NO_FUTUREMOVE);
 	    }
 	}
@@ -12168,15 +12169,17 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * into it, checking each position move as we go to make sure its futuremoves are handled.
 	 */
 
-	gettimeofday(&pass_start_times[total_passes], NULL);
-	pass_type[total_passes] = "futurebase backprop";
+	if (! do_restart) {
+	    gettimeofday(&pass_start_times[total_passes], NULL);
+	    pass_type[total_passes] = "futurebase backprop";
 
-	if (! back_propagate_all_futurebases(tb)) return 0;
-	finalize_proptable_pass();
+	    if (! back_propagate_all_futurebases(tb)) return 0;
+	    finalize_proptable_pass();
 
-	gettimeofday(&pass_end_times[total_passes], NULL);
-	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
-	total_passes ++;
+	    gettimeofday(&pass_end_times[total_passes], NULL);
+	    getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
+	    total_passes ++;
+	}
 
 	info("Initializing tablebase...\n");
 	pass_type[total_passes] = "initialization";
@@ -12429,7 +12432,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.450 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.451 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12447,7 +12450,7 @@ int main(int argc, char *argv[])
     verify_movements();
 
     while (1) {
-	c = getopt(argc, argv, "iqgpvo:n:P:t:");
+	c = getopt(argc, argv, "iqgpvo:n:P:t:r");
 
 	if (c == -1) break;
 
@@ -12485,6 +12488,9 @@ int main(int argc, char *argv[])
 	    num_threads = strtol(optarg, NULL, 0);
 	    break;
 #endif
+	case 'r':
+	    do_restart = 1;
+	    break;
 	}
     }
 
