@@ -5504,7 +5504,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.453 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.454 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6510,9 +6510,9 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
     /* create entries file for writing if it isn't already open */
 
     if (entries_write_fd == -1) {
-	entries_write_fd = open("entries", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
+	entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
 	if (entries_write_fd == -1) {
-	    fatal("Can't open 'entries' for read-write: %s\n", strerror(errno));
+	    fatal("Can't open 'entries_out' for read-write: %s\n", strerror(errno));
 	    return 0;
 	}
     }
@@ -6537,15 +6537,20 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
 	if (entries_read_fd != -1) close(entries_read_fd);
 	close(entries_write_fd);
 
-	entries_read_fd = open("entries", O_RDONLY | O_LARGEFILE, 0666);
-	entries_write_fd = open("entries", O_RDWR | O_LARGEFILE, 0666);
+	if (rename("entries_out", "entries_in") != 0) {
+	    fatal("Can't rename entries_out as entries_in\n");
+	    return 0;
+	}
+
+	entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
+	entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_LARGEFILE, 0666);
 
 	if (entries_read_fd == -1) {
-	    fatal("Can't open 'entries' for reading: %s\n", strerror(errno));
+	    fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
 	    return 0;
 	}
 	if (entries_write_fd == -1) {
-	    fatal("Can't open 'entries' for writing: %s\n", strerror(errno));
+	    fatal("Can't open 'entries_out' for writing: %s\n", strerror(errno));
 	    return 0;
 	}
 
@@ -12455,7 +12460,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.453 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.454 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
