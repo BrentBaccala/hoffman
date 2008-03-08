@@ -5504,7 +5504,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.452 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.453 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6517,12 +6517,22 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
 	}
     }
 
-    /* we're reseting back to the beginning - write the current buffer out, close and reopen both
-     * file descriptors, and read the first buffer in
+    /* we're reseting back to the beginning - write the current buffer out, write out everything
+     * else, close and reopen both file descriptors, and read the first buffer in
      */
 
     if (entry_buffer_start > index) {
 	do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+
+	if (entries_read_fd != -1) {
+	    while ((ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES)) != 0) {
+		if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+		    fatal("entries read: %s\n", strerror(errno));
+		    return 0;
+		}
+		do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	    }
+	}
 
 	if (entries_read_fd != -1) close(entries_read_fd);
 	close(entries_write_fd);
@@ -12445,7 +12455,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.452 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.453 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
