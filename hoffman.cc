@@ -253,11 +253,13 @@ int * pass_target_dtms = NULL;
 int * positions_finalized = NULL;
 uint64 * backproped_moves = NULL;
 
-uint8 * positive_passes_needed = NULL;
-uint8 * negative_passes_needed = NULL;
-
 int proptable_writes = 0;
 struct timeval proptable_write_time = {0, 0};
+
+int min_tracked_dtm = -2;
+int max_tracked_dtm = 2;
+uint8 * positive_passes_needed = NULL;
+uint8 * negative_passes_needed = NULL;
 
 
 /***** DATA STRUCTURES *****/
@@ -974,8 +976,8 @@ void fprint_system_time(void)
     fprintf(stderr, "System time: %s\n", strbuf);
 }
 
-void expand_per_pass_statistics(void) {
-
+void expand_per_pass_statistics(void)
+{
     if (max_passes == 0) max_passes = 100;
     else max_passes *= 2;
 
@@ -987,10 +989,6 @@ void expand_per_pass_statistics(void) {
     positions_finalized = realloc(positions_finalized, max_passes * sizeof(int));
     backproped_moves = realloc(backproped_moves, max_passes * sizeof(uint64));
 
-    /* we actually need these two arrays to be only half the size they are, because they are split like this */
-    positive_passes_needed = realloc(positive_passes_needed, max_passes * sizeof(uint8));
-    negative_passes_needed = realloc(negative_passes_needed, max_passes * sizeof(uint8));
-
     /* not all of these arrays are cumulative, but just zero them all to be on the safe size */
     bzero(pass_start_times + total_passes, (max_passes-total_passes)*sizeof(struct timeval));
     bzero(pass_end_times + total_passes, (max_passes-total_passes)*sizeof(struct timeval));
@@ -999,10 +997,6 @@ void expand_per_pass_statistics(void) {
     bzero(pass_target_dtms + total_passes, (max_passes-total_passes)*sizeof(int));
     bzero(positions_finalized + total_passes, (max_passes-total_passes)*sizeof(int));
     bzero(backproped_moves + total_passes, (max_passes-total_passes)*sizeof(uint64));
-
-    bzero(positive_passes_needed + total_passes, (max_passes-total_passes)*sizeof(uint8));
-    bzero(negative_passes_needed + total_passes, (max_passes-total_passes)*sizeof(uint8));
-
 }
 
 #if USE_THREADS
@@ -5248,7 +5242,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
     return 1;
 }
 
-boolean preload_all_futurebases(tablebase_t *tb, int *max_dtm, int *min_dtm)
+boolean preload_all_futurebases(tablebase_t *tb)
 {
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
@@ -5287,8 +5281,8 @@ boolean preload_all_futurebases(tablebase_t *tb, int *max_dtm, int *min_dtm)
 	    continue;
 	}
 
-	if (futurebases[fbnum]->max_dtm > *max_dtm) *max_dtm = futurebases[fbnum]->max_dtm;
-	if (futurebases[fbnum]->min_dtm < *min_dtm) *min_dtm = futurebases[fbnum]->min_dtm;
+	if (futurebases[fbnum]->max_dtm > max_tracked_dtm) max_tracked_dtm = futurebases[fbnum]->max_dtm;
+	if (futurebases[fbnum]->min_dtm < min_tracked_dtm) min_tracked_dtm = futurebases[fbnum]->min_dtm;
 
 	futurebases[fbnum]->invert_colors = 0;
 	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "colors");
@@ -5510,7 +5504,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.451 $ $Locker: baccala $");
+    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.452 $ $Locker: baccala $");
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -6737,6 +6731,9 @@ void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm)
     }
 #endif
 
+    /* We always initialize with fairly small DTMs (never bigger than two), so we don't need to
+     * check these array bounds for overflow here.
+     */
     if (dtm > 0) positive_passes_needed[dtm] = 1;
     if (dtm < 0) negative_passes_needed[-dtm] = 1;
 
@@ -6856,13 +6853,13 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
 	       && (get_entry_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)) {
 	set_entry_movecnt(index, MOVECNT_PTM_WINS_UNPROPED);
 	set_entry_raw_DTM(index, dtm);
-	positive_passes_needed[dtm] = 1;
+	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 1;
     } else if (dtm < get_entry_raw_DTM(index)) {
 	/* This can happen if we get a PTM mate during futurebase back prop, then, later during
 	 * futurebase back prop or during intra-table back prop, improve upon the mate.
 	 */
 	set_entry_raw_DTM(index, dtm);
-	positive_passes_needed[dtm] = 1;
+	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 1;
     }
 }
 
@@ -6897,13 +6894,14 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 	     * best line, so that's why we fetch entry DTM here.
 	     */
 #ifdef DEBUG_PASS_DEPENDANCIES
-	    if (negative_passes_needed[-get_entry_raw_DTM(index)] == 0) {
+	    if ((get_entry_raw_DTM(index) >= min_tracked_dtm)
+		&& (negative_passes_needed[-get_entry_raw_DTM(index)] == 0)) {
 		global_position_t global;
 		index_to_global_position(current_tb, index, &global);
 		printf("%d pass needed by %d %s\n", get_entry_raw_DTM(index), index, global_position_to_FEN(&global));
 	    }
 #endif
-	    negative_passes_needed[-get_entry_raw_DTM(index)] = 1;
+	    if (get_entry_raw_DTM(index) >= min_tracked_dtm) negative_passes_needed[-get_entry_raw_DTM(index)] = 1;
 	}
     }
 }
@@ -11748,33 +11746,44 @@ void initialize_tablebase(void)
 
 #endif
 
-/* Intra-table propagation is almost trivial.  Keep making passes over the tablebase first until
- * we've hit dtm_limit, which means we've processed everything from the futurebases, then until no
- * more progress is made on a given pass.
+/* Intra-table propagation is (almost) trivial.  Keep making passes over the tablebase first until
+ * we've processed everything from the futurebases, then until no more progress can be made.  We
+ * don't even have to make every pass, just the ones that have mates in the entries table (and we
+ * track that as we finalize the mates).  Once we're past all the mates that came in from the
+ * futurebases (that's what max_tracked_dtm and min_tracked_dtm show), the only way we can have new
+ * mates is by following a line that's completely within this tablebase, so we keep going until one
+ * of the passes didn't finalize any positions.
  *
- * XXX need to re-examine the pass skipping logic
+ * We have to be a little bit careful when we're using proptables, since we can have stuff queued up
+ * in the current proptable that hasn't be reflected in the positive_passes_needed[] and
+ * negative_passes_needed[] arrays, so if we're using proptables, then we ALWAYS run the next pass
+ * after a pass that finalized some positions.
  */
 
-void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, int upper_dtm_limit)
+void propagate_all_moves_within_tablebase(tablebase_t *tb)
 {
     int dtm = 1;
     int positions_finalized_on_last_pass = 0;
 
     /* DTM 1 positions are illegal (PNTM is in check), so back prop from these positions is not
-     * necessary because we don't count moves into check as part of movecnt.
+     * needed or desired because we don't count moves into check as part of movecnt.
      */
 
     positive_passes_needed[1] = 0;
 
-    while ((dtm <= upper_dtm_limit) || (-dtm >= lower_dtm_limit)) {
+    while ((dtm <= max_tracked_dtm) || (-dtm >= min_tracked_dtm)) {
 
 	/* PTM wins */
-	if ((using_proptables || positive_passes_needed[dtm]) && dtm > 1)
+	if (positive_passes_needed[dtm] || (using_proptables && (positions_finalized_on_last_pass > 0)))
 	    positions_finalized_on_last_pass = propagation_pass(dtm);
+	else
+	    positions_finalized_on_last_pass = 0;
 
 	/* PNTM wins */
-	if (using_proptables || negative_passes_needed[dtm])
+	if (negative_passes_needed[dtm] || (using_proptables && (positions_finalized_on_last_pass > 0)))
 	    positions_finalized_on_last_pass = propagation_pass(-dtm);
+	else
+	    positions_finalized_on_last_pass = 0;
 
 	dtm ++;
     }
@@ -11782,12 +11791,12 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb, int lower_dtm_limit, 
     while (1) {
 
 	/* PTM wins */
-	if (positions_finalized_on_last_pass > 0 || positive_passes_needed[dtm])
+	if (positions_finalized_on_last_pass > 0)
 	    positions_finalized_on_last_pass = propagation_pass(dtm);
 	else break;
 
 	/* PNTM wins */
-	if (positions_finalized_on_last_pass > 0 || negative_passes_needed[dtm])
+	if (positions_finalized_on_last_pass > 0)
 	    positions_finalized_on_last_pass = propagation_pass(-dtm);
 	else break;
 
@@ -11996,8 +12005,6 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 boolean generate_tablebase_from_control_file(char *control_filename, char *output_filename, char *options) {
 
     tablebase_t *tb;
-    int max_dtm = 0;
-    int min_dtm = 0;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
     long long futurevector_bytes;
@@ -12058,7 +12065,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	memset(proptable, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
     }
 
-    if (! preload_all_futurebases(tb, &max_dtm, &min_dtm)) return 0;
+    if (! preload_all_futurebases(tb)) return 0;
     assign_numbers_to_futuremoves(tb);
     print_futuremoves();
     if (! compute_pruned_futuremoves(tb)) return 0;
@@ -12072,6 +12079,17 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
      * to see if they would overflow the arrays.
      */
     expand_per_pass_statistics();
+
+    /* Part of preloading the futurebases was to compute the smallest and largest DTMs in them, so
+     * we now know what the sizes of these two arrays have to be.
+     */
+    positive_passes_needed = calloc(max_tracked_dtm + 1, sizeof(uint8));
+    negative_passes_needed = calloc(-min_tracked_dtm + 1, sizeof(uint8));
+
+    if ((positive_passes_needed == NULL) || (negative_passes_needed == NULL)) {
+	fatal("Can't calloc positive/negative_passes_needed\n");
+	return 0;
+    }
 
     if (!using_proptables) {
 
@@ -12194,13 +12212,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     unload_all_futurebases();
 
-    /* We add one to dtm_limit here because, even if there are intra-table passes with no
-     * progress made, we want to process at least one pass beyond the maximum mate-in value we
-     * saw during futurebase back-prop.
-     */
-
     info("Intra-table propagating\n");
-    propagate_all_moves_within_tablebase(tb, min_dtm-1, max_dtm+1);
+    propagate_all_moves_within_tablebase(tb);
 
     write_tablebase_to_file(tb, output_filename, options);
 
@@ -12432,7 +12445,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.451 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.452 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
