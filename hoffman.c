@@ -248,9 +248,6 @@ struct timeval program_end_time;
 int total_passes = 0;
 int max_passes = 0;
 
-struct timeval * pass_start_times = NULL;
-struct timeval * pass_end_times = NULL;
-struct rusage * pass_rusage = NULL;
 char ** pass_type = NULL;
 int * pass_target_dtms = NULL;
 int * positions_finalized = NULL;
@@ -984,18 +981,12 @@ void expand_per_pass_statistics(void)
     if (max_passes == 0) max_passes = 100;
     else max_passes *= 2;
 
-    pass_start_times = realloc(pass_start_times, max_passes * sizeof(struct timeval));
-    pass_end_times = realloc(pass_end_times, max_passes * sizeof(struct timeval));
-    pass_rusage = realloc(pass_rusage, max_passes * sizeof(struct rusage));
     pass_type = realloc(pass_type, max_passes * sizeof(char *));
     pass_target_dtms = realloc(pass_target_dtms, max_passes * sizeof(int));
     positions_finalized = realloc(positions_finalized, max_passes * sizeof(int));
     backproped_moves = realloc(backproped_moves, max_passes * sizeof(uint64));
 
     /* not all of these arrays are cumulative, but just zero them all to be on the safe size */
-    bzero(pass_start_times + total_passes, (max_passes-total_passes)*sizeof(struct timeval));
-    bzero(pass_end_times + total_passes, (max_passes-total_passes)*sizeof(struct timeval));
-    bzero(pass_rusage + total_passes, (max_passes-total_passes)*sizeof(struct rusage));
     bzero(pass_type + total_passes, (max_passes-total_passes)*sizeof(char *));
     bzero(pass_target_dtms + total_passes, (max_passes-total_passes)*sizeof(int));
     bzero(positions_finalized + total_passes, (max_passes-total_passes)*sizeof(int));
@@ -5422,21 +5413,25 @@ void unload_all_futurebases(void)
 
 }
 
-void finalize_pass()
+/* finalize_pass_statistics() - this function also collects some of the per-pass statistics,
+ * specifically the timings.
+ */
+
+void finalize_pass_statistics()
 {
     xmlNodePtr tablebase, node, generation_statistics, passNode;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
 
-#if 0
-    static struct timeval timeval;
-    static struct rusage rusage;
-    static int timings_valid = 0;
-#endif
+    static struct timeval last_timeval;
+    static struct rusage last_rusage;
+    static int last_timings_valid = 0;
+
+    struct timeval timeval;
+    struct rusage rusage;
 
     char hostname[256];		/* XXX hardwired max */
     struct hostent *he;
-    struct timeval tmptime;
     char strbuf[256];
 
     tablebase = xmlDocGetRootElement(current_tb->xml);
@@ -5459,7 +5454,7 @@ void finalize_pass()
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.455 $ $Locker: baccala $");
+	xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.456 $ $Locker: baccala $");
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options_string);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5477,14 +5472,25 @@ void finalize_pass()
 
     xmlNewProp(passNode, BAD_CAST "type", BAD_CAST pass_type[total_passes]);
 
-    subtract_timeval(&pass_end_times[total_passes], &pass_start_times[total_passes]);
-    sprint_timeval(strbuf, &pass_end_times[total_passes]);
+    gettimeofday(&timeval, NULL);
+    getrusage(RUSAGE_SELF, &rusage);
+
+    if (last_timings_valid) {
+	subtract_timeval(&timeval, &last_timeval);
+	subtract_timeval(&rusage.ru_utime, &last_rusage.ru_utime);
+    } else {
+	subtract_timeval(&timeval, &program_start_time);
+    }
+
+    sprint_timeval(strbuf, &timeval);
     xmlNewProp(passNode, BAD_CAST "real-time", BAD_CAST strbuf);
 
-    tmptime = pass_rusage[total_passes].ru_utime;
-    if (total_passes > 0) subtract_timeval(&tmptime, &pass_rusage[total_passes-1].ru_utime);
-    sprint_timeval(strbuf, &tmptime);
+    sprint_timeval(strbuf, &rusage.ru_utime);
     xmlNewProp(passNode, BAD_CAST "user-time", BAD_CAST strbuf);
+
+    gettimeofday(&last_timeval, NULL);
+    getrusage(RUSAGE_SELF, &last_rusage);
+    last_timings_valid = 1;
 
     if (! strcmp(pass_type[total_passes], "intratable")) {
 	if (ENTRIES_FORMAT_DTM_BITS > 0) {
@@ -8063,7 +8069,6 @@ int propagation_pass(int target_dtm)
 	terminate();
     }
 
-    gettimeofday(&pass_start_times[total_passes], NULL);
     if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
     pass_target_dtms[total_passes] = target_dtm;
 
@@ -8104,9 +8109,6 @@ int propagation_pass(int target_dtm)
 #endif
     }
 
-    gettimeofday(&pass_end_times[total_passes], NULL);
-    getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
-
     total_backproped_moves += backproped_moves[total_passes];
 
     if (positions_finalized[total_passes] > 0) {
@@ -8114,7 +8116,7 @@ int propagation_pass(int target_dtm)
 	if (target_dtm < min_dtm) min_dtm = target_dtm;
     }
 
-    finalize_pass();
+    finalize_pass_statistics();
     info("Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized[total_passes]);
 
     total_passes ++;
@@ -12220,31 +12222,24 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 #endif
 
-	gettimeofday(&pass_start_times[total_passes], NULL);
 	pass_type[total_passes] = "initialization";
 
 	info("Initializing tablebase\n");
 	initialize_tablebase();
 
-	gettimeofday(&pass_end_times[total_passes], NULL);
-	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
-	finalize_pass();
+	finalize_pass_statistics();
 	total_passes ++;
 
 	info("Total legal positions: %lld\n", total_legal_positions);
 	info("Total moves: %lld\n", total_moves);
 
-	gettimeofday(&pass_start_times[total_passes], NULL);
 	pass_type[total_passes] = "futurebase backprop";
 
 	if (! back_propagate_all_futurebases(tb)) return 0;
 
-	gettimeofday(&pass_end_times[total_passes], NULL);
-	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
-	finalize_pass();
+	finalize_pass_statistics();
 	total_passes ++;
 
-	gettimeofday(&pass_start_times[total_passes], NULL);
 	pass_type[total_passes] = "futuremove check";
 
 	info("Checking futuremoves...\n");
@@ -12252,9 +12247,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	if (! have_all_futuremoves_been_handled(tb)) return 0;
 	info("All futuremoves handled under move restrictions\n");
 
-	gettimeofday(&pass_end_times[total_passes], NULL);
-	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
-	finalize_pass();
+	finalize_pass_statistics();
 	total_passes ++;
 
 	free(tb->futurevectors);
@@ -12268,15 +12261,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 */
 
 	if (! do_restart) {
-	    gettimeofday(&pass_start_times[total_passes], NULL);
 	    pass_type[total_passes] = "futurebase backprop";
 
 	    if (! back_propagate_all_futurebases(tb)) return 0;
 	    finalize_proptable_pass();
 
-	    gettimeofday(&pass_end_times[total_passes], NULL);
-	    getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
-	    finalize_pass();
+	    finalize_pass_statistics();
 	    total_passes ++;
 	}
 
@@ -12525,7 +12515,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.455 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.456 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
