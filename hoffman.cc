@@ -237,6 +237,9 @@ uint64 player_wins[2];
 int max_dtm = 0;
 int min_dtm = 0;
 
+/* How we were called - XXX hardwired max */
+char options_string[256];
+
 struct timeval program_start_time;
 struct timeval program_end_time;
 
@@ -5419,27 +5422,118 @@ void unload_all_futurebases(void)
 
 }
 
+void finalize_pass()
+{
+    xmlNodePtr tablebase, node, generation_statistics, passNode;
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+
+#if 0
+    static struct timeval timeval;
+    static struct rusage rusage;
+    static int timings_valid = 0;
+#endif
+
+    char hostname[256];		/* XXX hardwired max */
+    struct hostent *he;
+    struct timeval tmptime;
+    char strbuf[256];
+
+    tablebase = xmlDocGetRootElement(current_tb->xml);
+
+    /* First, check to see if we have a generation-statistics element, and add it if we don't */
+
+    context = xmlXPathNewContext(current_tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics", context);
+
+    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+
+	node = xmlNewChild(tablebase, NULL, BAD_CAST "generation-statistics", NULL);
+	xmlAddPrevSibling(node, xmlNewText(BAD_CAST "   "));
+	xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n"));
+	generation_statistics = node;
+
+	gethostname(hostname, sizeof(hostname));
+	he = gethostbyname(hostname);
+
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.455 $ $Locker: baccala $");
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options_string);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+	strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
+	xmlNewChild(node, NULL, BAD_CAST "start-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n   ");
+
+    } else {
+	generation_statistics = result->nodesetval->nodeTab[0];
+    }
+
+    xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
+    passNode = xmlNewChild(generation_statistics, NULL, BAD_CAST "pass", NULL);
+    xmlNodeAddContent(generation_statistics, BAD_CAST "\n   ");
+
+    xmlNewProp(passNode, BAD_CAST "type", BAD_CAST pass_type[total_passes]);
+
+    subtract_timeval(&pass_end_times[total_passes], &pass_start_times[total_passes]);
+    sprint_timeval(strbuf, &pass_end_times[total_passes]);
+    xmlNewProp(passNode, BAD_CAST "real-time", BAD_CAST strbuf);
+
+    tmptime = pass_rusage[total_passes].ru_utime;
+    if (total_passes > 0) subtract_timeval(&tmptime, &pass_rusage[total_passes-1].ru_utime);
+    sprint_timeval(strbuf, &tmptime);
+    xmlNewProp(passNode, BAD_CAST "user-time", BAD_CAST strbuf);
+
+    if (! strcmp(pass_type[total_passes], "intratable")) {
+	if (ENTRIES_FORMAT_DTM_BITS > 0) {
+	    snprintf(strbuf, sizeof(strbuf), "%d", pass_target_dtms[total_passes]);
+	    xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
+	}
+	snprintf(strbuf, sizeof(strbuf), "%d", positions_finalized[total_passes]);
+	xmlNewProp(passNode, BAD_CAST "positions-finalized", BAD_CAST strbuf);
+	snprintf(strbuf, sizeof(strbuf), "%lld", backproped_moves[total_passes]);
+	xmlNewProp(passNode, BAD_CAST "moves-generated", BAD_CAST strbuf);
+    }
+}
+
 /* Given a tablebase, change its XML structure to reflect the fact that the tablebase has now
  * actually been built.  Adds a dummy "offset" property to the root element which will be adjusted
  * later to reflect the actual byte offset of the tablebase entries, and a "generated-by" block
  * indicating the program, time, and host that generated the data.
  */
 
-xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
+xmlDocPtr finalize_XML_header(tablebase_t *tb)
 {
     xmlNodePtr tablebase, node;
-    char hostname[256];
-    struct hostent *he;
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
     struct rusage rusage;
     char strbuf[256];
-    int passnum;
 
     tablebase = xmlDocGetRootElement(tb->xml);
 
     xmlNewProp(tablebase, BAD_CAST "offset", BAD_CAST "0x1000");
 
-    xmlNodeAddContent(tablebase, BAD_CAST "   ");
-    node = xmlNewChild(tablebase, NULL, BAD_CAST "tablebase-statistics", NULL);
+    /* Add a set of tablebase-statistics.  We prefer to add this before the generation-statistics,
+     * because the generation-statistics are long and boring, and because this is how it's always
+     * been done.
+     */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics", context);
+    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	warning("Can't find /generation-statistics in XML\n");
+
+	xmlNodeAddContent(tablebase, BAD_CAST "   ");
+	node = xmlNewChild(tablebase, NULL, BAD_CAST "tablebase-statistics", NULL);
+    } else {
+	node = result->nodesetval->nodeTab[0];
+	node = xmlAddPrevSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "tablebase-statistics", BAD_CAST strbuf));
+	xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n   "));
+    }
+
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%d", tb->max_index + 1);
     xmlNewChild(node, NULL, BAD_CAST "indices", BAD_CAST strbuf);
@@ -5488,102 +5582,69 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb, char *options)
 	snprintf(strbuf, sizeof(strbuf), "%d", min_dtm);
 	xmlNewChild(node, NULL, BAD_CAST "min-dtm", BAD_CAST strbuf);
     }
+
     xmlNodeAddContent(node, BAD_CAST "\n   ");
 
-    xmlNodeAddContent(tablebase, BAD_CAST "\n   ");
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics//start-time", context);
 
-    node = xmlNewChild(tablebase, NULL, BAD_CAST "generation-statistics", NULL);
+    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	warning("Can't find /generation-statistics/start-time in XML\n");
+    } else {
 
-    gethostname(hostname, sizeof(hostname));
-    he = gethostbyname(hostname);
+	node = result->nodesetval->nodeTab[0];
 
-    getrusage(RUSAGE_SELF, &rusage);
+	getrusage(RUSAGE_SELF, &rusage);
+	gettimeofday(&program_end_time, NULL);
 
-    gettimeofday(&program_end_time, NULL);
+	strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_end_time.tv_sec));
+	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "completion-time", BAD_CAST strbuf));
 
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.454 $ $Locker: baccala $");
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
-    xmlNewChild(node, NULL, BAD_CAST "start-time", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_end_time.tv_sec));
-    xmlNewChild(node, NULL, BAD_CAST "completion-time", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprint_timeval(strbuf, &rusage.ru_utime);
-    xmlNewChild(node, NULL, BAD_CAST "user-time", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    sprint_timeval(strbuf, &rusage.ru_stime);
-    xmlNewChild(node, NULL, BAD_CAST "system-time", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    /* Note that we modified program_end_time here to compute the real time used by the program */
-    subtract_timeval(&program_end_time, &program_start_time);
-    sprint_timeval(strbuf, &program_end_time);
-    xmlNewChild(node, NULL, BAD_CAST "real-time", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_majflt);
-    xmlNewChild(node, NULL, BAD_CAST "page-faults", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_minflt);
-    xmlNewChild(node, NULL, BAD_CAST "page-reclaims", BAD_CAST strbuf);
+	sprint_timeval(strbuf, &rusage.ru_utime);
+	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "user-time", BAD_CAST strbuf));
+
+	sprint_timeval(strbuf, &rusage.ru_stime);
+	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "system-time", BAD_CAST strbuf));
+
+	/* Note that we modified program_end_time here to compute the real time used by the program */
+	subtract_timeval(&program_end_time, &program_start_time);
+	sprint_timeval(strbuf, &program_end_time);
+	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "real-time", BAD_CAST strbuf));
+
+	snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_majflt);
+	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "page-faults", BAD_CAST strbuf));
+
+	snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_minflt);
+	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "page-reclaims", BAD_CAST strbuf));
 
 #if USE_THREADS
-    if (num_threads > 1) {
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
-	xmlNewChild(node, NULL, BAD_CAST "contended-locks", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%ld", contended_indices);
-	xmlNewChild(node, NULL, BAD_CAST "contended-indices", BAD_CAST strbuf);
-    }
+	if (num_threads > 1) {
+	    snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
+	    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "contended-locks", BAD_CAST strbuf));
+
+	    snprintf(strbuf, sizeof(strbuf), "%ld", contended_indices);
+	    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "contended-indices", BAD_CAST strbuf));
+	}
 #endif
 
-    if (using_proptables) {
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%d", proptable_writes);
-	xmlNewChild(node, NULL, BAD_CAST "proptable-writes", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	sprint_timeval(strbuf, &proptable_write_time);
-	xmlNewChild(node, NULL, BAD_CAST "proptable-write-time", BAD_CAST strbuf);
-    }
+	if (using_proptables) {
+	    snprintf(strbuf, sizeof(strbuf), "%d", proptable_writes);
+	    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "proptable-writes", BAD_CAST strbuf));
 
-    for (passnum = 0; passnum < total_passes; passnum ++) {
-	xmlNodePtr passNode;
-	struct timeval tmptime;
-
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	passNode = xmlNewChild(node, NULL, BAD_CAST "pass", NULL);
-
-	xmlNewProp(passNode, BAD_CAST "type", BAD_CAST pass_type[passnum]);
-
-	subtract_timeval(&pass_end_times[passnum], &pass_start_times[passnum]);
-	sprint_timeval(strbuf, &pass_end_times[passnum]);
-	xmlNewProp(passNode, BAD_CAST "real-time", BAD_CAST strbuf);
-
-	tmptime = pass_rusage[passnum].ru_utime;
-	if (passnum > 0) subtract_timeval(&tmptime, &pass_rusage[passnum-1].ru_utime);
-	sprint_timeval(strbuf, &tmptime);
-	xmlNewProp(passNode, BAD_CAST "user-time", BAD_CAST strbuf);
-
-	if (! strcmp(pass_type[passnum], "intratable")) {
-	    if (ENTRIES_FORMAT_DTM_BITS > 0) {
-		snprintf(strbuf, sizeof(strbuf), "%d", pass_target_dtms[passnum]);
-		xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
-	    }
-	    snprintf(strbuf, sizeof(strbuf), "%d", positions_finalized[passnum]);
-	    xmlNewProp(passNode, BAD_CAST "positions-finalized", BAD_CAST strbuf);
-	    snprintf(strbuf, sizeof(strbuf), "%lld", backproped_moves[passnum]);
-	    xmlNewProp(passNode, BAD_CAST "moves-generated", BAD_CAST strbuf);
+	    sprint_timeval(strbuf, &proptable_write_time);
+	    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "proptable-write-time", BAD_CAST strbuf));
 	}
     }
-
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
-
-    xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
     return tb->xml;
 }
@@ -8053,6 +8114,7 @@ int propagation_pass(int target_dtm)
 	if (target_dtm < min_dtm) min_dtm = target_dtm;
     }
 
+    finalize_pass();
     info("Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized[total_passes]);
 
     total_passes ++;
@@ -11824,7 +11886,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
  * tablebase's XML for a <output> element.
  */
 
-void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
+void write_tablebase_to_file(tablebase_t *tb, char *filename)
 {
     xmlDocPtr doc;
     int index;
@@ -11921,7 +11983,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
 
     if (filename_needs_xmlFree) xmlFree(filename);
 
-    doc = finalize_XML_header(tb, options);
+    doc = finalize_XML_header(tb);
 
     /* We want at least one zero byte after the XML header, because that's how we figure out where
      * it ends when we read it back it, and I also want to align the tablebase on a four-byte
@@ -12017,7 +12079,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename, char *options)
  * an error indication, which is why we just silently return in many cases.
  */
 
-boolean generate_tablebase_from_control_file(char *control_filename, char *output_filename, char *options) {
+boolean generate_tablebase_from_control_file(char *control_filename, char *output_filename) {
 
     tablebase_t *tb;
     xmlXPathContextPtr context;
@@ -12166,6 +12228,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
 	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
+	finalize_pass();
 	total_passes ++;
 
 	info("Total legal positions: %lld\n", total_legal_positions);
@@ -12178,6 +12241,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
 	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
+	finalize_pass();
 	total_passes ++;
 
 	gettimeofday(&pass_start_times[total_passes], NULL);
@@ -12190,6 +12254,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	gettimeofday(&pass_end_times[total_passes], NULL);
 	getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
+	finalize_pass();
 	total_passes ++;
 
 	free(tb->futurevectors);
@@ -12211,6 +12276,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	    gettimeofday(&pass_end_times[total_passes], NULL);
 	    getrusage(RUSAGE_SELF, &pass_rusage[total_passes]);
+	    finalize_pass();
 	    total_passes ++;
 	}
 
@@ -12230,7 +12296,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     info("Intra-table propagating\n");
     propagate_all_moves_within_tablebase(tb);
 
-    write_tablebase_to_file(tb, output_filename, options);
+    write_tablebase_to_file(tb, output_filename);
 
     return 1;
 }
@@ -12427,7 +12493,6 @@ int main(int argc, char *argv[])
     char *output_filename = NULL;
     extern char *optarg;
     extern int optind;
-    char options_string[256];
     char *options_string_ptr = options_string;
     struct sigaction action;
 
@@ -12460,7 +12525,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.454 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.455 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12547,7 +12612,7 @@ int main(int argc, char *argv[])
     /* Generating */
 
     if (generating) {
-	generate_tablebase_from_control_file(argv[optind], output_filename, options_string);
+	generate_tablebase_from_control_file(argv[optind], output_filename);
 	terminate();
     }
 
