@@ -692,6 +692,14 @@ int using_proptables = 0;
 
 int do_restart = 0;
 
+xmlNodePtr generation_statistics;
+xmlNodePtr checkpoint_time;
+xmlNodePtr user_time, system_time, real_time;
+xmlNodePtr page_faults, page_reclaims;
+xmlNodePtr contended_locks_node, contended_indices_node;
+xmlNodePtr proptable_writes_node, proptable_write_time_node;
+
+
 /* PROPTABLE_BITS for 16 byte entries:
  *
  * 8 = 256 entries = 4KB (testing)
@@ -4949,6 +4957,28 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 /* Parses an XML control file.
  */
 
+xmlNodePtr extract_or_create_GenStats_node(xmlDocPtr doc, char *name)
+{
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
+    xmlNodePtr node;
+    char strbuf[256];
+
+    sprintf(strbuf, "//generation-statistics//%s", name);
+
+    context = xmlXPathNewContext(doc);
+    result = xmlXPathEvalExpression(BAD_CAST strbuf, context);
+    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
+	node = xmlNewChild(generation_statistics, NULL, BAD_CAST name, NULL);
+	xmlNodeAddContent(generation_statistics, BAD_CAST "\n   ");
+    } else {
+	node = result->nodesetval->nodeTab[0];
+    }
+
+    return node;
+}
+
 tablebase_t * parse_XML_control_file(char *filename)
 {
     xmlParserInputBufferPtr dtd_input_buffer;
@@ -4957,6 +4987,11 @@ tablebase_t * parse_XML_control_file(char *filename)
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
     tablebase_t *tb;
+
+    xmlNodePtr tablebase, node;
+    char hostname[256];		/* XXX hardwired max */
+    struct hostent *he;
+    char strbuf[256];
 
     /* load the DTD from memory */
 
@@ -5013,6 +5048,89 @@ tablebase_t * parse_XML_control_file(char *filename)
      */
 
     /* xmlFreeParserInputBuffer(dtd_input_buffer); */
+
+    /* Now, check to see if we have a generation-statistics element, which would mean this is a
+     * restart, and add it if not, along with a 'host' element, either at the beginning, or after
+     * the last 'checkpoint-time' element.
+     */
+
+    gethostname(hostname, sizeof(hostname));
+    he = gethostbyname(hostname);
+
+    tablebase = xmlDocGetRootElement(doc);
+    context = xmlXPathNewContext(doc);
+    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics", context);
+
+    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+
+	do_restart = 0;
+
+	generation_statistics = xmlNewChild(tablebase, NULL, BAD_CAST "generation-statistics", NULL);
+	xmlAddPrevSibling(generation_statistics, xmlNewText(BAD_CAST "   "));
+	xmlAddNextSibling(generation_statistics, xmlNewText(BAD_CAST "\n"));
+
+	xmlNodeAddContent(generation_statistics, BAD_CAST "\n      ");
+	node = xmlNewChild(generation_statistics, NULL, BAD_CAST "host", BAD_CAST he->h_name);
+
+    } else {
+
+	do_restart = 1;
+
+	generation_statistics = result->nodesetval->nodeTab[0];
+
+	xmlXPathFreeObject(result);
+	result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics//checkpoint-time", context);
+
+	if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	    warning("Can't find /generation-statistics/checkpoint-time in XML\n");
+
+	    xmlNodeAddContent(generation_statistics, BAD_CAST "\n      ");
+	    node = xmlNewChild(generation_statistics, NULL, BAD_CAST "host", BAD_CAST he->h_name);
+	} else {
+	    node = result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1];
+	    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "host", BAD_CAST he->h_name));
+	}
+    }
+
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
+    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "program",
+						 BAD_CAST "Hoffman $Revision: 1.460 $ $Locker: baccala $"));
+    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "args", BAD_CAST options_string));
+    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+    strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
+    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "start-time", BAD_CAST strbuf));
+    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+
+    checkpoint_time = xmlNewDocNode(tb->xml, NULL, BAD_CAST "checkpoint-time", NULL);
+    node = xmlAddNextSibling(node, checkpoint_time);
+    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n   "));
+
+    /* extract or create global counter nodes */
+    /* XXX still need to reload these counters */
+    /* XXX and create new nodes in the right place on restarts */
+
+    user_time = extract_or_create_GenStats_node(doc, "user-time");
+    system_time = extract_or_create_GenStats_node(doc, "system-time");
+    real_time = extract_or_create_GenStats_node(doc, "real-time");
+    page_faults = extract_or_create_GenStats_node(doc, "page-faults");
+    page_reclaims = extract_or_create_GenStats_node(doc, "page-reclaims");
+
+#if USE_THREADS
+    if (num_threads > 1) {
+	contended_locks_node = extract_or_create_GenStats_node(doc, "contended-locks");
+	contended_indices_node = extract_or_create_GenStats_node(doc, "contended-indices");
+    }
+#endif
+
+    if (using_proptables) {
+	proptable_writes_node = extract_or_create_GenStats_node(doc, "proptable-writes");
+	proptable_write_time_node = extract_or_create_GenStats_node(doc, "proptable-write-time");
+    }
 
     return tb;
 }
@@ -5419,15 +5537,7 @@ void unload_all_futurebases(void)
 
 void finalize_pass_statistics()
 {
-    xmlNodePtr tablebase, node, generation_statistics, passNode;
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
-
-    static xmlNodePtr checkpoint_time;
-    static xmlNodePtr user_time, system_time, real_time;
-    static xmlNodePtr page_faults, page_reclaims;
-    static xmlNodePtr contended_locks_node, contended_indices_node;
-    static xmlNodePtr proptable_writes_node, proptable_write_time_node;
+    xmlNodePtr passNode;
 
     static struct timeval last_timeval;
     static struct rusage last_rusage;
@@ -5436,84 +5546,7 @@ void finalize_pass_statistics()
     struct timeval timeval;
     struct rusage rusage;
 
-    char hostname[256];		/* XXX hardwired max */
-    struct hostent *he;
     char strbuf[256];
-
-    tablebase = xmlDocGetRootElement(current_tb->xml);
-
-    /* First, check to see if we have a generation-statistics element, and add it (and global counters) if we don't */
-
-    context = xmlXPathNewContext(current_tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics", context);
-
-    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-
-	node = xmlNewChild(tablebase, NULL, BAD_CAST "generation-statistics", NULL);
-	xmlAddPrevSibling(node, xmlNewText(BAD_CAST "   "));
-	xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n"));
-	generation_statistics = node;
-
-	gethostname(hostname, sizeof(hostname));
-	he = gethostbyname(hostname);
-
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.459 $ $Locker: baccala $");
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options_string);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
-	xmlNewChild(node, NULL, BAD_CAST "start-time", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-
-	checkpoint_time = xmlNewChild(node, NULL, BAD_CAST "checkpoint-time", NULL);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-
-	//strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_end_time.tv_sec));
-	//node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	//node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "completion-time", BAD_CAST strbuf));
-
-	user_time = xmlNewChild(node, NULL, BAD_CAST "user-time", NULL);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-
-	system_time = xmlNewChild(node, NULL, BAD_CAST "system-time", NULL);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-
-	real_time = xmlNewChild(node, NULL, BAD_CAST "real-time", NULL);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-
-	page_faults = xmlNewChild(node, NULL, BAD_CAST "page-faults", NULL);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-
-	page_reclaims = xmlNewChild(node, NULL, BAD_CAST "page-reclaims", NULL);
-
-#if USE_THREADS
-	if (num_threads > 1) {
-	    xmlNodeAddContent(node, BAD_CAST "\n      ");
-	    contended_locks_node = xmlNewChild(node, NULL, BAD_CAST "contended-locks", NULL);
-
-	    xmlNodeAddContent(node, BAD_CAST "\n      ");
-	    contended_indices_node = xmlNewChild(node, NULL, BAD_CAST "contended-indices", NULL);
-	}
-#endif
-
-	if (using_proptables) {
-	    xmlNodeAddContent(node, BAD_CAST "\n      ");
-	    proptable_writes_node = xmlNewChild(node, NULL, BAD_CAST "proptable-writes", NULL);
-
-	    xmlNodeAddContent(node, BAD_CAST "\n      ");
-	    proptable_write_time_node = xmlNewChild(node, NULL, BAD_CAST "proptable-write-time", NULL);
-	}
-
-	xmlNodeAddContent(node, BAD_CAST "\n   ");
-
-    } else {
-	generation_statistics = result->nodesetval->nodeTab[0];
-
-	// extract nodes
-    }
 
     /* Update global statistics */
 
@@ -11937,6 +11970,8 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 
 /* The 'filename' argument passed in here is only optional.  If it is NULL, we'll look into the
  * tablebase's XML for a <output> element.
+ *
+ * XXX move the XML code into the caller
  */
 
 void write_tablebase_to_file(tablebase_t *tb, char *filename)
@@ -12162,7 +12197,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     xmlXPathFreeContext(context);
 
     if (proptable_MBs > 0) {
-	using_proptables = 1;
 	num_propentries = proptable_MBs * 1024 * 1024 / PROPTABLE_FORMAT_BYTES;
     }
 
@@ -12566,7 +12600,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.459 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.460 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12584,7 +12618,7 @@ int main(int argc, char *argv[])
     verify_movements();
 
     while (1) {
-	c = getopt(argc, argv, "iqgpvo:n:P:t:r");
+	c = getopt(argc, argv, "iqgpvo:n:P:t:");
 
 	if (c == -1) break;
 
@@ -12616,15 +12650,13 @@ int main(int argc, char *argv[])
 	case 'P':
 	    /* set size of proptable in megabytes */
 	    proptable_MBs = strtol(optarg, NULL, 0);
+	    using_proptables = 1;
 	    break;
 #if USE_THREADS
 	case 't':
 	    num_threads = strtol(optarg, NULL, 0);
 	    break;
 #endif
-	case 'r':
-	    do_restart = 1;
-	    break;
 	}
     }
 
