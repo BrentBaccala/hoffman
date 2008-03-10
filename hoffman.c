@@ -5460,7 +5460,7 @@ void finalize_pass_statistics()
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.457 $ $Locker: baccala $");
+	xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.458 $ $Locker: baccala $");
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options_string);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -5634,7 +5634,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 	node = xmlNewChild(tablebase, NULL, BAD_CAST "tablebase-statistics", NULL);
     } else {
 	node = result->nodesetval->nodeTab[0];
-	node = xmlAddPrevSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "tablebase-statistics", BAD_CAST strbuf));
+	node = xmlAddPrevSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "tablebase-statistics", NULL));
 	xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n   "));
     }
 
@@ -7182,6 +7182,7 @@ int proptable_entries = 0;
 int proptable_merges = 0;
 
 #define PROPTABLE_ELEM(n)  ((void *)proptable + PROPTABLE_FORMAT_BYTES * (n))
+#define PROPTABLE_FORMAT_INDEX_ALL_ONES (PROPTABLE_FORMAT_INDEX_MASK >> PROPTABLE_FORMAT_INDEX_OFFSET)
 
 index_t get_propentry_index(proptable_entry_t *propentry)
 {
@@ -7416,14 +7417,14 @@ void proptable_full(void)
     output_buffer_next = 0;
 
     for (propentry = 0; propentry < num_propentries; propentry ++) {
-	if (get_propentry_index(PROPTABLE_ELEM(propentry)) != 0) {
+	if (get_propentry_index(PROPTABLE_ELEM(propentry)) != PROPTABLE_FORMAT_INDEX_ALL_ONES) {
 	    memcpy(output_buffer + output_buffer_next, PROPTABLE_ELEM(propentry), PROPTABLE_FORMAT_BYTES);
 	    output_buffer_next += PROPTABLE_FORMAT_BYTES;
 	    if (output_buffer_next == output_buffer_size) {
 		do_write_or_suspend(proptable_output_fd, output_buffer, output_buffer_size);
 		output_buffer_next = 0;
 	    }
-	    memset(PROPTABLE_ELEM(propentry), 0, PROPTABLE_FORMAT_BYTES);
+	    memset(PROPTABLE_ELEM(propentry), 0xff, PROPTABLE_FORMAT_BYTES);
 	}
     }
 
@@ -7522,7 +7523,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
 	while (proptable_buffer_ptr[tablenum] + PROPTABLE_FORMAT_BYTES <= proptable_buffer_limit[tablenum]) {
 
-	    if (get_propentry_index(proptable_buffer_ptr[tablenum]) != 0) {
+	    if (get_propentry_index(proptable_buffer_ptr[tablenum]) != PROPTABLE_FORMAT_INDEX_ALL_ONES) {
 		memcpy(dest, proptable_buffer_ptr[tablenum], PROPTABLE_FORMAT_BYTES);
 		proptable_buffer_ptr[tablenum] += PROPTABLE_FORMAT_BYTES;
 		return;
@@ -7862,7 +7863,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
 
     propentry = index / scaling_factor;
 
-    if (get_propentry_index(PROPTABLE_ELEM(propentry)) == 0) {
+    if (get_propentry_index(PROPTABLE_ELEM(propentry)) == PROPTABLE_FORMAT_INDEX_ALL_ONES) {
 	/* empty slot: insert at propentry */
 	/* proptable[propentry] = entry; */
 	insert_at_propentry(propentry, pentry);
@@ -7875,7 +7876,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
     } else if (get_propentry_index(PROPTABLE_ELEM(propentry)) > index) {
 	/* entry at slot greater than index to be inserted */
 	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) > index) && (propentry > 0)) propentry --;
-	if (get_propentry_index(PROPTABLE_ELEM(propentry)) == 0) {
+	if (get_propentry_index(PROPTABLE_ELEM(propentry)) == PROPTABLE_FORMAT_INDEX_ALL_ONES) {
 	    /* empty slot at lower end of a block all gt than index: insert there */
 	    /* proptable[propentry] = entry; */
 	    insert_at_propentry(propentry, pentry);
@@ -7888,7 +7889,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) > index) {
 	    /* we're at the beginning of the table and the first entry is gt index */
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
-		if (get_propentry_index(PROPTABLE_ELEM(zerooffset)) == 0) {
+		if (get_propentry_index(PROPTABLE_ELEM(zerooffset)) == PROPTABLE_FORMAT_INDEX_ALL_ONES) {
 		    /* proptable[1:zerooffset] = proptable[0:zerooffset-1]; */
 		    memmove(proptable + PROPTABLE_FORMAT_BYTES, proptable,
 			    (zerooffset) * PROPTABLE_FORMAT_BYTES);
@@ -7905,10 +7906,10 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	}
     } else {
 	/* entry at slot less than index to be inserted */
-	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) != 0)
+	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) != PROPTABLE_FORMAT_INDEX_ALL_ONES)
 	       && (get_propentry_index(PROPTABLE_ELEM(propentry)) < index)
 	       && (propentry < num_propentries - 1)) propentry ++;
-	if (get_propentry_index(PROPTABLE_ELEM(propentry)) == 0) {
+	if (get_propentry_index(PROPTABLE_ELEM(propentry)) == PROPTABLE_FORMAT_INDEX_ALL_ONES) {
 	    /* empty slot at upper end of a block all lt than index: insert there */
 	    /* proptable[propentry] = entry; */
 	    insert_at_propentry(propentry, pentry);
@@ -7921,7 +7922,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	} else if (get_propentry_index(PROPTABLE_ELEM(propentry)) < index) {
 	    /* we're at the end of the table and the last entry is lt index */
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
-		if (get_propentry_index(PROPTABLE_ELEM(num_propentries - 1 - zerooffset)) == 0) {
+		if (get_propentry_index(PROPTABLE_ELEM(num_propentries - 1 - zerooffset)) == PROPTABLE_FORMAT_INDEX_ALL_ONES) {
 		    /* proptable[num_propentries-zerooffset-1 : num_propentrys-2]
 		     *    = proptable[num_propentries-zerooffset : num_propentries-1];
 		     */
@@ -7946,7 +7947,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
 
     for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
 	if ((propentry + zerooffset < num_propentries - 1)
-	    && (get_propentry_index(PROPTABLE_ELEM(propentry+zerooffset)) == 0)) {
+	    && (get_propentry_index(PROPTABLE_ELEM(propentry+zerooffset)) == PROPTABLE_FORMAT_INDEX_ALL_ONES)) {
 	    /* proptable[propentry+2 : propentry+zerooffset]
 	     *    = proptable[propentry+1 : propentry+zerooffset-1];
 	     */
@@ -7958,7 +7959,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	    return;
 	}
 	if ((propentry - zerooffset >= 0)
-	    && (get_propentry_index(PROPTABLE_ELEM(propentry-zerooffset)) == 0)) {
+	    && (get_propentry_index(PROPTABLE_ELEM(propentry-zerooffset)) == PROPTABLE_FORMAT_INDEX_ALL_ONES)) {
 	    /* proptable[propentry-zerooffset : propentry-1]
 	     *    = proptable[propentry-zerooffset+1 : propentry];
 	     */
@@ -12039,7 +12040,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     doc = finalize_XML_header(tb);
 
     /* We want at least one zero byte after the XML header, because that's how we figure out where
-     * it ends when we read it back it, and I also want to align the tablebase on a four-byte
+     * it ends when we read it back in, and I also want to align the tablebase on a four-byte
      * boundary for the hell of it.  (size+5)&(~3) achieves these goals.  I then modify the XML
      * header with the updated string that gives the offset to the tablebase, and make sure that its
      * size hasn't changed.
@@ -12192,7 +12193,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	}
 
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
-	memset(proptable, 0, num_propentries * PROPTABLE_FORMAT_BYTES);
+	memset(proptable, 0xff, num_propentries * PROPTABLE_FORMAT_BYTES);
     }
 
     if (! preload_all_futurebases(tb)) return 0;
@@ -12566,7 +12567,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.457 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.458 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
