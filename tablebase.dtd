@@ -13,7 +13,7 @@
 	modulus CDATA				#IMPLIED>
 
 <!ELEMENT format (dtm | flag) >
-<!ELEMENT entries-format (dtm | flag | movecnt | in-check-flag)+ >
+<!ELEMENT entries-format (dtm | flag | movecnt | in-check-flag | locking-bit)+ >
 <!ELEMENT proptable-format (dtm | PTM-wins-flag | movecnt | index-field | futurevector)+ >
 
 <!ELEMENT dtm EMPTY>
