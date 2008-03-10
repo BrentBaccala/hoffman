@@ -5423,6 +5423,12 @@ void finalize_pass_statistics()
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
 
+    static xmlNodePtr checkpoint_time;
+    static xmlNodePtr user_time, system_time, real_time;
+    static xmlNodePtr page_faults, page_reclaims;
+    static xmlNodePtr contended_locks_node, contended_indices_node;
+    static xmlNodePtr proptable_writes_node, proptable_write_time_node;
+
     static struct timeval last_timeval;
     static struct rusage last_rusage;
     static int last_timings_valid = 0;
@@ -5436,7 +5442,7 @@ void finalize_pass_statistics()
 
     tablebase = xmlDocGetRootElement(current_tb->xml);
 
-    /* First, check to see if we have a generation-statistics element, and add it if we don't */
+    /* First, check to see if we have a generation-statistics element, and add it (and global counters) if we don't */
 
     context = xmlXPathNewContext(current_tb->xml);
     result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics", context);
@@ -5454,26 +5460,115 @@ void finalize_pass_statistics()
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	xmlNewChild(node, NULL, BAD_CAST "host", BAD_CAST he->h_name);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.456 $ $Locker: baccala $");
+	xmlNewChild(node, NULL, BAD_CAST "program", BAD_CAST "Hoffman $Revision: 1.457 $ $Locker: baccala $");
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	xmlNewTextChild(node, NULL, BAD_CAST "args", BAD_CAST options_string);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
 	xmlNewChild(node, NULL, BAD_CAST "start-time", BAD_CAST strbuf);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+
+	checkpoint_time = xmlNewChild(node, NULL, BAD_CAST "checkpoint-time", NULL);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+
+	//strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_end_time.tv_sec));
+	//node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
+	//node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "completion-time", BAD_CAST strbuf));
+
+	user_time = xmlNewChild(node, NULL, BAD_CAST "user-time", NULL);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+
+	system_time = xmlNewChild(node, NULL, BAD_CAST "system-time", NULL);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+
+	real_time = xmlNewChild(node, NULL, BAD_CAST "real-time", NULL);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+
+	page_faults = xmlNewChild(node, NULL, BAD_CAST "page-faults", NULL);
+	xmlNodeAddContent(node, BAD_CAST "\n      ");
+
+	page_reclaims = xmlNewChild(node, NULL, BAD_CAST "page-reclaims", NULL);
+
+#if USE_THREADS
+	if (num_threads > 1) {
+	    xmlNodeAddContent(node, BAD_CAST "\n      ");
+	    contended_locks_node = xmlNewChild(node, NULL, BAD_CAST "contended-locks", NULL);
+
+	    xmlNodeAddContent(node, BAD_CAST "\n      ");
+	    contended_indices_node = xmlNewChild(node, NULL, BAD_CAST "contended-indices", NULL);
+	}
+#endif
+
+	if (using_proptables) {
+	    xmlNodeAddContent(node, BAD_CAST "\n      ");
+	    proptable_writes_node = xmlNewChild(node, NULL, BAD_CAST "proptable-writes", NULL);
+
+	    xmlNodeAddContent(node, BAD_CAST "\n      ");
+	    proptable_write_time_node = xmlNewChild(node, NULL, BAD_CAST "proptable-write-time", NULL);
+	}
+
 	xmlNodeAddContent(node, BAD_CAST "\n   ");
 
     } else {
 	generation_statistics = result->nodesetval->nodeTab[0];
+
+	// extract nodes
     }
+
+    /* Update global statistics */
+
+    gettimeofday(&timeval, NULL);
+    getrusage(RUSAGE_SELF, &rusage);
+
+    strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&timeval.tv_sec));
+    xmlNodeSetContent(checkpoint_time, BAD_CAST strbuf);
+
+    sprint_timeval(strbuf, &rusage.ru_utime);
+    xmlNodeSetContent(user_time, BAD_CAST strbuf);
+
+    sprint_timeval(strbuf, &rusage.ru_stime);
+    xmlNodeSetContent(system_time, BAD_CAST strbuf);
+
+    /* Note that we modified timeval here to compute the real time used by the program */
+    subtract_timeval(&timeval, &program_start_time);
+    sprint_timeval(strbuf, &timeval);
+    xmlNodeSetContent(real_time, BAD_CAST strbuf);
+
+    snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_majflt);
+    xmlNodeSetContent(page_faults, BAD_CAST strbuf);
+
+    snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_minflt);
+    xmlNodeSetContent(page_reclaims, BAD_CAST strbuf);
+
+#if USE_THREADS
+    if (num_threads > 1) {
+	snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
+	xmlNodeSetContent(contended_locks_node, BAD_CAST strbuf);
+
+	snprintf(strbuf, sizeof(strbuf), "%ld", contended_indices);
+	xmlNodeSetContent(contended_indices_node, BAD_CAST strbuf);
+    }
+#endif
+
+    if (using_proptables) {
+	snprintf(strbuf, sizeof(strbuf), "%d", proptable_writes);
+	xmlNodeSetContent(proptable_writes_node, BAD_CAST strbuf);
+
+	sprint_timeval(strbuf, &proptable_write_time);
+	xmlNodeSetContent(proptable_write_time_node, BAD_CAST strbuf);
+    }
+
+
+    /* Now add a element with current pass statistics */
+
+    gettimeofday(&timeval, NULL);
+    getrusage(RUSAGE_SELF, &rusage);
 
     xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
     passNode = xmlNewChild(generation_statistics, NULL, BAD_CAST "pass", NULL);
     xmlNodeAddContent(generation_statistics, BAD_CAST "\n   ");
 
     xmlNewProp(passNode, BAD_CAST "type", BAD_CAST pass_type[total_passes]);
-
-    gettimeofday(&timeval, NULL);
-    getrusage(RUSAGE_SELF, &rusage);
 
     if (last_timings_valid) {
 	subtract_timeval(&timeval, &last_timeval);
@@ -5502,6 +5597,10 @@ void finalize_pass_statistics()
 	snprintf(strbuf, sizeof(strbuf), "%lld", backproped_moves[total_passes]);
 	xmlNewProp(passNode, BAD_CAST "moves-generated", BAD_CAST strbuf);
     }
+
+    if (using_proptables) {
+	xmlSaveFile("checkpoint.xml", current_tb->xml);
+    }
 }
 
 /* Given a tablebase, change its XML structure to reflect the fact that the tablebase has now
@@ -5515,7 +5614,6 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     xmlNodePtr tablebase, node;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
-    struct rusage rusage;
     char strbuf[256];
 
     tablebase = xmlDocGetRootElement(tb->xml);
@@ -5591,65 +5689,18 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     xmlNodeAddContent(node, BAD_CAST "\n   ");
 
+    /* Rename the last checkpoint-time to completion-time */
+
     context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics//start-time", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics//checkpoint-time", context);
 
     if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	warning("Can't find /generation-statistics/start-time in XML\n");
+	warning("Can't find /generation-statistics/checkpoint-time in XML\n");
     } else {
+	node = result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1];
 
-	node = result->nodesetval->nodeTab[0];
-
-	getrusage(RUSAGE_SELF, &rusage);
-	gettimeofday(&program_end_time, NULL);
-
-	strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_end_time.tv_sec));
-	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "completion-time", BAD_CAST strbuf));
-
-	sprint_timeval(strbuf, &rusage.ru_utime);
-	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "user-time", BAD_CAST strbuf));
-
-	sprint_timeval(strbuf, &rusage.ru_stime);
-	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "system-time", BAD_CAST strbuf));
-
-	/* Note that we modified program_end_time here to compute the real time used by the program */
-	subtract_timeval(&program_end_time, &program_start_time);
-	sprint_timeval(strbuf, &program_end_time);
-	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "real-time", BAD_CAST strbuf));
-
-	snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_majflt);
-	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "page-faults", BAD_CAST strbuf));
-
-	snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_minflt);
-	node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "page-reclaims", BAD_CAST strbuf));
-
-#if USE_THREADS
-	if (num_threads > 1) {
-	    snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
-	    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "contended-locks", BAD_CAST strbuf));
-
-	    snprintf(strbuf, sizeof(strbuf), "%ld", contended_indices);
-	    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "contended-indices", BAD_CAST strbuf));
-	}
-#endif
-
-	if (using_proptables) {
-	    snprintf(strbuf, sizeof(strbuf), "%d", proptable_writes);
-	    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "proptable-writes", BAD_CAST strbuf));
-
-	    sprint_timeval(strbuf, &proptable_write_time);
-	    node = xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n      "));
-	    node = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "proptable-write-time", BAD_CAST strbuf));
-	}
+	node = xmlNewDocNode(tb->xml, NULL, BAD_CAST "completion-time", xmlNodeGetContent(node));
+	xmlReplaceNode(result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1], node);
     }
 
     return tb->xml;
@@ -12515,7 +12566,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.456 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.457 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
