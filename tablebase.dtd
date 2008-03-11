@@ -1,4 +1,4 @@
-<!ELEMENT tablebase (move-restriction*, index?, format?, piece+, futurebase*, prune*, generation-controls?, tablebase-statistics?, generation-statistics?)>
+<!ELEMENT tablebase (move-restriction*, index?, format?, piece+, futurebase*, prune*, generation-controls?, tablebase-statistics?, generation-statistics*)>
 <!ELEMENT move-restriction EMPTY>
 <!ELEMENT piece EMPTY>
 <!ELEMENT futurebase EMPTY>
@@ -62,19 +62,26 @@
 
 <!ELEMENT generation-controls (output | completion-report | error-report | entries-format | proptable-format)+ >
 
-<!ELEMENT tablebase-statistics (indices, legal-positions, forward-moves, futuremoves, backproped-moves)>
+<!ELEMENT tablebase-statistics (indices, PNTM-mated-positions?, legal-positions, stalemate-positions?, white-wins-positions?, black-wins-positions?, forward-moves, futuremoves, backproped-moves?, max-dtm?, min-dtm?)>
 <!ELEMENT indices (#PCDATA)>
+<!ELEMENT PNTM-mated-positions (#PCDATA)>
 <!ELEMENT legal-positions (#PCDATA)>
+<!ELEMENT stalemate-positions (#PCDATA)>
+<!ELEMENT white-wins-positions (#PCDATA)>
+<!ELEMENT black-wins-positions (#PCDATA)>
 <!ELEMENT forward-moves (#PCDATA)>
 <!ELEMENT futuremoves (#PCDATA)>
 <!ELEMENT backproped-moves (#PCDATA)>
+<!ELEMENT max-dtm (#PCDATA)>
+<!ELEMENT min-dtm (#PCDATA)>
 
-<!ELEMENT generation-statistics (host, program, args, start-time, checkpoint-time?, completion-time?, user-time, system-time, real-time, page-faults, page-reclaims, proptable-writes?, proptable-write-time?, pass*)>
+<!ELEMENT generation-statistics (host, program, args, (start-time|restart-time), (checkpoint-time|completion-time), user-time, system-time, real-time, page-faults, page-reclaims, contended-locks?, contended-indices?, proptable-writes?, proptable-write-time?, pass*)>
 <!ELEMENT host (#PCDATA)>
 <!ELEMENT program (#PCDATA)>
 <!ELEMENT args (#PCDATA)>
 <!ELEMENT time (#PCDATA)>
 <!ELEMENT start-time (#PCDATA)>
+<!ELEMENT restart-time (#PCDATA)>
 <!ELEMENT checkpoint-time (#PCDATA)>
 <!ELEMENT completion-time (#PCDATA)>
 <!ELEMENT user-time (#PCDATA)>
@@ -82,6 +89,8 @@
 <!ELEMENT real-time (#PCDATA)>
 <!ELEMENT page-faults (#PCDATA)>
 <!ELEMENT page-reclaims (#PCDATA)>
+<!ELEMENT contended-locks (#PCDATA)>
+<!ELEMENT contended-indices (#PCDATA)>
 <!ELEMENT proptable-writes (#PCDATA)>
 <!ELEMENT proptable-write-time (#PCDATA)>
 
