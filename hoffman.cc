@@ -5073,7 +5073,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.461 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.462 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7715,7 +7715,8 @@ void proptable_finalize(int target_dtm)
 	futurevector_t possible_futuremoves;
 
 	if (get_propentry_index(SORTING_NETWORK_ELEM(1)) < index) {
-	    fatal("Out-of-order entries in sorting network\n");
+	    fatal("Out-of-order entries in sorting network: %llx %llx <-%d\n",
+		  *((uint64 *) SORTING_NETWORK_ELEM(1)), *(((uint64 *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
 	}
 
 	if (target_dtm == 0) {
@@ -7726,8 +7727,8 @@ void proptable_finalize(int target_dtm)
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE)
-		fprintf(stderr, "Commiting sorting element 1: %llx %llx\n",
-			*((uint64 *) SORTING_NETWORK_ELEM(1)), *(((uint64 *) SORTING_NETWORK_ELEM(1)) + 1));
+		fprintf(stderr, "Commiting sorting element 1: %llx %llx <-%d\n",
+			*((uint64 *) SORTING_NETWORK_ELEM(1)), *(((uint64 *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
 #endif
 
 	    /* These futuremoves might be moves into check, in which case they were discarded back
@@ -7879,7 +7880,8 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	return;
     } else if (get_propentry_index(PROPTABLE_ELEM(propentry)) > index) {
 	/* entry at slot greater than index to be inserted */
-	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) > index) && (propentry > 0)) propentry --;
+	while ((get_propentry_index(PROPTABLE_ELEM(propentry)) != PROPTABLE_FORMAT_INDEX_MASK)
+	       && (get_propentry_index(PROPTABLE_ELEM(propentry)) > index) && (propentry > 0)) propentry --;
 	if (get_propentry_index(PROPTABLE_ELEM(propentry)) == PROPTABLE_FORMAT_INDEX_MASK) {
 	    /* empty slot at lower end of a block all gt than index: insert there */
 	    /* proptable[propentry] = entry; */
@@ -12572,7 +12574,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.461 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.462 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
