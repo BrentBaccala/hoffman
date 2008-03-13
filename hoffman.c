@@ -691,6 +691,7 @@ int num_propentries = 0;
 int using_proptables = 0;
 
 int do_restart = 0;
+int last_dtm_before_restart;
 
 xmlNodePtr generation_statistics;
 xmlNodePtr checkpoint_time;
@@ -5057,11 +5058,24 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     } else {
 
+	xmlChar * dtm;
+
 	do_restart = 1;
 
 	node = xmlAddNextSibling(result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1], xmlNewText(BAD_CAST "\n   "));
 	generation_statistics = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "generation-statistics", NULL));
 
+	xmlXPathFreeObject(result);
+	result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics//pass", context);
+
+	dtm = xmlGetProp(result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1], BAD_CAST "dtm");
+	if (dtm == NULL) {
+	    /* check for futurebase pass */
+	    fatal("Last pass before checkpoint wasn't an intratable pass\n");
+	} else {
+	    last_dtm_before_restart = strtol((const char *)dtm, NULL, 0);
+	    xmlFree(dtm);
+	}
     }
 
     xmlXPathFreeObject(result);
@@ -5073,7 +5087,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.464 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.465 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7721,6 +7735,12 @@ void proptable_pass(int target_dtm)
 
 	if (target_dtm == 0) {
 	    possible_futuremoves = initialize_tablebase_entry(current_tb, index);
+	}
+
+	/* If this isn't the initialization pass, we can skip right to whatever the next proptable index is */
+	if (target_dtm != 0) {
+	    index = get_propentry_index(SORTING_NETWORK_ELEM(1));
+	    if (index > current_tb->max_index) break;
 	}
 
 	while (get_propentry_index(SORTING_NETWORK_ELEM(1)) == index ) {
@@ -11908,6 +11928,14 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 
     positive_passes_needed[1] = 0;
 
+    if (do_restart) {
+	if (last_dtm_before_restart > 0) dtm = -last_dtm_before_restart;
+	else dtm = -last_dtm_before_restart + 1;
+
+	/* we don't know, exactly, but the existance of a proptable suggests at least one */
+	positions_finalized_on_last_pass = 1;
+    }
+
     while ((dtm <= max_tracked_dtm) || (-dtm >= min_tracked_dtm)) {
 
 	/* PTM wins */
@@ -12329,14 +12357,18 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    total_passes ++;
 	}
 
-	info("Initializing tablebase...\n");
-	pass_type[total_passes] = "initialization";
-	propagation_pass(0);
+	/* XXX should be able to handle restart just after a futurebase backprop */
 
-	info("Total legal positions: %lld\n", total_legal_positions);
-	info("Total moves: %lld\n", total_moves);
+	if (! do_restart) {
+	    info("Initializing tablebase...\n");
+	    pass_type[total_passes] = "initialization";
+	    propagation_pass(0);
 
-	info("All futuremoves handled under move restrictions\n");
+	    info("Total legal positions: %lld\n", total_legal_positions);
+	    info("Total moves: %lld\n", total_moves);
+
+	    info("All futuremoves handled under move restrictions\n");
+	}
 
     }
 
@@ -12574,7 +12606,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.464 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.465 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
