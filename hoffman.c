@@ -5087,7 +5087,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.465 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.466 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6438,7 +6438,7 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 }
 
 
-/***** THE ENTRIES TABLE *****/
+/***** THE ENTRIES TABLE(S) *****/
 
 #define LEFTSHIFT(val,bits) (((bits) > 0) ? ((val) << (bits)) : ((val) >> (-(bits))))
 
@@ -6613,6 +6613,9 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     return fetch_entry_pointer_n(tb, index, 0);
 }
 
+/* Fetch an entry pointer from the current tablebase - an table that's either in memory or on disk.
+ */
+
 int entries_read_fd = -1;
 int entries_write_fd = -1;
 
@@ -6620,26 +6623,15 @@ entry_t *entry_buffer = NULL;
 index_t entry_buffer_start = 0;
 int entry_buffer_size = 4096;
 
-inline entry_t * fetch_current_entry_pointer(index_t index)
+void initialize_current_entries_file(void)
 {
-    int ret;
-
-    if (!using_proptables) {
-
-	/* entries array exists in memory - so just return a pointer into it */
-	return (void *)(current_tb->entries) + LEFTSHIFT(index, ENTRIES_FORMAT_BITS - 3);
-
-    }
-
-    /* we're using proptables, so make sure we've got the right buffer and then return the pointer */
-
     /* first, malloc the entries buffer if it doesn't already exist */
 
     if (entry_buffer == NULL) {
 	entry_buffer = malloc(entry_buffer_size * ENTRIES_FORMAT_BYTES);
 	if (entry_buffer == NULL) {
 	    fatal("Can't malloc entries buffer\n");
-	    return 0;
+	    return;
 	}
 	memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
     }
@@ -6650,54 +6642,75 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
 	entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
 	if (entries_write_fd == -1) {
 	    fatal("Can't open 'entries_out' for read-write: %s\n", strerror(errno));
-	    return 0;
+	    return;
 	}
     }
+
+    /* if we're restarting, there should be an input entries file */
+    /* XXX not true if the restart is right after futurebase backprop */
+
+    if (do_restart) {
+	entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
+
+	if (entries_read_fd == -1) {
+	    fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
+	    return;
+	}
+    }
+}
+
+void reset_current_entries_file(void)
+{
+    int ret;
 
     /* we're reseting back to the beginning - write the current buffer out, write out everything
      * else, close and reopen both file descriptors, and read the first buffer in
      */
 
-    if (entry_buffer_start > index) {
-	do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+    do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
 
-	if (entries_read_fd != -1) {
-	    while ((ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES)) != 0) {
-		if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
-		    fatal("entries read: %s\n", strerror(errno));
-		    return 0;
-		}
-		do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+    if (entries_read_fd != -1) {
+	while ((ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES)) != 0) {
+	    if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+		fatal("entries read: %s\n", strerror(errno));
+		return;
 	    }
-	}
-
-	if (entries_read_fd != -1) close(entries_read_fd);
-	close(entries_write_fd);
-
-	if (rename("entries_out", "entries_in") != 0) {
-	    fatal("Can't rename entries_out as entries_in\n");
-	    return 0;
-	}
-
-	entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
-	entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_LARGEFILE, 0666);
-
-	if (entries_read_fd == -1) {
-	    fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
-	    return 0;
-	}
-	if (entries_write_fd == -1) {
-	    fatal("Can't open 'entries_out' for writing: %s\n", strerror(errno));
-	    return 0;
-	}
-
-	entry_buffer_start = 0;
-	ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-	if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
-	    fatal("initial entries read: %s\n", strerror(errno));
-	    return 0;
+	    do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
 	}
     }
+
+    if (entries_read_fd != -1) close(entries_read_fd);
+    close(entries_write_fd);
+
+    if (rename("entries_out", "entries_in") != 0) {
+	fatal("Can't rename entries_out as entries_in\n");
+	return;
+    }
+
+    entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
+    entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_LARGEFILE, 0666);
+
+    if (entries_read_fd == -1) {
+	fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
+	return;
+    }
+    if (entries_write_fd == -1) {
+	fatal("Can't open 'entries_out' for writing: %s\n", strerror(errno));
+	return;
+    }
+
+    entry_buffer_start = 0;
+    ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+    if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+	fatal("initial entries read: %s\n", strerror(errno));
+	return;
+    }
+
+}
+
+void advance_current_entries_file(index_t index)
+{
+    int ret;
 
     /* if we're moving past the entry buffer, write it to disk */
 
@@ -6709,16 +6722,31 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
 	    ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
 	    if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
 		fatal("entries read: %s\n", strerror(errno));
-		return 0;
+		return;
 	    }
 	} else {
 	    memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
 	}
 	entry_buffer_start += entry_buffer_size;
     }
+}
 
-    return (void *) (entry_buffer + LEFTSHIFT(index - entry_buffer_start, ENTRIES_FORMAT_BITS - 3));
+inline entry_t * fetch_current_entry_pointer(index_t index)
+{
+    if (!using_proptables) {
 
+	/* entries array exists in memory - so just return a pointer into it */
+	return (void *)(current_tb->entries) + LEFTSHIFT(index, ENTRIES_FORMAT_BITS - 3);
+
+    } else {
+
+	/* proptables - entries array is on dik, so make sure we've got the right buffer and then return the pointer */
+
+	if (entry_buffer_start > index) reset_current_entries_file();
+	if (index >= entry_buffer_start + entry_buffer_size) advance_current_entries_file(index);
+
+	return (void *) (entry_buffer + LEFTSHIFT(index - entry_buffer_start, ENTRIES_FORMAT_BITS - 3));
+    }
 }
 
 
@@ -7737,11 +7765,14 @@ void proptable_pass(int target_dtm)
 	    possible_futuremoves = initialize_tablebase_entry(current_tb, index);
 	}
 
+#if 0
 	/* If this isn't the initialization pass, we can skip right to whatever the next proptable index is */
+	/* No, we can't do this, because we might have entries that need to be finalized on this pass. */
 	if (target_dtm != 0) {
 	    index = get_propentry_index(SORTING_NETWORK_ELEM(1));
 	    if (index > current_tb->max_index) break;
 	}
+#endif
 
 	while (get_propentry_index(SORTING_NETWORK_ELEM(1)) == index ) {
 
@@ -12347,6 +12378,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * into it, checking each position move as we go to make sure its futuremoves are handled.
 	 */
 
+	initialize_current_entries_file();
+
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
 
@@ -12606,7 +12639,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.465 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.466 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
