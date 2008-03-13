@@ -5073,7 +5073,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.463 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.464 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7566,12 +7566,12 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
 
-/* proptable_finalize()
+/* proptable_pass()
  *
  * Commit an old set of proptables into the entries array while writing a new set.
  */
 
-void proptable_finalize(int target_dtm)
+void proptable_pass(int target_dtm)
 {
     int i;
     int tablenum;
@@ -7596,7 +7596,7 @@ void proptable_finalize(int target_dtm)
 	if ((fd = open(infilename, O_RDONLY | O_LARGEFILE | O_DIRECT)) == -1) break;
 	proptable_input_fds = realloc(proptable_input_fds, (tablenum+1)*sizeof(int));
 	if (proptable_input_fds == NULL) {
-	    fatal("Can't realloc proptable_input_fds in proptable_finalize()\n");
+	    fatal("Can't realloc proptable_input_fds in proptable_pass()\n");
 	    return;
 	}
 	proptable_input_fds[tablenum] = fd;
@@ -7611,7 +7611,7 @@ void proptable_finalize(int target_dtm)
     proptable_buffer_limit = (proptable_entry_t **) calloc(num_input_proptables, sizeof(proptable_entry_t *));
 
     if ((proptable_buffer == NULL) || (proptable_buffer_ptr == NULL) || (proptable_buffer_limit == NULL)) {
-	fatal("Can't malloc proptable buffers in proptable_finalize()\n");
+	fatal("Can't malloc proptable buffers in proptable_pass()\n");
 	return;
     }
 
@@ -7651,7 +7651,7 @@ void proptable_finalize(int target_dtm)
     proptable_num = malloc(2*highbit * sizeof(int));
 
     if ((sorting_network == NULL) || (proptable_num == NULL)) {
-	fatal("Can't malloc sorting network in proptable_finalize()\n");
+	fatal("Can't malloc sorting network in proptable_pass()\n");
 	return;
     }
 
@@ -8131,7 +8131,7 @@ int propagation_pass(int target_dtm)
     pass_target_dtms[total_passes] = target_dtm;
 
     if (using_proptables) {
-	proptable_finalize(target_dtm);
+	proptable_pass(target_dtm);
 	finalize_proptable_pass();
     } else {
 #if !USE_THREADS
@@ -12574,7 +12574,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.463 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.464 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
