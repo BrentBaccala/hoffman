@@ -696,6 +696,7 @@ int last_dtm_before_restart;
 xmlNodePtr generation_statistics;
 xmlNodePtr checkpoint_time;
 xmlNodePtr positive_passes_needed_node, negative_passes_needed_node;
+xmlNodePtr positive_passes_needed_text_node, negative_passes_needed_text_node;
 
 xmlNodePtr user_time, system_time, real_time;
 xmlNodePtr page_faults, page_reclaims;
@@ -5089,7 +5090,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.468 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.469 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5100,13 +5101,20 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     checkpoint_time = create_GenStats_node("checkpoint-time");
 
-#if 0
-    positive_passes_needed_node = create_GenStats_node("positive-passes-needed");
-    negative_passes_needed_node = create_GenStats_node("negative-passes-needed");
-#else
+    /* We now want to add the elements positive-passes-needed and negative-passes-needed in such a
+     * way that they can be deleted when we're all done.  The problem is the whitespace used for
+     * alignment. Studying the libxml2 documentation shows that the first content added will be
+     * merged with the previous text node (from the last call to create_GenStats_node) and freed.
+     * Then we record the text nodes used to add the whitespace between and after these elements.
+     * The next call to create_GenStats_node will add more whitespace, which will get merged with
+     * negative_passes_needed_text_node.  When these nodes here are unlinked, everything lines up.
+     */
+
+    xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
     positive_passes_needed_node = xmlNewChild(generation_statistics, NULL, BAD_CAST "positive-passes-needed", NULL);
+    positive_passes_needed_text_node = xmlAddChild(generation_statistics, xmlNewText(BAD_CAST "\n      "));
     negative_passes_needed_node = xmlNewChild(generation_statistics, NULL, BAD_CAST "negative-passes-needed", NULL);
-#endif
+    negative_passes_needed_text_node = xmlAddChild(generation_statistics, xmlNewText(BAD_CAST "\n   "));
 
     /* create global counter nodes */
 
@@ -5748,6 +5756,8 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     xmlUnlinkNode(positive_passes_needed_node);
     xmlUnlinkNode(negative_passes_needed_node);
+    xmlUnlinkNode(positive_passes_needed_text_node);
+    xmlUnlinkNode(negative_passes_needed_text_node);
 
     return tb->xml;
 }
@@ -12679,7 +12689,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.468 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.469 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
