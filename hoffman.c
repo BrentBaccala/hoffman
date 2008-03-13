@@ -695,6 +695,8 @@ int last_dtm_before_restart;
 
 xmlNodePtr generation_statistics;
 xmlNodePtr checkpoint_time;
+xmlNodePtr positive_passes_needed_node, negative_passes_needed_node;
+
 xmlNodePtr user_time, system_time, real_time;
 xmlNodePtr page_faults, page_reclaims;
 xmlNodePtr contended_locks_node, contended_indices_node;
@@ -5087,7 +5089,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.467 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.468 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5097,6 +5099,14 @@ tablebase_t * parse_XML_control_file(char *filename)
     }
 
     checkpoint_time = create_GenStats_node("checkpoint-time");
+
+#if 0
+    positive_passes_needed_node = create_GenStats_node("positive-passes-needed");
+    negative_passes_needed_node = create_GenStats_node("negative-passes-needed");
+#else
+    positive_passes_needed_node = xmlNewChild(generation_statistics, NULL, BAD_CAST "positive-passes-needed", NULL);
+    negative_passes_needed_node = xmlNewChild(generation_statistics, NULL, BAD_CAST "negative-passes-needed", NULL);
+#endif
 
     /* create global counter nodes */
 
@@ -5618,6 +5628,27 @@ void finalize_pass_statistics()
     }
 
     if (using_proptables) {
+	int i;
+
+	/* update the passes needed nodes */
+
+	xmlNodeSetContent(positive_passes_needed_node, BAD_CAST "");
+	for (i = 1; i <= max_tracked_dtm; i ++) {
+	    if (positive_passes_needed[i]) {
+		snprintf(strbuf, sizeof(strbuf), "%d ", i);
+		xmlNodeAddContent(positive_passes_needed_node, BAD_CAST strbuf);
+	    }
+	}
+
+	xmlNodeSetContent(negative_passes_needed_node, BAD_CAST "");
+	for (i = -1; i >= min_tracked_dtm; i --) {
+	    if (negative_passes_needed[-i]) {
+		snprintf(strbuf, sizeof(strbuf), "%d ", i);
+		xmlNodeAddContent(negative_passes_needed_node, BAD_CAST strbuf);
+	    }
+	}
+
+
 	xmlSaveFile("checkpoint.xml", current_tb->xml);
     }
 }
@@ -5710,17 +5741,13 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     /* Rename the last checkpoint-time to completion-time */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics//checkpoint-time", context);
+    node = xmlNewDocNode(tb->xml, NULL, BAD_CAST "completion-time", xmlNodeGetContent(checkpoint_time));
+    xmlReplaceNode(checkpoint_time, node);
 
-    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	warning("Can't find /generation-statistics/checkpoint-time in XML\n");
-    } else {
-	node = result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1];
+    /* Remove the passes needed nodes from the XML */
 
-	node = xmlNewDocNode(tb->xml, NULL, BAD_CAST "completion-time", xmlNodeGetContent(node));
-	xmlReplaceNode(result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1], node);
-    }
+    xmlUnlinkNode(positive_passes_needed_node);
+    xmlUnlinkNode(negative_passes_needed_node);
 
     return tb->xml;
 }
@@ -11984,11 +12011,15 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 	else
 	    positions_finalized_on_last_pass = 0;
 
+	positive_passes_needed[dtm] = 0;
+
 	/* PNTM wins */
 	if (negative_passes_needed[dtm] || (using_proptables && (positions_finalized_on_last_pass > 0)))
 	    positions_finalized_on_last_pass = propagation_pass(-dtm);
 	else
 	    positions_finalized_on_last_pass = 0;
+
+	negative_passes_needed[dtm] = 0;
 
 	dtm ++;
     }
@@ -12648,7 +12679,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.467 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.468 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
