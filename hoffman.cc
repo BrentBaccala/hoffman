@@ -4,11 +4,12 @@
  *
  * by Brent Baccala
  *
- * August, 2006
+ * begun coding    August, 2006
+ * last modified   May, 2008
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
- * written in C for speed
+ * written in C for speed (but still needs a lot of work to reach that goal)
  *
  * This program is formated for a (minimum) 100 character wide display.
  *
@@ -33,7 +34,8 @@
  * the Internet, the Nalimov approach of solving an endgame completely results in very slow run
  * times and exceptionally large tablebases.  The K+P+P vs K+P endgame, for example, due to the
  * possibility of all pawns queening, requires the K+Q+Q vs K+Q endgame to be solved before it can
- * be calculated.
+ * be calculated.  The Nalimov kppkp tablebase occupies 64MB; Hoffman's current, less efficient
+ * storage scheme requires 225MB for the same tablebase.
  *
  * Hoffman takes a somewhat different approach, one pioneered by Eiko Bleicher's Freezer, now a
  * commercial program. When faced with something like K+P+P vs K+P, rather than calculate all
@@ -42,8 +44,8 @@
  * tablebase is nevertheless useful.  For the player with two pawns, if the tablebase finds a
  * winning line subject to the queening restrictions, then that line is still playable for a win,
  * even though a faster winning line may exist.  From the opposing point of view, if the tablebase
- * treats any position where the third pawn queens as a forced win, then the player can be confident
- * that any drawing line can not be improved upon by the superior side.  From a computational
+ * treats any position where the third pawn queens as a loss, then the player can be confident that
+ * any drawing line can not be improved upon by the superior side.  From a computational
  * perspective, we have reduced the complexity requirements to a point where the calculation can be
  * performed in a reasonable amount of time.  While still too slow for over-the-board use, we now
  * have a useful tool for the analysis of more complex endgames, useful for either static analysis,
@@ -54,29 +56,31 @@
  * example, in a bishop vs knight endgame (with pawns), we can (if we wish) analyze first the king
  * and pawn endgame resulting after a trade of the minors, then use this information to analyze a
  * similar set of king vs knight and king vs bishop endgames, and finally combine all this
- * information together to analyze the bishop vs knight endgame.  While the current version of
- * Freezer can only regard the capture of the knight or bishop as a forced win for one side or the
- * other, Hoffman can look through the exchange to determine the result more accurately.
+ * information together to analyze the original endgame.  While the current version of Freezer can
+ * only regard the capture of the knight or bishop as a forced win for one side or the other,
+ * Hoffman can look through the exchange to determine the result more accurately.
  *
  * Hoffman thus attempts to combine the best of Nalimov and Freezer.  Unlike Freezer, the program is
- * powerful enough to solve any endgame completely (given enough computing resources), exactly
- * reproducing any Nalimov tablebase.  Unlike Nalimov, the program is capable of pruning pawn moves,
- * queening combinations, movement options and exchanges, giving it Freezer's ability to solve
- * complex endgames in a reasonable amount of time.  The exact tradeoff between the two extremes is
- * made using a XML-based configuration that can seem daunting at first, but ultimately offers the
- * user the ability to extensively tailor the program's operation.  Combined with a human being's
- * common sense and chess judgement, it is my hope that this flexibility with ultimately make the
- * program more useful for endgame retrograde analysis than either Nalimov or Freezer.
+ * powerful enough to solve any endgame completely (given enough computing resources), reproducing
+ * any Nalimov tablebase.  Unlike Nalimov, the program is capable of pruning pawn moves, queening
+ * combinations, movement options and exchanges, giving it Freezer's ability to solve complex
+ * endgames in a reasonable amount of time.  The exact tradeoff between the two extremes is made
+ * using a XML-based configuration that can seem daunting at first, but ultimately offers the user
+ * the ability to extensively tailor the program's operation.  Combined with a human being's common
+ * sense and chess judgement, it is my hope that this flexibility with ultimately make the program
+ * more useful for endgame retrograde analysis than either Nalimov or Freezer.
  *
  * For those not up on Americana, the program is named after Trevor Hoffman, an All Star baseball
  * pitcher who specializes in "closing" games.  It was written specifically for The World vs. Arno
- * Nickel game.
+ * Nickel game (ultimately won by the World team with no help needed from Hoffman).
  *
  *
  * Basic Usage: hoffman -g <xml-control-file>                           (generate mode)
  *              hoffman -v <tablebase> ...                              (verification mode)
  *              hoffman -p <tablebase> ...                              (probe mode)
  */
+
+#include "config.h"		/* GNU configure script figures out our build options and writes them here */
 
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
 
@@ -88,62 +92,43 @@
 #include <stdlib.h>
 #include <string.h>
 #include <strings.h>
-#include <unistd.h>	/* for write(), lseek(), gethostname() */
-#include <time.h>	/* for putting timestamps on the output tablebases */
-#include <fcntl.h>	/* for O_RDONLY */
-#include <netdb.h>	/* for gethostbyname() */
+#include <unistd.h>		/* for write(), lseek(), gethostname() */
+#include <time.h>		/* for putting timestamps on the output tablebases */
+#include <fcntl.h>		/* for O_RDONLY */
+#include <netdb.h>		/* for gethostbyname() */
 
-#include <fnmatch.h>	/* for glob matching of pruning statements */
+#include <fnmatch.h>		/* for glob matching of pruning statements */
 
-#include <signal.h>	/* so user interrupts and internal errors are reported to the error URL */
+#include <signal.h>		/* so user interrupts and internal errors are reported to the error URL */
 
-#include <sys/time.h>     /* for reporting resource utilization */
+#include <sys/time.h>		/* for reporting resource utilization */
 #include <sys/resource.h>
 
-#include <sys/mman.h>	/* for mmap() */
+#include <errno.h>		/* for errno and strerror() */
 
-#include <errno.h>	/* for EINPROGRESS */
+#include <readline.h>		/* The GNU readline library (required) */
+#include <history.h>
 
-/* The GNU readline library, used for prompting the user during the probe code.  By defining
- * READLINE_LIBRARY, the library is set up to read include files from a directory specified on the
- * compiler's command line, rather than a system-wide /usr/include/readline.  I use it this way
- * simply because I don't have the readline include files installed system-wide on my machine.
- */
-
-#define READLINE_LIBRARY
-#include "readline.h"
-#include "history.h"
-
-/* The GNOME XML library.  To use it, I need "-I /usr/include/libxml2" (compiler) and "-lxml2"
- * (linker).
- */
-
-#include <libxml/parser.h>
+#include <libxml/parser.h>	/* The GNOME XML library (required) */
 #include <libxml/tree.h>
 #include <libxml/xpath.h>
 #include <libxml/xmlsave.h>
 
-/* The ZLIB compression library */
+#include "zlib_fopen.h"		/* My wrapper around the ZLIB compression library (required) */
 
-#include <zlib.h>
+#ifdef USE_LIBCURL
+#include "url_fopen.h"		/* My wrapper around libcurl (optional, for http: URL support) */
+#endif
 
-/* The public face of libcurl */
+#ifdef USE_FTPLIB
+#include "ftp_fopen.h"		/* My wrapper around ftplib (option, for ftp: URL support) */
+#endif
 
-#include "url_fopen.h"
 
-/* The public face of ftplib */
-
-#include "ftp_fopen.h"
-
-/* The public face of zlib */
-
-#include "zlib_fopen.h"
 
 /* If we're going to run multi-threaded, we need the POSIX threads library */
 
-#define USE_THREADS 1
-
-#if USE_THREADS
+#ifdef USE_THREADS
 #include <pthread.h>
 int num_threads = 1;
 long contended_locks = 0;
@@ -155,7 +140,7 @@ long contended_indices = 0;
  * to turn off multithreading, and use these #defines instead:
  */
 
-#if !USE_THREADS
+#ifndef USE_THREADS
 #define __sync_fetch_and_or(ptr, val) (*(ptr) |= (val))
 #define __sync_fetch_and_and(ptr, val) (*(ptr) &= (val))
 #define __sync_fetch_and_xor(ptr, val) (*(ptr) ^= (val))
@@ -171,7 +156,9 @@ long contended_indices = 0;
 
 /* According the GCC documentation, "long long" ints are supported by the C99 standard as well as
  * the GCC compiler.  In any event, since chess boards have 64 squares, being able to use 64 bit
- * integers makes a bunch of stuff a lot easier.  Might have to be careful with this if porting.
+ * integers makes a bunch of stuff a lot easier.
+ *
+ * XXX Have to be careful with this if porting.
  */
 
 typedef unsigned long long int uint64;
@@ -184,7 +171,7 @@ typedef uint32 index_t;
 
 /* XXX I don't have an 8-byte sync_fetch_and_add on i686, so I use this instead. */
 
-#if USE_THREADS
+#ifdef USE_THREADS
 inline uint64 __sync_fetch_and_add_8(uint64 *ptr, uint64 val) {
     static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
     uint64 ret;
@@ -374,17 +361,11 @@ typedef struct {
 } global_position_t;
 
 
-/* bitvector gets initialized in init_movements() */
-
-uint64 bitvector[64];
 uint64 allones_bitvector = 0xffffffffffffffffLL;
 
 /* pawn can't be on the first or last eight squares of the board */
 #define LEGAL_PAWN_BITVECTOR 0x00ffffffffffff00LL
 
-/* I'm not sure which one of these will be faster... */
-
-/* #define BITVECTOR(square) bitvector[square] */
 #define BITVECTOR(square) (1ULL << (square))
 
 
@@ -743,11 +724,14 @@ char * completion_report_url = NULL;
 
 void terminate (void)
 {
+#ifdef USE_LIBCURL
     void * file;
     xmlChar *buf;
     int size;
+#endif
 
     if (fatal_errors > 0) {
+#ifdef USE_LIBCURL
 	if (error_report_url != NULL) {
 	    file = url_open(error_report_url, "w");
 	    if ((current_tb != NULL) && (current_tb->xml != NULL)) {
@@ -757,8 +741,10 @@ void terminate (void)
 	    }
 	    url_close(file);
 	}
+#endif
 	exit(EXIT_FAILURE);
     } else {
+#ifdef USE_LIBCURL
 	if (completion_report_url != NULL) {
 	    file = url_open(completion_report_url, "w");
 	    if ((current_tb != NULL) && (current_tb->xml != NULL)) {
@@ -768,6 +754,7 @@ void terminate (void)
 	    }
 	    url_close(file);
 	}
+#endif
 	exit(EXIT_SUCCESS);
     }
 }
@@ -1007,7 +994,7 @@ void expand_per_pass_statistics(void)
     bzero(backproped_moves + total_passes, (max_passes-total_passes)*sizeof(uint64));
 }
 
-#if USE_THREADS
+#ifdef USE_THREADS
 
 inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
 {
@@ -1236,7 +1223,6 @@ void init_movements()
     int square, piece, dir, mvmt, color;
 
     for (square=0; square < NUM_SQUARES; square++) {
-	bitvector[square] = 1ULL << square;
 	algebraic_notation[square][0] = 'a' + square%8;
 	algebraic_notation[square][1] = '1' + square/8;
 	algebraic_notation[square][2] = '\0';
@@ -5092,7 +5078,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.471 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.472 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5126,7 +5112,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     page_faults = create_GenStats_node("page-faults");
     page_reclaims = create_GenStats_node("page-reclaims");
 
-#if USE_THREADS
+#ifdef USE_THREADS
     if (num_threads > 1) {
 	contended_locks_node = create_GenStats_node("contended-locks");
 	contended_indices_node = create_GenStats_node("contended-indices");
@@ -5170,6 +5156,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 	}
 #endif
     } else {
+#ifdef USE_FTPLIB
 	/* void *ptr = url_open(filename, "r"); */
 	void *ptr = ftp_openurl(filename, "r");
 #ifdef O_LARGEFILE
@@ -5182,6 +5169,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 	    /* file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "r"); */
 	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
+#endif
 #endif
     }
 
@@ -5234,6 +5222,7 @@ void open_futurebase(tablebase_t * tb)
 	}
 #endif
     } else {
+#ifdef USE_FTPLIB
 	void *ptr = ftp_openurl(tb->filename, "r");
 #ifdef O_LARGEFILE
 	if (ptr != NULL) {
@@ -5243,6 +5232,7 @@ void open_futurebase(tablebase_t * tb)
 	if (ptr != NULL) {
 	    tb->file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
+#endif
 #endif
     }
 
@@ -5579,7 +5569,7 @@ void finalize_pass_statistics()
     snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_minflt);
     xmlNodeSetContent(page_reclaims, BAD_CAST strbuf);
 
-#if USE_THREADS
+#ifdef USE_THREADS
     if (num_threads > 1) {
 	snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
 	xmlNodeSetContent(contended_locks_node, BAD_CAST strbuf);
@@ -6825,13 +6815,13 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
  * otherwise, we have to lock on the entire entries table.
  */
 
-#if USE_THREADS
+#ifdef USE_THREADS
 pthread_mutex_t entries_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
 inline void lock_entry(tablebase_t *tb, index_t index)
 {
-#if USE_THREADS
+#ifdef USE_THREADS
     if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
 	if (lock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET)) {
 	    /* contended_indices ++; */
@@ -6845,7 +6835,7 @@ inline void lock_entry(tablebase_t *tb, index_t index)
 
 inline void unlock_entry(tablebase_t *tb, index_t index)
 {
-#if USE_THREADS
+#ifdef USE_THREADS
     if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
 	unlock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET);
     } else {
@@ -8087,7 +8077,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
  * by a mutex lock on this next routine.
  */
 
-#if USE_THREADS
+#ifdef USE_THREADS
 pthread_mutex_t commit_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
@@ -8177,7 +8167,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 	    PTM_wins_flag = (index_to_side_to_move(current_tb, index) == win_side) ? 0 : 1;
 	}
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_lock_instrumented(&commit_lock);
 #endif
 
@@ -8197,7 +8187,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
 	insert_into_proptable(ptr);
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_unlock(&commit_lock);
 #endif
 
@@ -8212,7 +8202,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
 int propagation_pass(int target_dtm)
 {
-#if !USE_THREADS
+#ifndef USE_THREADS
     index_t index;
 #endif
 
@@ -8229,7 +8219,7 @@ int propagation_pass(int target_dtm)
 	proptable_pass(target_dtm);
 	finalize_proptable_pass();
     } else {
-#if !USE_THREADS
+#ifndef USE_THREADS
 	for (index = 0; index <= current_tb->max_index; index ++) {
 	    back_propagate_index(index, target_dtm);
 	}
@@ -8575,7 +8565,7 @@ int invert_colors_of_futurebase;
 
 index_t next_future_index;
 
-#if USE_THREADS
+#ifdef USE_THREADS
 pthread_mutex_t next_future_index_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
@@ -8600,7 +8590,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 
     while (1) {
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_lock_instrumented(&next_future_index_lock);
 #endif
 
@@ -8609,7 +8599,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 	    fetch_entry_pointer_n(futurebase, future_index, threadno);
 	}
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_unlock(&next_future_index_lock);
 #endif
 
@@ -8806,7 +8796,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 
     while (1) {
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_lock_instrumented(&next_future_index_lock);
 #endif
 
@@ -8815,7 +8805,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 	    fetch_entry_pointer_n(futurebase, future_index, threadno);
 	}
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_unlock(&next_future_index_lock);
 #endif
 
@@ -9307,7 +9297,7 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
 
     while (1) {
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_lock_instrumented(&next_future_index_lock);
 #endif
 
@@ -9316,7 +9306,7 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
 	    fetch_entry_pointer_n(futurebase, future_index, threadno);
 	}
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_unlock(&next_future_index_lock);
 #endif
 
@@ -9455,7 +9445,7 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 
     while (1) {
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_lock_instrumented(&next_future_index_lock);
 #endif
 
@@ -9464,7 +9454,7 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 	    fetch_entry_pointer_n(futurebase, future_index, threadno);
 	}
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	pthread_mutex_unlock(&next_future_index_lock);
 #endif
 
@@ -9768,7 +9758,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 
 	if (backprop_function != NULL) {
 
-#if USE_THREADS
+#ifdef USE_THREADS
 	    pthread_t *threads;
 	    int thread;
 
@@ -11937,7 +11927,7 @@ void * initialize_tablebase_section(void * ptr)
     return NULL;
 }
 
-#if !USE_THREADS
+#ifndef USE_THREADS
 
 void initialize_tablebase(void)
 {
@@ -12087,6 +12077,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    }
 #endif
 	} else {
+#ifdef USE_FTPLIB
 	    void *ptr = ftp_openurl(filename, "w");
 #ifdef O_LARGEFILE
 	    if (ptr != NULL) {
@@ -12096,6 +12087,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    if (ptr != NULL) {
 		file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
 	    }
+#endif
 #endif
 	}
     } else {
@@ -12124,6 +12116,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 		filename_needs_xmlFree = 1;
 	    } else if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url"))
 		       != NULL) {
+#ifdef USE_FTPLIB
 		void *ptr = ftp_openurl(filename, "w");
 #ifdef O_LARGEFILE
 		if (ptr != NULL) {
@@ -12135,6 +12128,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 		}
 #endif
 		filename_needs_xmlFree = 1;
+#endif
 	    }
 	}
 
@@ -12687,7 +12681,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.471 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.472 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12739,7 +12733,7 @@ int main(int argc, char *argv[])
 	    proptable_MBs = strtol(optarg, NULL, 0);
 	    using_proptables = 1;
 	    break;
-#if USE_THREADS
+#ifdef USE_THREADS
 	case 't':
 	    num_threads = strtol(optarg, NULL, 0);
 	    break;
@@ -12814,8 +12808,10 @@ int main(int argc, char *argv[])
 	int piece_type;
 	int *promoted_piece;
 	struct movement * movementptr;
-	int score;
 	index_t index;
+#ifdef USE_NALIMOV
+	int score;
+#endif
 
 	buffer = readline(global_position_valid ? "FEN or move? " : "FEN? ");
 	if (buffer == NULL) break;
