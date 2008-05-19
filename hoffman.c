@@ -84,8 +84,6 @@
 
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
 
-#define _XOPEN_SOURCE 600	/* for posix_memalign() and posix_fadvise() */
-
 #define _GNU_SOURCE		/* to get strsignal() and FNM_CASEFOLD */
 
 #include <stdio.h>
@@ -5078,7 +5076,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.474 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.475 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7676,12 +7674,12 @@ void proptable_pass(int target_dtm)
     /* Alloc and read initial buffers for all input proptables */
 
     for (tablenum = 0; tablenum < num_input_proptables; tablenum ++) {
-	int alignment = fpathconf(proptable_input_fds[tablenum], _PC_REC_XFER_ALIGN);
+
 	int ret;
 
-	if (posix_memalign((void **) &proptable_buffer[tablenum],
-			   alignment, PROPTABLE_BUFFER_BYTES) != 0) {
-	    fatal("Can't posix_memalign proptable buffer: %s\n", strerror(errno));
+	proptable_buffer[tablenum] = malloc(PROPTABLE_BUFFER_BYTES);
+	if (proptable_buffer[tablenum] == NULL) {
+	    fatal("Can't malloc proptable buffer: %s\n", strerror(errno));
 	    return;
 	}
 
@@ -12270,9 +12268,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 
     if (using_proptables) {
-	/* This is here so we can use O_DIRECT when writing the proptable out to disk.  1024 is a guess. */
-	if (posix_memalign((void **) &proptable, 1024, num_propentries * PROPTABLE_FORMAT_BYTES) != 0) {
-	    fatal("Can't posix_memalign proptable: %s\n", strerror(errno));
+	proptable = malloc(num_propentries * PROPTABLE_FORMAT_BYTES);
+	if (proptable == NULL) {
+	    fatal("Can't malloc proptable: %s\n", strerror(errno));
 	    return 0;
 	} else {
 	    info("Malloced %dMB for proptable\n", (num_propentries * PROPTABLE_FORMAT_BYTES)/(1024*1024));
@@ -12659,7 +12657,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.474 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.475 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
