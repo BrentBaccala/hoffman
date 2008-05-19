@@ -5078,7 +5078,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.472 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.473 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7409,6 +7409,7 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 	set_propentry_PTM_wins_flag(dest, 1);
     }
 
+    /* XXX need to check for overflow here */
     set_propentry_movecnt(dest, get_propentry_movecnt(dest) + get_propentry_movecnt(src));
 
 #if 0
@@ -7568,29 +7569,6 @@ int *proptable_input_fds = NULL;
 proptable_entry_t **proptable_buffer;
 proptable_entry_t **proptable_buffer_ptr;
 proptable_entry_t **proptable_buffer_limit;
-
-/* Proptable buffering settings.
- *
- * Based on a paper I read about disk throughput using Linux asynchronous I/O, 256 KB seems to be a
- * good target buffer size to shoot for.  Also, there's currently nothing in the code to deal with
- * the case where the buffers are so large relative to the proptable that the first set of AIO reads
- * more than completely consumes the proptable.  Since the smallest proptable we can specify (the -P
- * option) is 1 MB, and I'm currently using 4 BUFFERS_PER_PROPTABLE, 256 KB is also the largest
- * buffer size we can use with our smallest proptable size and not break the code.  Since
- * proptable_entry_t is currently hardwired at 16 bytes, 1<<14 (16 K) entries per buffer gives 256
- * KB buffers.
- *
- * Adjusting these numbers is actually quite tricky.  Make the buffers too small or too few, and
- * you'll be stalling because you've emptied your pipeline.  Make the buffers too big or too many,
- * and you'll stall because your pipeline is full of big, slow reads that you don't need yet.
- * Probably want to look at adjusting these things dynamically at some point; perhaps keep the
- * buffer size constant and adjust on the fly the number of buffers in the rings.
- *
- * I _assume_ that these numbers read full disk blocks on disk block multiples (otherwise the direct
- * I/O stuff will scream and fail).  I've also found out from the linux-kernel mailing list that
- * /sys/block/DEV/queue/max_sectors_kb gives the maximum size (in KB) of the kernel internal
- * requests.  My disk shows 128 KB there, so I've bumped 256 KB down to 128 KB.  (1<<13 entries)
- */
 
 #define PROPTABLE_BUFFER_ENTRIES (1<<13)
 #define PROPTABLE_BUFFER_BYTES (PROPTABLE_BUFFER_ENTRIES * PROPTABLE_FORMAT_BYTES)
@@ -12681,7 +12659,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.472 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.473 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
