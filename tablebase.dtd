@@ -118,7 +118,7 @@
 <!ATTLIST futurebase
 	filename CDATA		#IMPLIED
 	url CDATA		#IMPLIED
-	type	(normal|capture|promotion|promotion-capture|capture-promotion)	#REQUIRED
+	type	(normal|capture|promotion|promotion-capture|capture-promotion)	#IMPLIED
 	colors	(invert)	#IMPLIED>
 <!ATTLIST prune
 	color	(white|black)	#REQUIRED
