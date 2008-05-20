@@ -1,0 +1,459 @@
+\documentclass[11pt]{article}
+
+\usepackage{vmargin}
+\setmarginsrb{0.5in}{0.5in}{0.5in}{0.5in}{20pt}{20pt}{20pt}{20pt}
+
+\title{The Hoffman Reference Guide}
+\author{Brent Baccala}
+
+\usepackage{times}
+\pagestyle{empty}
+
+% Get rid of page numbers
+\def\thepage{}
+
+\begin{document}
+
+\maketitle
+
+\parindent 0pt
+\parskip 12pt
+
+Hoffman is a program to solve chess endgames using retrograde
+analysis, which is much different from conventional computer chess
+programs.  Retrograde analysis is only useful in the endgame, runs
+very slowly, and produces enormous amounts of data.  Its great
+advantage lies in its ability to completely solve the endgame.  In a
+very real sense, a retrograde engine has no ``move horizon'' like a
+conventional chess engine.  It sees everything.  For those not up on
+Americana, the program is named after Trevor Hoffman, an All Star
+baseball pitcher who specializes in ``closing'' games.  It was written
+specifically for The World vs. Arno Nickel game.
+
+Hoffman uses XML extensively both for configuring its operation and
+for labeling the resulting tablebases.  In fact, a completed Hoffman
+tablebase (typically in an {\tt .htb} file) is just a {\tt gzip}-ed
+file that contains an XML prefix followed by binary tablebase data (in
+a format specified by the XML).  Basically, to operate Hoffman, you
+write an XML file that specifies the analysis you want done, then feed
+it to the program.  As output, it produces a modified version of the
+XML input that includes binary tablebase data appended at the end.
+
+\section{Parallel Processing with Hoffman}
+
+A Hoffman analysis can be quite compute-intensive.  The program can be
+compiled to use POSIX threads (if available), with the number of
+threads specified at run-time using the {\tt -p} option.  The program
+is also designed to use multiple computers in parallel, all working
+simultaneously on an analysis.  This is accomplished by breaking the
+analysis up into smaller pieces, each with its own XML configuration
+file.  The primary support provided by the program is the ability to
+use URLs instead of filenames to reference tablebases, allowing
+tablebases to be stored on a server accessable over a network.  A
+basic Perl CGI script ({\tt hoffman.cgi}) is provided which, when
+installed on a web server and supplied with a directory full of
+Hoffman XML files, will hand them out in the proper order to Hoffman
+clients for processing.  Unfortunately, the process of creating those
+multiple interlinked XML files remains largely unautomated at this
+time.
+
+\section{Propagation tables}
+
+A Hoffman analysis can also be quite space-intensive.  Since its
+memory utilization pattern is basically random, Hoffman will begin to
+swap dramatically and suffer a disastrous drop in performance once its
+working set size exceeds the machine's available memory.  To alleviate
+this, the program can be operated in a mode where it fills a series of
+{\it propagation tables}, writing each one out to disk when full, then
+reads them back in sequentially during the next pass.  Although less
+efficient than when the working set can be contained in memory,
+propagation tables allow the program to build tablebases of
+essentially unlimited size with no swapping and reasonable CPU
+utilization.  This mode is activated at run-time by specifying the
+size of the propagation tables (in MB) with the {\tt -P} switch.
+
+{\bf Note:} If you're using proptables, performance will be abysmal
+unless you specify a {\tt modulus} attribute to the {\tt index}
+element.
+
+
+\vfil\eject
+\section{XML Syntax}
+
+The root XML element in a Hoffman tablebase is always {\tt
+<tablebase>}.  Its only attribute ({\tt offset}) is added by the
+program, should not be supplied by the user, and indicates a
+hexadecimal byte-offset into the file where the binary tablebase data
+begins.
+
+Within a {\tt <tablebase>} the following elements may
+occur in the listed order (deprecated elements and attributes are not
+documented):
+
+\subsection{\tt <move-restriction color="white|black" type="concede|discard"/>}
+
+Specifies which kinds of pruning statements will be allowed in this
+tablebase and its futurebases.  Both attributes are required.  {\tt
+concede} means wins may be conceded to the named color; {\tt discard}
+means moves by the named color may be discarded.  At most one {\tt
+move-restriction} can be specified for each color.  No {\tt
+move-restriction} element is required, however, no pruning statements
+are allowed without one and no futurebases may possess additional move
+restrictions beyond those specified for the current tablebase.
+
+
+\subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant" \hfil\break\hbox{\qquad} symmetry="1|2|2-way|4|8|8-way" modulus=NUMBER/>}
+
+The {\tt <index>} element specifies the algorithm that will be used to
+compute the index numbers in the tablebase; i.e, the algorithm that
+will convert board positions into tablebase offsets and vice versa.
+
+\begin{description}
+
+\item {\tt naive} uses $2^{6n+1}$ indices to store positions for $n$ pieces.
+It assigns a single bit for the side-to-move flag, then assigns 6 bits
+to each piece, which is used to encode a number from 0 to 63,
+indicating the piece's position on the board.
+
+\item {\tt naive2} Differs from {\tt naive} in its handling of multiple
+identical pieces, which it stores as a base and an offset, thus saving
+a single bit.  Currently, only pairs of identical pieces are handled;
+a fatal error will result if there are more than two identical pieces.
+
+\item {\tt simple} Like {\tt naive}, but only assigns numbers to
+squares that are legal for a particular piece.  Slower to compute than
+{\tt naive}, but more compact for tablebases with lots of movement
+restrictions on the pieces.
+
+\item {\tt compact} A combination of the delta encoding used for
+identical pieces in {\tt naive2}, the encoding of restricted pieces used
+in {\tt simple}, plus a paired encoding of the kings so they can never be
+adjacent.
+
+\item {\tt no-en-passant} An enhancement of {\tt compact} that uses
+the paired encoding scheme for pawns restricted to the same file.
+Since they can never pass each other, we can encode them as if they
+were an identical pair, then assign their colors in the same order
+they were originally specified.  En passant significantly complicates
+this and can not be handled with this scheme.
+
+\end{description}
+
+The optional {\tt symmetry} attribute can be used to encode multiple
+positions using a single entry, but its utility depends upon the exact
+analysis being done.  A tablebase with no pawns and no movement
+restrictions can be encoded with {\tt 8-way} (alias {\tt 8}) symmetry,
+since the board can be rotated about a horizontal, vertical, or
+diagonal axis without affecting the behavior of the pieces.  A
+tablebase with pawns can utilize at most {\tt 2-way} (alias {\tt 2})
+symmetry, since only a reflection about a vertical axis preserves
+piece behavior.  A tablebase with restrictions on the positions of the
+pieces (say, frozen pawns) can not use any symmetry at all ({\tt 1}).
+Not all symmetries are compatible will all index types; for example,
+8-way symmetry can not be used with {\tt naive} or {\tt naive2}
+index types.
+{\bf Default:} {\it no symmetry}
+
+The optional {\tt modulus} attribute, which if specified should be a
+prime number, indicates that the computed index should be inverted in
+a finite field (modulo the specified number) to obtain the actual
+index.  While time consuming, this step has the effect of shuffling
+the indices in a pseudo-random fashion, and should be used if
+proptables are in use in order to optimize the operation of the
+library sort.  This also produces larger tablebases, since
+a pseudo-random distribution of mating positions impedes
+the operation of the {\tt gzip} compression algorithm.
+{\bf Default:} {\it no inversion}
+
+\subsection{\tt <format> \ldots\quad </format>}
+
+This element specifies the format of the tablebase entries.  It has no
+attributes, and must contain exactly one of the following two
+elements:
+
+{\tt <dtm bits="8|16"/>} specifies a {\it distance to mate} metric
+occupying either one or two bytes.  Zero is used for draws, -1 is used
+for positions where the moving side is checkmated, and 1 is used for
+positions where the moving side can capture the opposing king, so a
+one byte dtm can record mate-in distances up to 126.  A two byte dtm
+has no such (practical) limitation.
+
+{\tt <flag type="white-wins|white-draws"/>} specifies a {\it bitbase}
+where only a single bit is used for each position, and no distance
+information is stored --- only an indicator of the ultimate outcome.
+Such a format is more compact and requires less time to generate, but
+requires more effort to use, since care must be taken to avoid loops
+when following winning lines.
+
+{\bf Note:} Bitbases have been rarely used and remain poorly tested.
+
+{\bf Default:} 8-bit DTM.
+
+
+\subsection{\tt <piece color="white|black" type="king|queen|rook|bishop|knight|pawn" \hfil\break\hbox{\qquad} location=STRING/>}
+
+Multiple {\tt piece} elements are used to specify the chess pieces
+present in the tablebase. {\tt color} and {\tt type} are required and
+should be obvious.  The ordering of {\tt piece} elements is
+significant in that it directly affects the index algorithm,
+but there is no user-visible effect of the ordering.
+
+The optional {\tt location} attribute restricts the board positions
+available to this piece.  It should be a list of squares, in algebraic
+notation, on which the piece is to be allowed.  A single square
+results in a completely frozen piece.  In addition, pawns may use an
+additional syntax consisting of a single starting square followed by a
+plus sign, indicating that the pawn may move forward as far as
+possible.  This can be used, for example, to locate a black pawn on
+{\tt "a7+} and a white pawn on {\tt "a2+"}, indicating that both can
+move forward, but they can not ``pass'' each other.
+
+
+\subsection{\tt <futurebase filename=STRING url=STRING colors="invert"/>}
+
+One or more futurebases may be specified with this element.  Either a
+{\tt filename} or a {\tt url} may be specified (not both) to locate a
+futurebase, which must be another Hoffman tablebase.  It must be
+related to the current tablebase in one of the following ways:
+
+\begin{description}
+\item It has exactly the same piece configuration as the
+current tablebase, and corresponds to movement by one of the
+restricted pieces, i.e, the current tablebase has a white pawn frozen
+on {\tt e4} and the futurebase has a white pawn frozen on {\tt e5}.
+
+\item It has exactly the same piece configuration as
+the current tablebase except that a single piece is missing, i.e,
+a capture occurred.
+
+\item It has exactly the same piece configuration as the current
+tablebase except that a single pawn has been replaced with a knight,
+bishop, rook or queen, i.e, a pawn promoted.
+
+\item It has exactly the same piece configuration as the current
+tablebase except that a single pawn has been replaced with a knight,
+bishop, rook or queen, and a single non-pawn of the opposite color has
+been removed, i.e, a pawn captured and promoted in the same move.
+
+\end{description}
+
+The option {\tt colors="invert"} attribute may be specified to indicate
+that the piece colors of the futurebase should be inverted as it is
+processed.  This precludes the need to calculate, say, a tablebase
+with a white queen and a black rook as well as a tablebase with a
+black queen and a white rook.  The first may be used (with this
+option) as a futurebase to calculate a tablebase with two white rooks
+and a black queen.
+
+{\bf Note:} Any futurebase {\tt move-restriction}s must be a subset of
+the current tablebase's {\tt move-restriction}.
+
+\subsection{\tt <prune color="white|black" move=STRING type="concede|discard"/>}
+
+Futuremoves not handled by specifying futurebases must be pruned using
+one or more of these elements, or an error will result.  All three
+attributes are required.  The {\tt move} is specified using regular
+expression syntax to match a move in a subset of standard algebraic
+notation.  All of the following strings are examples of legal {\tt
+move} strings in a {\tt prune} element: {\tt Pe5}, {\tt P=Q}, {\tt
+RxQ}, {\tt PxR=Q}.  The following regular expressions would all match
+{\tt Kd4}: {\tt Kd?}, {\tt K?4}, {\tt K[a-d]4}, {\tt K*}.
+The {\tt type} attribute specifies what should be done with matching
+moves: treated as wins for the moving side ({\tt concede}), or
+completely ignored ({\tt discard}).  If multiple {\tt prune}
+statements match a particular move, it is a warning if they have the
+same {\tt type}, a fatal error if their {\tt type}s differ.
+
+{\bf Note:} {\tt prune} statements are only allowed if they match the
+tablebase's allowed {\tt move-restriction}s.  If no move restriction
+elements were specified, then no {\tt prune} statements will be
+permitted.
+
+\subsection{\tt <generation-controls> \ldots\qquad </generation-controls>}
+
+This optional element has no attributes and contains one or more
+of the following sub-elements, in no particular order:
+
+\subsubsection{\tt <output filename=STRING url=STRING/>}
+
+At most a single {\tt output} element should be used, with either a
+{\tt filename} or a {\tt url} (but not both), to specify where
+the finished tablebase should be written.
+
+{\bf Note:} The only {\tt url} scheme that has been tested for this
+element is {\tt ftp}.
+
+\subsubsection{\tt <completion-report url=STRING/> \hfil\break <error-report url=STRING/>}
+
+Optionally, the tablebase's XML prefix (without the tablebase data) can
+be written to a URL upon either a successful or error termination of
+the program.  This capability (along with the ability to be read and
+write tablebase URLs) is intended to aid the construction of Hoffman
+tablebases using a distributed cluster.
+
+{\bf Note:} In the event of an error termination, every attempt will
+be made to add {\tt <error>} elements to the XML indicating the
+cause of the problem.
+
+\subsubsection{\tt <entries-format> \ldots\quad </entries-format>}
+
+This optional entity controls the internal format used to store a
+tablebase during its construction.  It contains a number of entities,
+each corresponding to a structure field, all of which admit at least
+the attributes {\tt bits} and {\tt offset}, which specify,
+respectively, the number of bits occupied by the field and the field's
+offset relative to the beginning of a tablebase entry.  {\tt offset}
+is always optional and, if not specified, will be computed using an
+algorithm to assign fields to empty slots.  {\tt bits} is usually
+required, except for single-bit-only fields.  The total number of bits
+required will be rounded up to a power-of-two byte boundary, i.e, 8,
+16, 32, 64.  The entities are:
+
+\begin{description}
+
+\item[{\tt dtm}] Exactly as specified in the {\tt format}.
+
+\item[{\tt flag}] Single-bit-only field.  Exactly as specified in the
+{\tt format}.  A {\tt type} attribute (as in {\tt format}) must be
+specified.  Should be specified instead of a {\tt dtm} field if a
+bitbase is being constructed.
+
+\item[{\tt movecnt}] Used to count the number of possible moves from a
+given position.  Has four reserved values, and must be able to count
+down to zero, so an $n$-bit {\tt movecnt} allows positions with up to
+$2^n-5$ moves.  If 8-way symmetry is in use, then many positions
+require their moves to be counted twice, effectively halving that
+number.  If positions exist with too many possible moves to fit into
+{\tt movecnt}, a fatal error will result during tablebase
+initialization.
+
+\item[{\tt locking-bit}] Single-bit-only field.  Optional, but
+recommended if running multi-threaded.  Allows individual tablebase
+entries to be locked.  Without it, a global lock must be used to
+regulate access to the entries table, which can adversely affect
+performance, but probably not as much as doubling the size of the
+entries table if that is the only way to create a free bit.
+
+\end{description}
+
+\begin{tabular}{@{} l l}
+{\bf Default:} & {\tt <entries-format>} \cr
+& \qquad {\tt <dtm bits="8" offset="0"/>} \cr
+& \qquad {\tt <movecnt bits="7" offset="9"/>} \cr
+& \qquad {\tt <locking-bit offset="8"/>} \cr
+& {\tt </entries-format>} \cr
+\end{tabular}
+
+{\bf Note:} Changing {\tt entries-format} requires the program to be
+recompiled with a different {\tt formats.h} file, which the
+program will print as it terminates with a fatal error.
+
+
+
+\subsubsection{\tt <proptable-format> \ldots\quad </proptable-format>}
+
+This optional entity controls the internal format used to store
+proptables, and is structured like {\tt entries-format}.
+The possible entries here are:
+
+\begin{description}
+
+\item[{\tt dtm}] Exactly as specified in the {\tt format}.
+
+\item[{\tt PTM-wins-flag}] Single-bit-only field.  Similar to the {\tt
+flag} field in {\tt entries-format}, but has a slightly different
+interpretation (indicates if {\it player to move} wins, not white).
+No {\tt type} attribute.  Should be specified instead of a {\tt dtm}
+field if a bitbase is being constructed.
+
+\item[{\tt movecnt}] Similar to the same field in {\tt
+entries-format}, but has no reserved values and doesn't have to hold a
+complete move count (only the number of moves being propagated).
+Currently has {\bf no check} for overflow!!
+
+\item[{\tt index-field}] Holds the index number being propagated.
+See the {\tt index} section for more information about how
+index numbers are computed.
+Currently has {\bf no check} for overflow!!
+
+\item[{\tt futurevector}] Only used during the first back-propagation
+pass, to track which futuremoves have been handled as futurebases are
+back-propagated.  Must be large enough to hold a single bit for each
+possible futuremove from a position.  Hoffman will die (early) with a
+fatal error if this field is not large enough.
+
+\end{description}
+
+\begin{tabular}{@{} l l}
+{\bf Default:} & {\tt <proptable-format>} \cr
+& \qquad {\tt    <index bits="32" offset="0"/>} \cr
+& \qquad {\tt    <dtm bits="16" offset="32"/>} \cr
+& \qquad {\tt    <movecnt bits="8" offset="56"/>} \cr
+& \qquad {\tt    <futurevector bits="64" offset="64"/>} \cr
+& {\tt </proptable-format>} \cr
+\end{tabular}
+
+{\bf Note:} Changing {\tt proptable-format} requires the program to be
+recompiled with a different {\tt formats.h} file, which the
+program will print as it terminates with a fatal error.
+
+\subsection{\tt <tablebase-statistics> \ldots\quad </tablebase-statistics>}
+
+This entity is added by the program and should not be specified in the
+input.  It contains statistics relating to the finished tablebase.
+
+\begin{tabular}{c p{12cm}}
+Entity & \multicolumn{1}{c}{Interpretation} \cr
+\hline
+{\tt indices} & Total number of entries in the uncompressed tablebase \cr
+{\tt PNTM-mated-positions} & Total number of positions in which {\it player not-to-move} is mated; i.e, illegal positions
+in which a kind can be immediately captured \cr
+{\tt legal-positions} & Total number of legal positions; i.e, total number of entries, minus illegal entries
+where two pieces occupy the same space, minus PNTM-mated positions \cr
+{\tt stalemate-positions} & Stalemate (not draw by repetition) positions \cr
+{\tt white-wins-positions} & Positions from which White can force a win \cr
+{\tt black-wins-positions} & Positions from which Black can force a win \cr
+{\tt forward-moves} & Total number of forward moves from positions in this tablebase (including futuremoves) \cr
+{\tt futuremoves} & Total number of forward moves from positions in this tablebase into futurebases or pruned \cr
+{\tt max-dtm} & Largest {\it distance to mate} of all positions in this tablebase \cr
+{\tt min-dtm} & Smallest {\it distance to mate} of all positions in this tablebase, i.e, a negative number indicating
+the longest forced loss \cr
+\end{tabular}
+
+\subsection{\tt <generation-statistics> \ldots\quad </generation-statistics>}
+
+This entity is added by the program and should not be specified in the
+input.  It contains statistics relating to the program run that generated the tablebase.
+
+\begin{tabular}{c p{12cm}}
+Entity & \multicolumn{1}{c}{Interpretation} \cr
+\hline
+{\tt host} & Hostname of system that generated the tablebase \cr
+{\tt program} & Name and version of the program that generated the tablebase \cr
+{\tt args} & Command line used for the generation run \cr
+{\tt start-time} & Time the program run initially started \cr
+{\tt completion-time} & Time the program run finally ended \cr
+{\tt user-time} & CPU time used by the run in user space \cr
+{\tt system-time} & CPU time used by the run in system calls \cr
+{\tt real-time} & Wall clock time used by the run \cr
+{\tt page-faults} & Number of times the program had to wait for a memory page to be swapped in from disk \cr
+{\tt page-reclaims} & Number of times the program reclaimed a page from the free list; this will typically be
+program instruction pages \cr
+{\tt proptable-writes} & If proptables are in use, the number of proptables written to disk \cr
+{\tt proptable-write-time} & If proptables are is use, the total real time required for all proptable writes \cr
+{\tt pass} & Per-pass statistics, including {\tt real-time} and {\tt user-time} \cr
+\end{tabular}
+
+\section{Error Messages}
+
+This section does not attempt to list all of Hoffman's error messages,
+only those anticipated to cause some confusion.
+
+\subsection{Attempting to initialize position with a movecnt that won't fit in field!}
+
+The {\tt movecnt} field specified in {\tt generation-controls} wasn't big enough,
+and note that the default value might not be big enough!
+Also note that if you're running a constant format version of Hoffman,
+the default might have been changed.
+
+\end{document}
