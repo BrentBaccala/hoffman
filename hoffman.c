@@ -91,6 +91,7 @@
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>		/* for write(), lseek(), gethostname() */
+#include <math.h>		/* for sqrt(), which is used only once */
 #include <time.h>		/* for putting timestamps on the output tablebases */
 #include <fcntl.h>		/* for O_RDONLY */
 #include <netdb.h>		/* for gethostbyname() */
@@ -2063,6 +2064,44 @@ uint32 invert_in_finite_field(uint32 b, uint32 m)
     ASM_invert_in_finite_field(b, m);
     return b;
 #endif
+}
+
+/* Inversion in a finite field only works if the modulus is prime, so we need some routines to test
+ * a number for primality and to round a number up to the next prime.  Because our numbers are all
+ * fairly small (as prime numbers go), and since these routines are run at most once per tablebase
+ * load, some very simple algorithms suffice.
+ */
+
+boolean is_prime(uint32 test_number)
+{
+    uint32 divisor, sqrt_test_number;
+
+    /* Quick, easy check to see if it's even (and thus can't be prime) */
+    if ((test_number % 2) == 0) return 0;
+
+    /* Now, check all odd numbers from 3 up to its square root to see if any divide it */
+    sqrt_test_number = (uint32) sqrt((double) test_number);
+    for (divisor = 3; divisor <= sqrt_test_number; divisor += 2) {
+	if ((test_number % divisor) == 0) return 0;
+    }
+
+    /* OK, it's prime */
+    return 1;
+}
+
+uint32 round_up_to_prime(uint32 starting_number)
+{
+    uint32 number = starting_number;
+
+    if (number % 2 == 0) number ++;
+
+    while (! is_prime(number)) number += 2;
+
+    if (number < starting_number) {
+	fatal("Wraparound in round_up_to_next_prime\n");
+    }
+
+    return number;
 }
 
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and multiplies
@@ -4897,10 +4936,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
     modulus = xmlGetProp(index_node, BAD_CAST "modulus");
     if (modulus != NULL) {
-	tb->modulus = strtoll((const char *) modulus, NULL, 0);
-	if (tb->modulus <= tb->max_index) {
-	    fatal("modulus %d less than max_index %d\n", tb->modulus, tb->max_index);
-	    return NULL;
+	if (strcmp((char *) modulus, "auto") == 0) {
+	    tb->modulus = round_up_to_prime(tb->max_index + 1);
+	    if (! is_futurebase) fprintf(stderr, "Using %d as auto modulus\n", tb->modulus);
+	} else {
+	    tb->modulus = strtoll((const char *) modulus, NULL, 0);
+	    if (! is_prime(tb->modulus)) {
+		fatal("modulus %d is not a prime number\n", tb->modulus);
+		return NULL;
+	    }
+	    if (tb->modulus <= tb->max_index) {
+		fatal("modulus %d less than max_index %d\n", tb->modulus, tb->max_index);
+		return NULL;
+	    }
 	}
 	tb->max_index = tb->modulus - 1;
 	xmlFree(modulus);
@@ -5076,7 +5124,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.476 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.477 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12596,7 +12644,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.476 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.477 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
