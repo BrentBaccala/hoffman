@@ -102,7 +102,7 @@ are allowed without one and no futurebases may possess additional move
 restrictions beyond those specified for the current tablebase.
 
 
-\subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant" \hfil\break\hbox{\qquad} symmetry="1|2|2-way|4|8|8-way" modulus=NUMBER/>}
+\subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant" \hfil\break\hbox{\qquad} symmetry="1|2|2-way|4|8|8-way" modulus="auto|{\it integer}"/>}
 
 The {\tt <index>} element specifies the algorithm that will be used to
 compute the index numbers in the tablebase; i.e, the algorithm that
@@ -154,15 +154,18 @@ Not all symmetries are compatible will all index types; for example,
 index types.
 {\bf Default:} {\it no symmetry}
 
-The optional {\tt modulus} attribute, which if specified should be a
-prime number, indicates that the computed index should be inverted in
-a finite field (modulo the specified number) to obtain the actual
-index.  While time consuming, this step has the effect of shuffling
-the indices in a pseudo-random fashion, and should be used if
-proptables are in use in order to optimize the operation of the
-library sort.  This also produces larger tablebases, since
-a pseudo-random distribution of mating positions impedes
-the operation of the {\tt gzip} compression algorithm.
+The optional {\tt modulus} attribute, which if specified should be
+either {\tt auto} or a prime number (the program complains if it's
+composite), indicates that the computed index should be inverted in a
+finite field (modulo the specified number) to obtain the actual index.
+While time consuming, this step has the effect of shuffling the
+indices in a pseudo-random fashion, and should be used if proptables
+are in use in order to optimize the operation of the library sort.
+This also produces larger tablebases, since a pseudo-random
+distribution of mating positions impedes the operation of the {\tt
+gzip} compression algorithm.  {\tt auto} simply rounds the highest
+index up to the next prime number; there really is no reason anymore
+to specify a specific prime.
 {\bf Default:} {\it no inversion}
 
 \subsection{\tt <format> \ldots\quad </format>}
@@ -190,7 +193,7 @@ when following winning lines.
 {\bf Default:} 8-bit DTM.
 
 
-\subsection{\tt <piece color="white|black" type="king|queen|rook|bishop|knight|pawn" \hfil\break\hbox{\qquad} location=STRING/>}
+\subsection{\tt <piece color="white|black" type="king|queen|rook|bishop|knight|pawn" \hfil\break\hbox{\qquad} location="{\it string}"/>}
 
 Multiple {\tt piece} elements are used to specify the chess pieces
 present in the tablebase. {\tt color} and {\tt type} are required and
@@ -209,7 +212,7 @@ possible.  This can be used, for example, to locate a black pawn on
 move forward, but they can not ``pass'' each other.
 
 
-\subsection{\tt <futurebase filename=STRING url=STRING colors="invert"/>}
+\subsection{\tt <futurebase filename="{\it string}" url="{\it string}" colors="invert"/>}
 
 One or more futurebases may be specified with this element.  Either a
 {\tt filename} or a {\tt url} may be specified (not both) to locate a
@@ -246,9 +249,9 @@ option) as a futurebase to calculate a tablebase with two white rooks
 and a black queen.
 
 {\bf Note:} Any futurebase {\tt move-restriction}s must be a subset of
-the current tablebase's {\tt move-restriction}.
+the current tablebase's {\tt move-restriction}s.
 
-\subsection{\tt <prune color="white|black" move=STRING type="concede|discard"/>}
+\subsection{\tt <prune color="white|black" move="{\it string}" type="concede|discard"/>}
 
 Futuremoves not handled by specifying futurebases must be pruned using
 one or more of these elements, or an error will result.  All three
@@ -264,9 +267,9 @@ completely ignored ({\tt discard}).  If multiple {\tt prune}
 statements match a particular move, it is a warning if they have the
 same {\tt type}, a fatal error if their {\tt type}s differ.
 
-{\bf Note:} {\tt prune} statements are only allowed if they match the
+{\bf Note:} {\tt prune} elements are only allowed if they match the
 tablebase's allowed {\tt move-restriction}s.  If no move restriction
-elements were specified, then no {\tt prune} statements will be
+elements were specified, then no {\tt prune} elements will be
 permitted.
 
 \subsection{\tt <generation-controls> \ldots\qquad </generation-controls>}
@@ -274,7 +277,7 @@ permitted.
 This optional element has no attributes and contains one or more
 of the following sub-elements, in no particular order:
 
-\subsubsection{\tt <output filename=STRING url=STRING/>}
+\subsubsection{\tt <output filename="{\it string}" url="{\it string}"/>}
 
 At most a single {\tt output} element should be used, with either a
 {\tt filename} or a {\tt url} (but not both), to specify where
@@ -283,7 +286,7 @@ the finished tablebase should be written.
 {\bf Note:} The only {\tt url} scheme that has been tested for this
 element is {\tt ftp}.
 
-\subsubsection{\tt <completion-report url=STRING/> \hfil\break <error-report url=STRING/>}
+\subsubsection{\tt <completion-report url="{\it string}"/> \hfil\break <error-report url="{\it string}"/>}
 
 Optionally, the tablebase's XML prefix (without the tablebase data) can
 be written to a URL upon either a successful or error termination of
