@@ -1833,9 +1833,8 @@ boolean check_king_legality(int kingA, int kingB) {
  * sort.  This kind of sort performs well if the keys are evenly distributed, and performs horribly
  * if the keys are clumped together.  Since checkmates occur in groups of similar positions,
  * something has to be done.  "Something" is inversion of the indices in a finite field,
- * specifically a modulo ring with a prime modulus.  The modulus is specified in the XML
- * configuration, and I don't check to make sure it's prime - there are other programs available
- * that do that.
+ * specifically a modulo ring with a prime modulus.  The modulus is either specified in the XML
+ * configuration or computed automatically.
  *
  * Originally, I used the HalfExtendedEuclidian algorithm from Manuel Bronstein's book "Symbolic
  * Integration I".  In the hopes a speed improvement, I switched to using a binary extended GCD
@@ -1907,8 +1906,11 @@ boolean check_king_legality(int kingA, int kingB) {
  * This is a GNU compiler, so we use AT&T assembler syntax - the destination comes second.
  */
 
-#define ASM_invert_in_finite_field(INDEX, MODULUS)						\
-   asm("                                                                                        \
+#ifdef i386
+
+uint32 invert_in_finite_field(uint32 b, uint32 m)
+{
+    asm("                                                                                       \
                 /* Input                                                                    */  \
                 /*                                                                          */  \
                 /* EAX - modulus                                                            */  \
@@ -1999,18 +2001,18 @@ boolean check_king_legality(int kingA, int kingB) {
                                                                                                 \
            6:   mov %%edi, %%ecx;                                                               \
                                                                                                 \
-                          " : "+c" (INDEX) : "a" (MODULUS) : "bx", "dx", "di", "si", "cc")
+                          " : "+c" (b) : "a" (m) : "bx", "dx", "di", "si", "cc");
+    return b;
+}
+
+#else
 
 uint32 invert_in_finite_field(uint32 b, uint32 m)
 {
-#if 0
     uint32 x = m;
     uint32 y = b;
     uint32 bx = 0;
     uint32 by = 1;
-
-    int test = b;
-    ASM_invert_in_finite_field(test, m);
 
     while ((y&1) == 0) {
 	y >>= 1;
@@ -2052,18 +2054,12 @@ uint32 invert_in_finite_field(uint32 b, uint32 m)
 	    }
 	}
     }
-    if (x != 1) fatal("x != 1 in invert_finite_field v2\n");
-
-    if (by != test) {
-	fatal("%d: assembly inversion (%d) didn't match C code (%d)\n", b, test, by);
-    }
+    if (x != 1) fatal("x != 1 in invert_finite_field\n");
 
     return by;
-#else
-    ASM_invert_in_finite_field(b, m);
-    return b;
-#endif
 }
+
+#endif
 
 /* Inversion in a finite field only works if the modulus is prime, so we need some routines to test
  * a number for primality and to round a number up to the next prime.  Because our numbers are all
@@ -4731,7 +4727,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.478 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.479 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12251,7 +12247,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.478 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.479 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
