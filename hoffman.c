@@ -5076,7 +5076,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.475 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.476 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5348,6 +5348,33 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
     return 1;
 }
 
+int autodetect_futurebase_type(tablebase_t *futurebase)
+{
+    if (futurebase->extra_piece == -1) {
+	if ((futurebase->missing_pawn == -1) && (futurebase->missing_non_pawn == -1)) {
+	    return FUTUREBASE_NORMAL;
+	} else if ((futurebase->missing_pawn != -1) && (futurebase->missing_non_pawn != -1)) {
+	    return -1;
+	} else {
+	    return FUTUREBASE_CAPTURE;
+	}
+    } else {
+	if (futurebase->missing_pawn == -1) {
+	    return -1;
+	} else if (futurebase->missing_non_pawn == -1) {
+	    return FUTUREBASE_PROMOTION;
+	} else {
+	    return FUTUREBASE_CAPTURE_PROMOTION;
+	}
+    }
+}
+
+/* preload_all_futurebases()
+ *
+ * In addition to preloading the futurebases, this function also updates the global variables
+ * min_tracked_dtm and max_tracked_dtm.
+ */
+
 boolean preload_all_futurebases(tablebase_t *tb)
 {
     xmlXPathContextPtr context;
@@ -5397,113 +5424,25 @@ boolean preload_all_futurebases(tablebase_t *tb)
 	    xmlFree(colors_property);
 	}
 
-	type = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "type");
-
-	futurebases[fbnum]->futurebase_type = find_name_in_array((char *) type, futurebase_types);
-
-	if (futurebases[fbnum]->futurebase_type == -1) {
-	    fatal("Unknown futurebase type '%s'\n", type);
-	}
+	/* We used to have to specify futurebase type in the XML, but now it is autodetected.  Check
+	 * for correctness if the XML (optionally now) specified the type.
+	 */
 
 	compute_extra_and_missing_pieces(tb, futurebases[fbnum], (char *)filename);
+	futurebases[fbnum]->futurebase_type = autodetect_futurebase_type(futurebases[fbnum]);
 
-	/* Various combinations of missing/extra pieces are legal for different futurebase types. */
-
-	switch (futurebases[fbnum]->futurebase_type) {
-
-	case FUTUREBASE_CAPTURE:
-
-	    /* It's a capture futurebase.  Futurebase should have exactly one less piece than the
-	     * current tablebase.
-	     */
-
-	    if (futurebases[fbnum]->extra_piece != -1) {
-		fatal("'%s': Extra piece in capture futurebase\n", filename);
-		break;
-	    }
-
-	    if ((futurebases[fbnum]->missing_pawn != -1) && (futurebases[fbnum]->missing_non_pawn != -1)) {
-		fatal("'%s': Too many missing pieces in capture futurebase\n", filename);
-		break;
-	    }
-
-	    if ((futurebases[fbnum]->missing_pawn == -1) && (futurebases[fbnum]->missing_non_pawn == -1)) {
-		fatal("'%s': No missing pieces in capture futurebase\n", filename);
-		break;
-	    }
-
-	    break;
-
-	case FUTUREBASE_PROMOTION:
-
-	    /* It's a promotion futurebase.  Futurebase should have exactly the same number of
-	     * pieces as the current tablebase, and one of our pawns should have promoted into
-	     * something else.
-	     */
-
-	    if (futurebases[fbnum]->extra_piece == -1) {
-		fatal("'%s': No extra piece in promotion futurebase\n", filename);
-		break;
-	    }
-
-	    if (futurebases[fbnum]->missing_non_pawn != -1) {
-		fatal("'%s': Missing non-pawn in promotion futurebase\n", filename);
-		break;
-	    }
-
-	    if (futurebases[fbnum]->missing_pawn == -1) {
-		fatal("'%s': No missing pawn in promotion futurebase\n", filename);
-		break;
-	    }
-
-	    break;
-
-	case FUTUREBASE_CAPTURE_PROMOTION:
-
-	    /* It's a promotion capture futurebase.  Futurebase should have exactly one less piece
-	     * than the current tablebase, and one of our pawns should have promoted into something
-	     * else.
-	     */
-
-	    if (futurebases[fbnum]->extra_piece == -1) {
-		fatal("'%s': No extra piece in promotion capture futurebase\n", filename);
-		break;
-	    }
-
-	    if (futurebases[fbnum]->missing_non_pawn == -1) {
-		fatal("'%s': No missing non-pawn in promotion capture futurebase\n", filename);
-		break;
-	    }
-
-	    if (futurebases[fbnum]->missing_pawn == -1) {
-		fatal("'%s': No missing pawn in promotion capture futurebase\n", filename);
-		break;
-	    }
-
-	    break;
-
-	case FUTUREBASE_NORMAL:
-
-	    if (futurebases[fbnum]->extra_piece != -1) {
-		fatal("'%s': Extra piece in normal futurebase\n", filename);
-		break;
-	    }
-
-	    if ((futurebases[fbnum]->missing_pawn != -1) || (futurebases[fbnum]->missing_non_pawn != -1)) {
-		fatal("'%s': Missing pieces in normal futurebase\n", filename);
-		break;
-	    }
-
-	    break;
-
-	default:
-
-	    fatal("'%s': Unknown back propagation type (%s)\n", (char *) filename, (char *) type);
-	    break;
-
+	if (futurebases[fbnum]->futurebase_type == -1) {
+	    fatal("'%s': Can't autodetect futurebase type\n", filename);
 	}
 
-	if (type != NULL) xmlFree(type);
+	type = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "type");
+	if (type != NULL) {
+	    if (futurebases[fbnum]->futurebase_type != find_name_in_array((char *) type, futurebase_types)) {
+		fatal("'%s': Specified type '%s' doesn't match autodetected type '%s'\n",
+		      filename, type, futurebase_types[futurebases[fbnum]->futurebase_type]);
+	    }
+	    xmlFree(type);
+	}
 
 	/* We can't xmlFree filename here, because it's stashed away in the tablebase structure */
 	/* if (filename != NULL) xmlFree(filename); */
@@ -12657,7 +12596,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.475 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.476 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
