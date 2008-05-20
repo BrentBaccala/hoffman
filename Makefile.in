@@ -1,19 +1,4 @@
 
-# Debugging
-#CPPFLAGS=-g -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
-
-# Optimization
-#CPPFLAGS=-O3 -Wall -I /usr/include/readline @XML_CPPFLAGS@ @CURL_CFLAGS@ -DUSE_NALIMOV -pthread
-
-# Debugging w/optimization
-#CPPFLAGS=-g -O3 -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
-
-# Debugging w/optimization and profiling
-#CPPFLAGS=-g -pg -O3 -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
-
-# Debugging w/profiling
-#CPPFLAGS=-g -pg -Wall -I /usr/include/readline -I /usr/include/libxml2 -DUSE_NALIMOV
-
 CFLAGS= @CFLAGS@ -I /usr/include/readline @XML_CPPFLAGS@ @CURL_CFLAGS@
 
 hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@
