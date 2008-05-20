@@ -1,46 +1,74 @@
 dnl Process this file with autoconf to produce a configure script.
-AC_INIT(hoffman, VERSION)
 
-#AM_INIT_AUTOMAKE([dist-bzip2 1.6])
-#AM_CONFIG_HEADER(config.h)
+AC_INIT(hoffman.c)
 
-dnl Checks for programs.
 AC_PROG_CC
-AC_PROG_CPP
 AC_PROG_CXX
-#AC_PROG_INSTALL
-AC_PROG_LN_S
-AC_PROG_MAKE_SET
-AC_PROG_RANLIB
 
 if test x"$GCC" = xyes; then
         CFLAGS="$CFLAGS -Wall"
+else
+	AC_MSG_WARN(You don't have gcc; Hoffman uses several gcc extensions)
 fi
 
-dnl Checks for libraries.
+ACX_PTHREAD(AC_DEFINE(HAVE_PTHREAD,1,[Define if you have POSIX threads libraries and header files.])
+	    AC_DEFINE(USE_THREADS,1,[Define to use POSIX threads libraries and header files.])
+	    CC="$PTHREAD_CC"; CFLAGS="$CFLAGS $PTHREAD_CFLAGS"; LIBS="$PTHREAD_LIBS $LIBS")
 
-AC_CHECK_LIB(curl, curl_easy_init)
-AC_CHECK_LIB(readline, readline)
-AC_CHECK_LIB(xml2, xmlReadFile)
-AC_CHECK_LIB(ftp, FtpConnect)
+dnl Check for the required libraries
 
-dnl Checks for header files.
-AC_HEADER_STDC
-AC_CHECK_HEADERS(fcntl.h sys/time.h unistd.h)
+AC_CHECK_LIB(z, inflate,, AC_MSG_ERROR([You must have zlib]))
+AM_PATH_XML2(,,AC_MSG_ERROR(You must have libxml2))
 
-dnl Checks for typedefs, structures, and compiler characteristics.
-AC_C_CONST
-AC_TYPE_OFF_T
-AC_TYPE_SIZE_T
-AC_HEADER_TIME
+dnl Check for readline
 
-dnl Checks for library functions.
-AC_FUNC_MMAP
-AC_CHECK_FUNCS(gettimeofday select socket strcspn strdup strspn strtoul)
+AC_CHECK_LIB(readline, readline, ,AC_MSG_WARN([You should have libreadline]))
 
-AC_CHECK_HEADERS(stdint.h)
+dnl Check for ftplib
+dnl
+dnl AC_CHECK_LIB(ftp, FtpConnect, AC_DEFINE([USE_FTPLIB], [1], [Define to use ftplib to resolve ftp: URLs])
+dnl 			      AC_SUBST([FTPOBJS], [ftp_fopen.o]))
 
-AC_TRY_LINK([#include <sys/types.h>],u_int16_t i16;,
-  AC_DEFINE(HAVE_U_INTXX_T, 1, Define if you have u_int16_t and friends.))
+AC_ARG_WITH([ftplib],
+  [AS_HELP_STRING([--without-ftplib], [Don't link with ftplib for ftp: URL support])],
+  [],
+  [with_ftplib=check])
 
+AS_IF([test "x$with_ftplib" != xno],
+  [AC_CHECK_LIB([ftp], [ftpConnect],
+    [AC_SUBST([FTPOBJS], ["ftp_fopen.o"])
+     AC_DEFINE([USE_FTPLIB], [1], [Define to use ftplib to resolve ftp: URLs])
+    ],
+    [if test "x$with_ftplib" != xcheck; then
+       AC_MSG_FAILURE([--with-ftplib was given, but test for ftplib failed])
+     fi
+    ])])
+
+dnl Check for libcurl
+dnl
+dnl PKG_CHECK_MODULES(CURL, libcurl, AC_DEFINE([USE_LIBCURL], [1], [Define if you have the Curl library])
+dnl 				 AC_SUBST([CURLOBJS], [url_fopen.o]))
+
+AC_ARG_WITH([libcurl],
+  [AS_HELP_STRING([--without-libcurl], [Don't link with libcurl for http: URL support])],
+  [],
+  [with_libcurl=check])
+
+AS_IF([test "x$with_libcurl" != xno],
+  [PKG_CHECK_MODULES([CURL], [libcurl],
+    [AC_DEFINE([USE_LIBCURL], [1], [Define if you have the Curl library])
+     AC_SUBST([CURLOBJS], [url_fopen.o])],
+    [if test "x$with_libcurl" != xcheck; then
+       AC_MSG_FAILURE([--with-libcurl was given, but test for libcurl failed])
+     fi
+    ])])
+
+
+
+AC_CHECK_FILE(egtb.cpp, LIBS="-lstdc++ $LIBS";
+			AC_DEFINE([USE_NALIMOV], [1], [Define to use Nalimov probe code to verify tablebase integrity])
+			AC_SUBST([NALIMOVOBJS], ["probe.o egtb.o"]),
+	      AC_MSG_WARN([You must symlink crafty's egtb.cpp into this directory for Nalimov support]))
+
+AC_CONFIG_HEADERS(config.h)
 AC_OUTPUT(Makefile)
