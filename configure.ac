@@ -64,11 +64,19 @@ AS_IF([test "x$with_libcurl" != xno],
     ])])
 
 
+dnl If we don't have C++, then we want to link with CC and leave out
+dnl Nalimov support.  If we have C++, then we want to link with C++
+dnl and include Nalimov support.
 
-AC_CHECK_FILE(egtb.cpp, LIBS="-lstdc++ $LIBS";
-			AC_DEFINE([USE_NALIMOV], [1], [Define to use Nalimov probe code to verify tablebase integrity])
-			AC_SUBST([NALIMOVOBJS], ["probe.o egtb.o"]),
-	      AC_MSG_WARN([You must symlink crafty's egtb.cpp into this directory for Nalimov support]))
+AC_SUBST(LINKER)
+
+if test $ac_cv_prog_cxx_g = yes; then
+   AC_DEFINE([USE_NALIMOV], [1], [Define to use Nalimov probe code to verify tablebase integrity])
+   AC_SUBST([NALIMOVOBJS], ["probe.o egtb.o"])
+   LINKER=$CXX
+else
+   LINKER=$CC
+fi
 
 AC_CONFIG_HEADERS(config.h)
 AC_OUTPUT(Makefile)
