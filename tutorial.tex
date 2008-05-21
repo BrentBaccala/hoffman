@@ -1,5 +1,6 @@
 \documentclass[11pt]{article}
 
+\usepackage{graphics}
 \usepackage[ps,mover]{skak}
 
 \usepackage{vmargin}
@@ -216,7 +217,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.1 $ $Locker: baccala $
+Hoffman $Revision: 1.2 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -241,7 +242,7 @@ Hoffman $Revision: 1.1 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.1 $ $Locker: baccala $</program>
+      <program>Hoffman $Revision: 1.2 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -315,7 +316,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.1 $ $Locker: baccala $
+Hoffman $Revision: 1.2 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -550,7 +551,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.1 $ $Locker: baccala $
+Hoffman $Revision: 1.2 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
@@ -600,9 +601,18 @@ should be able to answer after studying the fortress example:
 
 In the Lasker 1901 example, I noted that after a move like Ka2,
 Hoffman can't guarantee that White can't take a pawn, only that White
-can't take a pawn before Black does.  What {\it simple} change to the
+can't take a pawn before Black does.  What changes to the
 configuration would allow us to prove that Black can, in fact,
 completely prevent White from making any capture?
 
+\reflectbox{\vbox{{\bf Answer:} Change the black {\tt prune-enable} and {\tt
+prune} elements from {\tt concede} to {\tt discard}.  Now the analysis
+will not consider any black captures, and the only kind of ``draw''
+will be one that completely prevents white from making any kind of
+capture.  There is one gotcha, however.  White might put black in a
+position where his {\it has} to capture a pawn, but the new analysis
+would regard this as a stalemate.  To avoid this problem, you should
+also add a third pruning element: {\tt <prune color="white"
+move="stalemate" type="concede"/>}}}
 
 \end{document}
