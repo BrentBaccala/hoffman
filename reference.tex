@@ -90,16 +90,16 @@ Within a {\tt <tablebase>} the following elements may
 occur in the listed order (deprecated elements and attributes are not
 documented):
 
-\subsection{\tt <move-restriction color="white|black" type="concede|discard"/>}
+\subsection{\tt <prune-enable color="white|black" type="concede|discard"/>}
 
-Specifies which kinds of pruning statements will be allowed in this
+Specifies which kinds of pruning elements will be allowed in this
 tablebase and its futurebases.  Both attributes are required.  {\tt
 concede} means wins may be conceded to the named color; {\tt discard}
 means moves by the named color may be discarded.  At most one {\tt
-move-restriction} can be specified for each color.  No {\tt
-move-restriction} element is required, however, no pruning statements
-are allowed without one and no futurebases may possess additional move
-restrictions beyond those specified for the current tablebase.
+prune-enable} can be specified for each color.  No {\tt prune-enable}
+element is required, however, no {\tt prune} elements are allowed without
+one and no futurebases may possess additional {\tt prune-enable}
+elements beyond those specified for the current tablebase.
 
 
 \subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant" \hfil\break\hbox{\qquad} symmetry="1|2|2-way|4|8|8-way" modulus="auto|{\it integer}"/>}
@@ -248,8 +248,8 @@ black queen and a white rook.  The first may be used (with this
 option) as a futurebase to calculate a tablebase with two white rooks
 and a black queen.
 
-{\bf Note:} Any futurebase {\tt move-restriction}s must be a subset of
-the current tablebase's {\tt move-restriction}s.
+{\bf Note:} Any futurebase {\tt prune-enable} elements must be a subset of
+the current tablebase's {\tt prune-enable} elements.
 
 \subsection{\tt <prune color="white|black" move="{\it string}" type="concede|discard"/>}
 
@@ -264,13 +264,25 @@ RxQ}, {\tt PxR=Q}.  The following regular expressions would all match
 The {\tt type} attribute specifies what should be done with matching
 moves: treated as wins for the moving side ({\tt concede}), or
 completely ignored ({\tt discard}).  If multiple {\tt prune}
-statements match a particular move, it is a warning if they have the
+elements match a particular move, it is a warning if they have the
 same {\tt type}, a fatal error if their {\tt type}s differ.
 
-{\bf Note:} {\tt prune} elements are only allowed if they match the
-tablebase's allowed {\tt move-restriction}s.  If no move restriction
-elements were specified, then no {\tt prune} elements will be
-permitted.
+A single {\tt prune} element may be specified with {\tt
+move="stalemate"} and {\tt type="concede"}.  In this case, the {\tt
+color} attribute indicates to which side stalemates should be conceded
+as wins.  My main idea in implementing this was to speed up processing
+by allowing promotion futurebases with only queens to substitute for
+promotions into rooks and bishops, since the only logical reason to
+underpromote is to avoid a stalemate.  To this end, a futurebase with
+an extra queen and stalemates pruned will be treated as handling all
+three promotions (queen, rook, and bishop).  This feature has not been
+tested, and I believe there are bugs in the code (I'm not sure if the
+color sense is right, and I think you can ``lose'' these statements
+through a series of linked futurebases).
+
+{\bf Note:} {\tt prune} elements are only allowed if they match a {\tt
+prune-enable} element.  If no {\tt prune-enable} elements were
+specified, then no {\tt prune} elements will be permitted.
 
 \subsection{\tt <generation-controls> \ldots\qquad </generation-controls>}
 
@@ -306,11 +318,12 @@ each corresponding to a structure field, all of which admit at least
 the attributes {\tt bits} and {\tt offset}, which specify,
 respectively, the number of bits occupied by the field and the field's
 offset relative to the beginning of a tablebase entry.  {\tt offset}
-is always optional and, if not specified, will be computed using an
-algorithm to assign fields to empty slots.  {\tt bits} is usually
-required, except for single-bit-only fields.  The total number of bits
-required will be rounded up to a power-of-two byte boundary, i.e, 8,
-16, 32, 64.  The entities are:
+is optional and, if not specified, will be computed using an algorithm
+to assign fields to empty slots, though if {\tt offset} is specified
+in one element, it must be specified in all of them. {\tt bits} is
+usually required, except for single-bit-only fields.  The total number
+of bits required must be a power-of-two byte boundary, i.e, 8, 16, 32,
+64.  The entities are:
 
 \begin{description}
 
@@ -452,9 +465,46 @@ program instruction pages \cr
 This section does not attempt to list all of Hoffman's error messages,
 only those anticipated to cause some confusion.
 
+\subsection{Doubled pawns must (currently) appear in board order in piece list}
+
+Currently, doubled pawns using ``plus'' locations (ex: {\tt
+location="a2+"}) on the same file must have their {\tt piece} elements
+listed in the XML in the order that the pawns appear on the board,
+counting in algebraic notation from row 1 to row 8.  I mean, row 2 to
+row 7.
+
+\subsection{Piece restrictions not allowed with symmetric indices (yet)}
+
+You can't specify an {\tt index symmetry} attribute and also specify
+{\tt piece location} attributes, even if the restrictions on the piece
+locations might be compatible with the requested symmetry.
+
+\subsection{Non-identical overlapping piece restrictions not allowed with this index type}
+
+For the {\tt naive}, {\tt naive2}, and {\tt simple} index types, you
+can't specify two identical pieces with different {\tt location}
+restrictions unless those restrictions are completely distinct.  For
+example, you can't have a free white rook and another white rook
+restricted to the a-file.  If you think about it, this situation would
+allow the rooks to ``trade places'' --- both could move to the a-file
+and then either one could move off.  The simpler index types can't
+handle this situation.  You could, however, have a white rook
+restricted to the a-file and another restricted to the d-file (or use
+a more sophisticated index type, like {\tt compact}).
+
 \subsection{Attempting to initialize position with a movecnt that won't fit in field!}
 
 The {\tt movecnt} field specified in {\tt generation-controls} wasn't big enough,
 and note that the default value might not be big enough!
+
+\subsection{Default/specified proptable/entries format incompatible with compiled-in format}
+
+Changing the formats in {\tt generation-controls} requires recompiling
+the program with a different {\tt "formats.h"} file.
+
+\subsection{Futurebase doesn't match prune-enables!}
+
+Remember that futurebase {\tt prune-enable} elements must be a
+subset of the current tablebase's {\tt prune-enable}s.
 
 \end{document}
