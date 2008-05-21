@@ -382,9 +382,8 @@ typedef struct {
 } global_position_t;
 
 
-uint64 allones_bitvector = 0xffffffffffffffffLL;
-
 /* pawn can't be on the first or last eight squares of the board */
+#define ALL_ONES_BITVECTOR   0xffffffffffffffffLL
 #define LEGAL_PAWN_BITVECTOR 0x00ffffffffffff00LL
 
 #define BITVECTOR(square) (1ULL << (square))
@@ -1278,7 +1277,7 @@ void init_movements()
 			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
+			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
 			}
 			break;
 		    case LEFT:
@@ -1288,7 +1287,7 @@ void init_movements()
 			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
+			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
 			}
 			break;
 		    case UP:
@@ -1298,7 +1297,7 @@ void init_movements()
 			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
+			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
 			}
 			break;
 		    case DOWN:
@@ -1308,7 +1307,7 @@ void init_movements()
 			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
+			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
 			}
 			break;
 		    case DIAG_UL:
@@ -1319,7 +1318,7 @@ void init_movements()
 			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
+			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
 			}
 			break;
 		    case DIAG_UR:
@@ -1330,7 +1329,7 @@ void init_movements()
 			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
+			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
 			}
 			break;
 		    case DIAG_DL:
@@ -1341,7 +1340,7 @@ void init_movements()
 			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
+			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
 			}
 			break;
 		    case DIAG_DR:
@@ -1352,7 +1351,7 @@ void init_movements()
 			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
 			} else {
 			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = allones_bitvector;
+			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
 			}
 			break;
 		    case KNIGHTmove:
@@ -1363,10 +1362,10 @@ void init_movements()
 				movements[piece][square][dir][0].square = square + 2 + 8;
 				movements[piece][square][dir][0].vector = BITVECTOR(square + 2 + 8);
 				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = allones_bitvector;
+				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
 			    } else {
 				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = allones_bitvector;
+				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
 			    }
 			    break;
 			case 1:
@@ -1374,10 +1373,10 @@ void init_movements()
 				movements[piece][square][dir][0].square = square + 2 - 8;
 				movements[piece][square][dir][0].vector = BITVECTOR(square + 2 - 8);
 				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = allones_bitvector;
+				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
 			    } else {
 				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = allones_bitvector;
+				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
 			    }
 			    break;
 			case 2:
@@ -1385,10 +1384,10 @@ void init_movements()
 				movements[piece][square][dir][0].square = square - 2 + 8;
 				movements[piece][square][dir][0].vector = BITVECTOR(square - 2 + 8);
 				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = allones_bitvector;
+				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
 			    } else {
 				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = allones_bitvector;
+				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
 			    }
 			    break;
 			case 3:
@@ -1396,10 +1395,10 @@ void init_movements()
 				movements[piece][square][dir][0].square = square - 2 - 8;
 				movements[piece][square][dir][0].vector = BITVECTOR(square - 2 - 8);
 				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = allones_bitvector;
+				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
 			    } else {
 				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = allones_bitvector;
+				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
 			    }
 			    break;
 			case 4:
@@ -1407,10 +1406,10 @@ void init_movements()
 				movements[piece][square][dir][0].square = square + 1 + 16;
 				movements[piece][square][dir][0].vector = BITVECTOR(square + 1 + 16);
 				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = allones_bitvector;
+				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
 			    } else {
 				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = allones_bitvector;
+				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
 			    }
 			    break;
 			case 5:
@@ -1418,10 +1417,10 @@ void init_movements()
 				movements[piece][square][dir][0].square = square + 1 - 16;
 				movements[piece][square][dir][0].vector = BITVECTOR(square + 1 - 16);
 				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = allones_bitvector;
+				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
 			    } else {
 				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = allones_bitvector;
+				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
 			    }
 			    break;
 			case 6:
@@ -1429,10 +1428,10 @@ void init_movements()
 				movements[piece][square][dir][0].square = square - 1 + 16;
 				movements[piece][square][dir][0].vector = BITVECTOR(square - 1 + 16);
 				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = allones_bitvector;
+				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
 			    } else {
 				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = allones_bitvector;
+				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
 			    }
 			    break;
 			case 7:
@@ -1440,10 +1439,10 @@ void init_movements()
 				movements[piece][square][dir][0].square = square - 1 - 16;
 				movements[piece][square][dir][0].vector = BITVECTOR(square - 1 - 16);
 				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = allones_bitvector;
+				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
 			    } else {
 				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = allones_bitvector;
+				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
 			    }
 			    break;
 			}
@@ -1452,12 +1451,12 @@ void init_movements()
 		    }
 		}
 
-		/* Always put an allones_bitvector at the end of the movement vector
+		/* Always put an ALL_ONES_BITVECTOR at the end of the movement vector
 		 * to make sure we stop!
 		 */
 
 		movements[piece][square][dir][mvmt].square = -1;
-		movements[piece][square][dir][mvmt].vector = allones_bitvector;
+		movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
 
 	    }
 	}
@@ -1499,7 +1498,7 @@ void init_movements()
 	    }
 
 	    normal_pawn_movements[square][color][mvmt].square = -1;
-	    normal_pawn_movements[square][color][mvmt].vector = allones_bitvector;
+	    normal_pawn_movements[square][color][mvmt].vector = ALL_ONES_BITVECTOR;
 
 	    /* Backwards pawn movements */
 
@@ -1520,7 +1519,7 @@ void init_movements()
 	    }
 
 	    normal_pawn_movements_bkwd[square][color][mvmt].square = -1;
-	    normal_pawn_movements_bkwd[square][color][mvmt].vector = allones_bitvector;
+	    normal_pawn_movements_bkwd[square][color][mvmt].vector = ALL_ONES_BITVECTOR;
 
 	    /* Forward pawn captures. */
 
@@ -1552,7 +1551,7 @@ void init_movements()
 	    }
 
 	    capture_pawn_movements[square][color][mvmt].square = -1;
-	    capture_pawn_movements[square][color][mvmt].vector = allones_bitvector;
+	    capture_pawn_movements[square][color][mvmt].vector = ALL_ONES_BITVECTOR;
 
 	    /* Backwards pawn captures */
 
@@ -1584,7 +1583,7 @@ void init_movements()
 	    }
 
 	    capture_pawn_movements_bkwd[square][color][mvmt].square = -1;
-	    capture_pawn_movements_bkwd[square][color][mvmt].vector = allones_bitvector;
+	    capture_pawn_movements_bkwd[square][color][mvmt].vector = ALL_ONES_BITVECTOR;
 
 	}
 
@@ -1627,7 +1626,7 @@ void verify_movements()
 			for (movementptr = movements[piece][squareA][dir];
 			     (movementptr->vector & BITVECTOR(squareB)) == 0;
 			     movementptr++) ;
-			if ((movementptr->square != -1) || (movementptr->vector != allones_bitvector)) {
+			if ((movementptr->square != -1) || (movementptr->vector != ALL_ONES_BITVECTOR)) {
 			    fatal("Self movement possible!? %s %d %d\n",
 				  piece_name[piece], squareA, movementptr->square);
 			}
@@ -1649,8 +1648,8 @@ void verify_movements()
 		    }
 
 		    if (movementptr->square == -1) {
-			if (movementptr->vector != allones_bitvector) {
-			    fatal("-1 movement lacks allones_bitvector: %s %d %d\n",
+			if (movementptr->vector != ALL_ONES_BITVECTOR) {
+			    fatal("-1 movement lacks ALL_ONES_BITVECTOR: %s %d %d\n",
 				  piece_name[piece], squareA, squareB);
 			}
 		    } else if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
@@ -1665,8 +1664,8 @@ void verify_movements()
 				  piece_name[piece], squareA, squareB);
 			}
 			movement_possible = 1;
-			if (movementptr->vector == allones_bitvector) {
-			    fatal("allones_bitvector on a legal movement: %s %d %d\n",
+			if (movementptr->vector == ALL_ONES_BITVECTOR) {
+			    fatal("ALL_ONES_BITVECTOR on a legal movement: %s %d %d\n",
 				  piece_name[piece], squareA, squareB);
 			}
 		    }
@@ -1739,7 +1738,7 @@ void verify_movements()
 			for (movementptr = fwd_movement;
 			     (movementptr->vector & BITVECTOR(squareB)) == 0;
 			     movementptr++) ;
-			if ((movementptr->square != -1) || (movementptr->vector != allones_bitvector)) {
+			if ((movementptr->square != -1) || (movementptr->vector != ALL_ONES_BITVECTOR)) {
 			    fatal("Self movement possible!? PAWN %d %d\n", squareA, movementptr->square);
 			}
 		    }
@@ -1756,8 +1755,8 @@ void verify_movements()
 		    }
 
 		    if (movementptr->square == -1) {
-			if (movementptr->vector != allones_bitvector) {
-			    fatal("-1 movement lacks allones_bitvector: %s %d %d\n",
+			if (movementptr->vector != ALL_ONES_BITVECTOR) {
+			    fatal("-1 movement lacks ALL_ONES_BITVECTOR: %s %d %d\n",
 				  piece_name[piece], squareA, squareB);
 			}
 		    } else if ((movementptr->square < 0) || (movementptr->square >= NUM_SQUARES)) {
@@ -1772,8 +1771,8 @@ void verify_movements()
 				  piece_name[piece], squareA, squareB);
 			}
 			movement_possible = 1;
-			if (movementptr->vector == allones_bitvector) {
-			    fatal("allones_bitvector on a legal movement: %s %d %d\n",
+			if (movementptr->vector == ALL_ONES_BITVECTOR) {
+			    fatal("ALL_ONES_BITVECTOR on a legal movement: %s %d %d\n",
 				  piece_name[piece], squareA, squareB);
 			}
 		    }
@@ -3781,7 +3780,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    if (tb->piece_type[piece] == PAWN) {
 		tb->legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
 	    } else {
-		tb->legal_squares[piece] = allones_bitvector;
+		tb->legal_squares[piece] = ALL_ONES_BITVECTOR;
 	    }
 	} else {
 	    int j = 0;
@@ -4278,7 +4277,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
     if (tb->symmetry > 1) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (((tb->piece_type[piece] != PAWN) && (tb->legal_squares[piece] != allones_bitvector))
+	    if (((tb->piece_type[piece] != PAWN) && (tb->legal_squares[piece] != ALL_ONES_BITVECTOR))
 		|| ((tb->piece_type[piece] == PAWN) && (tb->legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
 		fatal("Piece restrictions not allowed with symmetric indices (yet)\n");
 		return NULL;
@@ -4794,7 +4793,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.485 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.486 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12233,7 +12232,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.485 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.486 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
