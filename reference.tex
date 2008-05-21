@@ -312,7 +312,7 @@ cause of the problem.
 
 \subsubsection{\tt <entries-format> \ldots\quad </entries-format>}
 
-This optional entity controls the internal format used to store a
+This optional element controls the internal format used to store a
 tablebase during its construction.  It contains a number of entities,
 each corresponding to a structure field, all of which admit at least
 the attributes {\tt bits} and {\tt offset}, which specify,
@@ -364,7 +364,7 @@ entries table if that is the only way to create a free bit.
 recompiled with a different {\tt formats.h} file, which the
 program will print as it terminates with a fatal error.
 
-{\bf Example:} A good example of how to use this entity is found in
+{\bf Example:} A good example of how to use this element is found in
 the standard {\tt kppkp} tablebase, which has a maximum distance to
 mate of 128, and therefore requires a 9 bit {\tt dtm} field
 (unfortunately, there's no way to know this in advance).  This can be
@@ -384,7 +384,7 @@ gets doubled to 148 since we use 8-way symmetry.
 
 \subsubsection{\tt <proptable-format> \ldots\quad </proptable-format>}
 
-This optional entity controls the internal format used to store
+This optional element controls the internal format used to store
 proptables, and is structured like {\tt entries-format}.
 The possible entries here are:
 
@@ -431,11 +431,11 @@ program will print as it terminates with a fatal error.
 
 \subsection{\tt <tablebase-statistics> \ldots\quad </tablebase-statistics>}
 
-This entity is added by the program and should not be specified in the
+This element is added by the program and should not be specified in the
 input.  It contains statistics relating to the finished tablebase.
 
 \begin{tabular}{c p{12cm}}
-Entity & \multicolumn{1}{c}{Interpretation} \cr
+Element & \multicolumn{1}{c}{Interpretation} \cr
 \hline
 {\tt indices} & Total number of entries in the uncompressed tablebase \cr
 {\tt PNTM-mated-positions} & Total number of positions in which {\it player not-to-move} is mated; i.e, illegal positions
@@ -454,11 +454,11 @@ the longest forced loss \cr
 
 \subsection{\tt <generation-statistics> \ldots\quad </generation-statistics>}
 
-This entity is added by the program and should not be specified in the
+This element is added by the program and should not be specified in the
 input.  It contains statistics relating to the program run that generated the tablebase.
 
 \begin{tabular}{c p{12cm}}
-Entity & \multicolumn{1}{c}{Interpretation} \cr
+Element & \multicolumn{1}{c}{Interpretation} \cr
 \hline
 {\tt host} & Hostname of system that generated the tablebase \cr
 {\tt program} & Name and version of the program that generated the tablebase \cr
