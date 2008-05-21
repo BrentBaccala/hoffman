@@ -1,0 +1,82 @@
+\documentclass[11pt]{article}
+
+\usepackage{vmargin}
+\setmarginsrb{0.5in}{1in}{0.5in}{0.5in}{20pt}{20pt}{20pt}{20pt}
+
+\title{Propagation Tables in Hoffman}
+\author{Brent Baccala}
+
+\usepackage{times}
+\pagestyle{empty}
+
+% Get rid of section numbers
+\def\thesection{}
+
+% Get rid of page numbers
+\def\thepage{}
+
+\begin{document}
+
+\maketitle
+
+\parindent 0pt
+\parskip 12pt
+
+Hoffman is a program to solve chess endgames using retrograde
+analysis.  Retrograde analysis is only useful in the endgame, runs
+very slowly, and produces enormous amounts of data.  Its great
+advantage lies in its ability to completely solve the endgame.  In a
+very real sense, a retrograde engine has no ``move horizon'' like a
+conventional chess engine.  It sees everything.
+
+A Hoffman analysis can be quite space-intensive.  Since its
+memory utilization pattern is basically random, Hoffman will begin to
+swap dramatically and suffer a disastrous drop in performance once its
+working set size exceeds the machine's available memory.  To alleviate
+this, the program can be operated in a mode where it fills a series of
+{\it propagation tables}, writes each one out to disk when full, then
+reads them back in sequentially during the next pass.  Although less
+efficient than when the working set can be contained in memory,
+propagation tables allow the program to build tablebases of
+essentially unlimited size with no swapping and reasonable CPU
+utilization.
+
+Propagation tables are implemented using a variation of the Library
+Sort proposed by Bender, Farach-Colton, and Mosteiro in \cite{bender} and the merge
+trees described by Knuth in \cite{knuth}.  Probably the most novel aspect of
+the implementation (to my knowledge) is the use of inversion in a
+finite field to smooth the distribution of index numbers.
+
+\section{The Algorithm}
+
+The basic operation of the program is to make multiple sweeps through
+an ``entries'' table, with the processing of each entry triggering
+changes to other, related entries.  The basic problem is that the
+entries table can not fit into memory.  Therefore, we store the
+entries table on disk and sweep through it sequentially.  To avoid the
+random disk accesses that would be required by the update operation,
+we maintain a sorted table (the ``proptable'') in memory that contains
+the information needed to perform an update.  A complete proptable can
+not fit in memory, either, so we write partial proptables out to disk
+as they fill, each to a different file.  Once a pass is complete, the
+output proptables become input proptables for the next pass.  Each
+(sorted) input proptable is read sequentially along with the entries
+file, the updates from all the proptables are pass through an
+in-memory merge tree, and the sorted updates are applied sequentially
+as we move through the entries table, generating a new set of output
+proptables as we go.
+
+
+
+%\section{Reference}
+\begin{thebibliography}{99}
+
+\bibitem{knuth} Knuth, Art of Computer Programming, Vol 3, 2nd Ed.
+
+\bibitem{bender} INSERTION SORT is O(n log n) -  Bender, Farach-Colton, Mosteiro (2004)   
+\hfil\break {\tt http://citeseer.ist.psu.edu/630187.html}
+
+\end{thebibliography}
+
+
+\end{document}
