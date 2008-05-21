@@ -61,7 +61,7 @@ sub print_cntl_file {
     open (XMLFILE, ">$filename.xml");
 
     printnl '<?xml version="1.0"?>';
-    printnl '<!DOCTYPE tablebase SYSTEM "tablebase.dtd">';
+    printnl '<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">';
     printnl '';
     printnl '<tablebase>';
     if (index($filename, 'p') == -1) {
