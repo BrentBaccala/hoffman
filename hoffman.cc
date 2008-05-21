@@ -634,7 +634,7 @@ typedef struct tablebase {
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
 
-    int move_restrictions[2];		/* one for each color */
+    int prune_enable[2];		/* one for each color */
     int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
     int stalemate_prune_color;
 
@@ -4596,10 +4596,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	xmlFree(modulus);
     }
 
-    /* Fetch the move restrictions */
+    /* Fetch any prune enable elements */
 
     context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression(BAD_CAST "//move-restriction", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//prune-enable | //move-restriction", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	int i;
 	for (i=0; i < result->nodesetval->nodeNr; i++) {
@@ -4614,12 +4614,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    color = find_name_in_array((char *) color_str, colors);
 	    type = find_name_in_array((char *) type_str, restriction_types);
 	    if ((color == -1) || (type == -1)) {
-		fatal("Illegal move restriction\n");
+		fatal("Illegal prune-enable\n");
 	    } else {
-		if ((tb->move_restrictions[color] > 0) && (tb->move_restrictions[color] != type)) {
-		    fatal("Incompatible move restrictions\n");
+		if ((tb->prune_enable[color] > 0) && (tb->prune_enable[color] != type)) {
+		    fatal("Incompatible prune enables\n");
 		} else {
-		    tb->move_restrictions[color] = type;
+		    tb->prune_enable[color] = type;
 		}
 	    }
 
@@ -4766,7 +4766,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.481 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.482 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -4974,13 +4974,13 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
     futurebase->missing_pawn = -1;
     futurebase->missing_non_pawn = -1;
 
-    /* Check futurebase to make sure its move restriction(s) match our own */
+    /* Check futurebase to make sure its prune enable(s) match our own */
 
     for (color = 0; color < 2; color ++) {
-	if ((futurebase->move_restrictions[color] != RESTRICTION_NONE)
-	    && (futurebase->move_restrictions[color]
-		!= tb->move_restrictions[futurebase->invert_colors ? 1 - color : color])) {
-	    fatal("'%s': Futurebase doesn't match move restrictions!\n", filename);
+	if ((futurebase->prune_enable[color] != RESTRICTION_NONE)
+	    && (futurebase->prune_enable[color]
+		!= tb->prune_enable[futurebase->invert_colors ? 1 - color : color])) {
+	    fatal("'%s': Futurebase doesn't match prune-enables!\n", filename);
 	    return 0;
 	}
     }
@@ -5128,7 +5128,7 @@ boolean preload_all_futurebases(tablebase_t *tb)
 	type = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "type");
 	if (type != NULL) {
 	    if (futurebases[fbnum]->futurebase_type != find_name_in_array((char *) type, futurebase_types)) {
-		fatal("'%s': Specified type '%s' doesn't match autodetected type '%s'\n",
+		fatal("'%s': Specified futurebase type '%s' doesn't match autodetected type '%s'\n",
 		      filename, type, futurebase_types[futurebases[fbnum]->futurebase_type]);
 	    }
 	    xmlFree(type);
@@ -10074,8 +10074,8 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 	int color = find_name_in_array((char *) prune_color, colors);
 	int type = find_name_in_array((char *) prune_type, restriction_types);
 
-	if (type != tb->move_restrictions[color]) {
-	    fatal("Prune statements don't match tablebase restrictions\n");
+	if (type != tb->prune_enable[color]) {
+	    fatal("Prune statements don't match tablebase prune-enables\n");
 	}
 
 	if (prune_color != NULL) xmlFree(prune_color);
@@ -12286,7 +12286,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.481 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.482 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
