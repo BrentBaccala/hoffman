@@ -216,7 +216,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.399 $ $Locker: baccala $
+Hoffman $Revision: 1.1 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -241,7 +241,7 @@ Hoffman $Revision: 1.399 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.320 $ $Locker:  $</program>
+      <program>Hoffman $Revision: 1.1 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -315,7 +315,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.399 $ $Locker: baccala $
+Hoffman $Revision: 1.1 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -464,10 +464,15 @@ a good program to let run overnight.  Remember, you can always use the
 generate.  Hoffman has also been used to generate a complete set of
 five-piece tablebases, but this takes considerably longer.
 
-Hoffman can thus duplicate the functionality of the Nalimov programs,
-but that's not all it can do.  It can also duplicate the functionality
-of Eiko Bleicher's Freezer.  For example, here is a 1901 composition
-by Lasker and Reichhelm, used as a demo on the Freezer website:
+Hoffman can thus duplicate much of the functionality of the Nalimov
+programs, but that's not all it can do.  It can also duplicate much of
+the functionality of Eiko Bleicher's Freezer ({\tt
+http://www.freezerchess.com/}).  Aside from Freezer's nice GUI, the
+only thing Hoffman lacks is the ability to use Nalimov tablebases as
+futurebases, which matters because 6 piece Nalimov tablebases are
+available on-line, while only 5 piece tablebases are currently
+available for Hoffman.  For example, here is a 1901 composition by
+Lasker and Reichhelm, used as a demo on the Freezer website:
 
 \fenboard{8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w - - 0 1}
 $$\showboard$$
@@ -545,7 +550,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.399 $ $Locker: baccala $
+Hoffman $Revision: 1.1 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
