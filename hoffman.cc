@@ -4772,7 +4772,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.483 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.484 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8316,34 +8316,10 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 
 			true_pawn = position.permuted_piece[pawn];
 
-			/* If the futurebase prunes stalemates to be victories for the queening
-			 * color, then a queen is as good as a rook or a bishop.
-			 */
-
-			if ((futurebase->stalemate_prune_type == RESTRICTION_CONCEDE)
-			    && (futurebase->stalemate_prune_color == current_tb->piece_color[pawn])
-			    && (! futurebase->invert_colors)
-			    && futurebase->piece_type[extra_piece] == QUEEN) {
-
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotions[true_pawn]
-									  + QUEEN - 1,
-									  &position);
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotions[true_pawn]
-									  + ROOK - 1,
-									  &position);
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotions[true_pawn]
-									  + BISHOP - 1,
-									  &position);
-
-			} else {
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotions[true_pawn]
-									  + futurebase->piece_type[extra_piece] - 1,
-									  &position);
-			}
+			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
+								      promotions[true_pawn]
+								      + futurebase->piece_type[extra_piece] - 1,
+								      &position);
 
 			/* We may be about to use this position again, so put the board_vector back... */
 
@@ -8533,26 +8509,9 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 			 * from the side that didn't promote in an en passant state.
 			 */
 
-			if ((futurebase->stalemate_prune_type == RESTRICTION_CONCEDE)
-			    && (futurebase->stalemate_prune_color == current_tb->piece_color[pawn])
-			    && (! futurebase->invert_colors)
-			    && futurebase->piece_type[extra_piece] == QUEEN) {
-
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece] + QUEEN - 1,
-									  &position);
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece] + ROOK - 1,
-									  &position);
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece] + BISHOP - 1,
-									  &position);
-
-			} else {
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
-									  &position);
-			}
+			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
+								      promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+								      &position);
 
 			/* We're about to use this position again, so put the board_vector back... */
 
@@ -8580,27 +8539,9 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 			true_captured_piece = position.permuted_piece[missing_piece2];
 			true_pawn = position.permuted_piece[pawn];
 
-			if ((futurebase->stalemate_prune_type == RESTRICTION_CONCEDE)
-			    && (futurebase->stalemate_prune_color == current_tb->piece_color[pawn])
-			    && (! futurebase->invert_colors)
-			    && futurebase->piece_type[extra_piece] == QUEEN) {
-
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece] + QUEEN - 1,
-									  &position);
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece] + ROOK - 1,
-									  &position);
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece] + BISHOP - 1,
-									  &position);
-
-			} else {
-
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
-									  &position);
-			}
+			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
+								      promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+								      &position);
 
 			/* We're about to use this position again, so put the board_vector back... */
 
@@ -10344,16 +10285,6 @@ boolean check_pruning(tablebase_t *tb) {
 		    promoted_pieces_handled
 			|= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
 
-		    /* If the futurebase prunes stalemates, then a queen suffices for a rook or bishop. */
-
-		    if ((futurebases[fbnum]->stalemate_prune_type == RESTRICTION_CONCEDE)
-			&& (futurebases[fbnum]->stalemate_prune_color == tb->piece_color[pawn])
-			&& (! futurebases[fbnum]->invert_colors)
-			&& (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == QUEEN)) {
-
-			promoted_pieces_handled |= (1 << ROOK);
-			promoted_pieces_handled |= (1 << BISHOP);
-		    }
 		}
 	    }
 
@@ -10398,16 +10329,6 @@ boolean check_pruning(tablebase_t *tb) {
 		promoted_pieces_handled
 		    |= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
 
-		/* If the futurebase prunes stalemates, then a queen suffices for a rook or bishop. */
-
-		if ((futurebases[fbnum]->stalemate_prune_type == RESTRICTION_CONCEDE)
-		    && (futurebases[fbnum]->stalemate_prune_color == tb->piece_color[pawn])
-		    && (! futurebases[fbnum]->invert_colors)
-		    && (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == QUEEN)) {
-
-		    promoted_pieces_handled |= (1 << ROOK);
-		    promoted_pieces_handled |= (1 << BISHOP);
-		}
 	    }
 	}
 
@@ -12290,7 +12211,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.483 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.484 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
