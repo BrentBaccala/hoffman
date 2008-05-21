@@ -1,9 +1,13 @@
 #!/usr/bin/perl
+#
+# This script writes a set of control files for all 5-piece tablebases
+# into the current directory.
+#
+# by Brent Baccala; no rights reserved
 
 my $pieces = "qrbnp";
 
 my @pieces = ('q', 'r', 'b', 'n', 'p');
-#my @pieces = ('q', 'r', 'b', 'n');
 my @non_pawn_pieces = ('q', 'r', 'b', 'n');
 
 my %pieces;
