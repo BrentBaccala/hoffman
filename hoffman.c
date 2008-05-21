@@ -153,18 +153,40 @@ long contended_indices = 0;
 #include "tablebase_dtd.h"
 
 
-/* According the GCC documentation, "long long" ints are supported by the C99 standard as well as
- * the GCC compiler.  In any event, since chess boards have 64 squares, being able to use 64 bit
- * integers makes a bunch of stuff a lot easier.
- *
- * XXX Have to be careful with this if porting.
+/* Working in conjunction with the configure script, find a variable that is either exactly 32 bits
+ * or longer, and one that is either exactly 64 bits or longer.  If this fails, we create the
+ * typedef anyway to avoid a slew of compiler error messages.
  */
 
-typedef unsigned long long int uint64;
-typedef unsigned int uint32;
-typedef unsigned short uint16;
 typedef unsigned char uint8;
-typedef short boolean;
+typedef unsigned char boolean;
+
+#if SIZEOF_UNSIGNED_SHORT >= 4
+typedef unsigned short uint32;
+#elif SIZEOF_UNSIGNED_INT >= 4
+typedef unsigned int uint32;
+#elif SIZEOF_UNSIGNED_LONG >= 4
+typedef unsigned long uint32;
+#elif SIZEOF_UNSIGNED_LONG_LONG >= 4
+typedef unsigned long long uint32;
+#else
+# error Could not find a 32 bit unsigned integer variable
+typedef unsigned int uint32;
+#endif
+
+#if SIZEOF_UNSIGNED_SHORT >= 8
+typedef unsigned short uint64;
+#elif SIZEOF_UNSIGNED_INT >= 8
+typedef unsigned int uint64;
+#elif SIZEOF_UNSIGNED_LONG >= 8
+typedef unsigned long uint64;
+#elif SIZEOF_UNSIGNED_LONG_LONG >= 8
+typedef unsigned long long uint64;
+#else
+# error Could not find a 64 bit unsigned integer variable
+typedef unsigned long long uint64;
+#endif
+
 
 typedef uint32 index_t;
 
@@ -4772,7 +4794,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.484 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.485 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12211,7 +12233,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.484 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.485 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

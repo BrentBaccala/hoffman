@@ -11,12 +11,18 @@ else
 	AC_MSG_WARN(You don't have gcc; Hoffman uses several gcc extensions)
 fi
 
+AC_CHECK_SIZEOF(unsigned short)
+AC_CHECK_SIZEOF(unsigned int)
+AC_CHECK_SIZEOF(unsigned long)
+AC_CHECK_SIZEOF(unsigned long long)
+
 ACX_PTHREAD(AC_DEFINE(HAVE_PTHREAD,1,[Define if you have POSIX threads libraries and header files.])
 	    AC_DEFINE(USE_THREADS,1,[Define to use POSIX threads libraries and header files.])
 	    CC="$PTHREAD_CC"; CFLAGS="$CFLAGS $PTHREAD_CFLAGS"; LIBS="$PTHREAD_LIBS $LIBS")
 
 dnl Check for the required libraries
 
+AC_CHECK_LIB(m, sqrt,, AC_MSG_ERROR([You must have the math library]))
 AC_CHECK_LIB(z, inflate,, AC_MSG_ERROR([You must have zlib]))
 AM_PATH_XML2(,,AC_MSG_ERROR(You must have libxml2))
 
