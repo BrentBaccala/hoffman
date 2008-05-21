@@ -364,6 +364,22 @@ entries table if that is the only way to create a free bit.
 recompiled with a different {\tt formats.h} file, which the
 program will print as it terminates with a fatal error.
 
+{\bf Example:} A good example of how to use this entity is found in
+the standard {\tt kppkp} tablebase, which has a maximum distance to
+mate of 128, and therefore requires a 9 bit {\tt dtm} field
+(unfortunately, there's no way to know this in advance).  This can be
+achieved within a 2-byte {\tt entries-format} by stealing a bit from
+the {\tt movecnt} field, leaving it with 6 bits for a possible $2^6 -
+5 = 59$ movements.  Since a king can have no more than 8 movements,
+and a pawn can have no more than 12 (on the seventh rank it has two
+possible captures and a forward movement, times four possible pieces
+it can promote into), a king and two pawns can have no more than 32
+movements (less, actually, since no capture-promotions are possible
+with only a pawn and a king on the opposing side), so a 6-bit {\tt
+movecnt} works fine.  On the other hand, this alternate format would
+not work on the {\tt kqqkq} tablebase, since a queen can have up to 28
+movements, so a king and two queens can have around 74 movements, which
+gets doubled to 148 since we use 8-way symmetry.
 
 
 \subsubsection{\tt <proptable-format> \ldots\quad </proptable-format>}
