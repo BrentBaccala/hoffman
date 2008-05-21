@@ -118,7 +118,7 @@ sub print_cntl_file {
 
     printnl '   <generation-controls>';
     printnl '      <output filename ="' . $filename . '.htb"/>';
-    if (index($filename, 'p') == -1) {
+    if ($filename ne "kppkp") {
 	printnl '      <entries-format>';
 	printnl '         <dtm bits="8" offset="0"/>';
 	printnl '         <locking-bit offset="8"/>';
@@ -126,9 +126,9 @@ sub print_cntl_file {
 	printnl '      </entries-format>';
     } else {
 	printnl '      <entries-format>';
-	printnl '         <dtm bits="24" offset="0"/>';
-	printnl '         <locking-bit offset="24"/>';
-	printnl '         <movecnt bits="7" offset="25"/>';
+	printnl '         <dtm bits="9" offset="0"/>';
+	printnl '         <locking-bit offset="9"/>';
+	printnl '         <movecnt bits="6" offset="10"/>';
 	printnl '      </entries-format>';
     }
     printnl '   </generation-controls>';
