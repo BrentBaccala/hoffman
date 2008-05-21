@@ -3625,8 +3625,8 @@ char * print_format(char *name, struct format *format)
  * I use a DTD and validate the XML input, so there's very little error checking here.  The idea is
  * that the validation provides most of the error checks.
  *
- * There very little difference between the futurebase and control file cases, except that we pay
- * attention to the generation controls in the control file but ignore them in futurebases.
+ * There's very little difference between the futurebase and generation control file cases, but the
+ * second argument is a flag to distinguish between them.
  */
 
 tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
@@ -4596,6 +4596,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	xmlFree(modulus);
     }
 
+    if (using_proptables && !is_futurebase) {
+	if (tb->max_index > PROPTABLE_FORMAT_INDEX_MASK) {
+	    fatal("max_index (%d) doesn't fit in proptable's %d bit index field\n", tb->max_index, proptable_format.index_bits);
+	}
+    }
+
     /* Fetch any prune enable elements */
 
     context = xmlXPathNewContext(doc);
@@ -4766,7 +4772,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.482 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.483 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7244,8 +7250,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
     /* No, we're really at the end! */
 
-    /* XXX could be a problem if max_index + 1 won't fit in the index element */
-    set_propentry_index(dest, current_tb->max_index + 1);
+    set_propentry_index(dest, PROPTABLE_FORMAT_INDEX_MASK);
 }
 
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
@@ -7373,8 +7378,7 @@ void proptable_pass(int target_dtm)
 	    fetch_next_propentry(i, SORTING_NETWORK_ELEM(highbit + i));
 	    proptable_num[highbit + i] = i;
 	} else {
-	    /* XXX could be a problem if max_index + 1 won't fit in the index element */
-	    set_propentry_index(SORTING_NETWORK_ELEM(highbit + i), current_tb->max_index + 1);
+	    set_propentry_index(SORTING_NETWORK_ELEM(highbit + i), PROPTABLE_FORMAT_INDEX_MASK);
 	    proptable_num[highbit + i] = -1;
 	}
     }
@@ -12286,7 +12290,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.482 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.483 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
