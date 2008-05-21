@@ -270,15 +270,7 @@ same {\tt type}, a fatal error if their {\tt type}s differ.
 A single {\tt prune} element may be specified with {\tt
 move="stalemate"} and {\tt type="concede"}.  In this case, the {\tt
 color} attribute indicates to which side stalemates should be conceded
-as wins.  My main idea in implementing this was to speed up processing
-by allowing promotion futurebases with only queens to substitute for
-promotions into rooks and bishops, since the only logical reason to
-underpromote is to avoid a stalemate.  To this end, a futurebase with
-an extra queen and stalemates pruned will be treated as handling all
-three promotions (queen, rook, and bishop).  This feature has not been
-tested, and I believe there are bugs in the code (I'm not sure if the
-color sense is right, and I think you can ``lose'' these statements
-through a series of linked futurebases).
+as wins.
 
 {\bf Note:} {\tt prune} elements are only allowed if they match a {\tt
 prune-enable} element.  If no {\tt prune-enable} elements were
