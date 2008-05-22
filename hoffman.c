@@ -4793,7 +4793,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.488 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.489 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12178,7 +12178,7 @@ void usage(char *program_name)
     fprintf(stderr, "   or: %s -p TABLEBASE                               (probe)\n", program_name);
     fprintf(stderr, "   or: %s -i TABLEBASE                               (info)\n", program_name);
 #ifdef USE_NALIMOV
-    fprintf(stderr, "   or: %s [-n NALIMOV-PATH] -v TABLEBASE             (verify)\n", program_name);
+    fprintf(stderr, "   or: %s -v [-n NALIMOV-PATH] TABLEBASE             (verify)\n", program_name);
 #endif
     fprintf(stderr, "\n");
     fprintf(stderr, "Possible GENERATING-OPTIONS are:\n");
@@ -12187,7 +12187,7 @@ void usage(char *program_name)
 #ifdef USE_THREADS
     fprintf(stderr, "   -t NUM-THREADS        sets number of threads to use (default 1)\n");
 #endif
-    fprintf(stderr, "   -q                    quiet mode; suppress information messages\n");
+    fprintf(stderr, "   -q                    quiet mode; suppress informational messages\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Other options:\n");
 #ifdef USE_NALIMOV
@@ -12244,7 +12244,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.488 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.489 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12315,7 +12315,11 @@ int main(int argc, char *argv[])
     }
 
     if (!generating && !probing && !verify && !dump_info) {
-	fatal("At least one of generating (-g), probing (-p), verify (-v), or info (-i) must be specified\n");
+#if USE_NALIMOV
+	fatal("At least one of -g, -p, -i, or -v must be specified\n");
+#else
+	fatal("At least one of -g, -p, or -i must be specified\n");
+#endif
 	usage(argv[0]);
 	terminate();
     }
