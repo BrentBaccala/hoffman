@@ -4793,7 +4793,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.487 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.488 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12171,6 +12171,31 @@ void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm, int pntm
     }
 }
 
+void usage(char *program_name)
+{
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Usage: %s -g [GENERATING-OPTIONS] XML-CONTROL-FILE   (generate)\n", program_name);
+    fprintf(stderr, "   or: %s -p TABLEBASE                               (probe)\n", program_name);
+    fprintf(stderr, "   or: %s -i TABLEBASE                               (info)\n", program_name);
+#ifdef USE_NALIMOV
+    fprintf(stderr, "   or: %s [-n NALIMOV-PATH] -v TABLEBASE             (verify)\n", program_name);
+#endif
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Possible GENERATING-OPTIONS are:\n");
+    fprintf(stderr, "   -o OUTPUT-FILENAME    set output filename (overrides control file)\n");
+    fprintf(stderr, "   -P PROPTABLE-SIZE     enable proptables and sets size in MBs\n");
+#ifdef USE_THREADS
+    fprintf(stderr, "   -t NUM-THREADS        sets number of threads to use (default 1)\n");
+#endif
+    fprintf(stderr, "   -q                    quiet mode; suppress information messages\n");
+    fprintf(stderr, "\n");
+    fprintf(stderr, "Other options:\n");
+#ifdef USE_NALIMOV
+    fprintf(stderr, "   -n NALIMOV-PATH       sets path to find Nalimov tablebases\n");
+#endif
+    fprintf(stderr, "   -h                    display this help message and exit\n");
+}
+
 int main(int argc, char *argv[])
 {
     /* Make sure this tablebase array is one bigger than we need, so it can be NULL terminated */
@@ -12219,7 +12244,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.487 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.488 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12237,7 +12262,7 @@ int main(int argc, char *argv[])
     verify_movements();
 
     while (1) {
-	c = getopt(argc, argv, "iqgpvo:n:P:t:");
+	c = getopt(argc, argv, "hiqgpvo:n:P:t:");
 
 	if (c == -1) break;
 
@@ -12254,6 +12279,10 @@ int main(int argc, char *argv[])
 	    break;
 	case 'v':
 	    verify = 1;
+	    break;
+	case 'h':
+	    usage(argv[0]);
+	    terminate();
 	    break;
 	case 'q':
 	    verbose = 0;
@@ -12281,22 +12310,26 @@ int main(int argc, char *argv[])
 
     if (generating && probing) {
 	fatal("Only one of the generating (-g) and probing (-p) options can be specified\n");
+	usage(argv[0]);
 	terminate();
     }
 
     if (!generating && !probing && !verify && !dump_info) {
 	fatal("At least one of generating (-g), probing (-p), verify (-v), or info (-i) must be specified\n");
+	usage(argv[0]);
 	terminate();
     }
 
     if (!generating && (output_filename != NULL)) {
 	fatal("An output filename can not be specified when probing or verifying\n");
+	usage(argv[0]);
 	terminate();
     }
 
 #if !USE_NALIMOV
     if (verify) {
 	fatal("Can't verify - program compiled without Nalimov support\n");
+	usage(argv[0]);
 	terminate();
     }
 #endif
