@@ -4793,7 +4793,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.486 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.487 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9361,34 +9361,21 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
  * decisions made on the futurebases used to calculate this one).
  *
  * We specify pruning in a simple way - by omitting future tables for moves we don't want to
- * consider.  This can be dangerous, so we require this feature to be specifically enabled.  Right
- * now, there are two possibilities we can specify in the XML control file; one to allow moves to be
- * DISCARDED; the other to allow victory to be CONCEDED to the side that makes the move.
+ * consider.  This can be dangerous, so we require this feature to be specifically enabled.  There
+ * are two possibilities: moves can be DISCARDED, or victory can be CONCEDED to the side that makes
+ * the move.
  *
  * So, if we are white, and assuming that this is a table with a frozen white pawn on e3, we can
  * prune by simply ignoring Pe4 as a possible move.  If there is a black pawn on the g-file, and we
- * don't want to compute out what happens after it queens, we can prune by treating Pg1=X as a forced
- * win for black.
- *
- * We might want to "partially" prune a move like Pg1=X by looking a half-move into the future to
- * see if we can immediately take the new piece and simplify that way.  To do so, we would construct
- * a futurebase for the piece combination resulting after Pg1=X, probably leaving X frozen on g1,
- * make one pass through that futurebase (XXX this is currently unimplemented) and flag everything
- * else a win for black.  This approach avoids having to step a half-move into the future during
- * back propagation.  The advantages of this are three-fold.  First, it simplifies the program, and
- * that's a big plus from a quality control standpoint.  Second, it avoids the random accesses that
- * would be required to probe into the tablebase, replacing them with a series of sequential sweeps,
- * and for a big tablebase that's probably a significant performance win.  Finally, it's a lot more
- * flexible.  We can make two, or three, or five sweeps through that tablebase, looking a few more
- * moves into the future for forced reductions.
+ * don't want to compute out what happens after it queens, we can prune by conceding Pg1=X as a win
+ * for black.
  *
  * For example, let's say we're looking at a Q-and-P vs. Q-and-P endgame.  There are four completely
  * mobile pieces (2 Ks and 2 Qs), and this is easy.  But if one of the pawns queens, then we've got
  * a more complex game with five mobile pieces.  But we don't want to completely discard all
- * possible enemy promotions, if we can immediately capture the new queen (or the old one).  So we
- * construct a special tablebase for a queen frozen on the queening square, back prop a tablebase
- * for a Q-and-P vs. Q endgame into it, make a pass or two through it, then feed it into our current
- * tablebase.
+ * possible enemy promotions, if we can immediately capture the new queen.  So we construct a
+ * special tablebase with a queen frozen on the queening square, concede any move by that queen as a
+ * win, then use it as a futurebase.
  *
  * And finally, we want to label in the file header that this pruning was done.  In particular, if
  * we use a pruned tablebase to compute another (earlier) pruned tablebase, we want to make sure the
@@ -12232,7 +12219,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    printf("Hoffman $Revision: 1.486 $ $Locker: baccala $\n");
+    printf("Hoffman $Revision: 1.487 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
