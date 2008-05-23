@@ -1,5 +1,6 @@
-<!ELEMENT tablebase (move-restriction*, index?, format?, piece+, futurebase*, prune*, generation-controls?, tablebase-statistics?, generation-statistics*)>
+<!ELEMENT tablebase ((move-restriction|prune-enable)*, index?, format?, piece+, futurebase*, prune*, generation-controls?, tablebase-statistics?, generation-statistics*)>
 <!ELEMENT move-restriction EMPTY>
+<!ELEMENT prune-enable EMPTY>
 <!ELEMENT piece EMPTY>
 <!ELEMENT futurebase EMPTY>
 <!ELEMENT prune EMPTY>
@@ -125,6 +126,10 @@
 	move	CDATA		#REQUIRED
 	type	(concede|discard)	#REQUIRED>
 
+<!-- move-restriction is the older, deprecated name for prune-enable -->
+<!ATTLIST prune-enable
+	color	(white|black)	#REQUIRED
+	type	(concede|discard)	#REQUIRED>
 <!ATTLIST move-restriction
 	color	(white|black)	#REQUIRED
 	type	(concede|discard)	#REQUIRED>
