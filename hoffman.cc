@@ -4793,7 +4793,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.489 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.490 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7063,7 +7063,10 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 	set_propentry_PTM_wins_flag(dest, 1);
     }
 
-    /* XXX need to check for overflow here */
+    /* XXX need to check for overflow here, and that seems to require the possibility for a merge to
+     * fail, meaning that this routine should return a failure indication and the code that calls it
+     * needs to be changed to handle that.
+     */
     set_propentry_movecnt(dest, get_propentry_movecnt(dest) + get_propentry_movecnt(src));
 
 #if 0
@@ -7447,7 +7450,16 @@ void proptable_pass(int target_dtm)
 #endif
 
 	    /* These futuremoves might be moves into check, in which case they were discarded back
-	     * during initialization.  So only commit if they are possible...
+	     * during initialization.  So we only commit if they are possible.  Now some of the
+	     * possibles might have been merged with impossibles, and if that's the case we hope
+	     * that they all had multiplicity 1, so we can filter out the impossibles and still know
+	     * what movecnt to use (by counting the possibles).
+	     *
+	     * XXX None of this really makes sense if the futurebase is dtm, since we should have
+	     * known during backprop which of the positions were in-check and never processed them.
+	     * So maybe we should change propagate_index_from_futurebase to drop positions with
+	     * dtm=-1.  (what about dtm=1?)  Bitbases and unimplemented possibilities like Nalimov
+	     * or dtr tablebases are more problematic.
 	     */
 
 	    if (target_dtm != 0) {
@@ -12244,7 +12256,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.489 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.490 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
