@@ -32,14 +32,32 @@ if keeping the input and output files (or some similar split) on
 seperate disks/controllers can be exploited.
 
 
-- check indexing logic with an automated theorem prover
+- investigate the Library Sort of Bender, et al. (2004)
 
-I've had a lot of bugs in the indexing logic, especially since there
-are two different routines for each index type that need to be kept in
-sync.  If we optimize the case where the index number is advanced by
-one (see above), then we'll have a third routine to keep in sync.  Can
-we use an automated theorem prover like Prover9 to ensure that this
-code is right?
+The paper is in References/FUN04.pdf.  Looks like it might have
+comparable performance to our bucket sort without requiring finite
+field inversion, which is itself costly.  It's probably hard to make a
+direct comparison since inversion costs CPU cycles and Library Sort
+costs memory accesses, but so long as we stay disk-bound it really
+doesn't matter either way.  Getting rid of inversion, though, is
+probably the single best thing we can do to improve compressibility of
+the resulting tablebases.
+
+
+- analyze and improve on bucket sort in proptable code
+
+Right now, the proptable insertion code runs until it has to move 25
+items to make room for a new one, then trips into the code where it
+writes the proptable out to disk and starts a new one.  The exact
+condition of 25 moves was a total guess on my part.
+
+
+- trim size of proptables
+
+Because I use an integer scaling factor during proptable insertion,
+the trailing part of a proptable (that would correspond to the
+truncated decimal part) is unused.  There's no need to either malloc
+it or check it for entries when writing the table out.
 
 
 - improve compressibility
@@ -94,14 +112,6 @@ the dtm field overflows - just checkpoint, terminate, and use our
 (unimplemented) reformating ability.
 
 
-- analyze and improve on insertion sort in proptable code
-
-Right now, the proptable insertion code runs until it has to move 10
-items to make room for a new one, then trips into the code where it
-writes the proptable out to disk and starts a new one.  The exact
-condition of 10 moves was a total guess on my part.
-
-
 - some things are uint32 right now (indices and futurevectors) that
   sometimes need to be uint64
 
@@ -143,6 +153,16 @@ operation (though gcc3 doesn't optimize them well; use gcc4), but it
 isn't as clear for proptable formats.  Compiling them in only makes
 sense if not doing so would introduce enough overhead that the program
 becomes compute-bound instead of disk-bound.
+
+
+- check indexing logic with an automated theorem prover
+
+I've had a lot of bugs in the indexing logic, especially since there
+are two different routines for each index type that need to be kept in
+sync.  If we optimize the case where the index number is advanced by
+one (see above), then we'll have a third routine to keep in sync.  Can
+we use an automated theorem prover like Prover9 to ensure that this
+code is right?
 
 
 - stalemate pruning
@@ -230,13 +250,25 @@ Perl.  Freezer seems to have a nice GUI for a tablebase generator; see
 the demos on http://www.freezerchess.com/
 
 
+- prepare a Windows version
+
+The "hoffman.nsi" file in the distribution is from an older version of
+Hoffman (the 2006 Christmas Release) for which I had prepared a
+Windows executable with cygwin and a setup installer with NSIS.  Right
+now, it's just too much trouble for me to prepare a Windows version,
+since I don't have a machine running any version of Windows.  But it
+worked before, and nothing too much has changed, so it probably
+wouldn't be too much effort to get it working again.  I seem to recall
+that I never got libftp working on Windows, though.
+
+
 - optimize futurebase backprop
   - look at entry caching again
 
 
-- revisit all the XXXs
+- warn of incompatibilities between tb and entries formats
 
-- remove in-check-flag from tablebase DTD
+- revisit all the XXXs
 
 - check for movecnt overflow when merging proptable entries
 
