@@ -14,7 +14,7 @@
 	modulus CDATA				#IMPLIED>
 
 <!ELEMENT format (dtm | flag) >
-<!ELEMENT entries-format (dtm | flag | movecnt | in-check-flag | locking-bit)+ >
+<!ELEMENT entries-format (dtm | flag | movecnt | locking-bit)+ >
 <!ELEMENT proptable-format (dtm | PTM-wins-flag | movecnt | index-field | futurevector)+ >
 
 <!ELEMENT dtm EMPTY>
@@ -32,10 +32,6 @@
 	bits CDATA				#REQUIRED>
 <!ELEMENT locking-bit EMPTY>
 <!ATTLIST locking-bit
-	offset CDATA				#IMPLIED
-	bits (1)				#IMPLIED>
-<!ELEMENT in-check-flag EMPTY>
-<!ATTLIST in-check-flag
 	offset CDATA				#IMPLIED
 	bits (1)				#IMPLIED>
 <!ELEMENT PTM-wins-flag EMPTY>
