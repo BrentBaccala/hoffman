@@ -641,6 +641,15 @@ typedef struct tablebase {
      * be illegal.  So we make the entire board "semilegal" for both rooks, process the move
      * normally, and only when it's time to convert the entire position to an index in the tablebase
      * do we actually decide if the position is fully legal.
+     *
+     * "Identical" pieces are, well, identical - same color, same type, though if two otherwise
+     * identical pieces have move restrictions that don't overlap (so they can't exchange places),
+     * they're not considered identical.
+     *
+     * "Paired" pieces are those encoded as a pair (i.e, only their positions are encoded, not their
+     * identities, saving a bit).  They are usually identical pieces, but in the 'no-en-passant'
+     * scheme, pawns restricted to a single file using plus syntax are paired, even if they are not
+     * the same color.
      */
 
     int num_pieces;
@@ -4463,6 +4472,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		 (reverse_index_ordering[piece] ? (square --) : (square ++))) {
 
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
+
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
@@ -4483,7 +4493,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		tb->max_index *= tb->total_legal_piece_positions[piece];
 	    } else if (tb->total_legal_piece_positions[piece]
 		       != tb->total_legal_piece_positions[tb->last_paired_piece[piece]]) {
-		fatal("Paired pieces don't have the same number of total legal positions\n");
+		/* Semilegal positions are supposed to be the union of legal positions for paired pieces */
+		fatal("BUG: Paired pieces don't have the same number of total semilegal positions\n");
 	    } else {
 		tb->max_index *= tb->total_legal_piece_positions[piece]/2;
 	    }
@@ -4569,6 +4580,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		 (reverse_index_ordering[piece] ? (square --) : (square ++))) {
 
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
+
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
@@ -4576,12 +4588,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
 
+		/* Unlike 'compact', we don't have to consider the en-passant case here because
+		 * we've already eliminated that as a possibility.  Also unlike 'compact', we've
+		 * paired opposing pawns on the same file.  So if en-passant were allowed, we would
+		 * now have to (like 'compact') add an extra position for it, which could cause the
+		 * total number of semilegal positions to be different for two paired pieces.
+		 */
 	    }
 	    if (tb->last_paired_piece[piece] == -1) {
 		tb->max_index *= tb->total_legal_piece_positions[piece];
 	    } else if (tb->total_legal_piece_positions[piece]
 		       != tb->total_legal_piece_positions[tb->last_paired_piece[piece]]) {
-		fatal("Paired pieces don't have the same number of total legal positions\n");
+		/* Semilegal positions are supposed to be the union of legal positions for paired pieces */
+		fatal("BUG: Paired pieces don't have the same number of total semilegal positions\n");
 	    } else {
 		tb->max_index *= tb->total_legal_piece_positions[piece]/2;
 	    }
@@ -4793,7 +4812,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.490 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.491 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12256,7 +12275,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.490 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.491 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
