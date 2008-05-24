@@ -163,12 +163,20 @@ typedef unsigned char boolean;
 
 #if SIZEOF_UNSIGNED_SHORT >= 4
 typedef unsigned short uint32;
+#define UINT32_HEX_FORMAT "0x%hx"
+#define UINT32_DECIMAL_FORMAT "%hd"
 #elif SIZEOF_UNSIGNED_INT >= 4
 typedef unsigned int uint32;
+#define UINT32_HEX_FORMAT "0x%x"
+#define UINT32_DECIMAL_FORMAT "%d"
 #elif SIZEOF_UNSIGNED_LONG >= 4
 typedef unsigned long uint32;
+#define UINT32_HEX_FORMAT "0x%lxL"
+#define UINT32_DECIMAL_FORMAT "%ldL"
 #elif SIZEOF_UNSIGNED_LONG_LONG >= 4
 typedef unsigned long long uint32;
+#define UINT32_HEX_FORMAT "0x%llxLL"
+#define UINT32_DECIMAL_FORMAT "%lldLL"
 #else
 # error Could not find a 32 bit unsigned integer variable
 typedef unsigned int uint32;
@@ -176,12 +184,20 @@ typedef unsigned int uint32;
 
 #if SIZEOF_UNSIGNED_SHORT >= 8
 typedef unsigned short uint64;
+#define UINT64_HEX_FORMAT "0x%hx"
+#define UINT64_DECIMAL_FORMAT "%hd"
 #elif SIZEOF_UNSIGNED_INT >= 8
 typedef unsigned int uint64;
+#define UINT64_HEX_FORMAT "0x%x"
+#define UINT64_DECIMAL_FORMAT "%d"
 #elif SIZEOF_UNSIGNED_LONG >= 8
 typedef unsigned long uint64;
+#define UINT64_HEX_FORMAT "0x%lxL"
+#define UINT64_DECIMAL_FORMAT "%ldL"
 #elif SIZEOF_UNSIGNED_LONG_LONG >= 8
 typedef unsigned long long uint64;
+#define UINT64_HEX_FORMAT "0x%llxLL"
+#define UINT64_DECIMAL_FORMAT "%lldLL"
 #else
 # error Could not find a 64 bit unsigned integer variable
 typedef unsigned long long uint64;
@@ -189,6 +205,7 @@ typedef unsigned long long uint64;
 
 
 typedef uint32 index_t;
+#define INDEX_T_DECIMAL_FORMAT UINT32_DECIMAL_FORMAT
 
 /* XXX I don't have an 8-byte sync_fetch_and_add on i686, so I use this instead. */
 
@@ -3639,8 +3656,10 @@ char * print_format(char *name, struct format *format)
     static char outstr[256];
 
     snprintf(outstr, sizeof(outstr),
-	     "   const struct format %s = {%d,%d, %d, 0x%x,%d,%d, 0x%x,%d,%d, 0x%x,%d,%d, 0x%llxLL,%d,%d, %d,%d, %d};\n", name,
-	     format->bits, format->bytes, format->locking_bit_offset,
+	     "   const struct format %s = {%d,%d, %d, " UINT32_HEX_FORMAT ",%d,%d, " UINT32_HEX_FORMAT ",%d,%d, "
+	     UINT32_HEX_FORMAT ",%d,%d, " UINT64_HEX_FORMAT ",%d,%d, %d,%d, %d};\n",
+
+	     name, format->bits, format->bytes, format->locking_bit_offset,
 	     format->dtm_mask, format->dtm_offset, format->dtm_bits,
 	     format->movecnt_mask, format->movecnt_offset, format->movecnt_bits,
 	     format->index_mask, format->index_offset, format->index_bits,
@@ -4812,7 +4831,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.492 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.493 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5296,7 +5315,7 @@ void finalize_pass_statistics()
 	}
 	snprintf(strbuf, sizeof(strbuf), "%d", positions_finalized[total_passes]);
 	xmlNewProp(passNode, BAD_CAST "positions-finalized", BAD_CAST strbuf);
-	snprintf(strbuf, sizeof(strbuf), "%lld", backproped_moves[total_passes]);
+	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, backproped_moves[total_passes]);
 	xmlNewProp(passNode, BAD_CAST "moves-generated", BAD_CAST strbuf);
     }
 
@@ -5362,16 +5381,16 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     }
 
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%d", tb->max_index + 1);
+    snprintf(strbuf, sizeof(strbuf), INDEX_T_DECIMAL_FORMAT, tb->max_index + 1);
     xmlNewChild(node, NULL, BAD_CAST "indices", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%lld", total_PNTM_mated_positions);
+    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_PNTM_mated_positions);
     xmlNewChild(node, NULL, BAD_CAST "PNTM-mated-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%lld", total_legal_positions);
+    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_legal_positions);
     xmlNewChild(node, NULL, BAD_CAST "legal-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%lld", total_stalemate_positions);
+    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_stalemate_positions);
     xmlNewChild(node, NULL, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
 
     /* If we generating a full tablebase, report both white-wins-positions and black-wins-positions.
@@ -5381,25 +5400,25 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     if ((tb->format.dtm_bits > 0) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%lld", player_wins[0]);
+	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, player_wins[0]);
 	xmlNewChild(node, NULL, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
     }
     if (tb->format.dtm_bits > 0) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%lld", player_wins[1]);
+	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, player_wins[1]);
 	xmlNewChild(node, NULL, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
     }
     if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%lld", total_legal_positions - player_wins[1]);
+	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_legal_positions - player_wins[1]);
 	xmlNewChild(node, NULL, BAD_CAST "white-wins-or-draws-positions", BAD_CAST strbuf);
     }
 
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%lld", total_moves);
+    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_moves);
     xmlNewChild(node, NULL, BAD_CAST "forward-moves", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%lld", total_futuremoves);
+    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_futuremoves);
     xmlNewChild(node, NULL, BAD_CAST "futuremoves", BAD_CAST strbuf);
     if (tb->format.dtm_bits > 0) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -12275,7 +12294,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.492 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.493 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
