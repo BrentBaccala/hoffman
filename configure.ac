@@ -58,7 +58,7 @@ AM_PATH_XML2(,,AC_MSG_ERROR(You must have libxml2))
 
 dnl Check for readline
 
-AC_CHECK_LIB(readline, readline, ,AC_MSG_WARN([No readline support]))
+AC_CHECK_LIB(readline, readline, AC_SUBST([READLINE_CPPFLAGS], ["-I /usr/include/readline"]), AC_MSG_WARN([No readline support]))
 
 dnl Check for ftplib
 dnl

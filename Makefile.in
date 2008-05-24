@@ -1,5 +1,5 @@
 
-CFLAGS= @CFLAGS@ -I /usr/include/readline @XML_CPPFLAGS@ @CURL_CFLAGS@
+CFLAGS= @CFLAGS@ @READLINE_CPPFLAGS@ @XML_CPPFLAGS@ @CURL_CFLAGS@
 
 hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@
 
