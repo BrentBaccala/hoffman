@@ -24,6 +24,23 @@ formats.h:
 tarball:
 	tar czhf hoffman.tgz Makefile hoffman.c probe.c egtb.cpp lock.h tbdecode.h url_fopen.c ftp_fopen.c zlib_fopen.c url_fopen.h ftp_fopen.h zlib_fopen.h tablebase.dtd
 
+docs: tutorial.pdf reference.pdf proptables.pdf
+
+tutorial.pdf: tutorial.tex
+	latex tutorial
+	dvipdf tutorial
+
+reference.pdf: reference.tex
+	latex reference
+	dvipdf reference
+
+proptables.pdf: proptables.tex proptables-fig1.eps
+	latex proptables
+	dvipdf proptables
+
+proptables-fig1.eps: proptables-fig1.fig
+	fig2dev -L eps proptables-fig1.fig proptables-fig1.eps
+
 #%.htb: %.xml
 #	./hoffman -g -o $@ $<
 #	./hoffman -v -n Nalimov $@
