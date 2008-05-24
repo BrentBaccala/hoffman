@@ -4833,7 +4833,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.495 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.496 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12296,7 +12296,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.495 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.496 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12453,7 +12453,7 @@ int main(int argc, char *argv[])
 	add_history(buffer);
 #else
 	printf(global_position_valid ? "FEN or move? " : "FEN? ");
-	fgets(buffer, sizeof(buffer), stdin);
+	if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
 #endif
 
 	if (!(global_position_valid && parse_move_in_global_position(buffer, &global_position))
