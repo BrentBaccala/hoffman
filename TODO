@@ -41,7 +41,10 @@ direct comparison since inversion costs CPU cycles and Library Sort
 costs memory accesses, but so long as we stay disk-bound it really
 doesn't matter either way.  Getting rid of inversion, though, is
 probably the single best thing we can do to improve compressibility of
-the resulting tablebases.
+the resulting tablebases.  Something to investigate is keeping the
+current bucket sort if inversion is enabled, and using Library Sort if
+it's not, which would at least make proptables useful without
+inversion.
 
 
 - analyze and improve on bucket sort in proptable code
@@ -114,6 +117,8 @@ the dtm field overflows - just checkpoint, terminate, and use our
 
 - some things are uint32 right now (indices and futurevectors) that
   sometimes need to be uint64
+
+Add configure switches --with-big-indices and --with-big-futurevectors
 
 
 - fix libcurl handling of FTP put transactions and use it exclusively
@@ -198,6 +203,12 @@ tablebases, and fully 1TB of storage is required for a full set of
 6-piece Nalimovs.
 
 
+- handle more than two identical pieces
+
+With this current restriction, we can't create tablebases like kpppkr.
+This would make Hoffman fully as powerful as the Nalimov program.
+
+
 - restrict range of indices we look at during a backprop
 
 If we're backproping, say, from kqk into kpk, we need only consider
@@ -262,19 +273,11 @@ wouldn't be too much effort to get it working again.  I seem to recall
 that I never got libftp working on Windows, though.
 
 
-- optimize futurebase backprop
-  - look at entry caching again
-
-
 - warn of incompatibilities between tb and entries formats
+
 
 - revisit all the XXXs
 
-- check for movecnt overflow when merging proptable entries
-
-- investigate proptable merge code in more detail
-
-- check stalemate handling in general
-
-- investigate		fatal("Paired pieces don't have the same number of total legal positions\n");
-
+  - check for movecnt overflow when merging proptable entries
+  - investigate proptable merge code in more detail
+  - check stalemate handling in general
