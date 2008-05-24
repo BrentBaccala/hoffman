@@ -17,6 +17,9 @@ tablebase_dtd.h: tablebase.dtd
 
 formats.h:
 	echo "const struct format entries_format = {4,2, 8, 0xff,0,8, 0x7f,9,7, 0,-1,0, 0,-1,0, -1,FORMAT_FLAG_NONE, -1};" > $@
+	echo "const struct format proptable_format = {7,16, -1, 0xffff,32,16, 0xff,56,8," >> $@
+	echo "					      0xffffffff,0,32, 0xffffffffffffffffLL,64,64," >> $@
+	echo "					      -1,FORMAT_FLAG_NONE, -1};" >> $@
 
 tarball:
 	tar czhf hoffman.tgz Makefile hoffman.c probe.c egtb.cpp lock.h tbdecode.h url_fopen.c ftp_fopen.c zlib_fopen.c url_fopen.h ftp_fopen.h zlib_fopen.h tablebase.dtd
