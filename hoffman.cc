@@ -4812,7 +4812,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.491 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.492 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12275,7 +12275,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.491 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.492 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12405,10 +12405,16 @@ int main(int argc, char *argv[])
 
     /* Probing only */
 
+#ifdef HAVE_LIBREADLINE
     read_history(".hoffman_history");
+#endif
 
     while (1) {
+#ifdef HAVE_LIBREADLINE
 	char *buffer;
+#else
+	char buffer[256];
+#endif
 	int dir, square;
 	int piece_color;
 	int piece_type;
@@ -12419,10 +12425,15 @@ int main(int argc, char *argv[])
 	int score;
 #endif
 
+#ifdef HAVE_LIBREADLINE
 	buffer = readline(global_position_valid ? "FEN or move? " : "FEN? ");
 	if (buffer == NULL) break;
 	if (*buffer == '\0') continue;
 	add_history(buffer);
+#else
+	printf(global_position_valid ? "FEN or move? " : "FEN? ");
+	fgets(buffer, sizeof(buffer), stdin);
+#endif
 
 	if (!(global_position_valid && parse_move_in_global_position(buffer, &global_position))
 	    && !parse_FEN_to_global_position(buffer, &global_position)) {
@@ -12754,7 +12765,11 @@ int main(int argc, char *argv[])
 	    global_position = saved_global_position;
 	}
     }
+
+#ifdef HAVE_LIBREADLINE
     write_history(".hoffman_history");
+#endif
+
     printf("\n");
 
     exit(EXIT_SUCCESS);
