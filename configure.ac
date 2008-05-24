@@ -1,6 +1,6 @@
 dnl Process this file with autoconf to produce a configure script.
 
-AC_INIT(hoffman.c)
+AC_INIT(hoffman, 1.0)
 
 AC_PROG_CC
 AC_PROG_CXX
@@ -28,7 +28,7 @@ AM_PATH_XML2(,,AC_MSG_ERROR(You must have libxml2))
 
 dnl Check for readline
 
-AC_CHECK_LIB(readline, readline, ,AC_MSG_WARN([You should have libreadline]))
+AC_CHECK_LIB(readline, readline, ,AC_MSG_WARN([No readline support]))
 
 dnl Check for ftplib
 dnl
