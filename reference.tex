@@ -504,6 +504,16 @@ handle this situation.  You could, however, have a white rook
 restricted to the a-file and another restricted to the d-file (or use
 a more sophisticated index type, like {\tt compact}).
 
+\subsection{More than two identical pieces with overlapping move restrictions}
+
+Identical pieces (say, two white rooks) can be swapped without
+changing the position, and the program has to take this into account.
+If there were, say, three identical pieces, we'd have to consider a
+more complex set of permutations, and the program currently doesn't do
+this.  So, unless the pieces have non-overlapping move restrictions
+(i.e, they can't be swapped), we're currently limited to two identical
+pieces, and thus can't handle something like {\tt kpppkr}.
+
 \subsection{Attempting to initialize position with a movecnt that won't fit in field!}
 
 The {\tt movecnt} field specified in {\tt generation-controls} wasn't big enough,
