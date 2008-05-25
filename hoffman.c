@@ -126,28 +126,6 @@
 #endif
 
 
-
-/* If we're going to run multi-threaded, we need the POSIX threads library */
-
-#ifdef USE_THREADS
-#include <pthread.h>
-int num_threads = 1;
-long contended_locks = 0;
-long contended_indices = 0;
-#endif
-
-/* If we're multithreaded, we use gcc 4's built-ins for atomic memory access, which are identical to
- * Intel's.  If the compiler doesn't feature these built-ins, then the simplest way to fix that is
- * to turn off multithreading, and use these #defines instead:
- */
-
-#ifndef USE_THREADS
-#define __sync_fetch_and_or(ptr, val) (*(ptr) |= (val))
-#define __sync_fetch_and_and(ptr, val) (*(ptr) &= (val))
-#define __sync_fetch_and_xor(ptr, val) (*(ptr) ^= (val))
-#define __sync_fetch_and_add(ptr, val) (*(ptr) += (val))
-#endif
-
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
  */
@@ -210,6 +188,28 @@ typedef unsigned long long uint64;
 
 typedef uint32 index_t;
 #define INDEX_T_DECIMAL_FORMAT UINT32_DECIMAL_FORMAT
+
+
+/* If we're going to run multi-threaded, we need the POSIX threads library */
+
+#ifdef USE_THREADS
+#include <pthread.h>
+int num_threads = 1;
+long contended_locks = 0;
+long contended_indices = 0;
+#endif
+
+/* If we're multithreaded, we use gcc 4's built-ins for atomic memory access, which are identical to
+ * Intel's.  If the compiler doesn't feature these built-ins, then the simplest way to fix that is
+ * to turn off multithreading, and use these #defines instead:
+ */
+
+#ifndef USE_THREADS
+#define __sync_fetch_and_or(ptr, val) (*(ptr) |= (val))
+#define __sync_fetch_and_and(ptr, val) (*(ptr) &= (val))
+#define __sync_fetch_and_xor(ptr, val) (*(ptr) ^= (val))
+#define __sync_fetch_and_add(ptr, val) (*(ptr) += (val))
+#endif
 
 /* I don't have an 8-byte sync_fetch_and_add on i686, so I use this instead. */
 
@@ -4835,7 +4835,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.497 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.498 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12298,7 +12298,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.497 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.498 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
