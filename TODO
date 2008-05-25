@@ -17,7 +17,8 @@ just flipping the side-to-move flag), so this can be optimized.  This
 would also be useful during futurebase backprop.  Might want to
 hand-code critical sections of this loop in assembly, and there should
 be a big difference between a 32-bit and a 64-bit architecture (since
-bitboards have 64 bits).
+bitboards have 64 bits).  I'll also note that some things (PTM_vector)
+only need to be computed during initialization.
 
 The tablebase operation, the main thing right now is to insure that
 the program really becomes disk-bound, then look at some ideas like
@@ -34,7 +35,7 @@ seperate disks/controllers can be exploited.
 
 - investigate the Library Sort of Bender, et al. (2004)
 
-The paper is in References/FUN04.pdf.  Looks like it might have
+Get the paper (FUN04.pdf) on-line.  Looks like it might have
 comparable performance to our bucket sort without requiring finite
 field inversion, which is itself costly.  It's probably hard to make a
 direct comparison since inversion costs CPU cycles and Library Sort
@@ -141,6 +142,9 @@ implement - Guy Haworth has written some papers about this.
 - configure script improvements
 
 Among others, check for __sync_fetch_and_or (sometimes need -march=i686)
+
+
+- be more consistent about current tablebase being a global var
 
 
 - use two different proptable formats
@@ -271,6 +275,12 @@ since I don't have a machine running any version of Windows.  But it
 worked before, and nothing too much has changed, so it probably
 wouldn't be too much effort to get it working again.  I seem to recall
 that I never got libftp working on Windows, though.
+
+
+- improve probe mode's move parser
+
+Check illegal moves more aggressively; have a 'back' command; maybe a
+'board' command to print a diagram of the chess board.
 
 
 - warn of incompatibilities between tb and entries formats
