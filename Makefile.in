@@ -6,12 +6,12 @@ hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@
 configure_SRCS = configure configure.in Makefile.in config.h.in config.guess config.sub install-sh
 hoffman_SRCS = hoffman.c probe.c egtb.cpp lock.h tbdecode.h url_fopen.c ftp_fopen.c zlib_fopen.c url_fopen.h ftp_fopen.h zlib_fopen.h
 hoffman_DTD = tablebase.dtd
-hoffman_SCRIPTS = genctlfile.pl hoffman.nsi
+hoffman_SCRIPTS = genctlfile.pl genalltb hoffman.nsi cgi-bin/*
 hoffman_DOCS = README ChangeLog TODO tutorial.pdf reference.pdf proptables.pdf
 hoffman_DOCSRC = tutorial.tex reference.tex proptables.tex proptables-fig1.fig
-hoffman_XMLS = xml/fortress*.xml xml/lasker1901.xml
+hoffman_XMLS = xml/*.xml
 
-hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPTS) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS) cgi-bin/*
+hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPTS) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS)
 
 hoffman: $(hoffman_OBJS)
 	@LINKER@ @CFLAGS@ -o hoffman $^ @XML_LIBS@ @CURL_LIBS@ @LIBS@
