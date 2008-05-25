@@ -132,6 +132,15 @@
 
 #include "tablebase_dtd.h"
 
+/* O_LARGEFILE - if it's defined, then sometimes we might need it, like when working with an entries
+ * file for a 5-piece tablebase under construction.  I use it almost everywhere.  If it's not
+ * defined, then just define it to 0 here so we can use it without (too many) worries.
+ */
+
+#ifndef O_LARGEFILE
+#define O_LARGEFILE 0
+#endif
+
 
 /* Working in conjunction with the configure script, find a variable that is either exactly 32 bits
  * or longer, and one that is either exactly 64 bits or longer.  If this fails, we create the
@@ -4835,7 +4844,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.498 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.499 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -4901,33 +4910,23 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
     if (rindex(filename, ':') == NULL) {
 	int fd;
-#ifdef O_LARGEFILE
+
 	fd = open(filename, O_RDONLY|O_LARGEFILE, 0);
 	if (fd != -1) {
 	    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	}
-#else
-	fd = open(filename, O_RDONLY, 0);
-	if (fd != -1) {
-	    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
-	}
-#endif
-    } else {
+
+    } else if (strncmp(filename, "ftp:", 4) == 0) {
 #ifdef USE_FTPLIB
-	/* void *ptr = url_open(filename, "r"); */
 	void *ptr = ftp_openurl(filename, "r");
-#ifdef O_LARGEFILE
 	if (ptr != NULL) {
-	    /* file = zlib_open(ptr, url_read, url_write, url_seek64, url_close, "r"); */
-	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek64, ftp_close, "r");
-	}
-#else
-	if (ptr != NULL) {
-	    /* file = zlib_open(ptr, url_read, url_write, url_seek, url_close, "r"); */
 	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
+#else
+	fatal("Compiled without ftplib - ftp: URLs unsupported\n");
 #endif
-#endif
+    } else if (strncmp(filename, "http:", 5) == 0) {
+	fatal("http: URLs currently unsupported for tablebase I/O\n");
     }
 
     if (file == NULL) {
@@ -4967,30 +4966,21 @@ void open_futurebase(tablebase_t * tb)
 
     if (rindex(tb->filename, ':') == NULL) {
 	int fd;
-#ifdef O_LARGEFILE
 	fd = open(tb->filename, O_RDONLY|O_LARGEFILE, 0);
 	if (fd != -1) {
 	    tb->file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	}
-#else
-	fd = open(tb->filename, O_RDONLY, 0);
-	if (fd != -1) {
-	    tb->file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
-	}
-#endif
-    } else {
+    } else if (strncmp(tb->filename, "ftp:", 4) == 0) {
 #ifdef USE_FTPLIB
 	void *ptr = ftp_openurl(tb->filename, "r");
-#ifdef O_LARGEFILE
-	if (ptr != NULL) {
-	    tb->file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek64, ftp_close, "r");
-	}
-#else
 	if (ptr != NULL) {
 	    tb->file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
+#else
+	fatal("Compiled without ftplib - ftp: URLs unsupported\n");
 #endif
-#endif
+    } else if (strncmp(tb->filename, "http:", 5) == 0) {
+	fatal("http: URLs currently unsupported for tablebase I/O\n");
     }
 
     if (tb->file == NULL) {
@@ -6198,66 +6188,31 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 
 	/* Special case for the very common one-byte-DTM format */
 
-	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
-
-#if 0
-	if (((z_stream *) ((unsigned char *) tb->file + 24))->total_out != tb->offset + tb->next_read_index) {
-	    fprintf(stderr, "zstream total_out (%d) != offset (%d) + next_read_index (%d)\n",
-		    ((z_stream *) ((unsigned char *) tb->file + 24))->total_out, tb->offset, tb->next_read_index);
-	}
-#endif
-
 	if (index < tb->next_read_index) {
-#ifdef O_LARGEFILE
-	    if (zlib_seek64(tb->file, tb->offset + index, SEEK_SET) != tb->offset + index) {
-		fatal("Seek failed in fetch_entry_pointer()\n");
-	    } else {
-		tb->next_read_index = index;
-	    }
-#else
 	    if (zlib_seek(tb->file, tb->offset + index, SEEK_SET) != tb->offset + index) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
 	    } else {
 		tb->next_read_index = index;
 	    }
-#endif
 	}
-
-#if 0
-	if (((z_stream *) ((unsigned char *) tb->file + 24))->total_out != tb->offset + tb->next_read_index) {
-	    fprintf(stderr, "zstream total_out (%d) != offset (%d) + next_read_index (%d)\n",
-		    ((z_stream *) ((unsigned char *) tb->file + 24))->total_out, tb->offset, tb->next_read_index);
-	}
-#endif
 
 	do {
-
 	    if (zlib_read(tb->file, entry, 1) != 1) {
 		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	    }
 	    tb->next_read_index ++;
-
 	} while (tb->next_read_index <= index);
 
     } else {
 
-	/* Do it this way for now to avoid seeks, which fail on network/gzip FILEs */
-
 	if (LEFTSHIFT(index, tb->format.bits - 3)
 	    < LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
-#ifdef O_LARGEFILE
-	    if (zlib_seek64(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
-		fatal("Seek failed in fetch_entry_pointer()\n");
-	    }
-#else
 	    if (zlib_seek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
 	    }
-#endif
 	}
 
 	do {
-
 	    if (zlib_read(tb->file, entry, tb->format.bytes) != tb->format.bytes) {
 		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	    }
@@ -7154,11 +7109,7 @@ void proptable_full(void)
 
     sprintf(outfilename, "propfile%04d_out", num_proptables);
 
-#ifdef O_LARGEFILE
     proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
-#else
-    proptable_output_fd = open(outfilename, O_WRONLY | O_CREAT | O_TRUNC, 0666);
-#endif
 
     if (proptable_output_fd == -1) {
 	fatal("Can't open '%s' for writing propfile\n", outfilename);
@@ -11653,36 +11604,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     int raw_dtm;
     int filename_needs_xmlFree = 0;
 
-    if (filename != NULL) {
-	if (rindex(filename, ':') == NULL) {
-	    int fd;
-#ifdef O_LARGEFILE
-	    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
-	    if (fd != -1) {
-		/* XXX should this be lseek64? */
-		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-	    }
-#else
-	    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-	    if (fd != -1) {
-		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-	    }
-#endif
-	} else {
-#ifdef USE_FTPLIB
-	    void *ptr = ftp_openurl(filename, "w");
-#ifdef O_LARGEFILE
-	    if (ptr != NULL) {
-		file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek64, ftp_close, "w");
-	    }
-#else
-	    if (ptr != NULL) {
-		file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
-	    }
-#endif
-#endif
-	}
-    } else {
+    if (filename == NULL) {
 	xmlXPathContextPtr context;
 	xmlXPathObjectPtr result;
 
@@ -11690,42 +11612,41 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	result = xmlXPathEvalExpression(BAD_CAST "//output", context);
 
 	if (result->nodesetval->nodeNr == 1) {
-	    if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename"))
-		!= NULL) {
-		int fd;
-#ifdef O_LARGEFILE
-		fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
-		if (fd != -1) {
-		    /* XXX should this be lseek64? */
-		    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-		}
-#else
-		fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC, 0666);
-		if (fd != -1) {
-		    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-		}
-#endif
+	    if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) != NULL) {
 		filename_needs_xmlFree = 1;
-	    } else if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url"))
-		       != NULL) {
-#ifdef USE_FTPLIB
-		void *ptr = ftp_openurl(filename, "w");
-#ifdef O_LARGEFILE
-		if (ptr != NULL) {
-		    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek64, ftp_close, "w");
-		}
-#else
-		if (ptr != NULL) {
-		    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
-		}
-#endif
+	    } else if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) != NULL) {
 		filename_needs_xmlFree = 1;
-#endif
 	    }
 	}
 
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
+    }
+
+    if (filename == NULL) {
+	/* XXX really should check for this problem BEFORE building the tablebase */
+	fatal("No output filename or URL specified\n");
+    } else {
+	if (rindex(filename, ':') == NULL) {
+	    int fd;
+	    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
+	    if (fd != -1) {
+		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
+	    }
+	} else if (strncmp(filename, "ftp:", 4) == 0) {
+#ifdef USE_FTPLIB
+	    void *ptr = ftp_openurl(filename, "w");
+	    if (ptr != NULL) {
+		file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
+	    }
+#else
+	    /* XXX really should check for this problem BEFORE building the tablebase */
+	    fatal("Compiled without ftplib - ftp: URLs unsupported\n");
+#endif
+	} else if (strncmp(filename, "http:", 5) == 0) {
+	    /* XXX really should check for this problem BEFORE building the tablebase */
+	    fatal("http: URLs currently unsupported for tablebase I/O\n");
+	}
     }
 
     if (file == NULL) {
@@ -12298,7 +12219,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.498 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.499 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
