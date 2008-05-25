@@ -1,6 +1,15 @@
 
 	   Hoffman - retrograde analysis for chess endgames
 
+Hoffman is a very compute-intensive program that uses 64-bit integer
+operations extensively.  If you're running on a 64-bit processor,
+something like an Intel Core 2, I'd suggesting configuring with an
+appropriate CFLAGS to take advantage of your processor's features:
+
+	CFLAGS="-march=core2 -O3" ./configure
+
+or something similar (assuming that you're using GCC).
+
 To get started, I recommend reading the following:
 
 tutorial.pdf - The Hoffman Tutorial
