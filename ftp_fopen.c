@@ -1,4 +1,9 @@
 /* -*- mode: C; fill-column: 100; c-basic-offset: 4; -*-
+ *
+ * I wrote this wrapper code around ftplib with the intention of using GNU glibc's ability to fopen
+ * a 'cookie' of arbitrary functions and thus treat an FTP connection the same any other FILE *.
+ * Then I ported to Windows using cygwin, which doesn't using glibc, so I've had to remove my cookie
+ * dependencies, loosing a lot of the original motivation for creating this code.
  */
 
 #define _GNU_SOURCE
