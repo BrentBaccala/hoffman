@@ -1,10 +1,9 @@
 \documentclass[11pt]{article}
 
-\usepackage{graphics}
 \usepackage[ps,mover]{skak}
 
 \usepackage{vmargin}
-\setmarginsrb{0.5in}{1in}{0.5in}{0.5in}{20pt}{20pt}{20pt}{20pt}
+\setmarginsrb{0.5in}{0.75in}{0.5in}{0.5in}{20pt}{20pt}{20pt}{20pt}
 
 \title{The Hoffman Tutorial}
 \author{Brent Baccala}
@@ -47,6 +46,7 @@ examples.
 {\small\begin{verbatim}
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Created by genctlfile.pl -->
 
 <tablebase>
    <index type="compact" symmetry="8-way"/>
@@ -54,7 +54,7 @@ examples.
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
    <generation-controls>
-      <output filename="kk.htb"/>
+      <output filename ="kk.htb"/>
    </generation-controls>
 </tablebase>
 \end{verbatim}}
@@ -65,21 +65,23 @@ examples.
 The first thing to understand is that Hoffman uses XML
 control files to govern its operation.
 For example, Figure 1 shows about the simplest possible XML control file, for
-the king vs. king endgame, contained in the file {\tt Examples/kk.xml}.
+the king vs. king endgame, contained in the file {\tt xml/kk.xml}.
 
-What does this all mean?  Well, the first two lines identify this as
-an XML tablebase file; copy them verbatim at the top of any new
-Hoffman control file.  The bulk of the file is contained between the
-two lines {\tt <tablebase>} and {\tt </tablebase>}.  {\tt tablebase}
-is a simple example of an XML {\it element}, which come in basically
-two flavors: the simple kind and the complex kind.  The simple kind,
-like, say, {\tt piece}, have only a single tag that ends with a slash.
-The complex kind have both a beginning and an ending tag.  The
-beginning tag does not have a slash, and the ending tag is identical
-to the beginning tag except that it starts with a slash (like {\tt
-tablebase}).  Complex elements allow you to put things between the
-starting and ending tags.  Follow my lead; it'll start to make sense
-soon.
+What does this all mean?  Well, the first two lines identify this as a
+Hoffman XML tablebase file; copy them verbatim at the top of any new
+Hoffman control file.  The third line illustrates XML's comment
+format; anything between {\tt <!--} and {\tt -->} is a comment, in
+this case the identity of the Perl script that created this file. The
+bulk of the file is contained between the two lines {\tt <tablebase>}
+and {\tt </tablebase>}.  {\tt tablebase} is a simple example of an XML
+{\it element}, which come in basically two flavors: the simple kind
+and the complex kind.  The simple kind, like, say, {\tt piece}, have
+only a single tag that ends with a slash.  The complex kind have both
+a beginning and an ending tag.  The beginning tag does not have a
+slash, and the ending tag is identical to the beginning tag except
+that it starts with a slash (like {\tt tablebase}).  Complex elements
+allow you to put things between the starting and ending tags.  Follow
+my lead; it'll start to make sense soon.
 
 The {\tt index} element controls how Hoffman numbers the positions in
 the tablebase.  I'm using the ``compact'' index type, which is a
@@ -119,7 +121,7 @@ tablebase isn't tied to a particular filename.  It's just, well, a
 ``generation control''.
 
 Now you put all this into a file called something like {\tt kk.xml},
-(or just {\tt cd} into the {\tt Examples} directory) and run Hoffman
+(or just copy it from the {\tt xml} directory) and run Hoffman
 like this:
 
 
@@ -146,16 +148,17 @@ queen endgame whose XML configuration is shown in Figure 2.
 {\small\begin{verbatim}
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Created by genctlfile.pl -->
 
 <tablebase>
-   <index type="no-en-passant" symmetry="8-way"/>
+   <index type="compact" symmetry="8-way"/>
    <format><dtm bits="8"/></format>
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
    <piece color="white" type="queen"/>
    <futurebase filename="kk.htb"/>
    <generation-controls>
-      <output filename="kqk.htb"/>
+      <output filename ="kqk.htb"/>
    </generation-controls>
 </tablebase>
 \end{verbatim}}
@@ -217,7 +220,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.2 $ $Locker: baccala $
+Hoffman $Revision: 1.3 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -242,7 +245,7 @@ Hoffman $Revision: 1.2 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.2 $ $Locker: baccala $</program>
+      <program>Hoffman $Revision: 1.3 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -277,6 +280,7 @@ kpk.xml} (Figure 3).
 {\small\begin{verbatim}
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Created by genctlfile.pl -->
 
 <tablebase>
    <index type="compact" symmetry="2-way"/>
@@ -284,13 +288,13 @@ kpk.xml} (Figure 3).
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
    <piece color="white" type="pawn"/>
+   <futurebase filename="kk.htb"/>
    <futurebase filename="kqk.htb"/>
    <futurebase filename="krk.htb"/>
-   <futurebase filename="knk.htb"/>
    <futurebase filename="kbk.htb"/>
-   <futurebase filename="kk.htb"/>
+   <futurebase filename="knk.htb"/>
    <generation-controls>
-      <output filename="kpk.htb"/>
+      <output filename ="kpk.htb"/>
    </generation-controls>
 </tablebase>
 \end{verbatim}}
@@ -316,7 +320,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.2 $ $Locker: baccala $
+Hoffman $Revision: 1.3 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -333,6 +337,7 @@ four piece?  Figure 4 is {\tt kqkq.xml}.
 {\small\begin{verbatim}
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Created by genctlfile.pl -->
 
 <tablebase>
    <index type="compact" symmetry="8-way"/>
@@ -341,10 +346,10 @@ four piece?  Figure 4 is {\tt kqkq.xml}.
    <piece color="black" type="king"/>
    <piece color="white" type="queen"/>
    <piece color="black" type="queen"/>
-   <futurebase filename="kqk.htb"/>
    <futurebase filename="kqk.htb" colors="invert"/>
+   <futurebase filename="kqk.htb"/>
    <generation-controls>
-      <output filename="kqkq.htb"/>
+      <output filename ="kqkq.htb"/>
    </generation-controls>
 </tablebase>
 \end{verbatim}}
@@ -456,14 +461,15 @@ the moment is that if you want to promote, you need to specify EXACTLY
 the piece you're promoting into; ``b7b8=Q'' is radically different from
 ``b7b8=q''!!
 
-The {\tt Examples} directory contains all of the XML configuration
-files needed to generate a complete set of three- and four-piece
-tablebases, along with a {\tt genalltb} script that will run Hoffman
-repeatedly on the files, and in the correct order.  {\tt genalltb} is
-a good program to let run overnight.  Remember, you can always use the
-{\tt -i} option to find out how long individual tablebases took to
-generate.  Hoffman has also been used to generate a complete set of
-five-piece tablebases, but this takes considerably longer.
+The {\tt xml} directory contains all of the XML configuration files
+needed to generate a complete set of three- and four-piece tablebases.
+These files were created by {\tt genctlfile.pl}, a Perl script that
+can also create control files for five- and six-piece tablebases,
+though actually generating them can be quite demanding of a computer.
+{\tt genalltb} is a shell script that will run Hoffman repeatedly on
+these files, and in the correct order, though it may take several
+hours to run.  Hoffman has also been used to generate a complete set
+of five-piece tablebases, but this takes considerably longer.
 
 Hoffman can thus duplicate much of the functionality of the Nalimov
 programs, but that's not all it can do.  It can also duplicate much of
@@ -514,7 +520,7 @@ $$\showboard$$
 \end{figure}
 
 The Hoffman XML configuration for this problem (Figure 5), is in the
-{\tt Examples} directory as {\tt lasker1901.xml}.  Several new
+{\tt xml} directory as {\tt lasker1901.xml}.  Several new
 features in the configuration should be apparent.
 
 First, note the new {\tt location} parameter that can be specified for
@@ -551,7 +557,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.2 $ $Locker: baccala $
+Hoffman $Revision: 1.3 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
@@ -582,7 +588,7 @@ $$\showboard$$
 
 It's a fortress.  We're White, and we're out to show that we can draw
 this position.  My Hoffman analysis is in the ``{\tt fortress*.xml}''
-files in the {\tt Examples} directory.  You need to have several of
+files in the {\tt xml} directory.  You need to have several of
 the four-piece tablebases built in order to process them.  I'm not
 going to copy them all into this document; I'll just ask you to study
 them on your own while I point out some salient features.
@@ -603,9 +609,12 @@ In the Lasker 1901 example, I noted that after a move like Ka2,
 Hoffman can't guarantee that White can't take a pawn, only that White
 can't take a pawn before Black does.  What changes to the
 configuration would allow us to prove that Black can, in fact,
-completely prevent White from making any capture?
+completely prevent White from making any capture?  (answer on next
+page)
 
-\reflectbox{\vbox{{\bf Answer:} Change the black {\tt prune-enable} and {\tt
+\vfill\eject
+
+{\bf Answer:} Change the black {\tt prune-enable} and {\tt
 prune} elements from {\tt concede} to {\tt discard}.  Now the analysis
 will not consider any black captures, and the only kind of ``draw''
 will be one that completely prevents white from making any kind of
@@ -613,6 +622,6 @@ capture.  There is one gotcha, however.  White might put black in a
 position where his {\it has} to capture a pawn, but the new analysis
 would regard this as a stalemate.  To avoid this problem, you should
 also add a third pruning element: {\tt <prune color="white"
-move="stalemate" type="concede"/>}}}
+move="stalemate" type="concede"/>}
 
 \end{document}
