@@ -70,18 +70,18 @@ sub mkfilename {
 }
 
 sub mkfuturebase {
-    my ($type, $white_pieces, $black_pieces) = @_;
+    my ($white_pieces, $black_pieces) = @_;
 
     my ($invert, $filename) = &mkfilename($white_pieces, $black_pieces);
 
     if ($invert) {
 	if (grep($_ eq $filename, @inverse_futurebases) == 0) {
-	    printnl '   <futurebase filename="' . $filename . '.htb" type="' . $type . '" colors="invert"/>';
+	    printnl '   <futurebase filename="' . $filename . '.htb" colors="invert"/>';
 	    push @inverse_futurebases, $filename;
 	}
     } else {
 	if (grep($_ eq $filename, @normal_futurebases) == 0) {
-	    printnl '   <futurebase filename="' . $filename . '.htb" type="' . $type . '"/>';
+	    printnl '   <futurebase filename="' . $filename . '.htb"/>';
 	    push @normal_futurebases, $filename;
 	}
     }
@@ -129,25 +129,25 @@ sub print_cntl_file {
     for my $captured_white_index (1 .. length($white_pieces)) {
 	my $remaining_white_pieces = $white_pieces;
 	substr($remaining_white_pieces, $captured_white_index-1, 1) = "";
-	&mkfuturebase("capture", $remaining_white_pieces, $black_pieces);
+	&mkfuturebase($remaining_white_pieces, $black_pieces);
     }
 
     for my $captured_black_index (1 .. length($black_pieces)) {
 	my $remaining_black_pieces = $black_pieces;
 	substr($remaining_black_pieces, $captured_black_index-1, 1) = "";
-	&mkfuturebase("capture", $white_pieces, $remaining_black_pieces);
+	&mkfuturebase($white_pieces, $remaining_black_pieces);
     }
 
     if (index($white_pieces, 'p') != -1) {
 	my $remaining_white_pieces = $white_pieces;
 	substr($remaining_white_pieces, index($white_pieces, 'p'), 1) = "";
 	for my $white_promotion (@non_pawn_pieces) {
-	    &mkfuturebase("promotion", $remaining_white_pieces . $white_promotion, $black_pieces);
+	    &mkfuturebase($remaining_white_pieces . $white_promotion, $black_pieces);
 	    for my $captured_black_index (1 .. length($black_pieces)) {
 		if (substr($black_pieces, $captured_black_index-1, 1) ne "p") {
 		    my $remaining_black_pieces = $black_pieces;
 		    substr($remaining_black_pieces, $captured_black_index-1, 1) = "";
-		    &mkfuturebase("capture-promotion", $remaining_white_pieces . $white_promotion, $remaining_black_pieces);
+		    &mkfuturebase($remaining_white_pieces . $white_promotion, $remaining_black_pieces);
 		}
 	    }
 	}
@@ -157,12 +157,12 @@ sub print_cntl_file {
 	my $remaining_black_pieces = $black_pieces;
 	substr($remaining_black_pieces, index($black_pieces, 'p'), 1) = "";
 	for my $black_promotion (@non_pawn_pieces) {
-	    &mkfuturebase("promotion", $white_pieces, $remaining_black_pieces . $black_promotion);
+	    &mkfuturebase($white_pieces, $remaining_black_pieces . $black_promotion);
 	    for my $captured_white_index (1 .. length($white_pieces)) {
 		if (substr($white_pieces, $captured_white_index-1, 1) ne "p") {
 		    my $remaining_white_pieces = $white_pieces;
 		    substr($remaining_white_pieces, $captured_white_index-1, 1) = "";
-		    &mkfuturebase("capture-promotion", $remaining_white_pieces, $remaining_black_pieces . $black_promotion);
+		    &mkfuturebase($remaining_white_pieces, $remaining_black_pieces . $black_promotion);
 		}
 	    }
 	}
