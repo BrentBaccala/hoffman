@@ -4844,7 +4844,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.500 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.501 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5919,9 +5919,10 @@ boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_pos
 boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 {
     int row, col;
+    global_position_t localpos;
 
-    memset(pos, 0, sizeof(global_position_t));
-    pos->en_passant_square = -1;
+    memset(&localpos, 0, sizeof(global_position_t));
+    localpos.en_passant_square = -1;
 
     for (row=7; row>=0; row--) {
 	for (col=0; col<=7; col++) {
@@ -5940,45 +5941,45 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 		break;
 
 	    case 'k':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, KING)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, KING)) return 0;
 		break;
 	    case 'K':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, KING)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, KING)) return 0;
 		break;
 
 	    case 'q':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, QUEEN)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, QUEEN)) return 0;
 		break;
 	    case 'Q':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, QUEEN)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, QUEEN)) return 0;
 		break;
 
 	    case 'r':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, ROOK)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, ROOK)) return 0;
 		break;
 	    case 'R':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, ROOK)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, ROOK)) return 0;
 		break;
 
 	    case 'b':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, BISHOP)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, BISHOP)) return 0;
 		break;
 	    case 'B':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, BISHOP)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, BISHOP)) return 0;
 		break;
 
 	    case 'n':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, KNIGHT)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, KNIGHT)) return 0;
 		break;
 	    case 'N':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, KNIGHT)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, KNIGHT)) return 0;
 		break;
 
 	    case 'p':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), BLACK, PAWN)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, PAWN)) return 0;
 		break;
 	    case 'P':
-		if (!place_piece_in_global_position(pos, rowcol2square(row, col), WHITE, PAWN)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, PAWN)) return 0;
 		break;
 	    }
 	    FEN_string++;
@@ -5993,9 +5994,9 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
     while (*FEN_string == ' ') FEN_string ++;
 
     if (*FEN_string == 'w') {
-      pos->side_to_move = WHITE;
+      localpos.side_to_move = WHITE;
     } else if (*FEN_string == 'b') {
-      pos->side_to_move = BLACK;
+      localpos.side_to_move = BLACK;
     } else {
       return 0;
     }
@@ -6015,11 +6016,12 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 
     if ((FEN_string[0] >= 'a') && (FEN_string[0] <= 'h')
 	&& (FEN_string[1] >= '1') && (FEN_string[1] <= '8')) {
-	pos->en_passant_square = rowcol2square(FEN_string[1] - '1', FEN_string[0] - 'a');
+	localpos.en_passant_square = rowcol2square(FEN_string[1] - '1', FEN_string[0] - 'a');
     }
 
-    /* maybe we should return error here if there's still more to the string */
+    /* the point of using 'localpos' was to only modify pos if the parse succeeded */
 
+    memcpy(pos, &localpos, sizeof(global_position_t));
     return 1;
 }
 
@@ -12219,7 +12221,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.500 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.501 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
