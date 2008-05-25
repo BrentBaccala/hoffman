@@ -46,13 +46,14 @@ Section "Hoffman"
   
   ; Set output path to the installation directory.
   SetOutPath $INSTDIR
+  File "genalltb.bat"
   
   ; Put executable and all of its cygwin DLLs into subdir bin
   SetOutPath $INSTDIR\bin
   File "hoffman.exe"
   File "\cygwin\bin\cygwin1.dll"
   File "\cygwin\bin\cygcrypto-0.9.8.dll"
-  File "\cygwin\bin\cygcurl-3.dll"
+  File "\cygwin\bin\cygcurl-4.dll"
   File "\cygwin\bin\cygiconv-2.dll"
   File "\cygwin\bin\cygncurses-8.dll"
   File "\cygwin\bin\cygreadline6.dll"
@@ -61,17 +62,12 @@ Section "Hoffman"
   File "\cygwin\bin\cygz.dll"
 
   ; and the demo XML files into subdir Examples
-  SetOutPath $INSTDIR\Examples
-  File "kk.xml"
-  File "k?k.xml"
-  File "k??k.xml"
-  File "k?k?.xml"
-  File "lasker1901.xml"
-  File "fortress*.xml"
-  File "genalltb.bat"
+  SetOutPath $INSTDIR\xml
+  File "xml\*.xml"
 
   SetOutPath $INSTDIR
-  File "hoffman.pdf"
+  File "reference.pdf"
+  File "tutorial.pdf"
   
   ; Write the installation path into the registry
   WriteRegStr HKLM SOFTWARE\freesoft.org\Hoffman "Install_Dir" "$INSTDIR"
@@ -87,7 +83,8 @@ Section "Hoffman"
   ; the Start Menu shortcuts
   CreateDirectory "$SMPROGRAMS\Hoffman"
   CreateShortCut "$SMPROGRAMS\Hoffman\Uninstall.lnk" "$INSTDIR\bin\uninstall.exe" "" "$INSTDIR\bin\uninstall.exe" 0
-  CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman User's Guide.lnk" "$INSTDIR\hoffman.pdf"
+  CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman Tutorial.lnk" "$INSTDIR\tutorial.pdf"
+  CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman Reference Guide.lnk" "$INSTDIR\reference.pdf"
   CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman.lnk" "cmd.exe" "/k set path=%path%;$INSTDIR\bin"
 
 SectionEnd
@@ -105,11 +102,11 @@ Section "Uninstall"
   ; Remove files and uninstaller, including any tablebases in Examples and/or history files
   Delete "$INSTDIR\bin\hoffman.exe"
   Delete "$INSTDIR\bin\*.dll"
-  Delete "$INSTDIR\Examples\*.xml"
-  Delete "$INSTDIR\Examples\*.htb"
-  Delete "$INSTDIR\Examples\genalltb.bat"
-  Delete "$INSTDIR\Examples\.hoffman_history"
-  Delete "$INSTDIR\hoffman.pdf"
+  Delete "$INSTDIR\xml\*.xml"
+  Delete "$INSTDIR\genalltb.bat"
+  Delete "$INSTDIR\reference.pdf"
+  Delete "$INSTDIR\tutorial.pdf"
+  Delete "$INSTDIR\xml\.hoffman_history"
   Delete "$INSTDIR\.hoffman_history"
   Delete "$INSTDIR\bin\uninstall.exe"
 
@@ -118,7 +115,7 @@ Section "Uninstall"
 
   ; Remove directories used
   RMDir "$SMPROGRAMS\Hoffman"
-  RMDir "$INSTDIR\Examples"
+  RMDir "$INSTDIR\xml"
   RMDir "$INSTDIR\bin"
   RMDir "$INSTDIR"
 
