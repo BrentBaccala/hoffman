@@ -102,6 +102,7 @@ sub print_cntl_file {
 
     printnl '<?xml version="1.0"?>';
     printnl '<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">';
+    printnl '<!-- Created by genctlfile.pl -->';
     printnl '';
     printnl '<tablebase>';
 
