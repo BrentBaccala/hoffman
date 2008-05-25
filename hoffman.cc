@@ -157,7 +157,9 @@ long contended_indices = 0;
 
 /* Working in conjunction with the configure script, find a variable that is either exactly 32 bits
  * or longer, and one that is either exactly 64 bits or longer.  If this fails, we create the
- * typedef anyway to avoid a slew of compiler error messages.
+ * typedef anyway to avoid a slew of compiler error messages.  I don't put things like 'LL' at the
+ * end of the decimal formats because they're always used to print stuff in the XML that the user
+ * might read, while the hex formats are invariably used for stuff we compile back into the program.
  */
 
 typedef unsigned char uint8;
@@ -174,11 +176,11 @@ typedef unsigned int uint32;
 #elif SIZEOF_UNSIGNED_LONG >= 4
 typedef unsigned long uint32;
 #define UINT32_HEX_FORMAT "0x%lxL"
-#define UINT32_DECIMAL_FORMAT "%ldL"
+#define UINT32_DECIMAL_FORMAT "%ld"
 #elif SIZEOF_UNSIGNED_LONG_LONG >= 4
 typedef unsigned long long uint32;
 #define UINT32_HEX_FORMAT "0x%llxLL"
-#define UINT32_DECIMAL_FORMAT "%lldLL"
+#define UINT32_DECIMAL_FORMAT "%lld"
 #else
 # error Could not find a 32 bit unsigned integer variable
 typedef unsigned int uint32;
@@ -195,11 +197,11 @@ typedef unsigned int uint64;
 #elif SIZEOF_UNSIGNED_LONG >= 8
 typedef unsigned long uint64;
 #define UINT64_HEX_FORMAT "0x%lxL"
-#define UINT64_DECIMAL_FORMAT "%ldL"
+#define UINT64_DECIMAL_FORMAT "%ld"
 #elif SIZEOF_UNSIGNED_LONG_LONG >= 8
 typedef unsigned long long uint64;
 #define UINT64_HEX_FORMAT "0x%llxLL"
-#define UINT64_DECIMAL_FORMAT "%lldLL"
+#define UINT64_DECIMAL_FORMAT "%lld"
 #else
 # error Could not find a 64 bit unsigned integer variable
 typedef unsigned long long uint64;
@@ -4833,7 +4835,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.496 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.497 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12296,7 +12298,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.496 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.497 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
