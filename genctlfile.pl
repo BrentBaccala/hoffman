@@ -17,11 +17,22 @@ $pieces{b} = 'bishop';
 $pieces{n} = 'knight';
 $pieces{p} = 'pawn';
 
-sub mkfilename {
-    my ($white_piece1, $white_piece2, $black_piece) = @_;
-    my $filename = "k" . $white_piece1 . $white_piece2 . "k" . $black_piece;
-    return $filename;
-}
+my %sortorder;
+$sortorder{q} = 1;
+$sortorder{r} = 2;
+$sortorder{b} = 3;
+$sortorder{n} = 4;
+$sortorder{p} = 5;
+
+# bishop is given a slightly higher value than knight here to ensure
+# that kbkn is definitely preferred over knkb
+
+my %values;
+$values{q} = 9;
+$values{r} = 5;
+$values{b} = 3.1;
+$values{n} = 3;
+$values{p} = 1;
 
 sub printnl {
     print XMLFILE @_, "\n";
@@ -31,22 +42,30 @@ my @normal_futurebases;
 my @inverse_futurebases;
 
 sub mkfuturebase {
-    my ($type, $white_piece1, $white_piece2, $black_piece) = @_;
+    my ($type, $white_pieces, $black_pieces) = @_;
 
-    if ($white_piece2 ne '' and index($pieces, $white_piece1) > index($pieces, $white_piece2)) {
-	my $tmp = $white_piece1;
-	$white_piece1 = $white_piece2;
-	$white_piece2 = $tmp;
+    $white_pieces = join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $white_pieces));
+    $black_pieces = join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $black_pieces));
+
+    my $white_value = 0;
+    for my $white_piece (split(//, $white_pieces)) {
+	$white_value += $values{$white_piece};
     }
 
-    if ($white_piece2 eq '' and index($pieces, $black_piece) < index($pieces, $white_piece1)) {
-	my $filename = &mkfilename($black_piece, '', $white_piece1);
+    my $black_value = 0;
+    for my $black_piece (split(//, $black_pieces)) {
+	$black_value += $values{$black_piece};
+    }
+
+    if ((length($black_pieces) > length($white_pieces)) or
+	((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value))) {
+	my $filename = "k" . $black_pieces . "k" . $white_pieces;
 	if (grep($_ eq $filename, @inverse_futurebases) == 0) {
 	    printnl '   <futurebase filename="' . $filename . '.htb" type="' . $type . '" colors="invert"/>';
 	    push @inverse_futurebases, $filename;
 	}
     } else {
-	my $filename = &mkfilename($white_piece1, $white_piece2, $black_piece);
+	my $filename = "k" . $white_pieces . "k" . $black_pieces;
 	if (grep($_ eq $filename, @normal_futurebases) == 0) {
 	    printnl '   <futurebase filename="' . $filename . '.htb" type="' . $type . '"/>';
 	    push @normal_futurebases, $filename;
@@ -55,13 +74,16 @@ sub mkfuturebase {
 }
 
 sub print_cntl_file {
-    my ($white_piece1, $white_piece2, $black_piece) = @_;
+    my ($white_pieces, $black_pieces) = @_;
 
     @normal_futurebases = ();
     @inverse_futurebases = ();
 
-    my $filename = "k" . $white_piece1 . $white_piece2 . "k" . $black_piece;
-    print $filename, ".xml\n";
+    return if ($white_pieces ne join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $white_pieces)));
+    return if ($black_pieces ne join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $black_pieces)));
+
+    my $filename = "k" . $white_pieces . "k" . $black_pieces;
+    print "Writing $filename.xml\n";
     open (XMLFILE, ">$filename.xml");
 
     printnl '<?xml version="1.0"?>';
@@ -82,40 +104,51 @@ sub print_cntl_file {
 
     printnl '   <piece color="white" type="king"/>';
     printnl '   <piece color="black" type="king"/>';
-    printnl '   <piece color="white" type="' . $pieces{$white_piece1} . '"/>';
-    printnl '   <piece color="white" type="' . $pieces{$white_piece2} . '"/>';
-    printnl '   <piece color="black" type="' . $pieces{$black_piece} . '"/>';
+    for my $piece (split(//, $white_pieces)) {
+	printnl '   <piece color="white" type="' . $pieces{$piece} . '"/>';
+    }
+    for my $piece (split(//, $black_pieces)) {
+	printnl '   <piece color="black" type="' . $pieces{$piece} . '"/>';
+    }
 
-    &mkfuturebase("capture", $white_piece1, $white_piece2, '');
-    &mkfuturebase("capture", $white_piece1, '', $black_piece);
-    &mkfuturebase("capture", $white_piece2, '', $black_piece);
+    for my $captured_white_index (1 .. length($white_pieces)) {
+	my $remaining_white_pieces = $white_pieces;
+	substr($remaining_white_pieces, $captured_white_index-1, 1) = "";
+	&mkfuturebase("capture", $remaining_white_pieces, $black_pieces);
+    }
 
-    if ($white_piece1 eq 'p') {
-	for $white_promotion1 (@non_pawn_pieces) {
-	    &mkfuturebase("promotion", $white_promotion1, $white_piece2, $black_piece);
-	    if ($black_piece ne 'p') {
-		&mkfuturebase("capture-promotion", $white_promotion1, $white_piece2, '');
+    for my $captured_black_index (1 .. length($black_pieces)) {
+	my $remaining_black_pieces = $black_pieces;
+	substr($remaining_black_pieces, $captured_black_index-1, 1) = "";
+	&mkfuturebase("capture", $white_pieces, $remaining_black_pieces);
+    }
+
+    if (index($white_pieces, 'p') != -1) {
+	my $remaining_white_pieces = $white_pieces;
+	substr($remaining_white_pieces, index($white_pieces, 'p'), 1) = "";
+	for my $white_promotion (@non_pawn_pieces) {
+	    &mkfuturebase("promotion", $remaining_white_pieces . $white_promotion, $black_pieces);
+	    for my $captured_black_index (1 .. length($black_pieces)) {
+		if (substr($black_pieces, $captured_black_index-1, 1) ne "p") {
+		    my $remaining_black_pieces = $black_pieces;
+		    substr($remaining_black_pieces, $captured_black_index-1, 1) = "";
+		    &mkfuturebase("capture-promotion", $remaining_white_pieces . $white_promotion, $remaining_black_pieces);
+		}
 	    }
 	}
     }
 
-    if ($white_piece2 eq 'p') {
-	for $white_promotion2 (@non_pawn_pieces) {
-	    &mkfuturebase("promotion", $white_piece1, $white_promotion2, $black_piece);
-	    if ($black_piece ne 'p') {
-		&mkfuturebase("capture-promotion", $white_piece1, $white_promotion2, '');
-	    }
-	}
-    }
-
-    if ($black_piece eq 'p') {
-	for $black_promotion (@non_pawn_pieces) {
-	    &mkfuturebase("promotion", $white_piece1, $white_piece2, $black_promotion);
-	    if ($white_piece1 ne 'p') {
-		&mkfuturebase("capture-promotion", $white_piece2, '', $black_promotion);
-	    }
-	    if ($white_piece2 ne 'p') {
-		&mkfuturebase("capture-promotion", $white_piece1, '', $black_promotion);
+    if (index($black_pieces, 'p') != -1) {
+	my $remaining_black_pieces = $black_pieces;
+	substr($remaining_black_pieces, index($black_pieces, 'p'), 1) = "";
+	for my $black_promotion (@non_pawn_pieces) {
+	    &mkfuturebase("promotion", $white_pieces, $remaining_black_pieces . $black_promotion);
+	    for my $captured_white_index (1 .. length($white_pieces)) {
+		if (substr($white_pieces, $captured_white_index-1, 1) ne "p") {
+		    my $remaining_white_pieces = $white_pieces;
+		    substr($remaining_white_pieces, $captured_white_index-1, 1) = "";
+		    &mkfuturebase("capture-promotion", $remaining_white_pieces, $remaining_black_pieces . $black_promotion);
+		}
 	    }
 	}
     }
@@ -135,12 +168,16 @@ sub print_cntl_file {
     close XMLFILE;
 }
 
-for $white_piece1 (@pieces) {
-    for $white_piece2 (@pieces) {
-	next if index($pieces, $white_piece1) > index($pieces, $white_piece2);
-	for $black_piece (@pieces) {
-	    &print_cntl_file($white_piece1, $white_piece2, $black_piece);
+sub gen32 {
+    my ($white_piece1, $white_piece2, $black_piece);
+
+    for $white_piece1 (@pieces) {
+	for $white_piece2 (@pieces) {
+	    for $black_piece (@pieces) {
+		&print_cntl_file($white_piece1 . $white_piece2, $black_piece);
+	    }
 	}
     }
 }
 
+&gen32;
