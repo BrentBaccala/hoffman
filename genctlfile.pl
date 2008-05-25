@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
-# This script writes a set of control files for all 5-piece tablebases
-# into the current directory.
+# This script writes control files for 'standard' tablebases (i.e, no
+# pruning or move restrictions) into the current directory.
 #
 # by Brent Baccala; no rights reserved
 
@@ -40,6 +40,10 @@ sub printnl {
 
 my @normal_futurebases;
 my @inverse_futurebases;
+
+# Make an unordered pair of piece listings into a properly ordered
+# filename (that might be color inverted, i.e, kkq to kqk).  Return
+# the filename along with a flag indicating if we inverted.
 
 sub mkfilename {
     my ($white_pieces, $black_pieces) = @_;
@@ -178,36 +182,48 @@ sub print_cntl_file {
     close XMLFILE;
 }
 
-sub gen32 {
-    my ($white_piece1, $white_piece2, $black_piece);
+sub all_combos_of_n_pieces {
+    my ($n) = @_;
 
-    for $white_piece1 (@pieces) {
-	for $white_piece2 (@pieces) {
-	    for $black_piece (@pieces) {
-		&print_cntl_file($white_piece1 . $white_piece2, $black_piece);
+    if ($n == 0) {
+	return ("");
+    } elsif ($n == 1) {
+	return @pieces;
+    } else {
+	my @result;
+
+	for my $recursion (&all_combos_of_n_pieces($n - 1)) {
+	    for my $piece (@pieces) {
+		unshift @result, $recursion . $piece;
 	    }
 	}
+
+	return @result;
     }
 }
 
-sub gen22 {
-    my ($white_piece, $black_piece);
+# Generate all tablebases with n white pieces and m black ones
 
-    for $white_piece (@pieces) {
-	for $black_piece (@pieces) {
-	    &print_cntl_file($white_piece, $black_piece);
+sub gen {
+    my ($white_n, $black_m) = @_;
+
+    for my $white_pieces (&all_combos_of_n_pieces($white_n - 1)) {
+	for my $black_pieces (&all_combos_of_n_pieces($black_m - 1)) {
+	    &print_cntl_file($white_pieces, $black_pieces);
 	}
     }
 }
 
-sub gen31 {
-    my ($white_piece1, $white_piece2);
+# kk
+&gen(1,1);
 
-    for $white_piece1 (@pieces) {
-	for $white_piece2 (@pieces) {
-	    &print_cntl_file($white_piece1 . $white_piece2, "");
-	}
-    }
-}
+# 3-piece TBs
+&gen(2,1);
 
-&gen31;
+# 4-piece TBs
+&gen(3,1);
+&gen(2,2);
+
+# 5-piece TBs
+# &gen(3,2);
+# &gen(4,1);
