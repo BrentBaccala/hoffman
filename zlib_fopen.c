@@ -1,4 +1,19 @@
 /* -*- mode: C; fill-column: 100; c-basic-offset: 4; -*-
+ *
+ * I wrote this wrapper code around zlib with the intention of using GNU glibc's ability to fopen a
+ * 'cookie' of arbitrary functions and thus treat a compressed file the same any other FILE *.  Then
+ * I ported to Windows using cygwin, which doesn't using glibc, so I've had to remove my cookie
+ * dependencies, loosing a lot of the original motivation for creating this code.
+ *
+ * You'll notice that I define some 64-bit seek functions that I never really use.  Why?  Well, for
+ * one thing, we have to seek all the back to the beginning to rewind a zlib compressed stream, so
+ * the only kind of seek that we need to pass in to zlib_open is a 32-bit one.  Also, though I've
+ * created functions to seek to 64-bit offsets in a compressed stream, that seems a little bit silly
+ * when you think about the performance implications of doing that to a zlib stream.  In any event,
+ * since indices are (currently) 32-bit in hoffman, only its very largest tablebases with two-byte
+ * DTM format would have any chance of overflowing this seek code.  And if we do change to 64-bit
+ * indices to support even bigger tablebases, then we'll probably have to think real hard about
+ * replacing zlib with something that supports random access better.
  */
 
 #define _GNU_SOURCE
