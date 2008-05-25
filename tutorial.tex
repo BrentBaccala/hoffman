@@ -37,8 +37,8 @@ Trevor Hoffman, an All Star baseball pitcher who specializes in
 ``closing'' games.  It was written specifically for The World vs. Arno
 Nickel game.
 
-Hoffman comes with an {\tt Examples} directory containing some simple
-examples of its use.  I'll illustrate how Hoffman works using these
+Hoffman comes with an {\tt xml} directory containing a number of
+simple control files.  I'll illustrate how Hoffman works using these
 examples.
 
 \begin{figure}
@@ -220,7 +220,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.3 $ $Locker: baccala $
+Hoffman $Revision: 1.4 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -245,7 +245,7 @@ Hoffman $Revision: 1.3 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.3 $ $Locker: baccala $</program>
+      <program>Hoffman $Revision: 1.4 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -320,7 +320,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.3 $ $Locker: baccala $
+Hoffman $Revision: 1.4 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -557,7 +557,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.3 $ $Locker: baccala $
+Hoffman $Revision: 1.4 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
