@@ -41,8 +41,8 @@ sub printnl {
 my @normal_futurebases;
 my @inverse_futurebases;
 
-sub mkfuturebase {
-    my ($type, $white_pieces, $black_pieces) = @_;
+sub mkfilename {
+    my ($white_pieces, $black_pieces) = @_;
 
     $white_pieces = join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $white_pieces));
     $black_pieces = join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $black_pieces));
@@ -59,13 +59,23 @@ sub mkfuturebase {
 
     if ((length($black_pieces) > length($white_pieces)) or
 	((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value))) {
-	my $filename = "k" . $black_pieces . "k" . $white_pieces;
+	return (1, "k" . $black_pieces . "k" . $white_pieces);
+    } else {
+	return (0, "k" . $white_pieces . "k" . $black_pieces);
+    }
+}
+
+sub mkfuturebase {
+    my ($type, $white_pieces, $black_pieces) = @_;
+
+    my ($invert, $filename) = &mkfilename($white_pieces, $black_pieces);
+
+    if ($invert) {
 	if (grep($_ eq $filename, @inverse_futurebases) == 0) {
 	    printnl '   <futurebase filename="' . $filename . '.htb" type="' . $type . '" colors="invert"/>';
 	    push @inverse_futurebases, $filename;
 	}
     } else {
-	my $filename = "k" . $white_pieces . "k" . $black_pieces;
 	if (grep($_ eq $filename, @normal_futurebases) == 0) {
 	    printnl '   <futurebase filename="' . $filename . '.htb" type="' . $type . '"/>';
 	    push @normal_futurebases, $filename;
@@ -79,10 +89,10 @@ sub print_cntl_file {
     @normal_futurebases = ();
     @inverse_futurebases = ();
 
-    return if ($white_pieces ne join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $white_pieces)));
-    return if ($black_pieces ne join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $black_pieces)));
+    my ($invert, $filename) = &mkfilename($white_pieces, $black_pieces);
 
-    my $filename = "k" . $white_pieces . "k" . $black_pieces;
+    return if $invert or $filename ne "k" . $white_pieces . "k" . $black_pieces;
+
     print "Writing $filename.xml\n";
     open (XMLFILE, ">$filename.xml");
 
@@ -180,4 +190,24 @@ sub gen32 {
     }
 }
 
-&gen32;
+sub gen22 {
+    my ($white_piece, $black_piece);
+
+    for $white_piece (@pieces) {
+	for $black_piece (@pieces) {
+	    &print_cntl_file($white_piece, $black_piece);
+	}
+    }
+}
+
+sub gen31 {
+    my ($white_piece1, $white_piece2);
+
+    for $white_piece1 (@pieces) {
+	for $white_piece2 (@pieces) {
+	    &print_cntl_file($white_piece1 . $white_piece2, "");
+	}
+    }
+}
+
+&gen31;
