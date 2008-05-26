@@ -21,12 +21,101 @@ InstallDir $PROGRAMFILES\Hoffman
 ;InstallDirRegKey SHCTX "Software\freesoft.org\Hoffman" "Install_Dir"
 InstallDirRegKey HKLM "Software\freesoft.org\Hoffman" "Install_Dir"
 
+; We're going to prompt the user (if he has enough permissions) to see
+; if he wants to install system-wide.  If not, we'll install just for
+; the current user, but that triggers some kind of backward
+; compatibility mode on newer Microsoft systems (at least Vista and
+; Server 2008) that causes shortcuts to be installed system-wide when
+; we try to install for the current user, so we need this:
+;
+; http://nsis.sourceforge.net/Shortcuts_removal_fails_on_Windows_Vista
+
+RequestExecutionLevel highest
+
 ;--------------------------------
 
 ; Pages
 
+!include nsDialogs.nsh
+
+Var CurrentUserOnlyInstallState
+
+Page custom installTypePage installTypePageLeave
+Page custom installResultPage
 Page directory
 Page instfiles
+
+; create our initial install page, which tells a little about the
+; program, queries to find out what kind of permissions the current
+; user has got, and if he can install for anyone (Admin or Power),
+; give him that option as a radio button, otherwise gray it out
+
+Function installTypePage
+	nsDialogs::Create /NOUNLOAD 1018
+	Pop $0
+
+	; ${NSD_CreateLabel} 0 0 100% 12u 'freesoft.org'
+	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 0 100% 12u 'freesoft.org'
+	Pop $0
+
+	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 15u 100% 12u 'Hoffman 1.0'
+	Pop $0
+
+	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 40u 100% 12u 'Chess endgame retrograde analyzer'
+	Pop $0
+
+	UserInfo::GetName
+	Pop $R0
+
+	StrCpy $1 ${WS_DISABLED}
+	UserInfo::GetAccountType
+	Pop $0
+	${If} $0 == "Admin"
+		StrCpy $1 0
+	${EndIf}
+	${If} $0 == "Power"
+		StrCpy $1 0
+	${EndIf}
+
+	${NSD_CreateRadioButton} 0 80u 100% 12u 'Install for "$R0"'
+	Pop $R1
+
+	; ${NSD_CreateRadioButton} 0 100u 100% 12u "Install for all users"
+	nsDialogs::CreateControl /NOUNLOAD BUTTON ${__NSD_RadioButton_STYLE}|$1 0  0 100u 100% 12u "Install for all users"
+	Pop $R2
+
+	${If} $CurrentUserOnlyInstallState == ${BST_CHECKED}
+		${NSD_Check} $R1
+	${ElseIf} $1 == 0
+		${NSD_Check} $R2
+	${Else}
+		${NSD_Check} $R1
+	${EndIf}
+
+	nsDialogs::Show
+FunctionEnd
+
+Function installTypePageLeave
+	${NSD_GetState} $R1 $CurrentUserOnlyInstallState
+	${If} $CurrentUserOnlyInstallState == ${BST_CHECKED}
+		SetShellVarContext current
+	${Else}
+		SetShellVarContext all
+	${EndIf}
+FunctionEnd
+
+Function installResultPage
+	nsDialogs::Create /NOUNLOAD 1018
+	Pop $0
+
+	${NSD_CreateLabel} 0 0 100% 12u $CurrentUserOnlyInstallState
+	Pop $0
+
+	${NSD_CreateLabel} 0 20u 100% 12u $SMPROGRAMS
+	Pop $0
+
+	nsDialogs::Show
+FunctionEnd
 
 ; Uninstaller doesn't reside in the install directory, so use a pre-function
 ; to fetch install directory from registry first thing in the uninstaller
@@ -51,8 +140,6 @@ Section "Hoffman"
 
   SectionIn RO
   
-  SetShellVarContext all
-
   ; Set output path to the installation directory.
   SetOutPath $INSTDIR
   File "genalltb.bat"
@@ -89,11 +176,11 @@ Section "Hoffman"
 
   WriteUninstaller "bin\uninstall.exe"
   
-  ; the Start Menu shortcuts
+  ; the Start Menu shortcuts (in reverse order from their appearance)
   CreateDirectory "$SMPROGRAMS\Hoffman"
   CreateShortCut "$SMPROGRAMS\Hoffman\Uninstall.lnk" "$INSTDIR\bin\uninstall.exe" "" "$INSTDIR\bin\uninstall.exe" 0
-  CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman Tutorial.lnk" "$INSTDIR\tutorial.pdf"
   CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman Reference Guide.lnk" "$INSTDIR\reference.pdf"
+  CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman Tutorial.lnk" "$INSTDIR\tutorial.pdf"
   CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman.lnk" "cmd.exe" "/k set path=%path%;$INSTDIR\bin"
 
 SectionEnd
