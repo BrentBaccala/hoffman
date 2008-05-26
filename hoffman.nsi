@@ -41,7 +41,6 @@ RequestExecutionLevel highest
 Var CurrentUserOnlyInstallState
 
 Page custom installTypePage installTypePageLeave
-Page custom installResultPage
 Page directory
 Page instfiles
 
@@ -102,19 +101,6 @@ Function installTypePageLeave
 	${Else}
 		SetShellVarContext all
 	${EndIf}
-FunctionEnd
-
-Function installResultPage
-	nsDialogs::Create /NOUNLOAD 1018
-	Pop $0
-
-	${NSD_CreateLabel} 0 0 100% 12u $CurrentUserOnlyInstallState
-	Pop $0
-
-	${NSD_CreateLabel} 0 20u 100% 12u $SMPROGRAMS
-	Pop $0
-
-	nsDialogs::Show
 FunctionEnd
 
 ; Uninstaller doesn't reside in the install directory, so use a pre-function
