@@ -18,6 +18,7 @@ InstallDir $PROGRAMFILES\Hoffman
 
 ; Registry key to check for directory (so if you install again, it will 
 ; overwrite the old one automatically)
+;InstallDirRegKey SHCTX "Software\freesoft.org\Hoffman" "Install_Dir"
 InstallDirRegKey HKLM "Software\freesoft.org\Hoffman" "Install_Dir"
 
 ;--------------------------------
@@ -29,9 +30,15 @@ Page instfiles
 
 ; Uninstaller doesn't reside in the install directory, so use a pre-function
 ; to fetch install directory from registry first thing in the uninstaller
+;
+; Check first if it was installed for the current user, then the local machine
 
 Function un.setINSTDIR
-  ReadRegStr $INSTDIR HKLM SOFTWARE\freesoft.org\Hoffman "Install_Dir"
+  SetShellVarContext current
+  ReadRegStr $INSTDIR HKCU SOFTWARE\freesoft.org\Hoffman "Install_Dir"
+  IfErrors 0 +3
+    ReadRegStr $INSTDIR HKLM SOFTWARE\freesoft.org\Hoffman "Install_Dir"
+    SetShellVarContext all
 FunctionEnd
 
 UninstPage uninstConfirm un.setINSTDIR
@@ -44,6 +51,8 @@ Section "Hoffman"
 
   SectionIn RO
   
+  SetShellVarContext all
+
   ; Set output path to the installation directory.
   SetOutPath $INSTDIR
   File "genalltb.bat"
@@ -70,13 +79,13 @@ Section "Hoffman"
   File "tutorial.pdf"
   
   ; Write the installation path into the registry
-  WriteRegStr HKLM SOFTWARE\freesoft.org\Hoffman "Install_Dir" "$INSTDIR"
+  WriteRegStr SHCTX SOFTWARE\freesoft.org\Hoffman "Install_Dir" "$INSTDIR"
   
   ; Write the uninstall keys for Windows
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman" "DisplayName" "Hoffman"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman" "UninstallString" '"$INSTDIR\bin\uninstall.exe"'
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman" "NoModify" 1
-  WriteRegDWORD HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman" "NoRepair" 1
+  WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman" "DisplayName" "Hoffman"
+  WriteRegStr SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman" "UninstallString" '"$INSTDIR\bin\uninstall.exe"'
+  WriteRegDWORD SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman" "NoModify" 1
+  WriteRegDWORD SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman" "NoRepair" 1
 
   WriteUninstaller "bin\uninstall.exe"
   
@@ -96,8 +105,8 @@ SectionEnd
 Section "Uninstall"
   
   ; Remove registry keys
-  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman"
-  DeleteRegKey HKLM SOFTWARE\freesoft.org\Hoffman
+  DeleteRegKey SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman"
+  DeleteRegKey SHCTX SOFTWARE\freesoft.org\Hoffman
 
   ; Remove files and uninstaller, including any tablebases in Examples and/or history files
   Delete "$INSTDIR\bin\hoffman.exe"
