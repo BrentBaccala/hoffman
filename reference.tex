@@ -251,6 +251,9 @@ and a black queen.
 {\bf Note:} Any futurebase {\tt prune-enable} elements must be a subset of
 the current tablebase's {\tt prune-enable} elements.
 
+{\bf Note:} The only {\tt url} scheme currently supported for this
+element is {\tt ftp}.
+
 \subsection{\tt <prune color="white|black" move="{\it string}" type="concede|discard"/>}
 
 Futuremoves not handled by specifying futurebases must be pruned using
@@ -287,7 +290,7 @@ At most a single {\tt output} element should be used, with either a
 {\tt filename} or a {\tt url} (but not both), to specify where
 the finished tablebase should be written.
 
-{\bf Note:} The only {\tt url} scheme that has been tested for this
+{\bf Note:} The only {\tt url} scheme currently supported for this
 element is {\tt ftp}.
 
 \subsubsection{\tt <completion-report url="{\it string}"/> \hfil\break <error-report url="{\it string}"/>}
@@ -301,6 +304,9 @@ tablebases using a distributed cluster.
 {\bf Note:} In the event of an error termination, every attempt will
 be made to add {\tt <error>} elements to the XML indicating the
 cause of the problem.
+
+{\bf Note:} The only {\tt url} scheme currently supported for these
+elements is {\tt http}.
 
 \subsubsection{\tt <entries-format> \ldots\quad </entries-format>}
 
@@ -472,10 +478,10 @@ program instruction pages \cr
 
 \vfill\eject
 
-\section{Error Messages}
+\section{Some Confusing Error Messages}
 
-This section does not attempt to list all of Hoffman's error messages,
-only those anticipated to cause some confusion.
+% This section does not attempt to list all of Hoffman's error messages,
+% only those anticipated to cause some confusion.
 
 \subsection{Doubled pawns must (currently) appear in board order in piece list}
 
