@@ -286,6 +286,14 @@ Check illegal moves more aggressively; have a 'back' command; maybe a
 - warn of incompatibilities between tb and entries formats
 
 
+- improve portability
+
+There might be some little-endian dependencies in the code, but even
+more serious is the usage (in the dynamic structures code and in the
+futurevector handling) of non-word-aligned word accesses.  I doubt it
+would run on a SPARC.
+
+
 - revisit all the XXXs
 
   - check for movecnt overflow when merging proptable entries
