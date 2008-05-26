@@ -162,7 +162,7 @@ Section "Hoffman"
 
   WriteUninstaller "bin\uninstall.exe"
   
-  ; the Start Menu shortcuts (in reverse order from their appearance)
+  ; the Start Menu shortcuts
   CreateDirectory "$SMPROGRAMS\Hoffman"
   CreateShortCut "$SMPROGRAMS\Hoffman\Uninstall.lnk" "$INSTDIR\bin\uninstall.exe" "" "$INSTDIR\bin\uninstall.exe" 0
   CreateShortCut "$SMPROGRAMS\Hoffman\Hoffman Reference Guide.lnk" "$INSTDIR\reference.pdf"
@@ -181,13 +181,15 @@ Section "Uninstall"
   DeleteRegKey SHCTX "Software\Microsoft\Windows\CurrentVersion\Uninstall\Hoffman"
   DeleteRegKey SHCTX SOFTWARE\freesoft.org\Hoffman
 
-  ; Remove files and uninstaller, including any tablebases in Examples and/or history files
+  ; Remove files and uninstaller, including any tablebases and/or history files
   Delete "$INSTDIR\bin\hoffman.exe"
   Delete "$INSTDIR\bin\*.dll"
   Delete "$INSTDIR\xml\*.xml"
+  Delete "$INSTDIR\xml\*.htb"
   Delete "$INSTDIR\genalltb.bat"
   Delete "$INSTDIR\reference.pdf"
   Delete "$INSTDIR\tutorial.pdf"
+  Delete "$INSTDIR\*.htb"
   Delete "$INSTDIR\xml\.hoffman_history"
   Delete "$INSTDIR\.hoffman_history"
   Delete "$INSTDIR\bin\uninstall.exe"
