@@ -265,18 +265,6 @@ Perl.  Freezer seems to have a nice GUI for a tablebase generator; see
 the demos on http://www.freezerchess.com/
 
 
-- prepare a Windows version
-
-The "hoffman.nsi" file in the distribution is from an older version of
-Hoffman (the 2006 Christmas Release) for which I had prepared a
-Windows executable with cygwin and a setup installer with NSIS.  Right
-now, it's just too much trouble for me to prepare a Windows version,
-since I don't have a machine running any version of Windows.  But it
-worked before, and nothing too much has changed, so it probably
-wouldn't be too much effort to get it working again.  I seem to recall
-that I never got libftp working on Windows, though.
-
-
 - improve probe mode's move parser
 
 Check illegal moves more aggressively; have a 'back' command; maybe a
