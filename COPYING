@@ -1,0 +1,18 @@
+
+Hoffman was written by Brent Baccala and is covered by an open license:
+
+no rights reserved; you may freely copy, modify, or distribute HOFFMAN
+
+
+
+Several of the files in the distribution (all related to verification
+vs. Nalimov tablebases) were contributed by others:
+
+egtb.cpp is used with permission of Euguene Nalimov, and has its own
+copyright notice in the file.
+
+tbdecode.h is used with permission of Andrew Kadatch, and has its own
+copyright notice in the file.
+
+probe.c is a modified version of the file with the same name from the
+crafty chess program, used with permission of Bob Hyatt.
