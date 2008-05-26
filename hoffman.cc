@@ -4844,7 +4844,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.501 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.502 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11584,10 +11584,12 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 
 }
 
-/* The 'filename' argument passed in here is only optional.  If it is NULL, we'll look into the
- * tablebase's XML for a <output> element.
- *
- * XXX move the XML code into the caller
+/* The 'filename' argument passed in here can either be a filename or a URL.  We don't distinguish
+ * between them except by looking at their prefix (though it would be easy to add an extra flag
+ * argument to do so), so hopefully nobody will try to create tablebases starting with 'ftp:'.  Much
+ * of the error checking on 'filename' is done by the caller, since we'd like that error checking to
+ * occur prior to a time consuming generation run, rather than when we're ready to write the
+ * finished product out.
  */
 
 void write_tablebase_to_file(tablebase_t *tb, char *filename)
@@ -11604,62 +11606,30 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     void *entry = entrybuf;
     int dtm;
     int raw_dtm;
-    int filename_needs_xmlFree = 0;
 
-    if (filename == NULL) {
-	xmlXPathContextPtr context;
-	xmlXPathObjectPtr result;
-
-	context = xmlXPathNewContext(tb->xml);
-	result = xmlXPathEvalExpression(BAD_CAST "//output", context);
-
-	if (result->nodesetval->nodeNr == 1) {
-	    if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) != NULL) {
-		filename_needs_xmlFree = 1;
-	    } else if ((filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) != NULL) {
-		filename_needs_xmlFree = 1;
-	    }
-	}
-
-	xmlXPathFreeObject(result);
-	xmlXPathFreeContext(context);
-    }
-
-    if (filename == NULL) {
-	/* XXX really should check for this problem BEFORE building the tablebase */
-	fatal("No output filename or URL specified\n");
-    } else {
-	if (rindex(filename, ':') == NULL) {
-	    int fd;
-	    fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
-	    if (fd != -1) {
-		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-	    }
-	} else if (strncmp(filename, "ftp:", 4) == 0) {
 #ifdef USE_FTPLIB
-	    void *ptr = ftp_openurl(filename, "w");
-	    if (ptr != NULL) {
-		file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
-	    }
-#else
-	    /* XXX really should check for this problem BEFORE building the tablebase */
-	    fatal("Compiled without ftplib - ftp: URLs unsupported\n");
+    if (strncmp(filename, "ftp:", 4) == 0) {
+	void *ptr = ftp_openurl(filename, "w");
+	if (ptr != NULL) {
+	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
+	}
+    }
 #endif
-	} else if (strncmp(filename, "http:", 5) == 0) {
-	    /* XXX really should check for this problem BEFORE building the tablebase */
-	    fatal("http: URLs currently unsupported for tablebase I/O\n");
+
+    if (file == NULL) {
+	int fd;
+	fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
+	if (fd != -1) {
+	    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 	}
     }
 
     if (file == NULL) {
 	fatal("Can't open output tablebase\n");
-	if (filename_needs_xmlFree) xmlFree(filename);
 	terminate();
     }
 
     info("Writing '%s'\n", filename);
-
-    if (filename_needs_xmlFree) xmlFree(filename);
 
     doc = finalize_XML_header(tb);
 
@@ -11763,6 +11733,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
     long long futurevector_bytes;
+    /* int output_filename_needs_xmlFree = 0; */
 
 #if defined(RLIMIT_MEMLOCK) && LOCK_MEMORY
     struct rlimit rlimit;
@@ -11774,17 +11745,45 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
     current_tb = tb;
 
+    /* Figure out where we want to write the finished product. */
+
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression(BAD_CAST "//output", context);
     if ((result->nodesetval->nodeNr == 0) && (output_filename == NULL)) {
 	fatal("Output filename must be specified either on command line or with <output> tag\n");
 	return 0;
     }
-    if ((result->nodesetval->nodeNr > 0) && (output_filename != NULL)) {
-	warning("Output filename specified on command line overrides <output> tag\n");
+    if (result->nodesetval->nodeNr > 0) {
+	if (output_filename != NULL) {
+	    warning("Output filename specified on command line overrides <output> tag\n");
+	} else {
+	    /* XXX little memory leak here, but fixing it would clutter this routine */
+	    if ((output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) != NULL) {
+		/* output_filename_needs_xmlFree = 1; */
+	    } else if ((output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) != NULL) {
+		/* output_filename_needs_xmlFree = 1; */
+	    }
+	}
     }
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
+
+    if (output_filename == NULL) {
+	fatal("No output filename or URL specified\n");
+	return 0;
+    }
+
+    if (strncmp(output_filename, "http:", 5) == 0) {
+	fatal("http URLs currently unsupported for tablebase I/O\n");
+	return 0;
+    }
+
+#ifndef USE_FTPLIB
+    if (strncmp(output_filename, "ftp:", 4) == 0) {
+	fatal("Compiled without ftplib - ftp URLs unavailable\n");
+	return 0;
+    }
+#endif
 
     if (proptable_MBs > 0) {
 	num_propentries = proptable_MBs * 1024 * 1024 / PROPTABLE_FORMAT_BYTES;
@@ -12221,7 +12220,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.501 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.502 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
