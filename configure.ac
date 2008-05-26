@@ -70,8 +70,10 @@ fi
 
 dnl Check for ftplib
 dnl
-dnl AC_CHECK_LIB(ftp, FtpConnect, AC_DEFINE([USE_FTPLIB], [1], [Define to use ftplib to resolve ftp: URLs])
-dnl 			      AC_SUBST([FTPOBJS], [ftp_fopen.o]))
+dnl Do some extra work to make sure we can turn it off using
+dnl --without-ftplib, keep the default action (if found) of adding
+dnl library to LIBS and defining HAVE_LIBFTP, plus substituting
+dnl FTPOBJS in Makefile.
 
 AC_ARG_WITH([ftplib],
   [AS_HELP_STRING([--without-ftplib], [Don't link with ftplib for ftp: URL support])],
@@ -79,14 +81,15 @@ AC_ARG_WITH([ftplib],
   [with_ftplib=check])
 
 AS_IF([test "x$with_ftplib" != xno],
-  [AC_CHECK_LIB([ftp], [ftpConnect],
-    [AC_SUBST([FTPOBJS], ["ftp_fopen.o"])
-     AC_DEFINE([USE_FTPLIB], [1], [Define to use ftplib to resolve ftp: URLs])
-    ],
+  [AC_CHECK_LIB([ftp], [FtpConnect],,
     [if test "x$with_ftplib" != xcheck; then
        AC_MSG_FAILURE([--with-ftplib was given, but test for ftplib failed])
      fi
-    ])])
+    ])
+   if test $ac_cv_lib_ftp_FtpConnect = yes; then
+     AC_SUBST([FTPOBJS], ["ftp_fopen.o"])
+   fi
+])
 
 dnl Check for libcurl
 dnl
