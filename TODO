@@ -139,11 +139,6 @@ incorporates the 50-move rule into the calculation, but is tricky to
 implement - Guy Haworth has written some papers about this.
 
 
-- configure script improvements
-
-Among others, check for __sync_fetch_and_or (sometimes need -march=i686)
-
-
 - be more consistent about current tablebase being a global var
 
 
