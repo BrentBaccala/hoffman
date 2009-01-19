@@ -16,7 +16,7 @@ $LIST_SEPARATOR = undef;
 
 use strict;
 
-#open(DEBUG,">&STDOUT");
+open(DEBUG,">&STDOUT");
 
 my $analysis = "analysis4";
 
@@ -522,6 +522,9 @@ sub checkallpositions {
     return 1 + $#unique_positions;
 }
 
+# Determine which of the positions we've identified are already handled by one of the tablebases
+# that we passed in on the command line.
+
 sub assign_file {
     my ($filename) = @_;
     my ($white_pieces, $black_pieces);
@@ -961,7 +964,9 @@ sub genallsets {
 #&consider_position("Kd4Kd5d6");
 &consider_position("Kb7d4g2h3Kd5d6g6h5");
 
-foreach my $file (@ARGV) { &assign_file($file); }
+if ($#ARGV >= 0) {
+    foreach my $file (@ARGV) { &assign_file($file); }
+}
 
 #&genset("Kb7d4g2h3Kd5d6g6h5");
 &genallsets;
