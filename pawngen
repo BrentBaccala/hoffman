@@ -615,7 +615,7 @@ sub generate_control_file {
 
     # Sort the pawns here to make sure that doubled pawns appear in "board order"
 
-    foreach my $white_pawn (isort @white_pawns) {
+    foreach my $white_pawn (sort @white_pawns) {
 	if (defined $white_pawn) {
 	    print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$white_pawn\"/>\n";
 	} else {
