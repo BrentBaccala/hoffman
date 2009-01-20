@@ -130,7 +130,7 @@ sub match_prune {
     my ($movement, @prune_list) = @_;
 
     foreach my $prune_statement (@prune_list) {
-	return 1 if ($movement =~ m/$prune_statement/);
+	return 1 if ($movement =~ /$prune_statement/);
     }
 
     return 0;
@@ -361,13 +361,6 @@ sub compute_futurebases {
     my @white_pieces = unpack "(a1)*", $white_base;
     my @black_pieces = unpack "(a1)*", $black_base;
 
-    #return if (exists $positions{$position});
-    #$positions{$position} = undef;
-    #print "Considering $position\n";
-
-    #return if (exists $positions{"$white_base@white_pawns$black_base@black_pawns"});
-    #$positions{"$white_base@white_pawns$black_base@black_pawns"} = undef;
-
     print VERBOSE "Considering $position (sorted as $white_base@white_pawns$black_base@black_pawns)\n";
 
     # Look into the global XML control file and extract the prune statements.  Not all of them may
@@ -405,15 +398,12 @@ sub compute_futurebases {
     # XXX add something to prune here
 
     for (my $i=0; $i < length($position); $i ++) {
-	my $char = substr($position,$i,1);
-	if ($char =~ /QRBN/) {
+	if (substr($position,$i,1) =~ /QRBN/) {
 	    my $position7 = $position;
 	    substr($position7,$i,1) = "";
 	    push @futurebases, &normalize_position($position7);
 	}
     }
-
-    # die "futurebase" if (grep { not defined $_ } @white_captures, @black_captures);
 
     return (\@futurebases, \@white_prunes, \@black_prunes);
 }
@@ -455,16 +445,16 @@ sub expand_pattern_list {
 
 	return "$white_base@white_pawns$black_base@black_pawns";
 
-    } elsif ($first =~ m:^K:) {
+    } elsif ($first =~ /^K/) {
 
 	return &expand_pattern_list($prefix . $first, @sequence);
 
-    } elsif ($first =~ m:^(..)\+$:) {
+    } elsif ($first =~ /^(..)\+$/) {
 
 	# plus pawns - advance them as far as they can go without hitting another pawn
 
 	my $pawn = $1;
-	if ($prefix =~ m:^K[^K]*$:) {
+	if ($prefix =~ /^K[^K]*$/) {
 	    # white plus-pawn
 	    #print "white pawn = $pawn\n";
 	    while ($pawn !~ /8/ and "$prefix@sequence" !~ /$pawn/) {
@@ -838,7 +828,7 @@ sub genset {
 
 		if (&checkallpositions($white_base, (isort @white_pawns),
 				       $black_base, (sort @black_pawns))) {
-		    while ($white_pawn =~ m/^(.[3-7])/) {
+		    while ($white_pawn =~ /^(.[3-7])/) {
 			$white_pawn =~ tr/[3-7]/[2-6]/;
 			if (not &checkallpositions($white_base, (isort @white_pawns),
 						   $black_base, (sort @black_pawns))) {
@@ -852,11 +842,11 @@ sub genset {
 
 		# consider advancing white pawn
 
-		while ($white_pawn =~ m/(.[2-6])$/) {
+		while ($white_pawn =~ /(.[2-6])$/) {
 		    my $lastpawn = $1;
 		    $lastpawn =~ tr/[2-6]/[3-7]/;
 
-		    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+		    #last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
 		    $white_pawn .= $lastpawn;
 		    if (not &checkallpositions($white_base, (isort @white_pawns),
 					       $black_base, (sort @black_pawns))) {
@@ -867,11 +857,11 @@ sub genset {
 
 		# consider retreating white pawn
 
-		while ($white_pawn =~ m/^(.[3-7])/) {
+		while ($white_pawn =~ /^(.[3-7])/) {
 		    my $lastpawn = $1;
 		    $lastpawn =~ tr/[3-7]/[2-6]/;
 
-		    #last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+		    #last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
 		    $white_pawn = $lastpawn . $white_pawn;
 		    if (not &checkallpositions($white_base, (isort @white_pawns),
 					       $black_base, (sort @black_pawns))) {
@@ -891,7 +881,7 @@ sub genset {
 
 		if (&checkallpositions($white_base, (isort @white_pawns),
 				       $black_base, (sort @black_pawns))) {
-		    while ($black_pawn =~ m/^(.[2-6])/) {
+		    while ($black_pawn =~ /^(.[2-6])/) {
 			$black_pawn =~ tr/[2-6]/[3-7]/;
 			if (not &checkallpositions($white_base, (isort @white_pawns),
 						   $black_base, (sort @black_pawns))) {
@@ -905,12 +895,12 @@ sub genset {
 
 		# consider advancing black pawn
 
-		while ($black_pawn =~ m/(.[3-7])$/) {
+		while ($black_pawn =~ /(.[3-7])$/) {
 		    my $lastpawn = $1;
 		    $lastpawn =~ tr/[3-7]/[2-6]/;
 
-		    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
-		    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+		    #last if ("@white_pawns@black_pawns" =~ /$lastpawn/);
+		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
 		    $black_pawn .= $lastpawn;
 		    if (not &checkallpositions($white_base, (isort @white_pawns),
 					       $black_base, (sort @black_pawns))) {
@@ -921,12 +911,12 @@ sub genset {
 
 		# consider retreating black pawn
 
-		while ($black_pawn =~ m/^(.[2-6])/) {
+		while ($black_pawn =~ /^(.[2-6])/) {
 		    my $lastpawn = $1;
 		    $lastpawn =~ tr/[2-6]/[3-7]/;
 
-		    #last if ("@white_pawns@black_pawns" =~ m/$lastpawn/);
-		    last if grep m/^$lastpawn$/, @white_pawns, @black_pawns;
+		    #last if ("@white_pawns@black_pawns" =~ /$lastpawn/);
+		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
 		    $black_pawn = $lastpawn . $black_pawn;
 		    if (not &checkallpositions($white_base, (isort @white_pawns),
 					       $black_base, (sort @black_pawns))) {
