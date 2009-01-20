@@ -64,6 +64,7 @@ my $white_queens_allowed = 1;
 my $black_queens_allowed = 0;
 
 my %positions;
+my %futurebases;
 
 my %white_base;
 my %white_pawns;
@@ -405,7 +406,9 @@ sub compute_futurebases {
 	}
     }
 
-    return (\@futurebases, \@white_prunes, \@black_prunes);
+    $futurebases{$position} = \@futurebases;
+    #return (\@futurebases, \@white_prunes, \@black_prunes);
+    return @futurebases;
 }
 
 sub consider_position {
@@ -416,9 +419,7 @@ sub consider_position {
     return if (exists $positions{$position});
     $positions{$position} = undef;
 
-    my ($futurebases, $white_prunes, $black_prunes) = &compute_futurebases($position);
-
-    foreach my $new_position (@$futurebases) {
+    foreach my $new_position (&compute_futurebases($position)) {
 	&consider_position($new_position);
     }
 }
@@ -705,11 +706,12 @@ sub generate_control_file {
     @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
 
     foreach my $subposition (@unique_positions) {
-	my ($futurebases, $white_prunes, $black_prunes) = &compute_futurebases($subposition);
+	#my ($futurebases, $white_prunes, $black_prunes) = &compute_futurebases($subposition);
 
-	push @futurebases, map { $positions{$_} } @$futurebases;
-	push @white_prunes, @$white_prunes;
-	push @black_prunes, @$black_prunes;
+	push @futurebases, map { $positions{$_} } @{$futurebases{$subposition}};
+	#push @futurebases, map { $positions{$_} } @$futurebases;
+	#push @white_prunes, @$white_prunes;
+	#push @black_prunes, @$black_prunes;
 
 #	if (grep { not defined $_ } @white_captures, @black_captures) {
 #	    print "$subposition\n";
