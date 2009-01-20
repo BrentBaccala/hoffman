@@ -124,14 +124,16 @@ sub pattern_to_name {
     return join '', map { substr($_, 0, 1) eq "K" ? $_ : substr($_, 0, 2) } @pattern;
 }
 
-# Prune statement matching.  Given a movement and a list of prune statements (which can be regular
-# expressions), figure out if any of them match and return TRUE if so.
+# Prune statement matching.  Given a movement and a list of prune statements (which can be shell
+# glob expressions), figure out if any of them match and return TRUE if so.
 
 sub match_prune {
     my ($movement, @prune_list) = @_;
 
     foreach my $prune_statement (@prune_list) {
-	return 1 if ($movement =~ /$prune_statement/);
+	$prune_statement =~ s/\?/\./;
+	$prune_statement =~ s/\*/\.\*/;
+	return 1 if ($movement =~ /^$prune_statement$/);
     }
 
     return 0;
@@ -399,7 +401,7 @@ sub compute_futurebases {
     # XXX add something to prune here
 
     for (my $i=0; $i < length($position); $i ++) {
-	if (substr($position,$i,1) =~ /QRBN/) {
+	if (substr($position,$i,1) =~ /[QRBN]/) {
 	    my $position7 = $position;
 	    substr($position7,$i,1) = "";
 	    push @futurebases, &normalize_position($position7);
