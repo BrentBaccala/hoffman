@@ -509,9 +509,9 @@ sub assignallpositions {
 # Checks all positions resulting from a given pattern and returns either 0 (if at least one of them
 # either doesn't exist in our table or has already been assigned) or a count of the number of unique
 # positions matched by the pattern.  The pattern passed in should be a list of pieces and pawns,
-# each a separate list item - white first, then black, pieces before pawns within each color.
-# Pieces are just a single capital character.  Pawns are a board square (like "c2") or a string of
-# board squares (like "c2c3c4") or plus syntax (like "c2+").
+# each pawn a separate list item - white first, then black, pieces before pawns within each color.
+# Pieces are just a string of capital characters.  Pawns are a board square (like "c2") or a string
+# of board squares (like "c2c3c4") or plus syntax (like "c2+").
 
 sub checkallpositions {
 
@@ -763,6 +763,12 @@ sub generate_control_file {
 }
 
 
+# Given a position, attempt to collapse a group of related positions together, using plus pawns
+# and/or pawns on multiple squares.  Doing this perfectly is probably NP-complete, so we use a
+# simple algorithm and hope for the best.  Record the results in some global hashes (%white_base,
+# %white_pawns, %black_base, %black_pawns), pick a control file name to use as a key, and assign the
+# control file name to the entries in the %positions hash that we've successfully matched.
+
 sub genset {
     my ($position) = @_;
 
@@ -981,6 +987,8 @@ sub genset {
 
     return $cntl_filename;
 }
+
+# Assign all the positions to control files (using &genset), then generate the control files
 
 sub genallsets {
     my @cntl_files_needed;
