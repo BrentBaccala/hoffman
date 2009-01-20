@@ -52,9 +52,6 @@ my $XMLcontrolFile;
 
 # position format - K[pieces][pawn locations]K[pieces][pawn locations]
 
-my $white_queens_allowed = 1;
-my $black_queens_allowed = 0;
-
 my %positions;
 my %futurebases;
 
@@ -532,22 +529,23 @@ sub checkallpositions {
     return 1 + $#unique_positions;
 }
 
-# Determine which of the positions we've identified are already handled by one of the tablebases
-# that we passed in on the command line.
+# Determine which of the positions we've identified are already handled by one of the futurebases
+# that was specified in the original control file.
+#
+# XXX doesn't handle inverted futurebases
+#
+# XXX doesn't handle genuine URLs; just filenames
+#
+# XXX doesn't really parse the XML
 
-sub assign_file {
+sub assign_futurebase {
     my ($filename) = @_;
     my ($white_pieces, $black_pieces);
     my @white_pawns;
     my @black_pawns;
 
-    # To get the tablebase name we'll use, strip off any directory component and file extension.
-    # We'll prepend $url_prefix and append '.htb', just like any other tablebase name.
+    # XXX Yikes! This runs awfully late in the program to 'die'...
 
-    $filename =~ m|/([^/]*)\.[^/.]*$|;
-    my $tbname = $1;
-
-    #open(FILE, "<$filename");
     tie *FILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
 
     while (<FILE>) {
@@ -587,7 +585,7 @@ sub assign_file {
     }
     close(FILE);
 
-    &assignallpositions($tbname, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
+    &assignallpositions($filename, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
 }
 
 
@@ -633,31 +631,29 @@ sub add_prune {
 }
 
 sub generate_control_file {
-    my ($position) = @_;
+    my ($basename) = @_;
 
-    my $cntl_filename = "$position.xml";
+    my $cntl_filename = "$basename.xml";
 
-    my $white_base = $white_base{$position};
-    my $black_base = $black_base{$position};
+    my $white_base = $white_base{$basename};
+    my $black_base = $black_base{$basename};
 
     my @white_pieces = unpack "(a1)*", $white_base;
     my @black_pieces = unpack "(a1)*", $black_base;
 
-    my @white_pawns = @{$white_pawns{$position}};
-    my @black_pawns = @{$black_pawns{$position}};
+    my @white_pawns = @{$white_pawns{$basename}};
+    my @black_pawns = @{$black_pawns{$basename}};
 
-    # Make a copy of the original XML control file, then remove all existing pieces from it.  We'll
-    # reinsert the ones we want below.  This destroys location restrictions, which means that we
-    # don't support location restrictions yet in pawngen.  It also removes any text node that
-    # follows the pieces, and notes what that text was for later use.
+    # Make a copy of the original XML control file, then remove all existing pieces and futurebases
+    # from it.  We'll reinsert the ones we want below.  This destroys location restrictions, which
+    # means that we don't support location restrictions yet in pawngen.  It also removes any text
+    # node that follows the pieces, and notes what that text was for later use.
 
     $XMLroot = $XMLtree->getDocumentElement->cloneNode(1);
 
-    #print $XMLroot->toString() . "\n";
-
     undef $next_piece_location;
 
-    foreach my $old_piece ($XMLroot->findnodes('piece')) {
+    foreach my $old_piece ($XMLroot->findnodes('piece'), $XMLroot->findnodes('futurebase')) {
 	my $text_node = $old_piece->nextSibling();
 
 	if (not defined $next_piece_location) {
@@ -672,11 +668,9 @@ sub generate_control_file {
 	$old_piece->unbindNode();
     }
 
-    #print $XMLroot->toString() . "\n";
+    # Used to isort here to make sure a white queen came first... why?  I don't remember.
 
-    # isort here to make sure a white queen comes first (if present)
-
-    foreach my $white_piece (isort @white_pieces) {
+    foreach my $white_piece (sort @white_pieces) {
 	&add_piece('white', $piece_names{$white_piece});
     }
 
@@ -730,8 +724,8 @@ sub generate_control_file {
     my @unique_black_prunes = &uniqsort(@black_prunes);
 
     foreach my $futurebase (@unique_futurebases) {
-	if ($futurebase ne $position) {
-	    &add_futurebase("$url_prefix$futurebase.htb");
+	if ($futurebase ne $url_prefix . $basename . ".htb") {
+	    &add_futurebase($futurebase);
 	}
     }
 
@@ -752,9 +746,9 @@ sub generate_control_file {
     print OUT $XMLroot->toString();
     close OUT;
 
-    print MAKEFILE "$position:";
+    print MAKEFILE "$basename:";
     foreach my $futurebase (@futurebases) {
-	print MAKEFILE " $futurebase" if ($futurebase ne $position);
+	print MAKEFILE " $futurebase" if ($futurebase ne $url_prefix . $basename . ".htb");
     }
     print MAKEFILE "\n";
 
@@ -968,22 +962,22 @@ sub genset {
 
     my $KiloPositions = $best_count << (6*(length($white_base) + length($black_base)) - 10);
 
-    my $cntl_filename = &pattern_to_name($white_base, @best_white_pawns, $black_base, @best_black_pawns);
+    my $basename = &pattern_to_name($white_base, @best_white_pawns, $black_base, @best_black_pawns);
 
-    $white_base{$cntl_filename} = $white_base;
-    $white_pawns{$cntl_filename} = \@best_white_pawns;
-    $black_base{$cntl_filename} = $black_base;
-    $black_pawns{$cntl_filename} = \@best_black_pawns;
+    $white_base{$basename} = $white_base;
+    $white_pawns{$basename} = \@best_white_pawns;
+    $black_base{$basename} = $black_base;
+    $black_pawns{$basename} = \@best_black_pawns;
 
     $LIST_SEPARATOR = " ";
-    print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count ${KiloPositions}K as $cntl_filename from $position\n";
+    print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count ${KiloPositions}K as $basename from $position\n";
     $LIST_SEPARATOR = undef;
 
-    &assignallpositions($cntl_filename, $white_base, (isort @best_white_pawns), $black_base, (sort @best_black_pawns));
+    &assignallpositions($url_prefix . $basename . ".htb", $white_base, (isort @best_white_pawns), $black_base, (sort @best_black_pawns));
 
     die "$position wasn't defined" if not defined $positions{$position};
 
-    return $cntl_filename;
+    return $basename;
 }
 
 # Assign all the positions to control files (using &genset), then generate the control files
@@ -1050,14 +1044,28 @@ sub pawngen {
 	$starting_position .= $pawn_location;
     }
 
-    print "Starting position $starting_position\n";
-
     # Extract URL prefix from the control file, if it exists.  If not, then $url_prefix will be an
     # empty string.
 
     $url_prefix = $XMLcontrolFile->findvalue('generation-controls/url-prefix');
 
+    # Starting from the position we identified above, and subject to pruning restrictions, populate
+    # the %positions hash with all possible positions that can arise from the original one.
+
+    print "Starting position $starting_position\n";
     &consider_position($starting_position);
+
+    # Extract any futurebases from the input control file and assign them to any positions that they
+    # match.  XXX This could probably be made more efficient by doing it earlier, so we don't have
+    # to generate all the positions that arise from the matched positions.
+
+    foreach my $futurebase ($XMLcontrolFile->findnodes("futurebase")) {
+	if ($futurebase->findvalue('@url') ne "") {
+	    &assign_futurebase($futurebase->findvalue('@url'));
+	} elsif ($futurebase->findvalue('@filename') ne "") {
+	    &assign_futurebase($futurebase->findvalue('@filename'));
+	}
+    }
 
     &genallsets;
 }
