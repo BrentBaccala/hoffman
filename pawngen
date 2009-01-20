@@ -143,10 +143,7 @@ sub match_prune {
 sub compute_futurebases {
     my ($position) = @_;
 
-    my (@white_captures, @black_captures);
-    my (@white_promotions, @black_promotions);
-    my (@white_capture_promotions, @black_capture_promotions);
-    my (@white_normals, @black_normals);
+    my @futurebases;
     my (@white_prunes, @black_prunes);
 
     my $white_pawns = $position;
@@ -202,7 +199,7 @@ sub compute_futurebases {
 		    $position2 =~ s/^K/K$white_promotion/;
 		    #print "  $position2\n";
 		    #&consider_position($position2);
-		    push @white_promotions, &normalize_position($position2);
+		    push @futurebases, &normalize_position($position2);
 		}
 
 		# also consider capture promotions
@@ -213,7 +210,7 @@ sub compute_futurebases {
 			$position2 =~ s/(K[^K]*K[^$black_piece]*)$black_piece/\1/;
 			#print "  $position2\n";
 			#&consider_position($position2);
-			push @white_capture_promotions, &normalize_position($position2);
+			push @futurebases, &normalize_position($position2);
 		    }
 		}
 	    }
@@ -228,7 +225,7 @@ sub compute_futurebases {
 		if (not &match_prune("P$forward_move", @white_prunes)) {
 		    my $position2 = $position;
 		    $position2 =~ s/$white_pawn/$forward_move/;
-		    push @white_normals, &normalize_position($position2);
+		    push @futurebases, &normalize_position($position2);
 		}
 
 		if ($forward_move =~ /.3/) {
@@ -237,7 +234,7 @@ sub compute_futurebases {
 		    if ($pawns !~ /$forward_move2/ and not &match_prune("P$forward_move2", @white_prunes)) {
 			my $position3 = $position;
 			$position3 =~ s/$white_pawn/$forward_move2/;
-			push @white_normals, &normalize_position($position3);
+			push @futurebases, &normalize_position($position3);
 		    }
 		}
 	    }
@@ -254,7 +251,7 @@ sub compute_futurebases {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$white_pawn/$capture_move/;
-		    push @white_captures, &normalize_position($position4);
+		    push @futurebases, &normalize_position($position4);
 		}
 		# en passant capture?
 		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
@@ -264,7 +261,7 @@ sub compute_futurebases {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$white_pawn/$capture_move/;
-			push @white_captures, &normalize_position($position5);
+			push @futurebases, &normalize_position($position5);
 		    }
 		}
 	    }
@@ -276,7 +273,7 @@ sub compute_futurebases {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$white_pawn/$capture_move/;
-		    push @white_captures, &normalize_position($position4);
+		    push @futurebases, &normalize_position($position4);
 		}
 		# en passant capture?
 		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
@@ -286,7 +283,7 @@ sub compute_futurebases {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$white_pawn/$capture_move/;
-			push @white_captures, &normalize_position($position5);
+			push @futurebases, &normalize_position($position5);
 		    }
 		}
 	    }
@@ -311,7 +308,7 @@ sub compute_futurebases {
 	if ($white_pawns !~ /$protector1/ and $white_pawns !~ /$protector2/) {
 	    my $position6 = $position;
 	    $position6 =~ s/$white_pawn//;
-	    push @black_captures, &normalize_position($position6);
+	    push @futurebases, &normalize_position($position6);
 	}
     }
 
@@ -323,7 +320,7 @@ sub compute_futurebases {
 		my $position2 = $position;
 		$position2 =~ s/$black_pawn//;
 		$position2 =~ s/\BK/KQ/;
-		push @black_promotions, &normalize_position($position2);
+		push @futurebases, &normalize_position($position2);
 	    } else {
 		push @black_prunes, "P=*";
 	    }
@@ -335,7 +332,7 @@ sub compute_futurebases {
 		    $position2 =~ s/$black_pawn//;
 		    $position2 =~ s/\BK/KQ/;
 		    $position2 =~ s/^K[QRBN]/K/;
-		    push @black_capture_promotions, &normalize_position($position2);
+		    push @futurebases, &normalize_position($position2);
 		} else {
 		    push @black_prunes, "Px$1=*";
 		}
@@ -350,7 +347,7 @@ sub compute_futurebases {
 		my $position2 = $position;
 		# have to consider queening
 		$position2 =~ s/$black_pawn/$forward_move/;
-		push @black_normals, &normalize_position($position2);
+		push @futurebases, &normalize_position($position2);
 
 		if ($forward_move =~ /.6/) {
 		    my $forward_move2 = $forward_move;
@@ -358,7 +355,7 @@ sub compute_futurebases {
 		    if ($pawns !~ /$forward_move2/) {
 			my $position3 = $position;
 			$position3 =~ s/$black_pawn/$forward_move2/;
-			push @black_normals, &normalize_position($position3);
+			push @futurebases, &normalize_position($position3);
 		    }
 		}
 	    }
@@ -385,7 +382,7 @@ sub compute_futurebases {
 		    my $position4 = $position;
 		    $position4 =~ s/$capture_move//;
 		    $position4 =~ s/$black_pawn/$capture_move/;
-		    push @black_captures, &normalize_position($position4);
+		    push @futurebases, &normalize_position($position4);
 		}
 		# en passant capture?
 		if ($capture_move =~ /.3/ and $pawns !~ /$capture_move/) {
@@ -395,7 +392,7 @@ sub compute_futurebases {
 			my $position5 = $position;
 			$position5 =~ s/$oldpawn//;
 			$position5 =~ s/$black_pawn/$capture_move/;
-			push @black_captures, &normalize_position($position5);
+			push @futurebases, &normalize_position($position5);
 		    }
 		}
 		# capture of a mobile white piece?
@@ -405,7 +402,7 @@ sub compute_futurebases {
 		    $position5 =~ s/^K([QRBN])/K/;
 		    my $captured_piece = $1;
 		    if ($consider_all_captures or exists $positions{&normalize_position($position5)}) {
-			push @black_captures, &normalize_position($position5);
+			push @futurebases, &normalize_position($position5);
 		    } else {
 			push @black_prunes, "Px$captured_piece";
 		    }
@@ -432,7 +429,7 @@ sub compute_futurebases {
 	if ($black_pawns !~ /$protector1/ and $black_pawns !~ /$protector2/) {
 	    my $position6 = $position;
 	    $position6 =~ s/$black_pawn//;
-	    push @white_captures, &normalize_position($position6);
+	    push @futurebases, &normalize_position($position6);
 	}
     }
 
@@ -440,15 +437,12 @@ sub compute_futurebases {
     if ($position =~ /^K[QRBN]/) {
 	my $position7 = $position;
 	$position7 =~ s/^K[QRBN]/K/;
-	push @black_captures, &normalize_position($position7);
+	push @futurebases, &normalize_position($position7);
     }
 
-    die "futurebase" if (grep { not defined $_ } @white_captures, @black_captures);
+    # die "futurebase" if (grep { not defined $_ } @white_captures, @black_captures);
 
-    return (\@white_captures, \@black_captures,
-	    \@white_promotions, \@black_promotions,
-	    \@white_capture_promotions, \@black_capture_promotions,
-	    \@white_normals, \@black_normals,
+    return (\@futurebases,
 	    \@white_prunes, \@black_prunes);
 }
 
@@ -460,16 +454,9 @@ sub consider_position {
     return if (exists $positions{$position});
     $positions{$position} = undef;
 
-    my ($white_captures, $black_captures,
-	$white_promotions, $black_promotions,
-	$white_capture_promotions, $black_capture_promotions,
-	$white_normals, $black_normals,
-	$white_prunes, $black_prunes) = &compute_futurebases($position);
+    my ($futurebases, $white_prunes, $black_prunes) = &compute_futurebases($position);
 
-    foreach my $new_position (@$white_captures, @$black_captures,
-			      @$white_promotions, @$black_promotions,
-			      @$white_capture_promotions, @$black_capture_promotions,
-			      @$white_normals, @$black_normals) {
+    foreach my $new_position (@$futurebases) {
 	&consider_position($new_position);
     }
 }
@@ -660,10 +647,9 @@ sub add_piece {
 }
 
 sub add_futurebase {
-    my ($url, $type) = @_;
+    my ($url) = @_;
     my $new_futurebase = $XMLtree->createElement('futurebase');
     $new_futurebase->addChild($XMLtree->createAttribute('url', $url));
-    $new_futurebase->addChild($XMLtree->createAttribute('type', $type));
     $XMLroot->insertAfter($new_futurebase, $next_piece_location);
     $next_piece_location = $XMLtree->createTextNode($piece_text);
     $XMLroot->insertAfter($next_piece_location, $new_futurebase);
@@ -750,66 +736,35 @@ sub generate_control_file {
     # of them to the control file.  Keep on adding them right after the pieces.
 
     my (@positions, @unique_positions);
-    my (@white_captures, @black_captures);
-    my (@white_promotions, @black_promotions);
-    my (@white_capture_promotions, @black_capture_promotions);
-    my (@white_normals, @black_normals);
+    my @futurebases;
     my (@white_prunes, @black_prunes);
 
     @positions = &expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
     @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
 
     foreach my $subposition (@unique_positions) {
-	my ($white_captures, $black_captures,
-	    $white_promotions, $black_promotions,
-	    $white_capture_promotions, $black_capture_promotions,
-	    $white_normals, $black_normals,
-	    $white_prunes, $black_prunes) = &compute_futurebases($subposition);
+	my ($futurebases, $white_prunes, $black_prunes) = &compute_futurebases($subposition);
 
-	push @white_captures, map { $positions{$_} } @$white_captures;
-	push @white_promotions, map { $positions{$_} } @$white_promotions;
-	push @white_capture_promotions, map { $positions{$_} } @$white_capture_promotions;
-	push @white_normals, map { $positions{$_} } @$white_normals;
+	push @futurebases, map { $positions{$_} } @$futurebases;
 	push @white_prunes, @$white_prunes;
-
-	push @black_captures, map { $positions{$_} } @$black_captures;
-	push @black_promotions, map { $positions{$_} } @$black_promotions;
-	push @black_capture_promotions, map { $positions{$_} } @$black_capture_promotions;
-	push @black_normals, map { $positions{$_} } @$black_normals;
 	push @black_prunes, @$black_prunes;
 
-	if (grep { not defined $_ } @white_captures, @black_captures) {
-	    print "$subposition\n";
-	    foreach my $capture (@$white_captures, @$black_captures) {
-		print "$capture $positions{$capture}\n";
-	    }
-	    die "captures";
-	}
+#	if (grep { not defined $_ } @white_captures, @black_captures) {
+#	    print "$subposition\n";
+#	    foreach my $capture (@$white_captures, @$black_captures) {
+#		print "$capture $positions{$capture}\n";
+#	    }
+#	    die "captures";
+#	}
     }
 
-    my @unique_captures = &uniqsort(@white_captures, @black_captures);
-    my @unique_promotions = &uniqsort(@white_promotions, @black_promotions);
-    my @unique_capture_promotions = &uniqsort(@white_capture_promotions, @black_capture_promotions);
-    my @unique_normals = &uniqsort(@white_normals, @black_normals);
-
+    my @unique_futurebases = &uniqsort(@futurebases);
     my @unique_white_prunes = &uniqsort(@white_prunes);
     my @unique_black_prunes = &uniqsort(@black_prunes);
 
-    foreach my $futurebase (@unique_captures) {
-	&add_futurebase("$url_prefix$futurebase.htb", 'capture');
-    }
-
-    foreach my $futurebase (@unique_promotions) {
-	&add_futurebase("$url_prefix$futurebase.htb", 'promotion');
-    }
-
-    foreach my $futurebase (@unique_capture_promotions) {
-	&add_futurebase("$url_prefix$futurebase.htb", 'capture-promotion');
-    }
-
-    foreach my $futurebase (@unique_normals) {
+    foreach my $futurebase (@unique_futurebases) {
 	if ($futurebase ne $position) {
-	    &add_futurebase("$url_prefix$futurebase.htb", 'normal');
+	    &add_futurebase("$url_prefix$futurebase.htb");
 	}
     }
 
@@ -831,10 +786,7 @@ sub generate_control_file {
     close OUT;
 
     print MAKEFILE "$position:";
-    foreach my $futurebase (@unique_captures,
-			    @unique_promotions,
-			    @unique_capture_promotions,
-			    @unique_normals) {
+    foreach my $futurebase (@futurebases) {
 	print MAKEFILE " $futurebase" if ($futurebase ne $position);
     }
     print MAKEFILE "\n";
