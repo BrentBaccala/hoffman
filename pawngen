@@ -5,16 +5,16 @@
 # analyze a particular pawn configuration
 #
 
-use IO::Zlib;
+use strict;
 
+use IO::Zlib;
+use XML::LibXML;
 use Data::Dumper;
 
 my $for_real = 1;
 
 use English;
 $LIST_SEPARATOR = undef;
-
-use strict;
 
 open(DEBUG,">&STDOUT");
 
@@ -45,6 +45,11 @@ if ($for_real) {
 } else {
     open (MAKEFILE, ">/dev/null") || die "open";
 }
+
+# Obtain an XML copy of our base control file
+
+my $XMLparser = XML::LibXML->new();
+my $XMLtree = $XMLparser->parse_file("base.xml");
 
 # position format - K[pieces][pawn locations]K[pieces][pawn locations]
 
@@ -586,12 +591,6 @@ sub generate_control_file {
 
     my $cntl_filename = "$position.xml";
 
-    if ($for_real) {
-	open (OUT, ">$cntl_filename") || die "open";
-    } else {
-	open (OUT, ">&STDOUT") || die "open";
-    }
-
     my $white_base = $white_base{$position};
     my $black_base = $black_base{$position};
 
@@ -601,37 +600,78 @@ sub generate_control_file {
     my @white_pawns = @{$white_pawns{$position}};
     my @black_pawns = @{$black_pawns{$position}};
 
-    print OUT "<tablebase>\n";
-    print OUT "   <move-restriction color=\"white\" type=\"discard\"/>\n";
-    print OUT "   <move-restriction color=\"black\" type=\"concede\"/>\n";
-    print OUT "   <index type=\"compact\"/>\n";
-    print OUT "   <format><dtm bits=\"8\"/></format>\n";
+    # Make a copy of the original XML control file, then remove all existing pieces from it.  We'll
+    # reinsert the ones we want below.  This destroys location restrictions, which means that we
+    # don't support location restrictions yet in pawngen.  It also removes any text node that
+    # follows the pieces, and notes what that text was for later use.
+
+    my $XMLroot = $XMLtree->getDocumentElement->cloneNode(1);
+
+    my $piece_text;
+    my $next_piece_location;
+
+    foreach my $old_piece ($XMLroot->findnodes('piece')) {
+	my $text_node = $old_piece->nextSibling();
+
+	if (not defined $next_piece_location) {
+	    $next_piece_location = $old_piece->previousSibling();
+	}
+
+	if ($text_node->nodeValue ne "") {
+	    $piece_text = $text_node->nodeValue unless defined $piece_text;
+	    $text_node->unbindNode();
+	}
+
+	$old_piece->unbindNode();
+    }
+
+    # Convenience subroutine to add a piece to the XML.  Not only do we add the element, but we put
+    # some text in (whatever we took out above) to keep the formatting nice.
+
+    sub add_piece {
+	my ($color, $type, $location) = @_;
+	my $new_piece = $XMLtree->createElement('piece');
+	$new_piece->addChild($XMLtree->createAttribute('color', $color));
+	$new_piece->addChild($XMLtree->createAttribute('type', $type));
+	$new_piece->addChild($XMLtree->createAttribute('location', $location)) if defined $location;
+	$XMLroot->insertAfter($new_piece, $next_piece_location);
+	$next_piece_location = $XMLtree->createTextNode($piece_text);
+	$XMLroot->insertAfter($next_piece_location, $new_piece);
+    }
 
     # isort here to make sure a white queen comes first (if present)
 
     foreach my $white_piece (isort @white_pieces) {
-	print OUT "   <piece color=\"white\" type=\"$piece_names{$white_piece}\"/>\n";
-    }
-    foreach my $black_piece (@black_pieces) {
-	print OUT "   <piece color=\"black\" type=\"$piece_names{$black_piece}\"/>\n";
+	&add_piece('white', $piece_names{$white_piece});
     }
 
-    # Sort the pawns here to make sure that doubled pawns appear in "board order"
+    foreach my $black_piece (@black_pieces) {
+	&add_piece('black', $piece_names{$black_piece});
+    }
+
+    # Sort the pawns here to make sure that doubled pawns appear in "board order".  Also note that a
+    # value in the pawns array may be undefined to indicate an unrestricted pawn.  &add_piece
+    # handles this correctly.
 
     foreach my $white_pawn (sort @white_pawns) {
-	if (defined $white_pawn) {
-	    print OUT "   <piece color=\"white\" type=\"pawn\" location=\"$white_pawn\"/>\n";
-	} else {
-	    print OUT "   <piece color=\"white\" type=\"pawn\"/>\n";
-	}
+	&add_piece('white', 'pawn', $white_pawn);
     }
 
     foreach my $black_pawn (sort @black_pawns) {
-	if (defined $black_pawn) {
-	    print OUT "   <piece color=\"black\" type=\"pawn\" location=\"$black_pawn\"/>\n";
-	} else {
-	    print OUT "   <piece color=\"black\" type=\"pawn\"/>\n";
-	}
+	&add_piece('black', 'pawn', $black_pawn);
+    }
+
+    # Now we need to figure out which futurebases we'll need to build this tablebase and add a list
+    # of them to the control file.  Keep on adding them right after the pieces.
+
+    sub add_futurebase {
+	my ($url, $type) = @_;
+	my $new_futurebase = $XMLtree->createElement('futurebase');
+	$new_futurebase->addChild($XMLtree->createAttribute('url', $url));
+	$new_futurebase->addChild($XMLtree->createAttribute('type', $type));
+	$XMLroot->insertAfter($new_futurebase, $next_piece_location);
+	$next_piece_location = $XMLtree->createTextNode($piece_text);
+	$XMLroot->insertAfter($next_piece_location, $new_futurebase);
     }
 
     my (@positions, @unique_positions);
@@ -681,39 +721,49 @@ sub generate_control_file {
     my @unique_black_prunes = &uniqsort(@black_prunes);
 
     foreach my $futurebase (@unique_captures) {
-	print OUT "   <futurebase url=\"$url_prefix$futurebase.htb\" type=\"capture\"/>\n";
+	&add_futurebase("$url_prefix$futurebase.htb", 'capture');
     }
 
     foreach my $futurebase (@unique_promotions) {
-	print OUT "   <futurebase url=\"$url_prefix$futurebase.htb\" type=\"promotion\"/>\n";
+	&add_futurebase("$url_prefix$futurebase.htb", 'promotion');
     }
 
     foreach my $futurebase (@unique_capture_promotions) {
-	print OUT "   <futurebase url=\"$url_prefix$futurebase.htb\" type=\"capture-promotion\"/>\n";
+	&add_futurebase("$url_prefix$futurebase.htb", 'capture-promotion');
     }
 
     foreach my $futurebase (@unique_normals) {
 	if ($futurebase ne $position) {
-	    print OUT "   <futurebase url=\"$url_prefix$futurebase.htb\" type=\"normal\"/>\n";
+	    &add_futurebase("$url_prefix$futurebase.htb", 'normal');
 	}
     }
 
+    sub add_prune {
+	my ($color, $move, $type) = @_;
+	my $new_prune = $XMLtree->createElement('prune');
+	$new_prune->addChild($XMLtree->createAttribute('color', $color));
+	$new_prune->addChild($XMLtree->createAttribute('move', $move));
+	$new_prune->addChild($XMLtree->createAttribute('type', $type));
+	$XMLroot->insertAfter($new_prune, $next_piece_location);
+	$next_piece_location = $XMLtree->createTextNode($piece_text);
+	$XMLroot->insertAfter($next_piece_location, $new_prune);
+    }
+
     foreach my $white_prune (@unique_white_prunes) {
-	print OUT "   <prune color=\"white\" move=\"$white_prune\" type=\"discard\"/>\n";
+	&add_prune('white', $white_prune, 'discard');
     }
     foreach my $black_prune (@unique_black_prunes) {
-	print OUT "   <prune color=\"black\" move=\"$black_prune\" type=\"concede\"/>\n";
+	&add_prune('black', $black_prune, 'concede');
     }
 
 
-    print OUT "   <prune color=\"black\" move=\"stalemate\" type=\"concede\"/>\n" if $concede_stalemates;
-    print OUT "   <generation-controls>\n";
-    print OUT "      <output url=\"$url_prefix$position.htb\"/>\n";
-    print OUT "      <completion-report url=\"$completion_url$position\"/>\n";
-    print OUT "      <error-report url=\"$error_url$position\"/>\n";
-    print OUT "   </generation-controls>\n";
-    print OUT "</tablebase>\n";
+    if ($for_real) {
+	open (OUT, ">$cntl_filename") || die "open";
+    } else {
+	open (OUT, ">&STDOUT") || die "open";
+    }
 
+    print OUT $XMLroot->toString();
     close OUT;
 
     print MAKEFILE "$position:";
@@ -958,11 +1008,11 @@ sub genallsets {
 }
 
 
-#&consider_position("Kh3Kh5");
+&consider_position("Kh3Kh5");
 #&consider_position("Kg2h3Kg6h5");
 #&consider_position("Kb2g2h3Kg6h5");
 #&consider_position("Kd4Kd5d6");
-&consider_position("Kb7d4g2h3Kd5d6g6h5");
+#&consider_position("Kb7d4g2h3Kd5d6g6h5");
 
 if ($#ARGV >= 0) {
     foreach my $file (@ARGV) { &assign_file($file); }
