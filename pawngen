@@ -51,6 +51,7 @@ if ($for_real) {
 # Our original XML control file
 
 my $XMLtree;
+my $XMLcontrolFile;
 
 # position format - K[pieces][pawn locations]K[pieces][pawn locations]
 
@@ -115,6 +116,24 @@ sub pattern_to_name {
     return join '', map { substr($_, 0, 1) eq "K" ? $_ : substr($_, 0, 2) } @pattern;
 }
 
+# Prune statement matching.  Given a movement and a list of prune statements (which can be regular
+# expressions), figure out if any of them match and return TRUE if so.
+
+sub match_prune {
+    my ($movement, @prune_list) = @_;
+
+    foreach my $prune_statement (@prune_list) {
+	return 1 if ($movement =~ m/$prune_statement/);
+    }
+
+    return 0;
+}
+
+# Given a particular position, in standard position format (see above), we now compute all possible
+# future positions that can arise from it.  These aren't exactly futurebases, yet, because we
+# haven't yet tried to collapse multiple positions together (using plus pawns) in a single control
+# file, but the positions that come out of this routine form the core data of this program.
+#
 # Critical to the operation of this algorithm is the sorting of the pawn positions.
 # First of all, we keep pawn positions sorted so that there's no way to confuse "a5 b6"
 # with "b6 a5".  Next, we sort white pawn in inverse sort order, so that "a5" comes
@@ -141,13 +160,30 @@ sub compute_futurebases {
     my $black_base = $1;
     my @black_pawns = sort unpack "(a2)*", $black_pawns;
 
+    my @white_pieces = unpack "(a1)*", $white_base;
+    my @black_pieces = unpack "(a1)*", $black_base;
+
     #return if (exists $positions{$position});
     #$positions{$position} = undef;
     #print "Considering $position\n";
 
     #return if (exists $positions{"$white_base@white_pawns$black_base@black_pawns"});
     #$positions{"$white_base@white_pawns$black_base@black_pawns"} = undef;
+
     print DEBUG "Considering $position (sorted as $white_base@white_pawns$black_base@black_pawns)\n";
+
+    # Look into the global XML control file and extract the prune statements.  Not all of them may
+    # apply to a given position; we allow arbitrary Perl code in the prune statement to selectively
+    # apply them.  XXX need to track concede/discard, too
+
+    foreach my $white_prune ($XMLcontrolFile->findnodes("prune[attribute::color = 'white']")) {
+	my $condition_present = $white_prune->findnodes('@condition')->size();
+	my $condition = $white_prune->findvalue('@condition');
+	if (not $condition_present or eval $condition) {
+	    push @white_prunes, $white_prune->findvalue('@move');
+	}
+    }
+
 
     # if we were considering pawn-pieces captured, that would be here
 
@@ -155,36 +191,50 @@ sub compute_futurebases {
 
     foreach my $white_pawn (unpack "(a2)*", $white_pawns) {
 
-	# first, try to queen the pawn
+	# first, can we queen the pawn?
+
 	if ($white_pawn =~ /.7/) {
-	    if ($white_queens_allowed and ($position !~ /^K[QRBN]/)) {
-		my $position2 = $position;
-		$position2 =~ s/$white_pawn//;
-		$position2 =~ s/^K/KQ/;
-		#print "  $position2\n";
-		#&consider_position($position2);
-		push @white_promotions, &normalize_position($position2);
-		push @white_prunes, "P=[RBN]";
-	    } else {
-		push @white_prunes, "P=*";
+	    foreach my $white_promotion ('Q', 'R', 'B', 'N') {
+		if (not &match_prune("P=$white_promotion", @white_prunes)
+		    and not &match_prune("P$white_pawn=$white_promotion", @white_prunes)) {
+		    my $position2 = $position;
+		    $position2 =~ s/$white_pawn//;
+		    $position2 =~ s/^K/K$white_promotion/;
+		    #print "  $position2\n";
+		    #&consider_position($position2);
+		    push @white_promotions, &normalize_position($position2);
+		}
+
+		# also consider capture promotions
+		foreach my $black_piece (@black_pieces) {
+		    if ($black_piece != 'K' and not &match_prune("Px$black_piece=$white_promotion", @white_prunes)) {
+			my $position2 = $position;
+			$position2 =~ s/$white_pawn//;
+			$position2 =~ s/(K[^K]*K[^$black_piece]*)$black_piece/\1/;
+			#print "  $position2\n";
+			#&consider_position($position2);
+			push @white_capture_promotions, &normalize_position($position2);
+		    }
+		}
 	    }
-	    # if other black pieces allowed, consider capture promotions here
 	}
 
 	# now try to move the pawn forward
+
 	if ($white_pawn !~ /.7/) {
 	    my $forward_move = $white_pawn;
 	    $forward_move =~ tr/[2-7]/[3-8]/;
 	    if ($pawns !~ /$forward_move/) {
-		my $position2 = $position;
-		# have to consider queening
-		$position2 =~ s/$white_pawn/$forward_move/;
-		push @white_normals, &normalize_position($position2);
+		if (not &match_prune("P$forward_move", @white_prunes)) {
+		    my $position2 = $position;
+		    $position2 =~ s/$white_pawn/$forward_move/;
+		    push @white_normals, &normalize_position($position2);
+		}
 
 		if ($forward_move =~ /.3/) {
 		    my $forward_move2 = $forward_move;
 		    $forward_move2 =~ tr/3/4/;
-		    if ($pawns !~ /$forward_move2/) {
+		    if ($pawns !~ /$forward_move2/ and not &match_prune("P$forward_move2", @white_prunes)) {
 			my $position3 = $position;
 			$position3 =~ s/$white_pawn/$forward_move2/;
 			push @white_normals, &normalize_position($position3);
@@ -194,7 +244,8 @@ sub compute_futurebases {
 	}
 
 	# can the pawn capture another pawn?
-	if ($white_pawn !~ /.7/) {
+
+	if ($white_pawn !~ /.7/ and not &match_prune("PxP", @white_prunes)) {
 	    if ($white_pawn !~ /a./) {
 		my $capture_move = $white_pawn;
 		$capture_move =~ tr/[2-7]/[3-8]/;
@@ -1032,18 +1083,18 @@ sub pawngen {
     $XMLparser->recover_silently(0);
 
     $XMLtree = $XMLparser->parse_file($control_file);
-    my $XMLroot = $XMLtree->getDocumentElement();
+    $XMLcontrolFile = $XMLtree->getDocumentElement();
 
     # Figure out our starting position
 
     my $starting_position = "";
 
-    foreach my $white_piece ($XMLroot->findnodes("piece[attribute::color = 'white' and attribute::type != 'pawn']")) {
+    foreach my $white_piece ($XMLcontrolFile->findnodes("piece[attribute::color = 'white' and attribute::type != 'pawn']")) {
 	die "pawngen doesn't support movement restrictions on non-pawns yet" if $white_piece->findvalue('@location');
 	$starting_position .= $piece_character{$white_piece->findvalue('@type')};
     }
 
-    foreach my $white_pawn ($XMLroot->findnodes("piece[attribute::color = 'white' and attribute::type = 'pawn']")) {
+    foreach my $white_pawn ($XMLcontrolFile->findnodes("piece[attribute::color = 'white' and attribute::type = 'pawn']")) {
 	die "pawngen doesn't unrestricted pawns yet" if not $white_pawn->findvalue('@location');
 	my $pawn_location = $white_pawn->findvalue('@location');
 	die "pawngen doesn't support any pawn restrictions other than plus pawns yet" unless
@@ -1051,12 +1102,12 @@ sub pawngen {
 	$starting_position .= $pawn_location;
     }
 
-    foreach my $black_piece ($XMLroot->findnodes("piece[attribute::color = 'black' and attribute::type != 'pawn']")) {
+    foreach my $black_piece ($XMLcontrolFile->findnodes("piece[attribute::color = 'black' and attribute::type != 'pawn']")) {
 	die "pawngen doesn't support movement restrictions on non-pawns yet" if $black_piece->findvalue('@location');
 	$starting_position .= $piece_character{$black_piece->findvalue('@type')};
     }
 
-    foreach my $black_pawn ($XMLroot->findnodes("piece[attribute::color = 'black' and attribute::type = 'pawn']")) {
+    foreach my $black_pawn ($XMLcontrolFile->findnodes("piece[attribute::color = 'black' and attribute::type = 'pawn']")) {
 	die "pawngen doesn't unrestricted pawns yet" if not $black_pawn->findvalue('@location');
 	my $pawn_location = $black_pawn->findvalue('@location');
 	die "pawngen doesn't support any pawn restrictions other than plus pawns yet" unless
