@@ -1,9 +1,12 @@
 #! /usr/bin/perl
 # -*- fill-column: 100; -*-
 #
-# PAWNGEN - generates a directory full of Hoffman XML control files to
-# analyze a particular pawn configuration
-#
+# PAWNGEN - generates a directory full of Hoffman XML control files to analyze a particular pawn
+# configuration, with more complicated pruning operations than are possible with a single run.
+# Starting from a particular pawn configuration, this program will systematically consider all
+# possible pawn movements and promotions that can result from the position.  The 'condition'
+# attribute on pruning statements allows them to be applied selectively at various captures and
+# promotions in the analysis.
 
 use strict;
 
@@ -16,7 +19,9 @@ my $for_real = 1;
 use English;
 $LIST_SEPARATOR = undef;
 
-open(DEBUG,">&STDOUT");
+open(VERBOSE,">&STDOUT");
+#open(DEBUG,">&STDOUT");
+#open(DEBUG2,">&STDOUT");
 
 my $analysis = "analysis4";
 
@@ -96,6 +101,8 @@ sub debuguniqsort {
 sub normalize_position {
     my ($position) = @_;
 
+    print DEBUG "Normalizing $position\n";
+
     my $white_pawns = $position;
     $white_pawns =~ s/^(K[QRBN]*)//;
     my $white_base = $1;
@@ -140,6 +147,200 @@ sub match_prune {
 # before "a2".  This makes plus-pawns work easy and well - we just run through
 # the pawns in (inverse) sort order, and advance each plus-pawn until it hits something.
 
+sub forward_pawn_move {
+    my ($color, $pawn) = @_;
+
+    if ($color eq 'white') {
+	$pawn =~ tr/[2-7]/[3-8]/;
+    } else {
+	$pawn =~ tr/[2-7]/[1-6]/;
+    }
+
+    return $pawn;
+}
+
+sub reverse_pawn_move {
+    my ($color, $pawn) = @_;
+
+    return &forward_pawn_move($color eq 'white' ? 'black' : 'white', $pawn);
+}
+
+sub add_piece_to_position {
+    my ($color, $position, $piece) = @_;
+
+    if ($color eq 'white') {
+	$position =~ s/^K/K$piece/;
+    } else {
+	$position =~ s/(.K)/\1$piece/;
+    }
+
+    return $position;
+}
+
+sub remove_enemy_piece_from_position {
+    my ($color, $position, $piece) = @_;
+
+    if ($color eq 'white') {
+	$position =~ s/(K[^K]*K[^$piece]*)$piece/\1/;
+    } else {
+	$position =~ s/^([^$piece]*)$piece/\1/;
+    }
+
+    return $position;
+}
+
+sub compute_futurebases_from_one_pawn {
+    my ($color, $position, $pawn, $prunes) = @_;
+
+    my @futurebases;
+
+    my $white_pawns = $position;
+    $white_pawns =~ s/^(K[QRBN]*)//;
+    my $white_base = $1;
+    $white_pawns =~ s/K.*//;
+    my @white_pawns = isort unpack "(a2)*", $white_pawns;
+
+    my $black_pawns = $position;
+    $black_pawns =~ s/^K[^K]*(K[QRBN]*)//;
+    my $black_base = $1;
+    my @black_pawns = sort unpack "(a2)*", $black_pawns;
+
+    my @white_pieces = unpack "(a1)*", $white_base;
+    my @black_pieces = unpack "(a1)*", $black_base;
+
+    my $pawns = $white_pawns . $black_pawns;
+
+    my (@enemy_pieces, $enemy_pawns, $friendly_pawns);
+
+    if ($color eq 'white') {
+	@enemy_pieces = @black_pieces;
+	$enemy_pawns = $black_pawns;
+	$friendly_pawns = $white_pawns;
+    } else {
+	@enemy_pieces = @white_pieces;
+	$enemy_pawns = $white_pawns;
+	$friendly_pawns = $black_pawns;
+    }
+
+    my $forward_move = &forward_pawn_move($color, $pawn);
+
+    if ($forward_move =~ /.[18]/) {
+
+	# this is a promotion situation
+
+	foreach my $promotion ('Q', 'R', 'B', 'N') {
+	    if (not &match_prune("P=$promotion", @$prunes) and not &match_prune("P$pawn=$promotion", @$prunes)) {
+		my $position2 = &add_piece_to_position($color, $position, $promotion);
+		$position2 =~ s/$pawn//;
+		push @futurebases, &normalize_position($position2);
+	    }
+
+	    # consider capture promotions
+
+	    foreach my $enemy_piece (@enemy_pieces) {
+		if ($enemy_piece != 'K' and not &match_prune("Px$enemy_piece=$promotion", @$prunes)) {
+		    my $position2 = &remove_enemy_piece_from_position($color, $position, $enemy_piece);
+		    $position2 = &add_piece_to_position($color, $position, $promotion);
+		    $position2 =~ s/$pawn//;
+		    push @futurebases, &normalize_position($position2);
+		}
+	    }
+	}
+
+    } else {
+
+	# not a promotion situation, try to move the pawn forward
+
+	if ($pawns !~ /$forward_move/) {
+	    if (not &match_prune("P$forward_move", @$prunes)) {
+		my $position2 = $position;
+		$position2 =~ s/$pawn/$forward_move/;
+		push @futurebases, &normalize_position($position2);
+	    }
+
+	    if (($color eq 'white' and $forward_move =~ /.3/) or ($color eq 'black' and $forward_move =~ /.6/)) {
+		my $forward_move2 = &forward_pawn_move($color, $forward_move);
+		if ($pawns !~ /$forward_move2/ and not &match_prune("P$forward_move2", @$prunes)) {
+		    my $position3 = $position;
+		    $position3 =~ s/$pawn/$forward_move2/;
+		    push @futurebases, &normalize_position($position3);
+		}
+	    }
+	}
+
+	# ordinary (non-promotion) captures by the pawn
+
+	foreach my $direction ("a-to-h", "h-to-a") {
+	    next if ($direction eq "a-to-h" and $pawn =~ /h./);
+	    next if ($direction eq "h-to-a" and $pawn =~ /a./);
+
+	    my $capture_move = $forward_move;
+
+	    if ($direction eq "a-to-h") {
+		$capture_move =~ tr/[a-g]/[b-h]/;
+	    } else {
+		$capture_move =~ tr/[b-h]/[a-g]/;
+	    }
+
+	    # can the pawn capture a piece?
+
+	    # This is where we used to special case $consider_all_captures
+
+	    foreach my $enemy_piece (@enemy_pieces) {
+		if ($enemy_piece != 'K' and not &match_prune("Px$enemy_piece", @$prunes) and $pawns !~ /$capture_move/) {
+		    my $position2 = &remove_enemy_piece_from_position($color, $position, $enemy_piece);
+		    $position2 =~ s/$pawn/$capture_move/;
+		    push @futurebases, &normalize_position($position2);
+		}
+	    }
+
+	    # can the pawn capture another pawn?
+
+	    if (not &match_prune("PxP", @$prunes) and $enemy_pawns =~ /$capture_move/) {
+		my $position4 = $position;
+		$position4 =~ s/$capture_move//;
+		$position4 =~ s/$pawn/$capture_move/;
+		push @futurebases, &normalize_position($position4);
+	    }
+
+	    # en passant capture?
+
+	    if (not &match_prune("PxP", @$prunes) and ($pawns !~ /$capture_move/)
+		and (($color eq 'white' and $capture_move =~ /.6/) or ($color eq 'black' and $capture_move =~ /.3/))) {
+
+		my $oldpawn = &reverse_pawn_move($color, $capture_move);
+		if ($enemy_pawns =~ /$oldpawn/) {
+		    my $position5 = $position;
+		    $position5 =~ s/$oldpawn//;
+		    $position5 =~ s/$pawn/$capture_move/;
+		    push @futurebases, &normalize_position($position5);
+		}
+	    }
+	}
+    }
+
+    # captures of the pawn by a piece (captures by another pawn will be considered in another pass
+    # through this routine).  Special case for captures by the king (an optimization) - look to see
+    # if a friendly pawn is protecting this one, if so it can't be captured by the king.
+
+    foreach my $enemy_piece (@enemy_pieces) {
+	if (not &match_prune("${enemy_piece}xP")) {
+	    if ($enemy_piece eq 'K') {
+		my $protector1 = &reverse_pawn_move($color, $pawn);
+		my $protector2 = &reverse_pawn_move($color, $pawn);
+		$protector1 =~ tr/[a-h]/[b-i]/;
+		$protector2 =~ tr/abcdefgh/xabcdefg/;
+		next if ($friendly_pawns =~ /$protector1/ or $friendly_pawns =~ /$protector2/);
+	    }
+	    my $position6 = $position;
+	    $position6 =~ s/$pawn//;
+	    push @futurebases, &normalize_position($position6);
+	}
+    }
+
+    return @futurebases;
+}
+
 sub compute_futurebases {
     my ($position) = @_;
 
@@ -167,7 +368,7 @@ sub compute_futurebases {
     #return if (exists $positions{"$white_base@white_pawns$black_base@black_pawns"});
     #$positions{"$white_base@white_pawns$black_base@black_pawns"} = undef;
 
-    print DEBUG "Considering $position (sorted as $white_base@white_pawns$black_base@black_pawns)\n";
+    print VERBOSE "Considering $position (sorted as $white_base@white_pawns$black_base@black_pawns)\n";
 
     # Look into the global XML control file and extract the prune statements.  Not all of them may
     # apply to a given position; we allow arbitrary Perl code in the prune statement to selectively
@@ -181,269 +382,40 @@ sub compute_futurebases {
 	}
     }
 
+    foreach my $black_prune ($XMLcontrolFile->findnodes("prune[attribute::color = 'black']")) {
+	my $condition_present = $black_prune->findnodes('@condition')->size();
+	my $condition = $black_prune->findvalue('@condition');
+	if (not $condition_present or eval $condition) {
+	    push @black_prunes, $black_prune->findvalue('@move');
+	}
+    }
 
-    # if we were considering pawn-pieces captured, that would be here
-
-    my $pawns = $white_pawns . $black_pawns;
+    # consider all pawn possibilities
 
     foreach my $white_pawn (unpack "(a2)*", $white_pawns) {
-
-	# first, can we queen the pawn?
-
-	if ($white_pawn =~ /.7/) {
-	    foreach my $white_promotion ('Q', 'R', 'B', 'N') {
-		if (not &match_prune("P=$white_promotion", @white_prunes)
-		    and not &match_prune("P$white_pawn=$white_promotion", @white_prunes)) {
-		    my $position2 = $position;
-		    $position2 =~ s/$white_pawn//;
-		    $position2 =~ s/^K/K$white_promotion/;
-		    #print "  $position2\n";
-		    #&consider_position($position2);
-		    push @futurebases, &normalize_position($position2);
-		}
-
-		# also consider capture promotions
-		foreach my $black_piece (@black_pieces) {
-		    if ($black_piece != 'K' and not &match_prune("Px$black_piece=$white_promotion", @white_prunes)) {
-			my $position2 = $position;
-			$position2 =~ s/$white_pawn//;
-			$position2 =~ s/(K[^K]*K[^$black_piece]*)$black_piece/\1/;
-			#print "  $position2\n";
-			#&consider_position($position2);
-			push @futurebases, &normalize_position($position2);
-		    }
-		}
-	    }
-	}
-
-	# now try to move the pawn forward
-
-	if ($white_pawn !~ /.7/) {
-	    my $forward_move = $white_pawn;
-	    $forward_move =~ tr/[2-7]/[3-8]/;
-	    if ($pawns !~ /$forward_move/) {
-		if (not &match_prune("P$forward_move", @white_prunes)) {
-		    my $position2 = $position;
-		    $position2 =~ s/$white_pawn/$forward_move/;
-		    push @futurebases, &normalize_position($position2);
-		}
-
-		if ($forward_move =~ /.3/) {
-		    my $forward_move2 = $forward_move;
-		    $forward_move2 =~ tr/3/4/;
-		    if ($pawns !~ /$forward_move2/ and not &match_prune("P$forward_move2", @white_prunes)) {
-			my $position3 = $position;
-			$position3 =~ s/$white_pawn/$forward_move2/;
-			push @futurebases, &normalize_position($position3);
-		    }
-		}
-	    }
-	}
-
-	# can the pawn capture another pawn?
-
-	if ($white_pawn !~ /.7/ and not &match_prune("PxP", @white_prunes)) {
-	    if ($white_pawn !~ /a./) {
-		my $capture_move = $white_pawn;
-		$capture_move =~ tr/[2-7]/[3-8]/;
-		$capture_move =~ tr/[b-h]/[a-g]/;
-		if ($black_pawns =~ /$capture_move/) {
-		    my $position4 = $position;
-		    $position4 =~ s/$capture_move//;
-		    $position4 =~ s/$white_pawn/$capture_move/;
-		    push @futurebases, &normalize_position($position4);
-		}
-		# en passant capture?
-		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
-		    my $oldpawn = $capture_move;
-		    $oldpawn =~ s/6/5/;
-		    if ($black_pawns =~ /$oldpawn/) {
-			my $position5 = $position;
-			$position5 =~ s/$oldpawn//;
-			$position5 =~ s/$white_pawn/$capture_move/;
-			push @futurebases, &normalize_position($position5);
-		    }
-		}
-	    }
-	    if ($white_pawn !~ /h./) {
-		my $capture_move = $white_pawn;
-		$capture_move =~ tr/[2-7]/[3-8]/;
-		$capture_move =~ tr/[a-g]/[b-h]/;
-		if ($black_pawns =~ /$capture_move/) {
-		    my $position4 = $position;
-		    $position4 =~ s/$capture_move//;
-		    $position4 =~ s/$white_pawn/$capture_move/;
-		    push @futurebases, &normalize_position($position4);
-		}
-		# en passant capture?
-		if ($capture_move =~ /.6/ and $pawns !~ /$capture_move/) {
-		    my $oldpawn = $capture_move;
-		    $oldpawn =~ s/6/5/;
-		    if ($black_pawns =~ /$oldpawn/) {
-			my $position5 = $position;
-			$position5 =~ s/$oldpawn//;
-			$position5 =~ s/$white_pawn/$capture_move/;
-			push @futurebases, &normalize_position($position5);
-		    }
-		}
-	    }
-	}
-
-	# can the pawn be captured by the black king?
-	my ($protector1, $protector2);
-	if ($white_pawn !~ /a./) {
-	    $protector1 = $white_pawn;
-	    $protector1 =~ tr/[b-h]/[a-g]/;
-	    $protector1 =~ tr/[2-7]/[1-6]/;
-	} else {
-	    $protector1 = "XX";
-	}
-	if ($white_pawn !~ /h./) {
-	    $protector2 = $white_pawn;
-	    $protector2 =~ tr/[a-g]/[b-h]/;
-	    $protector2 =~ tr/[2-7]/[1-6]/;
-	} else {
-	    $protector2 = "XX";
-	}
-	if ($white_pawns !~ /$protector1/ and $white_pawns !~ /$protector2/) {
-	    my $position6 = $position;
-	    $position6 =~ s/$white_pawn//;
-	    push @futurebases, &normalize_position($position6);
-	}
+	push @futurebases, &compute_futurebases_from_one_pawn('white', $position, $white_pawn, \@white_prunes);
     }
 
     foreach my $black_pawn (unpack "(a2)*", $black_pawns) {
-
-	# first, try to queen the pawn
-	if ($black_pawn =~ /.2/) {
-	    if ($black_queens_allowed and $position !~ /\BK[QRBN]/) {
-		my $position2 = $position;
-		$position2 =~ s/$black_pawn//;
-		$position2 =~ s/\BK/KQ/;
-		push @futurebases, &normalize_position($position2);
-	    } else {
-		push @black_prunes, "P=*";
-	    }
-
-	    # consider capture promotions
-	    if ($position =~ /^K([QRBN])/) {
-		if ($black_queens_allowed and $position !~ /\BK[QRBN]/) {
-		    my $position2 = $position;
-		    $position2 =~ s/$black_pawn//;
-		    $position2 =~ s/\BK/KQ/;
-		    $position2 =~ s/^K[QRBN]/K/;
-		    push @futurebases, &normalize_position($position2);
-		} else {
-		    push @black_prunes, "Px$1=*";
-		}
-	    }
-	}
-
-	# now try to move the pawn forward
-	if ($black_pawn !~ /.2/) {
-	    my $forward_move = $black_pawn;
-	    $forward_move =~ tr/[2-7]/[1-6]/;
-	    if ($pawns !~ /$forward_move/) {
-		my $position2 = $position;
-		# have to consider queening
-		$position2 =~ s/$black_pawn/$forward_move/;
-		push @futurebases, &normalize_position($position2);
-
-		if ($forward_move =~ /.6/) {
-		    my $forward_move2 = $forward_move;
-		    $forward_move2 =~ tr/6/5/;
-		    if ($pawns !~ /$forward_move2/) {
-			my $position3 = $position;
-			$position3 =~ s/$black_pawn/$forward_move2/;
-			push @futurebases, &normalize_position($position3);
-		    }
-		}
-	    }
-	}
-
-	# can the pawn capture something else (without promoting?)
-	if ($black_pawn !~ /.2/) {
-	    my @capture_moves;
-	    if ($black_pawn !~ /a./) {
-		my $capture_move = $black_pawn;
-		$capture_move =~ tr/[2-7]/[1-6]/;
-		$capture_move =~ tr/[b-h]/[a-g]/;
-		push @capture_moves, $capture_move;
-	    }
-	    if ($black_pawn !~ /h./) {
-		my $capture_move = $black_pawn;
-		$capture_move =~ tr/[2-7]/[1-6]/;
-		$capture_move =~ tr/[a-g]/[b-h]/;
-		push @capture_moves, $capture_move;
-	    }
-	    foreach my $capture_move (@capture_moves) {
-		# is there another pawn there to be taken?
-		if ($white_pawns =~ /$capture_move/) {
-		    my $position4 = $position;
-		    $position4 =~ s/$capture_move//;
-		    $position4 =~ s/$black_pawn/$capture_move/;
-		    push @futurebases, &normalize_position($position4);
-		}
-		# en passant capture?
-		if ($capture_move =~ /.3/ and $pawns !~ /$capture_move/) {
-		    my $oldpawn = $capture_move;
-		    $oldpawn =~ s/3/4/;
-		    if ($white_pawns =~ /$oldpawn/) {
-			my $position5 = $position;
-			$position5 =~ s/$oldpawn//;
-			$position5 =~ s/$black_pawn/$capture_move/;
-			push @futurebases, &normalize_position($position5);
-		    }
-		}
-		# capture of a mobile white piece?
-		if ($white_base ne "K" and $pawns !~ /$capture_move/) {
-		    my $position5 = $position;
-		    $position5 =~ s/$black_pawn/$capture_move/;
-		    $position5 =~ s/^K([QRBN])/K/;
-		    my $captured_piece = $1;
-		    if ($consider_all_captures or exists $positions{&normalize_position($position5)}) {
-			push @futurebases, &normalize_position($position5);
-		    } else {
-			push @black_prunes, "Px$captured_piece";
-		    }
-		}
-	    }
-	}
-
-	# can the pawn be captured by the white king?
-	my ($protector1, $protector2);
-	if ($black_pawn !~ /a./) {
-	    $protector1 = $black_pawn;
-	    $protector1 =~ tr/[b-h]/[a-g]/;
-	    $protector1 =~ tr/[2-7]/[3-8]/;
-	} else {
-	    $protector1 = "XX";
-	}
-	if ($black_pawn !~ /h./) {
-	    $protector2 = $black_pawn;
-	    $protector2 =~ tr/[a-g]/[b-h]/;
-	    $protector2 =~ tr/[2-7]/[3-8]/;
-	} else {
-	    $protector2 = "XX";
-	}
-	if ($black_pawns !~ /$protector1/ and $black_pawns !~ /$protector2/) {
-	    my $position6 = $position;
-	    $position6 =~ s/$black_pawn//;
-	    push @futurebases, &normalize_position($position6);
-	}
+	push @futurebases, &compute_futurebases_from_one_pawn('black', $position, $black_pawn, \@black_prunes);
     }
 
-    # if both sides have non-king, non-pawns, have to consider captures here
-    if ($position =~ /^K[QRBN]/) {
-	my $position7 = $position;
-	$position7 =~ s/^K[QRBN]/K/;
-	push @futurebases, &normalize_position($position7);
+    # consider piece-on-piece captures
+
+    # XXX add something to prune here
+
+    for (my $i=0; $i < length($position); $i ++) {
+	my $char = substr($position,$i,1);
+	if ($char =~ /QRBN/) {
+	    my $position7 = $position;
+	    substr($position7,$i,1) = "";
+	    push @futurebases, &normalize_position($position7);
+	}
     }
 
     # die "futurebase" if (grep { not defined $_ } @white_captures, @black_captures);
 
-    return (\@futurebases,
-	    \@white_prunes, \@black_prunes);
+    return (\@futurebases, \@white_prunes, \@black_prunes);
 }
 
 sub consider_position {
