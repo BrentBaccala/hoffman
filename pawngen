@@ -23,15 +23,7 @@ $LIST_SEPARATOR = undef;
 #open(DEBUG,">&STDOUT");
 #open(DEBUG2,">&STDOUT");
 
-my $analysis = "analysis4";
-
-# Consider pawn positions that arise after we queen, then capture with a pawn (moving the pawn to a
-# different file), then queen, then capture again to a different file, etc., or just those pawn
-# positions that arise directly from the current position?
-
-my $consider_all_captures = 0;
-
-my $url_prefix = "ftp://vger.freesoft.org/Hoffman/$analysis/";
+my $url_prefix;
 
 my %piece_names;
 
@@ -287,7 +279,13 @@ sub compute_futurebases_from_one_pawn {
 
 	    # can the pawn capture a piece?
 
-	    # This is where we used to special case $consider_all_captures
+	    # This is where we used to special case $consider_all_captures, to determine if we
+	    # should consider pawn positions that arise after we queen, then capture with a pawn
+	    # (moving the pawn to a different file), then queen, then capture again to a different
+	    # file, etc., or just those pawn positions that arise directly from the current
+	    # position?
+	    #
+	    # XXX figure how to make this work again
 
 	    foreach my $enemy_piece (@enemy_pieces) {
 		if ($enemy_piece != 'K' and not &match_prune("Px$enemy_piece", @$prunes) and $pawns !~ /$capture_move/) {
@@ -1053,6 +1051,11 @@ sub pawngen {
     }
 
     print "Starting position $starting_position\n";
+
+    # Extract URL prefix from the control file, if it exists.  If not, then $url_prefix will be an
+    # empty string.
+
+    $url_prefix = $XMLcontrolFile->findvalue('generation-controls/url-prefix');
 
     &consider_position($starting_position);
 
