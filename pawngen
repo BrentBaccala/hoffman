@@ -19,7 +19,7 @@ my $for_real = 1;
 use English;
 $LIST_SEPARATOR = undef;
 
-open(VERBOSE,">&STDOUT");
+#open(VERBOSE,">&STDOUT");
 #open(DEBUG,">&STDOUT");
 #open(DEBUG2,">&STDOUT");
 
@@ -131,8 +131,8 @@ sub match_prune {
     my ($movement, @prune_list) = @_;
 
     foreach my $prune_statement (@prune_list) {
-	$prune_statement =~ s/\?/\./;
-	$prune_statement =~ s/\*/\.\*/;
+	$prune_statement =~ s/\?/\./g;
+	$prune_statement =~ s/\*/\.\*/g;
 	return 1 if ($movement =~ /^$prune_statement$/);
     }
 
@@ -506,17 +506,20 @@ sub assignallpositions {
     }
 }
 
-# Checks all positions resulting from a given pattern and returns either 0 (if at least one
-# of them either doesn't exist in our table or has already been assigned) or a count
-# of the number of unique positions matched by the pattern.
+# Checks all positions resulting from a given pattern and returns either 0 (if at least one of them
+# either doesn't exist in our table or has already been assigned) or a count of the number of unique
+# positions matched by the pattern.  The pattern passed in should be a list of pieces and pawns,
+# each a separate list item - white first, then black, pieces before pawns within each color.
+# Pieces are just a single capital character.  Pawns are a board square (like "c2") or a string of
+# board squares (like "c2c3c4") or plus syntax (like "c2+").
 
 sub checkallpositions {
 
-    my @positions = &expand_pattern_list(@_);
+    my @input_positions = &expand_pattern_list(@_);
 
-    print DEBUG2 "Checking @_ : $#positions @positions\n";
+    print DEBUG2 "Checking @_ : $#input_positions @input_positions\n";
 
-    my @unique_positions = &uniqsort(@positions);
+    my @unique_positions = &uniqsort(@input_positions);
 
     print DEBUG2 "Unique: $#unique_positions @unique_positions\n";
 
@@ -814,7 +817,7 @@ sub genset {
 	# $file_types into a bitstring, transform it into a template (with 'x' to skip a byte and
 	# 'a' to convert it), then use that template on $files_in_play to compute $plus_files.
 
-	my $template = unpack "b$num_files_in_play", $file_types;
+	my $template = unpack "b$num_files_in_play", pack("i", $file_types);
 	$template =~ tr/01/xa/;
 	my $plus_files = join '', unpack $template, $files_in_play;
 
@@ -823,10 +826,16 @@ sub genset {
 	my @white_pawns = sort unpack "(a2)*", $white_pawns;
 	my @black_pawns = isort unpack "(a2)*", $black_pawns;
 
+	# Still crazy.  This next loop takes advantage of the Perl-ism that foreach's local variable
+	# is actually an alias for the list item.  So modifying $white_pawn modifies @white_pawns.
+	# Yep.
+
 	foreach my $white_pawn (@white_pawns) {
 
 	    my $white_pawn_file = substr($white_pawn,0,1);
 	    if (grep /$white_pawn_file/, $plus_files) {
+
+		# A plus pawn.  Modify it as such, then back it up as far as it can go.
 
 		$white_pawn .= "+";
 
@@ -880,6 +889,8 @@ sub genset {
 
 	    my $black_pawn_file = substr($black_pawn,0,1);
 	    if (grep /$black_pawn_file/, $plus_files) {
+
+		# A plus pawn.  Modify it as such, then back it up as far as it can go.
 
 		$black_pawn .= "+";
 
@@ -951,7 +962,7 @@ sub genset {
     # multiply $best_count by 64 ^ (number of fully mobile pieces) to get a count
     # of the number of positions
 
-    $best_count <<= 6*(length($white_base) + length($black_base));
+    my $KiloPositions = $best_count << (6*(length($white_base) + length($black_base)) - 10);
 
     my $cntl_filename = &pattern_to_name($white_base, @best_white_pawns, $black_base, @best_black_pawns);
 
@@ -961,7 +972,7 @@ sub genset {
     $black_pawns{$cntl_filename} = \@best_black_pawns;
 
     $LIST_SEPARATOR = " ";
-    print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count as $cntl_filename from $position\n";
+    print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count ${KiloPositions}K as $cntl_filename from $position\n";
     $LIST_SEPARATOR = undef;
 
     &assignallpositions($cntl_filename, $white_base, (isort @best_white_pawns), $black_base, (sort @best_black_pawns));
