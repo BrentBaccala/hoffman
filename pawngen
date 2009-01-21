@@ -1015,7 +1015,6 @@ sub pawngen {
     # Obtain an XML copy of our control file ($XMLtree is global so other routines can copy it)
 
     my $XMLparser = XML::LibXML->new();
-    $XMLparser->recover_silently(0);
 
     $XMLtree = $XMLparser->parse_file($control_file);
     $XMLcontrolFile = $XMLtree->getDocumentElement();
