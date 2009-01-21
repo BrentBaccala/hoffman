@@ -532,19 +532,15 @@ sub checkallpositions {
 # Determine which of the positions we've identified are already handled by one of the futurebases
 # that was specified in the original control file.
 #
-# XXX doesn't handle inverted futurebases
-#
 # XXX doesn't handle genuine URLs; just filenames
 #
 # XXX doesn't really parse the XML
 
 sub assign_futurebase {
-    my ($filename) = @_;
+    my ($filename, $invert_colors) = @_;
     my ($white_pieces, $black_pieces);
     my @white_pawns;
     my @black_pawns;
-
-    # XXX Yikes! This runs awfully late in the program to 'die'...
 
     tie *FILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
 
@@ -585,7 +581,13 @@ sub assign_futurebase {
     }
     close(FILE);
 
-    &assignallpositions($filename, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
+    # Put a period in at the beginning of the filename to flag an inverted tablebase.  What a kludge.  XXX
+
+    if ($invert_colors) {
+	&assignallpositions("." . $filename, $black_pieces, (isort @black_pawns), $white_pieces, (sort @white_pawns));
+    } else {
+	&assignallpositions($filename, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
+    }
 }
 
 
@@ -613,7 +615,11 @@ sub add_piece {
 sub add_futurebase {
     my ($url) = @_;
     my $new_futurebase = $XMLtree->createElement('futurebase');
+    $url =~ s/^(\.)//;
     $new_futurebase->addChild($XMLtree->createAttribute('url', $url));
+    if ($1 eq ".") {
+	$new_futurebase->addChild($XMLtree->createAttribute('colors', 'invert'));
+    }
     $XMLroot->insertAfter($new_futurebase, $next_piece_location);
     $next_piece_location = $XMLtree->createTextNode($piece_text);
     $XMLroot->insertAfter($next_piece_location, $new_futurebase);
@@ -1049,23 +1055,26 @@ sub pawngen {
 
     $url_prefix = $XMLcontrolFile->findvalue('generation-controls/url-prefix');
 
+    # Extract any futurebases from the input control file and assign them to any positions that they
+    # match.  XXX This could probably be made more efficient by changing the position lookup code,
+    # which is currently just a Perl hash lookup, and therefore requires &assign_futurebase
+    # (actually &assignallpositions) to generate all the pawn positions that arise from a
+    # futurebase.
+
+    foreach my $futurebase ($XMLcontrolFile->findnodes("futurebase")) {
+	my $invert_colors = ($futurebase->findvalue('@colors') eq 'invert');
+	if ($futurebase->findvalue('@url') ne "") {
+	    &assign_futurebase($futurebase->findvalue('@url'), $invert_colors);
+	} elsif ($futurebase->findvalue('@filename') ne "") {
+	    &assign_futurebase($futurebase->findvalue('@filename'), $invert_colors);
+	}
+    }
+
     # Starting from the position we identified above, and subject to pruning restrictions, populate
     # the %positions hash with all possible positions that can arise from the original one.
 
     print "Starting position $starting_position\n";
     &consider_position($starting_position);
-
-    # Extract any futurebases from the input control file and assign them to any positions that they
-    # match.  XXX This could probably be made more efficient by doing it earlier, so we don't have
-    # to generate all the positions that arise from the matched positions.
-
-    foreach my $futurebase ($XMLcontrolFile->findnodes("futurebase")) {
-	if ($futurebase->findvalue('@url') ne "") {
-	    &assign_futurebase($futurebase->findvalue('@url'));
-	} elsif ($futurebase->findvalue('@filename') ne "") {
-	    &assign_futurebase($futurebase->findvalue('@filename'));
-	}
-    }
 
     &genallsets;
 }
