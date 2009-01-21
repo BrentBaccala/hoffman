@@ -753,7 +753,7 @@ sub generate_control_file {
     close OUT;
 
     print MAKEFILE "$basename:";
-    foreach my $futurebase (@futurebases) {
+    foreach my $futurebase (@unique_futurebases) {
 	print MAKEFILE " $futurebase" if ($futurebase ne $url_prefix . $basename . ".htb");
     }
     print MAKEFILE "\n";
