@@ -641,6 +641,11 @@ sub generate_control_file {
 
     my $cntl_filename = "$basename.xml";
 
+    # Back in &genset, we used plus pawns and pawns restricted to multiple squares to group a bunch
+    # of pawn positions together into one control file.  That information was saved into several
+    # global hashes, keyed by the basename of the control file.  Extract it now.  The pawns, in
+    # particular, can be specified as "a2a3a4" or "a2+" and thus match multiple positions.
+
     my $white_base = $white_base{$basename};
     my $black_base = $black_base{$basename};
 
@@ -696,38 +701,20 @@ sub generate_control_file {
 	&add_piece('black', 'pawn', $black_pawn);
     }
 
-    #print $XMLroot->toString() . "\n";
-
     # Now we need to figure out which futurebases we'll need to build this tablebase and add a list
-    # of them to the control file.  Keep on adding them right after the pieces.
+    # of them to the control file.  Look at each position handled by this control file and add any
+    # futurebases that any of them need.
 
-    my (@positions, @unique_positions);
+    my @positions = &expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
+    my @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
+
     my @futurebases;
-    my (@white_prunes, @black_prunes);
-
-    @positions = &expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
-    @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
 
     foreach my $subposition (@unique_positions) {
-	#my ($futurebases, $white_prunes, $black_prunes) = &compute_futurebases($subposition);
-
 	push @futurebases, map { $positions{$_} } @{$futurebases{$subposition}};
-	#push @futurebases, map { $positions{$_} } @$futurebases;
-	#push @white_prunes, @$white_prunes;
-	#push @black_prunes, @$black_prunes;
-
-#	if (grep { not defined $_ } @white_captures, @black_captures) {
-#	    print "$subposition\n";
-#	    foreach my $capture (@$white_captures, @$black_captures) {
-#		print "$capture $positions{$capture}\n";
-#	    }
-#	    die "captures";
-#	}
     }
 
     my @unique_futurebases = &uniqsort(@futurebases);
-    my @unique_white_prunes = &uniqsort(@white_prunes);
-    my @unique_black_prunes = &uniqsort(@black_prunes);
 
     foreach my $futurebase (@unique_futurebases) {
 	if ($futurebase ne $url_prefix . $basename . ".htb") {
@@ -735,12 +722,14 @@ sub generate_control_file {
 	}
     }
 
-    foreach my $white_prune (@unique_white_prunes) {
-	&add_prune('white', $white_prune, 'discard');
-    }
-    foreach my $black_prune (@unique_black_prunes) {
-	&add_prune('black', $black_prune, 'concede');
-    }
+    # XXX can't handle pruning right now
+
+#    foreach my $white_prune (@unique_white_prunes) {
+#	&add_prune('white', $white_prune, 'discard');
+#    }
+#    foreach my $black_prune (@unique_black_prunes) {
+#	&add_prune('black', $black_prune, 'concede');
+#    }
 
 
     if ($for_real) {
