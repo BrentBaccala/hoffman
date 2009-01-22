@@ -41,6 +41,7 @@ foreach my $piece_char (keys %piece_names) { $piece_character{$piece_names{$piec
 
 if ($for_real) {
     open (MAKEFILE, ">makefile") || die "open";
+    print MAKEFILE "%.htb: %.xml\n\thoffman -o \$@ -g \$<\n\n";
 } else {
     open (MAKEFILE, ">/dev/null") || die "open";
 }
@@ -492,6 +493,10 @@ sub expand_pattern_list {
     return @retval;
 }
 
+# Assign all positions that match a given pattern list to a futurebase.  Can be passed in either a
+# string (for a tablebase that we're going to generate), or an XML node pointer (for a futurebase
+# specified in the original control file).
+
 sub assignallpositions {
     my ($target, @pattern) = @_;
 
@@ -530,17 +535,28 @@ sub checkallpositions {
 }
 
 # Determine which of the positions we've identified are already handled by one of the futurebases
-# that was specified in the original control file.
+# that was specified in the original control file.  Pass in an XML futurebase node.
 #
 # XXX doesn't handle genuine URLs; just filenames
 #
 # XXX doesn't really parse the XML
 
 sub assign_futurebase {
-    my ($filename, $invert_colors) = @_;
+    my ($futurebase) = @_;
     my ($white_pieces, $black_pieces);
     my @white_pawns;
     my @black_pawns;
+
+    my $invert_colors = ($futurebase->findvalue('@colors') eq 'invert');
+    my $filename;
+
+    if ($futurebase->findvalue('@url') ne "") {
+	$filename = $futurebase->findvalue('@url');
+    } elsif ($futurebase->findvalue('@filename') ne "") {
+	$filename = $futurebase->findvalue('@filename');
+    } else {
+	die "Can't find url or filename in futurebase element\n";
+    }
 
     tie *FILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
 
@@ -581,12 +597,10 @@ sub assign_futurebase {
     }
     close(FILE);
 
-    # Put a period in at the beginning of the filename to flag an inverted tablebase.  What a kludge.  XXX
-
     if ($invert_colors) {
-	&assignallpositions("." . $filename, $black_pieces, (isort @black_pawns), $white_pieces, (sort @white_pawns));
+	&assignallpositions($futurebase, $black_pieces, (isort @black_pawns), $white_pieces, (sort @white_pawns));
     } else {
-	&assignallpositions($filename, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
+	&assignallpositions($futurebase, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
     }
 }
 
@@ -612,13 +626,18 @@ sub add_piece {
     $XMLroot->insertAfter($next_piece_location, $new_piece);
 }
 
+# Can be passed in either a string (for a tablebase that we're going to generate), or an XML node
+# pointer (for a futurebase specified in the original control file).
+
 sub add_futurebase {
-    my ($url) = @_;
-    my $new_futurebase = $XMLtree->createElement('futurebase');
-    $url =~ s/^(\.)//;
-    $new_futurebase->addChild($XMLtree->createAttribute('url', $url));
-    if ($1 eq ".") {
-	$new_futurebase->addChild($XMLtree->createAttribute('colors', 'invert'));
+    my ($futurebase) = @_;
+    my $new_futurebase;
+
+    if (ref $futurebase) {
+	$new_futurebase = $futurebase->cloneNode(1);
+    } else {
+	$new_futurebase = $XMLtree->createElement('futurebase');
+	$new_futurebase->addChild($XMLtree->createAttribute('url', $url_prefix . $futurebase . ".htb"));
     }
     $XMLroot->insertAfter($new_futurebase, $next_piece_location);
     $next_piece_location = $XMLtree->createTextNode($piece_text);
@@ -715,11 +734,10 @@ sub generate_control_file {
     }
 
     my @unique_futurebases = &uniqsort(@futurebases);
+    @unique_futurebases = grep {$_ ne $basename} @unique_futurebases;
 
     foreach my $futurebase (@unique_futurebases) {
-	if ($futurebase ne $url_prefix . $basename . ".htb") {
-	    &add_futurebase($futurebase);
-	}
+	&add_futurebase($futurebase);
     }
 
     # XXX can't handle pruning right now
@@ -741,12 +759,19 @@ sub generate_control_file {
     print OUT $XMLroot->toString();
     close OUT;
 
-    print MAKEFILE "$basename:";
-    foreach my $futurebase (@unique_futurebases) {
-	print MAKEFILE " $futurebase" if ($futurebase ne $url_prefix . $basename . ".htb");
-    }
-    print MAKEFILE "\n";
+    # Print a dependencies line to the makefile.  Don't include any futurebases that were in the
+    # original control file (they would show up as references to their XML nodes), since we assume
+    # that they are all already present and up-to-date.  Also add '.htb' extensions to everything,
+    # but leave off any URL prefixes.
 
+    my @dependencies = grep {not ref $_} @unique_futurebases;
+    map { $_ =~ s/$/.htb/ } @dependencies;
+
+    if ($#dependencies >= 0) {
+	$LIST_SEPARATOR = " ";
+	print MAKEFILE "${basename}.htb: @dependencies\n";
+	$LIST_SEPARATOR = undef;
+    }
 }
 
 
@@ -968,7 +993,7 @@ sub genset {
     print "$white_base @best_white_pawns $black_base @best_black_pawns $best_count ${KiloPositions}K as $basename from $position\n";
     $LIST_SEPARATOR = undef;
 
-    &assignallpositions($url_prefix . $basename . ".htb", $white_base, (isort @best_white_pawns), $black_base, (sort @best_black_pawns));
+    &assignallpositions($basename, $white_base, (isort @best_white_pawns), $black_base, (sort @best_black_pawns));
 
     die "$position wasn't defined" if not defined $positions{$position};
 
@@ -1050,12 +1075,7 @@ sub pawngen {
     # futurebase.
 
     foreach my $futurebase ($XMLcontrolFile->findnodes("futurebase")) {
-	my $invert_colors = ($futurebase->findvalue('@colors') eq 'invert');
-	if ($futurebase->findvalue('@url') ne "") {
-	    &assign_futurebase($futurebase->findvalue('@url'), $invert_colors);
-	} elsif ($futurebase->findvalue('@filename') ne "") {
-	    &assign_futurebase($futurebase->findvalue('@filename'), $invert_colors);
-	}
+	&assign_futurebase($futurebase);
     }
 
     # Starting from the position we identified above, and subject to pruning restrictions, populate
