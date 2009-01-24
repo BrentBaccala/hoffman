@@ -51,6 +51,9 @@ if ($for_real) {
 my $XMLtree;
 my $XMLcontrolFile;
 
+my $white_prune_enable;
+my $black_prune_enable;
+
 # This next hash is indexed by a 'position', which is a colon-separated string with four fields:
 # $white_pieces, $white_pawns, $black_pieces, $black_pawns.  The pieces are strings of capital
 # characters, one for each piece, and the pawns are strings of board squares in algebraic notation.
@@ -544,6 +547,8 @@ sub checkallpositions {
 # XXX doesn't handle genuine URLs; just filenames
 #
 # XXX doesn't really parse the XML
+#
+# XXX doesn't check prune-enable compatibility
 
 sub assign_futurebase {
     my ($futurebase) = @_;
@@ -1022,6 +1027,33 @@ sub genallsets {
     }
 }
 
+sub validate_xml_control_file {
+    my ($XMLcontrolFile) = @_;
+
+    if ($XMLcontrolFile->findnodes('piece[@color = "white" and @type = "king"]')->size() != 1
+	or $XMLcontrolFile->findnodes('piece[@color = "black" and @type = "king"]')->size() != 1) {
+	die "Must have one white king and one black one!\n";
+    }
+
+    # Pawngen is currently very restrictive in its piece restrictions (checked in &pawngen).  When
+    # these restrictions are relaxed, though, we should...
+    #
+    # Check piece locations to make sure they make sense
+    # Check for "more than two identical pieces with overlapping move restrictions"
+    # Check for "more than one pieces frozen on XX"
+
+    if ($XMLcontrolFile->findnodes('index[@symmetry != "8"]')->size() > 0) {
+	die "pawngen doesn't support symmetry\n";
+    }
+
+    $white_prune_enable = $XMLcontrolFile->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type');
+    $black_prune_enable = $XMLcontrolFile->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type');
+
+    if (($XMLcontrolFile->findnodes("prune[\@color='white' and \@type != '$white_prune_enable']")->size() > 0)
+	or ($XMLcontrolFile->findnodes("prune[\@color='black' and \@type != '$black_prune_enable']")->size() > 0)) {
+	die "At least one prune type incompatible with prune-enable\n";
+    }
+}
 
 #### MAIN ROUTINE ####
 
@@ -1031,9 +1063,11 @@ sub pawngen {
     # Obtain an XML copy of our control file ($XMLtree is global so other routines can copy it)
 
     my $XMLparser = XML::LibXML->new();
+    $XMLparser->validation(1);
 
     $XMLtree = $XMLparser->parse_file($control_file);
     $XMLcontrolFile = $XMLtree->getDocumentElement();
+    &validate_xml_control_file($XMLcontrolFile);
 
     # Figure out our starting position
 
