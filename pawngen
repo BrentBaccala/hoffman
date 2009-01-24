@@ -548,10 +548,6 @@ sub checkallpositions {
 # that was specified in the original control file.  Pass in an XML futurebase node.
 #
 # XXX doesn't handle genuine URLs; just filenames
-#
-# XXX doesn't really parse the XML
-#
-# XXX doesn't check prune-enable compatibility
 
 sub assign_futurebase {
     my ($futurebase) = @_;
@@ -572,6 +568,7 @@ sub assign_futurebase {
 
     tie *FILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
 
+    # XXX recover is turned on here only because we'll have trailing data after the XML
     $XMLparser->recover(1);
     my $XMLfuturebase = $XMLparser->parse_fh(*FILE)->getDocumentElement();
 
