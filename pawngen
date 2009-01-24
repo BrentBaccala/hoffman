@@ -839,11 +839,10 @@ my $XMLroot;
 
 sub add_piece {
     my ($color, $type, $location) = @_;
-    # my $new_piece = $XMLtree->createElement('piece');
     my $new_piece = XML::LibXML::Element->new('piece');
-    $new_piece->addChild($XMLtree->createAttribute('color', $color));
-    $new_piece->addChild($XMLtree->createAttribute('type', $type));
-    $new_piece->addChild($XMLtree->createAttribute('location', $location)) if defined $location;
+    $new_piece->addChild(XML::LibXML::Attr->new('color', $color));
+    $new_piece->addChild(XML::LibXML::Attr->new('type', $type));
+    $new_piece->addChild(XML::LibXML::Attr->new('location', $location)) if defined $location;
     $XMLroot->insertAfter($new_piece, $next_piece_location);
     $next_piece_location = $new_piece;
 }
@@ -858,8 +857,8 @@ sub add_futurebase {
     if (ref $futurebase) {
 	$new_futurebase = $futurebase->cloneNode(1);
     } else {
-	$new_futurebase = $XMLtree->createElement('futurebase');
-	$new_futurebase->addChild($XMLtree->createAttribute('url', $url_prefix . $futurebase . ".htb"));
+	$new_futurebase = XML::LibXML::Element->new('futurebase');
+	$new_futurebase->addChild(XML::LibXML::Attr->new('url', $url_prefix . $futurebase . ".htb"));
     }
     $XMLroot->insertAfter($new_futurebase, $next_piece_location);
     $next_piece_location = $new_futurebase;
@@ -867,10 +866,10 @@ sub add_futurebase {
 
 sub add_prune {
     my ($color, $move, $type) = @_;
-    my $new_prune = $XMLtree->createElement('prune');
-    $new_prune->addChild($XMLtree->createAttribute('color', $color));
-    $new_prune->addChild($XMLtree->createAttribute('move', $move));
-    $new_prune->addChild($XMLtree->createAttribute('type', $type));
+    my $new_prune = XML::LibXML::Element->new('prune');
+    $new_prune->addChild(XML::LibXML::Attr->new('color', $color));
+    $new_prune->addChild(XML::LibXML::Attr->new('move', $move));
+    $new_prune->addChild(XML::LibXML::Attr->new('type', $type));
     $XMLroot->insertAfter($new_prune, $next_piece_location);
     $next_piece_location = $new_prune;
 }
