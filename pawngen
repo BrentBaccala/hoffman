@@ -48,6 +48,9 @@ if ($for_real) {
 
 # Our original XML control file
 
+my $XMLparser = XML::LibXML->new();
+$XMLparser->validation(1);
+
 my $XMLtree;
 my $XMLcontrolFile;
 
@@ -569,42 +572,35 @@ sub assign_futurebase {
 
     tie *FILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
 
-    while (<FILE>) {
-	$_ = lc $_;
-	last if m|</tablebase>|;
-	if (m|<piece|) {
-	    my ($color) = m|color="([^"]*)"|;
-	    my ($type) = m|type="([^"]*)"|;
-	    my ($location) = m|location="([^"]*)"|;
-	    $location = "" if not defined $location;
+    $XMLparser->recover(1);
+    my $XMLfuturebase = $XMLparser->parse_fh(*FILE)->getDocumentElement();
 
-	    # Hoffman XML location format allows spaces - this script does not
-	    $location =~ s/ //g;
-
-	    die "Can't have non-pawn restrictions ($filename)\n" if ($type ne "pawn" and $location ne "");
-
-	    #print "$color $type $location\n";
-
-	    if ($color eq "white") {
-		if ($type eq "knight") {
-		    $white_pieces .= "N";
-		} elsif ($type ne "pawn") {
-		    $white_pieces .= uc substr($type, 0, 1);
-		} else {
-		    push @white_pawns, $location;
-		}
-	    } else {
-		if ($type eq "knight") {
-		    $black_pieces .= "N";
-		} elsif ($type ne "pawn") {
-		    $black_pieces .= uc substr($type, 0, 1);
-		} else {
-		    push @black_pawns, $location;
-		}
-	    }
-	}
-    }
     close(FILE);
+
+    if (($XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type') ne ""
+	 and $XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type') ne $white_prune_enable)
+	or ($XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type') ne ""
+	    and $XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type') ne $black_prune_enable)) {
+	die "Futurebase pruning incompatible ($filename)\n";
+    }
+
+    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "white" and @type != "pawn"]')) {
+	die "Futurebases can't have non-pawn restrictions ($filename)\n" if ($XMLpiece->findvalue('@location') ne "");
+	$white_pieces .= $piece_character{lc $XMLpiece->findvalue('@type')};
+    }
+
+    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "black" and @type != "pawn"]')) {
+	die "Futurebases can't have non-pawn restrictions ($filename)\n" if ($XMLpiece->findvalue('@location') ne "");
+	$black_pieces .= $piece_character{lc $XMLpiece->findvalue('@type')};
+    }
+
+    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "white" and @type = "pawn"]')) {
+	push @white_pawns, $XMLpiece->findvalue('@location');
+    }
+
+    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "black" and @type = "pawn"]')) {
+	push @black_pawns, $XMLpiece->findvalue('@location');
+    }
 
     if ($invert_colors) {
 	&assignallpositions($futurebase, $black_pieces, (isort @black_pawns), $white_pieces, (sort @white_pawns));
@@ -1061,9 +1057,6 @@ sub pawngen {
     my ($control_file) = @_;
 
     # Obtain an XML copy of our control file ($XMLtree is global so other routines can copy it)
-
-    my $XMLparser = XML::LibXML->new();
-    $XMLparser->validation(1);
 
     $XMLtree = $XMLparser->parse_file($control_file);
     $XMLcontrolFile = $XMLtree->getDocumentElement();
