@@ -544,239 +544,6 @@ sub checkallpositions {
     return 1 + $#unique_positions;
 }
 
-# Determine which of the positions we've identified are already handled by one of the futurebases
-# that was specified in the original control file.  Pass in an XML futurebase node.
-#
-# XXX doesn't handle genuine URLs; just filenames
-
-sub assign_futurebase {
-    my ($futurebase) = @_;
-    my ($white_pieces, $black_pieces);
-    my @white_pawns;
-    my @black_pawns;
-
-    my $invert_colors = ($futurebase->findvalue('@colors') eq 'invert');
-    my $filename;
-
-    if ($futurebase->findvalue('@url') ne "") {
-	$filename = $futurebase->findvalue('@url');
-    } elsif ($futurebase->findvalue('@filename') ne "") {
-	$filename = $futurebase->findvalue('@filename');
-    } else {
-	die "Can't find url or filename in futurebase element\n";
-    }
-
-    tie *FILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
-
-    # XXX recover is turned on here only because we'll have trailing data after the XML
-    $XMLparser->recover(1);
-    my $XMLfuturebase = $XMLparser->parse_fh(*FILE)->getDocumentElement();
-
-    close(FILE);
-
-    if (($XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type') ne ""
-	 and $XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type') ne $white_prune_enable)
-	or ($XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type') ne ""
-	    and $XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type') ne $black_prune_enable)) {
-	die "Futurebase pruning incompatible ($filename)\n";
-    }
-
-    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "white" and @type != "pawn"]')) {
-	die "Futurebases can't have non-pawn restrictions ($filename)\n" if ($XMLpiece->findvalue('@location') ne "");
-	$white_pieces .= $piece_character{lc $XMLpiece->findvalue('@type')};
-    }
-
-    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "black" and @type != "pawn"]')) {
-	die "Futurebases can't have non-pawn restrictions ($filename)\n" if ($XMLpiece->findvalue('@location') ne "");
-	$black_pieces .= $piece_character{lc $XMLpiece->findvalue('@type')};
-    }
-
-    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "white" and @type = "pawn"]')) {
-	push @white_pawns, $XMLpiece->findvalue('@location');
-    }
-
-    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "black" and @type = "pawn"]')) {
-	push @black_pawns, $XMLpiece->findvalue('@location');
-    }
-
-    if ($invert_colors) {
-	&assignallpositions($futurebase, $black_pieces, (isort @black_pawns), $white_pieces, (sort @white_pawns));
-    } else {
-	&assignallpositions($futurebase, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
-    }
-}
-
-
-my $piece_text;
-my $next_piece_location;
-
-my $XMLroot;
-
-# Convenience subroutine to add a piece to the XML.  Not only do we add the element, but we put
-# some text in (determined below) to keep the formatting nice.
-
-sub add_piece {
-    my ($color, $type, $location) = @_;
-    # my $new_piece = $XMLtree->createElement('piece');
-    my $new_piece = XML::LibXML::Element->new('piece');
-    $new_piece->addChild($XMLtree->createAttribute('color', $color));
-    $new_piece->addChild($XMLtree->createAttribute('type', $type));
-    $new_piece->addChild($XMLtree->createAttribute('location', $location)) if defined $location;
-    $XMLroot->insertAfter($new_piece, $next_piece_location);
-    #$XMLroot->appendChild($new_piece);
-    $next_piece_location = $XMLtree->createTextNode($piece_text);
-    $XMLroot->insertAfter($next_piece_location, $new_piece);
-}
-
-# Can be passed in either a string (for a tablebase that we're going to generate), or an XML node
-# pointer (for a futurebase specified in the original control file).
-
-sub add_futurebase {
-    my ($futurebase) = @_;
-    my $new_futurebase;
-
-    if (ref $futurebase) {
-	$new_futurebase = $futurebase->cloneNode(1);
-    } else {
-	$new_futurebase = $XMLtree->createElement('futurebase');
-	$new_futurebase->addChild($XMLtree->createAttribute('url', $url_prefix . $futurebase . ".htb"));
-    }
-    $XMLroot->insertAfter($new_futurebase, $next_piece_location);
-    $next_piece_location = $XMLtree->createTextNode($piece_text);
-    $XMLroot->insertAfter($next_piece_location, $new_futurebase);
-}
-
-sub add_prune {
-    my ($color, $move, $type) = @_;
-    my $new_prune = $XMLtree->createElement('prune');
-    $new_prune->addChild($XMLtree->createAttribute('color', $color));
-    $new_prune->addChild($XMLtree->createAttribute('move', $move));
-    $new_prune->addChild($XMLtree->createAttribute('type', $type));
-    $XMLroot->insertAfter($new_prune, $next_piece_location);
-    $next_piece_location = $XMLtree->createTextNode($piece_text);
-    $XMLroot->insertAfter($next_piece_location, $new_prune);
-}
-
-sub generate_control_file {
-    my ($basename) = @_;
-
-    my $cntl_filename = "$basename.xml";
-
-    # Back in &genset, we used plus pawns and pawns restricted to multiple squares to group a bunch
-    # of pawn positions together into one control file.  That information was saved into several
-    # global hashes, keyed by the basename of the control file.  Extract it now.  The pawns, in
-    # particular, can be specified as "a2a3a4" or "a2+" and thus match multiple positions.
-
-    my $white_base = $white_base{$basename};
-    my $black_base = $black_base{$basename};
-
-    my @white_pieces = unpack "(a1)*", $white_base;
-    my @black_pieces = unpack "(a1)*", $black_base;
-
-    my @white_pawns = @{$white_pawns{$basename}};
-    my @black_pawns = @{$black_pawns{$basename}};
-
-    # Make a copy of the original XML control file, then remove all existing pieces and futurebases
-    # from it.  We'll reinsert the ones we want below.  This destroys location restrictions, which
-    # means that we don't support location restrictions yet in pawngen.  It also removes any text
-    # node that follows the pieces, and notes what that text was for later use.
-
-    $XMLroot = $XMLtree->getDocumentElement->cloneNode(1);
-
-    undef $next_piece_location;
-
-    foreach my $old_piece ($XMLroot->findnodes('piece'), $XMLroot->findnodes('futurebase')) {
-	my $text_node = $old_piece->nextSibling();
-
-	if (not defined $next_piece_location) {
-	    $next_piece_location = $old_piece->previousSibling();
-	}
-
-	if ($text_node->nodeValue ne "") {
-	    $piece_text = $text_node->nodeValue unless defined $piece_text;
-	    $text_node->unbindNode();
-	}
-
-	$old_piece->unbindNode();
-    }
-
-    # Used to isort here to make sure a white queen came first... why?  I don't remember.
-
-    foreach my $white_piece (sort @white_pieces) {
-	&add_piece('white', $piece_names{$white_piece});
-    }
-
-    foreach my $black_piece (@black_pieces) {
-	&add_piece('black', $piece_names{$black_piece});
-    }
-
-    # Sort the pawns here to make sure that doubled pawns appear in "board order".  Also note that a
-    # value in the pawns array may be undefined to indicate an unrestricted pawn.  &add_piece
-    # handles this correctly.
-
-    foreach my $white_pawn (sort @white_pawns) {
-	&add_piece('white', 'pawn', $white_pawn);
-    }
-
-    foreach my $black_pawn (sort @black_pawns) {
-	&add_piece('black', 'pawn', $black_pawn);
-    }
-
-    # Now we need to figure out which futurebases we'll need to build this tablebase and add a list
-    # of them to the control file.  Look at each position handled by this control file and add any
-    # futurebases that any of them need.
-
-    my @positions = &expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
-    my @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
-
-    my @futurebases;
-
-    foreach my $subposition (@unique_positions) {
-	push @futurebases, map { $positions{$_} } @{$futurebases{$subposition}};
-    }
-
-    my @unique_futurebases = &uniqsort(@futurebases);
-    @unique_futurebases = grep {$_ ne $basename} @unique_futurebases;
-
-    foreach my $futurebase (@unique_futurebases) {
-	&add_futurebase($futurebase);
-    }
-
-    # XXX can't handle pruning right now
-
-#    foreach my $white_prune (@unique_white_prunes) {
-#	&add_prune('white', $white_prune, 'discard');
-#    }
-#    foreach my $black_prune (@unique_black_prunes) {
-#	&add_prune('black', $black_prune, 'concede');
-#    }
-
-
-    if ($for_real) {
-	open (OUT, ">$cntl_filename") || die "open";
-    } else {
-	open (OUT, ">&STDOUT") || die "open";
-    }
-
-    print OUT $XMLroot->toString();
-    close OUT;
-
-    # Print a dependencies line to the makefile.  Don't include any futurebases that were in the
-    # original control file (they would show up as references to their XML nodes), since we assume
-    # that they are all already present and up-to-date.  Also add '.htb' extensions to everything,
-    # but leave off any URL prefixes.
-
-    my @dependencies = grep {not ref $_} @unique_futurebases;
-    map { $_ =~ s/$/.htb/ } @dependencies;
-
-    if ($#dependencies >= 0) {
-	$LIST_SEPARATOR = " ";
-	print MAKEFILE "${basename}.htb: @dependencies\n";
-	$LIST_SEPARATOR = undef;
-    }
-}
-
-
 # Given a position, attempt to collapse a group of related positions together, using plus pawns
 # and/or pawns on multiple squares.  Doing this perfectly is probably NP-complete, so we use a
 # simple algorithm and hope for the best.  Record the results in some global hashes (%white_base,
@@ -1000,23 +767,231 @@ sub genset {
     return $basename;
 }
 
-# Assign all the positions to control files (using &genset), then generate the control files
+# Determine which of the positions we've identified are already handled by one of the futurebases
+# that was specified in the original control file.  Pass in an XML futurebase node.
+#
+# XXX doesn't handle genuine URLs; just filenames
 
-sub genallsets {
-    my @cntl_files_needed;
+sub assign_futurebase {
+    my ($futurebase) = @_;
+    my ($white_pieces, $black_pieces);
+    my @white_pawns;
+    my @black_pawns;
 
-    while (my ($position, $filename) = each %positions) {
-	#if (not defined $filename) {
-	if (not defined $positions{$position}) {
-	    #print "Processing $position\n";
-	    push @cntl_files_needed, &genset($position);
-	}
+    my $invert_colors = ($futurebase->findvalue('@colors') eq 'invert');
+    my $filename;
+
+    if ($futurebase->findvalue('@url') ne "") {
+	$filename = $futurebase->findvalue('@url');
+    } elsif ($futurebase->findvalue('@filename') ne "") {
+	$filename = $futurebase->findvalue('@filename');
+    } else {
+	die "Can't find url or filename in futurebase element\n";
     }
 
-    if ($for_real) {
-	foreach my $cntl_file (@cntl_files_needed) {
-	    &generate_control_file($cntl_file);
+    tie *FILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
+
+    # XXX recover is turned on here only because we'll have trailing data after the XML
+    $XMLparser->recover(1);
+    my $XMLfuturebase = $XMLparser->parse_fh(*FILE)->getDocumentElement();
+
+    close(FILE);
+
+    if (($XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type') ne ""
+	 and $XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type') ne $white_prune_enable)
+	or ($XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type') ne ""
+	    and $XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type') ne $black_prune_enable)) {
+	die "Futurebase pruning incompatible ($filename)\n";
+    }
+
+    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "white" and @type != "pawn"]')) {
+	die "Futurebases can't have non-pawn restrictions ($filename)\n" if ($XMLpiece->findvalue('@location') ne "");
+	$white_pieces .= $piece_character{lc $XMLpiece->findvalue('@type')};
+    }
+
+    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "black" and @type != "pawn"]')) {
+	die "Futurebases can't have non-pawn restrictions ($filename)\n" if ($XMLpiece->findvalue('@location') ne "");
+	$black_pieces .= $piece_character{lc $XMLpiece->findvalue('@type')};
+    }
+
+    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "white" and @type = "pawn"]')) {
+	push @white_pawns, $XMLpiece->findvalue('@location');
+    }
+
+    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "black" and @type = "pawn"]')) {
+	push @black_pawns, $XMLpiece->findvalue('@location');
+    }
+
+    if ($invert_colors) {
+	&assignallpositions($futurebase, $black_pieces, (isort @black_pawns), $white_pieces, (sort @white_pawns));
+    } else {
+	&assignallpositions($futurebase, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
+    }
+}
+
+
+my $piece_text;
+my $next_piece_location;
+
+my $XMLroot;
+
+# Convenience subroutine to add a piece to the XML.  Not only do we add the element, but we put
+# some text in (determined below) to keep the formatting nice.
+
+sub add_piece {
+    my ($color, $type, $location) = @_;
+    # my $new_piece = $XMLtree->createElement('piece');
+    my $new_piece = XML::LibXML::Element->new('piece');
+    $new_piece->addChild($XMLtree->createAttribute('color', $color));
+    $new_piece->addChild($XMLtree->createAttribute('type', $type));
+    $new_piece->addChild($XMLtree->createAttribute('location', $location)) if defined $location;
+    $XMLroot->insertAfter($new_piece, $next_piece_location);
+    #$XMLroot->appendChild($new_piece);
+    $next_piece_location = $XMLtree->createTextNode($piece_text);
+    $XMLroot->insertAfter($next_piece_location, $new_piece);
+}
+
+# Can be passed in either a string (for a tablebase that we're going to generate), or an XML node
+# pointer (for a futurebase specified in the original control file).
+
+sub add_futurebase {
+    my ($futurebase) = @_;
+    my $new_futurebase;
+
+    if (ref $futurebase) {
+	$new_futurebase = $futurebase->cloneNode(1);
+    } else {
+	$new_futurebase = $XMLtree->createElement('futurebase');
+	$new_futurebase->addChild($XMLtree->createAttribute('url', $url_prefix . $futurebase . ".htb"));
+    }
+    $XMLroot->insertAfter($new_futurebase, $next_piece_location);
+    $next_piece_location = $XMLtree->createTextNode($piece_text);
+    $XMLroot->insertAfter($next_piece_location, $new_futurebase);
+}
+
+sub add_prune {
+    my ($color, $move, $type) = @_;
+    my $new_prune = $XMLtree->createElement('prune');
+    $new_prune->addChild($XMLtree->createAttribute('color', $color));
+    $new_prune->addChild($XMLtree->createAttribute('move', $move));
+    $new_prune->addChild($XMLtree->createAttribute('type', $type));
+    $XMLroot->insertAfter($new_prune, $next_piece_location);
+    $next_piece_location = $XMLtree->createTextNode($piece_text);
+    $XMLroot->insertAfter($next_piece_location, $new_prune);
+}
+
+sub generate_control_file {
+    my ($basename) = @_;
+
+    my $cntl_filename = "$basename.xml";
+
+    # Back in &genset, we used plus pawns and pawns restricted to multiple squares to group a bunch
+    # of pawn positions together into one control file.  That information was saved into several
+    # global hashes, keyed by the basename of the control file.  Extract it now.  The pawns, in
+    # particular, can be specified as "a2a3a4" or "a2+" and thus match multiple positions.
+
+    my $white_base = $white_base{$basename};
+    my $black_base = $black_base{$basename};
+
+    my @white_pieces = unpack "(a1)*", $white_base;
+    my @black_pieces = unpack "(a1)*", $black_base;
+
+    my @white_pawns = @{$white_pawns{$basename}};
+    my @black_pawns = @{$black_pawns{$basename}};
+
+    # Make a copy of the original XML control file, then remove all existing pieces and futurebases
+    # from it.  We'll reinsert the ones we want below.  This destroys location restrictions, which
+    # means that we don't support location restrictions yet in pawngen.  It also removes any text
+    # node that follows the pieces, and notes what that text was for later use.
+
+    $XMLroot = $XMLtree->getDocumentElement->cloneNode(1);
+
+    undef $next_piece_location;
+
+    foreach my $old_piece ($XMLroot->findnodes('piece'), $XMLroot->findnodes('futurebase')) {
+	my $text_node = $old_piece->nextSibling();
+
+	if (not defined $next_piece_location) {
+	    $next_piece_location = $old_piece->previousSibling();
 	}
+
+	if ($text_node->nodeValue ne "") {
+	    $piece_text = $text_node->nodeValue unless defined $piece_text;
+	    $text_node->unbindNode();
+	}
+
+	$old_piece->unbindNode();
+    }
+
+    # Used to isort here to make sure a white queen came first... why?  I don't remember.
+
+    foreach my $white_piece (sort @white_pieces) {
+	&add_piece('white', $piece_names{$white_piece});
+    }
+
+    foreach my $black_piece (@black_pieces) {
+	&add_piece('black', $piece_names{$black_piece});
+    }
+
+    # Sort the pawns here to make sure that doubled pawns appear in "board order".  Also note that a
+    # value in the pawns array may be undefined to indicate an unrestricted pawn.  &add_piece
+    # handles this correctly.
+
+    foreach my $white_pawn (sort @white_pawns) {
+	&add_piece('white', 'pawn', $white_pawn);
+    }
+
+    foreach my $black_pawn (sort @black_pawns) {
+	&add_piece('black', 'pawn', $black_pawn);
+    }
+
+    # Now we need to figure out which futurebases we'll need to build this tablebase and add a list
+    # of them to the control file.  Look at each position handled by this control file and add any
+    # futurebases that any of them need.
+
+    my @positions = &expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
+    my @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
+
+    my @futurebases;
+
+    foreach my $subposition (@unique_positions) {
+	push @futurebases, map { $positions{$_} } @{$futurebases{$subposition}};
+    }
+
+    my @unique_futurebases = &uniqsort(@futurebases);
+    @unique_futurebases = grep {$_ ne $basename} @unique_futurebases;
+
+    foreach my $futurebase (@unique_futurebases) {
+	&add_futurebase($futurebase);
+    }
+
+    # XXX can't handle pruning right now
+
+#    foreach my $white_prune (@unique_white_prunes) {
+#	&add_prune('white', $white_prune, 'discard');
+#    }
+#    foreach my $black_prune (@unique_black_prunes) {
+#	&add_prune('black', $black_prune, 'concede');
+#    }
+
+
+    open (OUT, ">$cntl_filename") || die "open $cntl_filename for output";
+    $XMLtree->setDocumentElement($XMLroot);
+    print OUT $XMLtree->toString();
+    close OUT;
+
+    # Print a dependencies line to the makefile.  Don't include any futurebases that were in the
+    # original control file (they would show up as references to their XML nodes), since we assume
+    # that they are all already present and up-to-date.  Also add '.htb' extensions to everything,
+    # but leave off any URL prefixes.
+
+    my @dependencies = grep {not ref $_} @unique_futurebases;
+    map { $_ =~ s/$/.htb/ } @dependencies;
+
+    if ($#dependencies >= 0) {
+	$LIST_SEPARATOR = " ";
+	print MAKEFILE "${basename}.htb: @dependencies\n";
+	$LIST_SEPARATOR = undef;
     }
 }
 
@@ -1116,7 +1091,21 @@ sub pawngen {
     print "Starting position $starting_position\n";
     &consider_position($starting_position);
 
-    &genallsets;
+    # Assign all the positions to control files (using &genset), then generate the control files
+
+    my @cntl_files_needed;
+
+    while (my ($position, $filename) = each %positions) {
+	if (not defined $positions{$position}) {
+	    push @cntl_files_needed, &genset($position);
+	}
+    }
+
+    if ($for_real) {
+	foreach my $cntl_file (@cntl_files_needed) {
+	    &generate_control_file($cntl_file);
+	}
+    }
 }
 
 
