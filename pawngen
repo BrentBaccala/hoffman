@@ -830,7 +830,6 @@ sub assign_futurebase {
 }
 
 
-my $piece_text;
 my $next_piece_location;
 
 my $XMLroot;
@@ -846,9 +845,7 @@ sub add_piece {
     $new_piece->addChild($XMLtree->createAttribute('type', $type));
     $new_piece->addChild($XMLtree->createAttribute('location', $location)) if defined $location;
     $XMLroot->insertAfter($new_piece, $next_piece_location);
-    #$XMLroot->appendChild($new_piece);
-    $next_piece_location = $XMLtree->createTextNode($piece_text);
-    $XMLroot->insertAfter($next_piece_location, $new_piece);
+    $next_piece_location = $new_piece;
 }
 
 # Can be passed in either a string (for a tablebase that we're going to generate), or an XML node
@@ -865,8 +862,7 @@ sub add_futurebase {
 	$new_futurebase->addChild($XMLtree->createAttribute('url', $url_prefix . $futurebase . ".htb"));
     }
     $XMLroot->insertAfter($new_futurebase, $next_piece_location);
-    $next_piece_location = $XMLtree->createTextNode($piece_text);
-    $XMLroot->insertAfter($next_piece_location, $new_futurebase);
+    $next_piece_location = $new_futurebase;
 }
 
 sub add_prune {
@@ -876,8 +872,7 @@ sub add_prune {
     $new_prune->addChild($XMLtree->createAttribute('move', $move));
     $new_prune->addChild($XMLtree->createAttribute('type', $type));
     $XMLroot->insertAfter($new_prune, $next_piece_location);
-    $next_piece_location = $XMLtree->createTextNode($piece_text);
-    $XMLroot->insertAfter($next_piece_location, $new_prune);
+    $next_piece_location = $new_prune;
 }
 
 sub generate_control_file {
@@ -899,29 +894,19 @@ sub generate_control_file {
     my @white_pawns = @{$white_pawns{$basename}};
     my @black_pawns = @{$black_pawns{$basename}};
 
-    # Make a copy of the original XML control file, then remove all existing pieces and futurebases
-    # from it.  We'll reinsert the ones we want below.  This destroys location restrictions, which
-    # means that we don't support location restrictions yet in pawngen.  It also removes any text
-    # node that follows the pieces, and notes what that text was for later use.
+    # Make a copy of the original XML control file, then remove all existing text nodes, pieces and
+    # futurebases from it.  We'll reinsert the ones we want below.  This destroys location
+    # restrictions, which means that we don't support location restrictions yet in pawngen.  Record
+    # the previous sibling of the first piece we remove so that we know where to starting inserting
+    # new pieces back in.
 
     $XMLroot = $XMLtree->getDocumentElement->cloneNode(1);
 
-    undef $next_piece_location;
+    $_->unbindNode() foreach ($XMLroot->findnodes('text()'));
 
-    foreach my $old_piece ($XMLroot->findnodes('piece'), $XMLroot->findnodes('futurebase')) {
-	my $text_node = $old_piece->nextSibling();
+    $next_piece_location = ($XMLroot->findnodes('piece'))[0]->previousSibling();
 
-	if (not defined $next_piece_location) {
-	    $next_piece_location = $old_piece->previousSibling();
-	}
-
-	if ($text_node->nodeValue ne "") {
-	    $piece_text = $text_node->nodeValue unless defined $piece_text;
-	    $text_node->unbindNode();
-	}
-
-	$old_piece->unbindNode();
-    }
+    $_->unbindNode() foreach ($XMLroot->findnodes('piece'), $XMLroot->findnodes('futurebase'));
 
     # Used to isort here to make sure a white queen came first... why?  I don't remember.
 
@@ -975,10 +960,11 @@ sub generate_control_file {
 #    }
 
 
-    open (OUT, ">$cntl_filename") || die "open $cntl_filename for output";
+    # Save the generated control file.  Using the original $XMLtree preserves the DTD header, and
+    # using format '2' reinserts whitespace text nodes.
+
     $XMLtree->setDocumentElement($XMLroot);
-    print OUT $XMLtree->toString();
-    close OUT;
+    $XMLtree->toFile($cntl_filename, 2);
 
     # Print a dependencies line to the makefile.  Don't include any futurebases that were in the
     # original control file (they would show up as references to their XML nodes), since we assume
