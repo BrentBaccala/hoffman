@@ -364,7 +364,7 @@ sub compute_futurebases {
     # apply to a given position; we allow arbitrary Perl code in the prune statement to selectively
     # apply them.  XXX need to track concede/discard, too
 
-    foreach my $white_prune ($XMLcontrolFile->findnodes("prune[attribute::color = 'white']")) {
+    foreach my $white_prune ($XMLcontrolFile->findnodes('prune[@color = "white"]')) {
 	my $condition_present = $white_prune->findnodes('@condition')->size();
 	my $condition = $white_prune->findvalue('@condition');
 	if (not $condition_present or eval $condition) {
@@ -372,7 +372,7 @@ sub compute_futurebases {
 	}
     }
 
-    foreach my $black_prune ($XMLcontrolFile->findnodes("prune[attribute::color = 'black']")) {
+    foreach my $black_prune ($XMLcontrolFile->findnodes('prune[@color = "black"]')) {
 	my $condition_present = $black_prune->findnodes('@condition')->size();
 	my $condition = $black_prune->findvalue('@condition');
 	if (not $condition_present or eval $condition) {
@@ -1051,7 +1051,7 @@ sub validate_xml_control_file {
 
     if (($XMLcontrolFile->findnodes("prune[\@color='white' and \@type != '$white_prune_enable']")->size() > 0)
 	or ($XMLcontrolFile->findnodes("prune[\@color='black' and \@type != '$black_prune_enable']")->size() > 0)) {
-	die "At least one prune type incompatible with prune-enable\n";
+	die "At least one prune statement incompatible with prune-enable\n";
     }
 }
 
@@ -1073,14 +1073,14 @@ sub pawngen {
 
     my $starting_position = "";
 
-    foreach my $white_piece ($XMLcontrolFile->findnodes("piece[attribute::color = 'white' and attribute::type != 'pawn']")) {
+    foreach my $white_piece ($XMLcontrolFile->findnodes('piece[@color = "white" and @type != "pawn"]')) {
 	die "pawngen doesn't support movement restrictions on non-pawns yet" if $white_piece->findvalue('@location');
 	$starting_position .= $piece_character{$white_piece->findvalue('@type')};
     }
 
     $starting_position .= ":";
 
-    foreach my $white_pawn ($XMLcontrolFile->findnodes("piece[attribute::color = 'white' and attribute::type = 'pawn']")) {
+    foreach my $white_pawn ($XMLcontrolFile->findnodes('piece[@color = "white" and @type = "pawn"]')) {
 	die "pawngen doesn't unrestricted pawns yet" if not $white_pawn->findvalue('@location');
 	my $pawn_location = $white_pawn->findvalue('@location');
 	die "pawngen doesn't support any pawn restrictions other than plus pawns yet" unless
@@ -1090,14 +1090,14 @@ sub pawngen {
 
     $starting_position .= ":";
 
-    foreach my $black_piece ($XMLcontrolFile->findnodes("piece[attribute::color = 'black' and attribute::type != 'pawn']")) {
+    foreach my $black_piece ($XMLcontrolFile->findnodes('piece[@color = "black" and @type != "pawn"]')) {
 	die "pawngen doesn't support movement restrictions on non-pawns yet" if $black_piece->findvalue('@location');
 	$starting_position .= $piece_character{$black_piece->findvalue('@type')};
     }
 
     $starting_position .= ":";
 
-    foreach my $black_pawn ($XMLcontrolFile->findnodes("piece[attribute::color = 'black' and attribute::type = 'pawn']")) {
+    foreach my $black_pawn ($XMLcontrolFile->findnodes('piece[@color = "black" and @type = "pawn"]')) {
 	die "pawngen doesn't unrestricted pawns yet" if not $black_pawn->findvalue('@location');
 	my $pawn_location = $black_pawn->findvalue('@location');
 	die "pawngen doesn't support any pawn restrictions other than plus pawns yet" unless
