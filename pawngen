@@ -1091,6 +1091,11 @@ sub pawngen {
 	}
     }
 
+    # We'll use modified copies of the original control file to create new control files, so just
+    # add a single comment right now to note their origin.
+
+    $XMLtree->addChild(XML::LibXML::Comment->new("Created by pawngen from $control_file"));
+
     if ($for_real) {
 	foreach my $cntl_file (@cntl_files_needed) {
 	    &generate_control_file($cntl_file);
