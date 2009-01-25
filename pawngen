@@ -480,6 +480,11 @@ sub expand_pattern_list {
     } elsif ($first ne "") {
 
 	# conventional restriction
+	#
+	# We don't include any positions with pawns on the same square, because they don't exist and
+	# would thus invalidate this pattern.  Hoffman, however, can handle them (by flaging them
+	# illegal), so we don't want to invalidate patterns just because they generate some
+	# duplicates.
 
 	foreach my $square (unpack "(a2)*", $first) {
 	    if ($prefix !~ /$square/) {
@@ -503,7 +508,7 @@ sub expand_pattern_list {
 }
 
 #$OUTPUT_FIELD_SEPARATOR="\n";
-#print &expand_pattern_list("K", "a2+", "KQ", "a7+"), "\n";
+#print &expand_pattern_list("K", "g4g5g6g7", "K", "g4"), "\n";
 #exit;
 
 # Assign all positions that match a given pattern list to a futurebase.  Can be passed in either a
@@ -893,15 +898,15 @@ sub generate_control_file {
     my @white_pawns = @{$white_pawns{$basename}};
     my @black_pawns = @{$black_pawns{$basename}};
 
-    # Make a copy of the original XML control file, then remove all existing text nodes, pieces and
-    # futurebases from it.  We'll reinsert the ones we want below.  This destroys location
-    # restrictions, which means that we don't support location restrictions yet in pawngen.  Record
-    # the previous sibling of the first piece we remove so that we know where to starting inserting
-    # new pieces back in.
+    # Make a copy of the original XML control file, then remove all existing pieces, futurebases,
+    # and whitespace-only text nodes.  We'll reinsert the ones we want below.  This destroys
+    # location restrictions, which means that we don't support location restrictions yet in pawngen.
+    # Record the previous sibling of the first piece we remove so that we know where to starting
+    # inserting new pieces back in.
 
     $XMLroot = $XMLtree->getDocumentElement->cloneNode(1);
 
-    $_->unbindNode() foreach ($XMLroot->findnodes('text()'));
+    $_->unbindNode() foreach ($XMLroot->findnodes('text()[normalize-space(string()) = ""]'));
 
     $next_piece_location = ($XMLroot->findnodes('piece'))[0]->previousSibling();
 
@@ -960,10 +965,10 @@ sub generate_control_file {
 
 
     # Save the generated control file.  Using the original $XMLtree preserves the DTD header, and
-    # using format '2' reinserts whitespace text nodes.
+    # using format '1' inserts whitespace text nodes.
 
     $XMLtree->setDocumentElement($XMLroot);
-    $XMLtree->toFile($cntl_filename, 2);
+    $XMLtree->toFile($cntl_filename, 1);
 
     # Print a dependencies line to the makefile.  Don't include any futurebases that were in the
     # original control file (they would show up as references to their XML nodes), since we assume
