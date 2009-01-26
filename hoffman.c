@@ -175,19 +175,19 @@ typedef unsigned int uint32;
 
 #if SIZEOF_UNSIGNED_SHORT >= 8
 typedef unsigned short uint64;
-#define UINT64_HEX_FORMAT "0x%hx"
+#define UINT64_HEX_FORMAT "0x%016hx"
 #define UINT64_DECIMAL_FORMAT "%hd"
 #elif SIZEOF_UNSIGNED_INT >= 8
 typedef unsigned int uint64;
-#define UINT64_HEX_FORMAT "0x%x"
+#define UINT64_HEX_FORMAT "0x%016x"
 #define UINT64_DECIMAL_FORMAT "%d"
 #elif SIZEOF_UNSIGNED_LONG >= 8
 typedef unsigned long uint64;
-#define UINT64_HEX_FORMAT "0x%lxL"
+#define UINT64_HEX_FORMAT "0x%016lxL"
 #define UINT64_DECIMAL_FORMAT "%ld"
 #elif SIZEOF_UNSIGNED_LONG_LONG >= 8
 typedef unsigned long long uint64;
-#define UINT64_HEX_FORMAT "0x%llxLL"
+#define UINT64_HEX_FORMAT "0x%016llxLL"
 #define UINT64_DECIMAL_FORMAT "%lld"
 #else
 # error Could not find a 64 bit unsigned integer variable
@@ -4048,6 +4048,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+#if DEBUG
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	fprintf(stderr, "Piece %d: type %s color %s legal_squares " UINT64_HEX_FORMAT " semilegal_squares " UINT64_HEX_FORMAT "\n",
+		piece, piece_name[tb->piece_type[piece]], colors[tb->piece_color[piece]],
+		tb->legal_squares[piece], tb->semilegal_squares[piece]);
+    }
+#endif
+
     /* Fetch the index type */
 
     index = xmlGetProp(tablebase, BAD_CAST "index");
@@ -4844,7 +4852,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.504 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.505 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9063,7 +9071,8 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 	    missing_piece2 = (conversion_result >> 24) & 0xff;
 
 	    if ((missing_piece1 != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
-		fatal("Conversion error during normal back-prop\n");
+		fatal("Conversion error during normal back-prop; extra %d, restricted %d, missing1 %d, missing2 %d\n",
+		      extra_piece, restricted_piece, missing_piece1, missing_piece2);
 		continue;
 	    }
 
@@ -12220,7 +12229,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.504 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.505 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
