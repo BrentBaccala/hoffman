@@ -14,8 +14,6 @@ use IO::Zlib;
 use XML::LibXML;
 use Data::Dumper;
 
-my $for_real = 1;
-
 use English;
 $LIST_SEPARATOR = undef;
 
@@ -38,13 +36,6 @@ $piece_names{'N'} = "knight";
 my %piece_character;
 
 foreach my $piece_char (keys %piece_names) { $piece_character{$piece_names{$piece_char}} = $piece_char };
-
-if ($for_real) {
-    open (MAKEFILE, ">makefile") || die "open";
-    print MAKEFILE "%.htb: %.xml\n\t../hoffman -o \$@ -g \$<\n\n";
-} else {
-    open (MAKEFILE, ">/dev/null") || die "open";
-}
 
 # Our original XML control file
 
@@ -1112,7 +1103,15 @@ sub pawngen {
 
     $XMLtree->addChild(XML::LibXML::Comment->new(" Created by pawngen from $control_file "));
 
+    my $for_real = 1;
+
     if ($for_real) {
+	open (MAKEFILE, ">makefile") || die "can't open makefile";
+	print MAKEFILE "# Created by pawngen from $control_file\n\n";
+	print MAKEFILE "HOFFMAN ?= hoffman\n\n";
+	print MAKEFILE "%.htb: %.xml\n";
+	print MAKEFILE "\t\$(HOFFMAN) -o \$@ -g \$<\n\n";
+
 	foreach my $cntl_file (@cntl_files_needed) {
 	    &generate_control_file($cntl_file);
 	}
