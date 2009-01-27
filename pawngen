@@ -41,7 +41,7 @@ foreach my $piece_char (keys %piece_names) { $piece_character{$piece_names{$piec
 
 if ($for_real) {
     open (MAKEFILE, ">makefile") || die "open";
-    print MAKEFILE "%.htb: %.xml\n\thoffman -o \$@ -g \$<\n\n";
+    print MAKEFILE "%.htb: %.xml\n\t../hoffman -o \$@ -g \$<\n\n";
 } else {
     open (MAKEFILE, ">/dev/null") || die "open";
 }
@@ -428,9 +428,21 @@ sub consider_position {
 
 # Patterns can match multiple positions.  A pattern is a list of pieces and pawns, each pawn a
 # separate list item - white first, then black, pieces before pawns within each color.  Pieces are
-# just a string of capital characters.  Pawns are a board square (like "c2") or a string of board
-# squares (like "c2c3c4") or plus syntax (like "c2+").  Returns a list of the positions matching a
-# given pattern.
+# just a string of capital characters starting with 'K'.  Pawns are a board square (like "c2") or a
+# string of board squares (like "c2c3c4") or plus syntax (like "c2+").  Returns a list of the
+# positions matching a given pattern.
+
+# N.B: This routine assumes the all pawns on a file either are or are not plus pawns.  It also
+# assumes by the very structure of a "position" that nothing other than a pawn could block a pawn
+# (because no other pieces are allowed to be restricted).  Pawngen currently rejects any
+# restrictions on non-pawns, or pawn restrictions other than simple plus pawns.  ANY MORE
+# COMPLICATED RESTRICTIONS WILL BREAK THIS CODE.
+
+# N.B: This routine REQUIRES that white pawns be 'isort'ed and black pawns be 'sort'ed.  This is
+# because we advance plus pawns forward until they hit something, and if "something" is another plus
+# pawn, of the same color (thus doubled), then we need to make sure that the leading pawn is
+# advanced first.  For white pawns, this means that an "a5+" pawn has to come before an "a4+",
+# thus isort, and for black pawns it's reversed, so sort.
 
 # XXX could be made much more efficient by considering each file separately.
 
@@ -459,8 +471,9 @@ sub expand_pattern_list {
 
 	# plus pawns - advance them as far as they can go without hitting another pawn
 
-	# XXX do we need to check against the rest of sequence here?  If so, this isn't right if
-	# sequence includes a list of squares at some point.
+	# This is where we assume that any other pawn on the file of a plus pawn is also a plus
+	# pawn.  If not, this logic isn't right if sequence includes a list of squares at some
+	# point, because only one of them would be enough to stop the plus pawn.
 
 	my $pawn = $1;
 	if ($prefix =~ /^K[^K]*$/) {
@@ -513,13 +526,14 @@ sub expand_pattern_list {
 
 # Assign all positions that match a given pattern list to a futurebase.  Can be passed in either a
 # string (for a tablebase that we're going to generate), or an XML node pointer (for a futurebase
-# specified in the original control file).
+# specified in the original control file).  It is because of this later case that we assign whether
+# or not the position already exists in the %positions hash, since we don't know when we process a
+# futurebase which of its positions will ultimately be required.
 
 sub assignallpositions {
     my ($target, @pattern) = @_;
 
     foreach my $position (&expand_pattern_list(@pattern)) {
-	#$positions{$position} = $target if (exists $positions{$position} and not defined $positions{$position});
 	$positions{$position} = $target;
     }
 }
@@ -577,8 +591,6 @@ sub genset {
 
     my @white_pieces = unpack "(a1)*", $white_pieces;
     my @black_pieces = unpack "(a1)*", $black_pieces;
-    my @white_pawns = isort unpack "(a2)*", $white_pawns;
-    my @black_pawns = sort unpack "(a2)*", $black_pawns;
 
     #print "genset: $white_base @white_pawns $black_base @black_pawns\n";
 
@@ -616,18 +628,20 @@ sub genset {
 	my @white_pawns = sort unpack "(a2)*", $white_pawns;
 	my @black_pawns = isort unpack "(a2)*", $black_pawns;
 
-	# Still crazy.  This next loop takes advantage of the Perl-ism that foreach's local variable
-	# is actually an alias for the list item.  So modifying $white_pawn modifies @white_pawns.
-	# Yep.
+	# Still crazy.  These next three loops takes advantage of the Perl-ism that foreach's local
+	# variable is actually an alias for the list item.  So modifying $white_pawn modifies
+	# @white_pawns.  Yep.
+
+	foreach my $pawn (@white_pawns, @black_pawns) {
+	    my $pawn_file = substr($pawn,0,1);
+	    $pawn .= "+" if (index($plus_files, $pawn_file) != -1);
+	}
 
 	foreach my $white_pawn (@white_pawns) {
 
-	    my $white_pawn_file = substr($white_pawn,0,1);
-	    if (grep /$white_pawn_file/, $plus_files) {
+	    if (length($white_pawn) == 3) {
 
-		# A plus pawn.  Modify it as such, then back it up as far as it can go.
-
-		$white_pawn .= "+";
+		# A plus pawn.  Back it up as far as it can go.
 
 		if (&checkallpositions($white_pieces, (isort @white_pawns),
 				       $black_pieces, (sort @black_pawns))) {
@@ -677,12 +691,9 @@ sub genset {
 
 	foreach my $black_pawn (@black_pawns) {
 
-	    my $black_pawn_file = substr($black_pawn,0,1);
-	    if (grep /$black_pawn_file/, $plus_files) {
+	    if (length($black_pawn) == 3) {
 
-		# A plus pawn.  Modify it as such, then back it up as far as it can go.
-
-		$black_pawn .= "+";
+		# A plus pawn.  Back it up as far as it can go.
 
 		if (&checkallpositions($white_pieces, (isort @white_pawns),
 				       $black_pieces, (sort @black_pawns))) {
@@ -736,14 +747,13 @@ sub genset {
 	# is to prefer plus-pawns (because they are tested last) over an explicit location
 	# list.
 
-	# Sort the black pawns in reverse order here so that doubled pawns appear in board
-	# order, as is (currently) required by Hoffman.
+	# When we save them, sort the black pawns in reverse order here so that doubled pawns appear
+	# in board order, as is (currently) required by Hoffman.
 
-	if (&checkallpositions($white_pieces, (isort @white_pawns),
-			       $black_pieces, (sort @black_pawns))
-	    >= $best_count) {
-	    $best_count = &checkallpositions($white_pieces, (isort @white_pawns),
-					     $black_pieces, (sort @black_pawns));
+	my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
+						 $black_pieces, (sort @black_pawns));
+	if ($candidate_count >= $best_count) {
+	    $best_count = $candidate_count;
 	    @best_white_pawns = sort @white_pawns;
 	    @best_black_pawns = isort @black_pawns;
 	}
@@ -1094,7 +1104,7 @@ sub pawngen {
     # We'll use modified copies of the original control file to create new control files, so just
     # add a single comment right now to note their origin.
 
-    $XMLtree->addChild(XML::LibXML::Comment->new("Created by pawngen from $control_file"));
+    $XMLtree->addChild(XML::LibXML::Comment->new(" Created by pawngen from $control_file "));
 
     if ($for_real) {
 	foreach my $cntl_file (@cntl_files_needed) {
