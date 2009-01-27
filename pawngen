@@ -1070,6 +1070,8 @@ sub pawngen {
 	$starting_position .= $pawn_location;
     }
 
+    $starting_position = &normalize_position($starting_position);
+
     # Extract URL prefix from the control file, if it exists.  If not, then $url_prefix will be an
     # empty string.
 
@@ -1091,9 +1093,13 @@ sub pawngen {
     print "Starting position $starting_position\n";
     &consider_position($starting_position);
 
-    # Assign all the positions to control files (using &genset), then generate the control files
+    # Assign all the positions to control files (using &genset), then generate the control files.
+    # Call &genset on $starting_position to ensure that it's the first one processed and therefore
+    # appears first in the makefile, so that it is the default target if the user just types "make".
+    # Note that we use 'push' in this loop (and not 'unshift'), so that we're always adding to the
+    # end of the @cntl_files_needed array.
 
-    my @cntl_files_needed;
+    my @cntl_files_needed = (&genset($starting_position));
 
     while (my ($position, $filename) = each %positions) {
 	if (not defined $positions{$position}) {
