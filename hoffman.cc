@@ -4852,7 +4852,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.508 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.509 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9926,13 +9926,25 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			if ((piece == tb->black_king)
 			    && (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
 
-			/* If the piece is moving outside its legal squares, it's a futuremove.  Why
-			 * not semilegal squares here?  Because any legal position would (possibly
-			 * after permuting the pieces) have each piece on a legal square, after
-			 * which we would consider possible futuremoves outside the restriction.
+			/* If the piece is moving outside its semilegal squares, it's a futuremove.
+			 * If it's moving from a legal square to a semilegal square, it's also a
+			 * futuremove... except for a special case.  Obviously the other piece in
+			 * its semilegal group can't be on either the square it's moving from or the
+			 * square it's moving to (no other piece can be).  If all remaining legal
+			 * squares available to that other piece are also legal squares for this
+			 * piece, then we can always successfully flip the two pieces and this isn't
+			 * a futuremove.  The converse is that there must be at least one legal
+			 * square available to the other piece that isn't a legal square for this
+			 * piece; in other words, this piece must have another semilegal square that
+			 * isn't legal.
 			 */
 
-			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))) {
+			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))
+
+			    || (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+				&& ( tb->semilegal_squares[piece] & ~(tb->legal_squares[piece])
+				     & ~BITVECTOR(movementptr->square) & ~BITVECTOR(sq) ))) {
+
 			    if (futuremoves[piece][movementptr->square] == -1) {
 
 				sprintf(local_movestr, "%c%c%c", piece_char[tb->piece_type[piece]],
@@ -9984,15 +9996,22 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			 * move outside its restriction (except via capture).
 			 */
 
-			if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
-			    && (tb->blocking_piece[piece] == -1)) {
-			    if (futuremoves[piece][movementptr->square] == -1) {
-				futuremoves[piece][movementptr->square]
-				    = num_futuremoves[tb->piece_color[piece]];
-				sprintf(movestr[tb->piece_color[piece]][num_futuremoves[tb->piece_color[piece]]],
-					"%c%c%c", piece_char[tb->piece_type[piece]],
-					'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-				num_futuremoves[tb->piece_color[piece]] ++;
+			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))
+
+			    || (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+				&& ( tb->semilegal_squares[piece] & ~(tb->legal_squares[piece])
+				     & ~BITVECTOR(movementptr->square) & ~BITVECTOR(sq) ))) {
+
+			    if (tb->blocking_piece[piece] == -1) {
+
+				if (futuremoves[piece][movementptr->square] == -1) {
+				    futuremoves[piece][movementptr->square]
+					= num_futuremoves[tb->piece_color[piece]];
+				    sprintf(movestr[tb->piece_color[piece]][num_futuremoves[tb->piece_color[piece]]],
+					    "%c%c%c", piece_char[tb->piece_type[piece]],
+					    'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
+				    num_futuremoves[tb->piece_color[piece]] ++;
+				}
 			    }
 			}
 		    }
@@ -12259,7 +12278,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.508 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.509 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
