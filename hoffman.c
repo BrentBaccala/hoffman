@@ -4852,7 +4852,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.506 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.507 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5578,7 +5578,13 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
     if (invert_colors) flip_side_to_move_local(local);
 
-    /* First, see if we can slot foreign pieces into the local tablebase on semilegal squares. */
+    /* First, see if we can slot foreign pieces into the local tablebase on legal squares.  We start
+     * by slotting them onto semilegal squares, then swapping them around if needed to get them onto
+     * legal squares.
+     *
+     * This code could probably be made more efficient by keeping pointers to the semilegal groups
+     * of each piece color/type for each square on the board.
+     */
 
     for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
 
@@ -5595,7 +5601,37 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 		&& (local_tb->semilegal_squares[local_piece] & BITVECTOR(sq))
 		&& !(local_pieces_processed_bitvector & (1 << local_piece))) {
 
-		local->piece_position[local_piece] = sq;
+		if (local_tb->legal_squares[local_piece] & BITVECTOR(sq)) {
+		    local->piece_position[local_piece] = sq;
+		} else {
+		    /* The square is semilegal for local_piece, but not legal.  The only way this
+		     * can happen is if this piece is part of a semilegal group, which currently can
+		     * only have two members.  Find its pair.  If paired_piece hasn't been assigned
+		     * yet, then do nothing, since we'll hit it later on in the local_pieces loop
+		     * and assign it them.  Otherwise, attempt to get a legal assignment by swapping
+		     * the two pieces.  We know the square is semilegal for local_piece, but not
+		     * legal, so it has to be legal for paired_piece.  Therefore, the only question
+		     * is whether paired_piece's previously assigned square is legal for
+		     * local_piece.  If it is, swap them and keep going.  If not, then give up on
+		     * this foreign_piece, since we're not going to find anywhere to place it.
+		     *
+		     * This is one of the places where we assume that each semilegal group has only
+		     * two pieces in it, and will need a more complex algorithm to consider
+		     * permutations of more pieces if and when we relax this assumption.
+		     */
+
+		    int paired_piece = (local_tb->last_paired_piece[local_piece] != -1)
+			? local_tb->last_paired_piece[local_piece] : local_tb->next_paired_piece[local_piece];
+
+		    if (!(local_pieces_processed_bitvector & (1 << paired_piece))) continue;
+		    if (local_tb->legal_squares[local_piece] & BITVECTOR(local->piece_position[paired_piece])) {
+			local->piece_position[local_piece] = local->piece_position[paired_piece];
+			local->piece_position[paired_piece] = sq;
+		    } else {
+			break;
+		    }
+		}
+
 		local->board_vector |= BITVECTOR(sq);
 		if (local_tb->piece_color[local_piece] == local->side_to_move)
 		    local->PTM_vector |= BITVECTOR(sq);
@@ -5608,15 +5644,9 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	}
     }
 
-    /* If that didn't work for a foreign piece, see if we can slip it in on a non-semilegal square
-     * (a semiillegal square?)  Now, you might wonder if a different ordering of pieces might result
-     * in a successful assignment onto semilegal squares, where the current ordering would fail, but
-     * that's not so, because different semilegal groups of identical pieces never overlap
-     * (otherwise they would have been formed into a single group).  So for each piece type of a
-     * given color, there is only a single semilegal group for a given square.  But restricted
-     * pieces are a bit different, since until we've done all the pieces, we can't tell which ones
-     * are unassigned and thus available for a restricted piece.  That's why we run this next loop
-     * seperate from the first.
+    /* If that didn't work for a foreign piece, see if we can slip it in on an illegal square.  We
+     * waited until we ran that first loop so we could tell which pieces are unassigned and thus
+     * available for a restricted piece.
      */
 
     for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
@@ -12229,7 +12259,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.506 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.507 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
