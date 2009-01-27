@@ -4852,7 +4852,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.507 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.508 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5553,8 +5553,8 @@ void invert_colors_of_global_position(global_position_t *global)
 
 #define NONE 0x80
 
-int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_position_t *foreign,
-						 tablebase_t *local_tb, local_position_t *local,
+int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_position_t *foreign_position,
+						 tablebase_t *local_tb, local_position_t *local_position,
 						 int invert_colors)
 {
     int foreign_piece;
@@ -5566,17 +5566,17 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     short local_pieces_processed_bitvector = 0;
     short foreign_pieces_processed_bitvector = 0;
 
-    memset(local, 0, sizeof(local_position_t));
+    memset(local_position, 0, sizeof(local_position_t));
 
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
-	local->piece_position[local_piece] = -1;
-	local->permuted_piece[local_piece] = local_piece;
+	local_position->piece_position[local_piece] = -1;
+	local_position->permuted_piece[local_piece] = local_piece;
     }
 
-    local->en_passant_square = foreign->en_passant_square;
-    local->side_to_move = foreign->side_to_move;
+    local_position->en_passant_square = foreign_position->en_passant_square;
+    local_position->side_to_move = foreign_position->side_to_move;
 
-    if (invert_colors) flip_side_to_move_local(local);
+    if (invert_colors) flip_side_to_move_local(local_position);
 
     /* First, see if we can slot foreign pieces into the local tablebase on legal squares.  We start
      * by slotting them onto semilegal squares, then swapping them around if needed to get them onto
@@ -5588,7 +5588,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
     for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
 
-	int sq = foreign->piece_position[foreign_piece];
+	int sq = foreign_position->piece_position[foreign_piece];
 
 	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
 
@@ -5602,7 +5602,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 		&& !(local_pieces_processed_bitvector & (1 << local_piece))) {
 
 		if (local_tb->legal_squares[local_piece] & BITVECTOR(sq)) {
-		    local->piece_position[local_piece] = sq;
+		    local_position->piece_position[local_piece] = sq;
 		} else {
 		    /* The square is semilegal for local_piece, but not legal.  The only way this
 		     * can happen is if this piece is part of a semilegal group, which currently can
@@ -5624,17 +5624,17 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 			? local_tb->last_paired_piece[local_piece] : local_tb->next_paired_piece[local_piece];
 
 		    if (!(local_pieces_processed_bitvector & (1 << paired_piece))) continue;
-		    if (local_tb->legal_squares[local_piece] & BITVECTOR(local->piece_position[paired_piece])) {
-			local->piece_position[local_piece] = local->piece_position[paired_piece];
-			local->piece_position[paired_piece] = sq;
+		    if (local_tb->legal_squares[local_piece] & BITVECTOR(local_position->piece_position[paired_piece])) {
+			local_position->piece_position[local_piece] = local_position->piece_position[paired_piece];
+			local_position->piece_position[paired_piece] = sq;
 		    } else {
 			break;
 		    }
 		}
 
-		local->board_vector |= BITVECTOR(sq);
-		if (local_tb->piece_color[local_piece] == local->side_to_move)
-		    local->PTM_vector |= BITVECTOR(sq);
+		local_position->board_vector |= BITVECTOR(sq);
+		if (local_tb->piece_color[local_piece] == local_position->side_to_move)
+		    local_position->PTM_vector |= BITVECTOR(sq);
 
 		local_pieces_processed_bitvector |= (1 << local_piece);
 		foreign_pieces_processed_bitvector |= (1 << foreign_piece);
@@ -5651,7 +5651,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
     for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
 
-	int sq = foreign->piece_position[foreign_piece];
+	int sq = foreign_position->piece_position[foreign_piece];
 
 	if (foreign_pieces_processed_bitvector & (1 << foreign_piece)) continue;
 
@@ -5670,10 +5670,10 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 		    : (foreign_tb->piece_color[foreign_piece] == local_tb->piece_color[local_piece]))
 		&& !(local_pieces_processed_bitvector & (1 << local_piece))) {
 
-		local->piece_position[local_piece] = sq;
-		local->board_vector |= BITVECTOR(sq);
-		if (local_tb->piece_color[local_piece] == local->side_to_move)
-		    local->PTM_vector |= BITVECTOR(sq);
+		local_position->piece_position[local_piece] = sq;
+		local_position->board_vector |= BITVECTOR(sq);
+		if (local_tb->piece_color[local_piece] == local_position->side_to_move)
+		    local_position->PTM_vector |= BITVECTOR(sq);
 
 		local_pieces_processed_bitvector |= (1 << local_piece);
 		foreign_pieces_processed_bitvector |= (1 << foreign_piece);
@@ -12259,7 +12259,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.507 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.508 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
