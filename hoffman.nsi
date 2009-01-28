@@ -57,7 +57,7 @@ Function installTypePage
 	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 0 100% 12u 'freesoft.org'
 	Pop $0
 
-	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 15u 100% 12u 'Hoffman 1.0'
+	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 15u 100% 12u 'Hoffman 1.1'
 	Pop $0
 
 	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 40u 100% 12u 'Chess endgame retrograde analyzer'
@@ -133,6 +133,7 @@ Section "Hoffman"
   ; Put executable and all of its cygwin DLLs into subdir bin
   SetOutPath $INSTDIR\bin
   File "hoffman.exe"
+  File "pawngen"
   File "\cygwin\bin\cygwin1.dll"
   File "\cygwin\bin\cygcrypto-0.9.8.dll"
   File "\cygwin\bin\cygcurl-4.dll"
@@ -183,6 +184,7 @@ Section "Uninstall"
 
   ; Remove files and uninstaller, including any tablebases and/or history files
   Delete "$INSTDIR\bin\hoffman.exe"
+  Delete "$INSTDIR\bin\pawngen"
   Delete "$INSTDIR\bin\*.dll"
   Delete "$INSTDIR\xml\*.xml"
   Delete "$INSTDIR\xml\*.htb"
