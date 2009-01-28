@@ -843,7 +843,7 @@ sub assign_futurebase {
 	die "Can't find url or filename in futurebase element\n";
     }
 
-    tie *ZFILE, 'IO::Zlib', $filename, "rb" or die "Can't open $filename";
+    tie *ZFILE, 'IO::Zlib', $filename, "rb" or die "Can't open futurebase $filename\n";
     tie *FILE, 'XML_prefix_only', *ZFILE;
 
     my $XMLfuturebase = $XMLparser->parse_fh(*FILE)->getDocumentElement();
@@ -1078,16 +1078,16 @@ sub pawngen {
     my $starting_position = "";
 
     foreach my $white_piece ($XMLcontrolFile->findnodes('piece[@color = "white" and @type != "pawn"]')) {
-	die "pawngen doesn't support movement restrictions on non-pawns yet" if $white_piece->findvalue('@location');
+	die "pawngen doesn't support movement restrictions on non-pawns yet\n" if $white_piece->findvalue('@location');
 	$starting_position .= $piece_character{$white_piece->findvalue('@type')};
     }
 
     $starting_position .= ":";
 
     foreach my $white_pawn ($XMLcontrolFile->findnodes('piece[@color = "white" and @type = "pawn"]')) {
-	die "pawngen doesn't unrestricted pawns yet" if not $white_pawn->findvalue('@location');
+	die "pawngen doesn't support unrestricted pawns yet\n" if not $white_pawn->findvalue('@location');
 	my $pawn_location = $white_pawn->findvalue('@location');
-	die "pawngen doesn't support any pawn restrictions other than plus pawns yet" unless
+	die "pawngen doesn't support any pawn restrictions other than plus pawns yet\n" unless
 	    $pawn_location =~ s/^([a-h][1-8])\+$/\1/;
 	$starting_position .= $pawn_location;
     }
@@ -1095,16 +1095,16 @@ sub pawngen {
     $starting_position .= ":";
 
     foreach my $black_piece ($XMLcontrolFile->findnodes('piece[@color = "black" and @type != "pawn"]')) {
-	die "pawngen doesn't support movement restrictions on non-pawns yet" if $black_piece->findvalue('@location');
+	die "pawngen doesn't support movement restrictions on non-pawns yet\n" if $black_piece->findvalue('@location');
 	$starting_position .= $piece_character{$black_piece->findvalue('@type')};
     }
 
     $starting_position .= ":";
 
     foreach my $black_pawn ($XMLcontrolFile->findnodes('piece[@color = "black" and @type = "pawn"]')) {
-	die "pawngen doesn't unrestricted pawns yet" if not $black_pawn->findvalue('@location');
+	die "pawngen doesn't support unrestricted pawns yet\n" if not $black_pawn->findvalue('@location');
 	my $pawn_location = $black_pawn->findvalue('@location');
-	die "pawngen doesn't support any pawn restrictions other than plus pawns yet" unless
+	die "pawngen doesn't support any pawn restrictions other than plus pawns yet\n" unless
 	    $pawn_location =~ s/^([a-h][1-8])\+$/\1/;
 	$starting_position .= $pawn_location;
     }
