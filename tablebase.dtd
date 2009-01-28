@@ -57,7 +57,9 @@
 <!ELEMENT error-report EMPTY>
 <!ATTLIST error-report url CDATA #REQUIRED>
 
-<!ELEMENT generation-controls (output | completion-report | error-report | entries-format | proptable-format)+ >
+<!ELEMENT url-prefix (#PCDATA)>
+
+<!ELEMENT generation-controls (output | url-prefix | completion-report | error-report | entries-format | proptable-format)+ >
 
 <!ELEMENT tablebase-statistics (indices, PNTM-mated-positions?, legal-positions, stalemate-positions?, white-wins-positions?, black-wins-positions?, forward-moves, futuremoves, backproped-moves?, max-dtm?, min-dtm?)>
 <!ELEMENT indices (#PCDATA)>
