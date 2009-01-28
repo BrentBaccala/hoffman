@@ -259,6 +259,19 @@ Perl/Tk script or a Java applet, and I think Java is much cleaner than
 Perl.  Freezer seems to have a nice GUI for a tablebase generator; see
 the demos on http://www.freezerchess.com/
 
+Even the computation engine could use a GUI, though, especially on
+Microsoft systems where it's the standard user interface.  A modal
+startup sequence could begin with radio buttons to select either a
+file chooser to pick a control file (or files) for processing, or a
+URL to connect to a remote webserver and retrieve control files from
+there.  An options panel could allow selecting the maximum amount of
+RAM to use, along with the location of a temporary files directory and
+the maximum amount of disk space to use.  Use of proptable mode would
+then be automatic depending on how much RAM is available.  It should
+be possible to change these settings while the program is running.
+Once the analysis proper starts, you should be able to halt or pause
+it, as well as iconize it while it continues to run.
+
 
 - improve probe mode's move parser
 
