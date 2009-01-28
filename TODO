@@ -273,6 +273,16 @@ Once the analysis proper starts, you should be able to halt or pause
 it, as well as iconize it while it continues to run.
 
 
+- pawngen
+
+Needs to be more sophisticated.  Needs to handle restricted pieces.
+Needs to apply pruning statements selectively in different situations
+(there's already some code in it to do this using Perl expressions).
+Needs to have a 'freeze' pruning option that lets us queen a pawn and
+then let it sit there on the queening square to ensure that the other
+side can't either capture it immediately or queen right after us.
+
+
 - improve probe mode's move parser
 
 Check illegal moves more aggressively; have a 'back' command; maybe a
