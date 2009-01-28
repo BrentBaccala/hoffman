@@ -4,7 +4,7 @@
 # PAWNGEN - generates a directory full of Hoffman XML control files to analyze a particular pawn
 # configuration, with more complicated pruning operations than are possible with a single run.
 # Starting from a particular pawn configuration, this program will systematically consider all
-# possible pawn movements and promotions that can result from the position.  The 'condition'
+# possible pawn movements and promotions that can result from the position.  The 'pawngen-condition'
 # attribute on pruning statements allows them to be applied selectively at various captures and
 # promotions in the analysis.
 
@@ -12,7 +12,6 @@ use strict;
 
 use IO::Zlib;
 use XML::LibXML;
-use Data::Dumper;
 
 use English;
 $LIST_SEPARATOR = undef;
@@ -324,7 +323,7 @@ sub compute_futurebases_from_one_pawn {
     # if a friendly pawn is protecting this one, if so it can't be captured by the king.
 
     foreach my $enemy_piece (@enemy_pieces) {
-	if (not &match_prune("${enemy_piece}xP")) {
+	if (not &match_prune("${enemy_piece}xP", @$prunes)) {
 	    if ($enemy_piece eq 'K') {
 		my $protector1 = &reverse_pawn_move($color, $pawn);
 		my $protector2 = &reverse_pawn_move($color, $pawn);
@@ -359,16 +358,16 @@ sub compute_futurebases {
     # apply them.  XXX need to track concede/discard, too
 
     foreach my $white_prune ($XMLcontrolFile->findnodes('prune[@color = "white"]')) {
-	my $condition_present = $white_prune->findnodes('@condition')->size();
-	my $condition = $white_prune->findvalue('@condition');
+	my $condition_present = $white_prune->findnodes('@pawngen-condition')->size();
+	my $condition = $white_prune->findvalue('@pawngen-condition');
 	if (not $condition_present or eval $condition) {
 	    push @white_prunes, $white_prune->findvalue('@move');
 	}
     }
 
     foreach my $black_prune ($XMLcontrolFile->findnodes('prune[@color = "black"]')) {
-	my $condition_present = $black_prune->findnodes('@condition')->size();
-	my $condition = $black_prune->findvalue('@condition');
+	my $condition_present = $black_prune->findnodes('@pawngen-condition')->size();
+	my $condition = $black_prune->findvalue('@pawngen-condition');
 	if (not $condition_present or eval $condition) {
 	    push @black_prunes, $black_prune->findvalue('@move');
 	}
@@ -386,16 +385,24 @@ sub compute_futurebases {
 
     # consider piece-on-piece captures
 
-    # XXX add something to prune here
-
     foreach my $white_piece (@white_pieces) {
 	if ($white_piece ne 'K') {
-	    push @futurebases, &normalize_position(&remove_piece_from_position($position, 'white', $white_piece));
+	    foreach my $black_piece (@black_pieces) {
+		if (not &match_prune("${black_piece}x${white_piece}", @black_prunes)) {
+		    push @futurebases, &normalize_position(&remove_piece_from_position($position, 'white', $white_piece));
+		    last;
+		}
+	    }
 	}
     }
     foreach my $black_piece (@black_pieces) {
 	if ($black_piece ne 'K') {
-	    push @futurebases, &normalize_position(&remove_piece_from_position($position, 'black', $black_piece));
+	    foreach my $white_piece (@white_pieces) {
+		if (not &match_prune("${white_piece}x${black_piece}", @white_prunes)) {
+		    push @futurebases, &normalize_position(&remove_piece_from_position($position, 'black', $black_piece));
+		    last;
+		}
+	    }
 	}
     }
 
@@ -876,12 +883,11 @@ sub assign_futurebase {
 }
 
 
+my $XMLroot;
 my $next_piece_location;
 
-my $XMLroot;
 
-# Convenience subroutine to add a piece to the XML.  Not only do we add the element, but we put
-# some text in (determined below) to keep the formatting nice.
+# Convenience subroutine to add a piece to the XML.
 
 sub add_piece {
     my ($color, $type, $location) = @_;
@@ -995,7 +1001,9 @@ sub generate_control_file {
 	&add_futurebase($futurebase);
     }
 
-    # XXX can't handle pruning right now
+    # XXX Don't handle pruning the way I'd like to yet.  Just leave all the prune statements alone
+    # in the original XML.  I'd like to selectively include them based on Perl conditions specified
+    # in the XML.  I'd also like to only include the ones actually needed in output control files.
 
 #    foreach my $white_prune (@unique_white_prunes) {
 #	&add_prune('white', $white_prune, 'discard');
