@@ -61,7 +61,7 @@
 
 <!ELEMENT generation-controls (output | url-prefix | completion-report | error-report | entries-format | proptable-format)+ >
 
-<!ELEMENT tablebase-statistics (indices, PNTM-mated-positions?, legal-positions, stalemate-positions?, white-wins-positions?, black-wins-positions?, forward-moves, futuremoves, backproped-moves?, max-dtm?, min-dtm?)>
+<!ELEMENT tablebase-statistics (indices | PNTM-mated-positions | legal-positions | stalemate-positions | white-wins-positions | black-wins-positions | forward-moves | futuremoves | backproped-moves | max-dtm | min-dtm)+ >
 <!ELEMENT indices (#PCDATA)>
 <!ELEMENT PNTM-mated-positions (#PCDATA)>
 <!ELEMENT legal-positions (#PCDATA)>
@@ -95,12 +95,13 @@
 
 <!ELEMENT pass (#PCDATA)>
 <!ATTLIST pass
-	type CDATA	#REQUIRED
-	real-time CDATA	#REQUIRED
-	user-time CDATA	#REQUIRED
+	type CDATA	#IMPLIED
+	real-time CDATA	#IMPLIED
+	user-time CDATA	#IMPLIED
 	dtm CDATA	#IMPLIED
 	positions-finalized CDATA #IMPLIED
-	moves-generated CDATA #IMPLIED>
+	moves-generated CDATA #IMPLIED
+	backprop-moves-generated CDATA #IMPLIED>
 
 <!ATTLIST tablebase
 	offset	CDATA		#IMPLIED
