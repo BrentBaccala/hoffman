@@ -1,6 +1,6 @@
 dnl Process this file with autoconf to produce a configure script.
 
-AC_INIT(hoffman, 1.0)
+AC_INIT(hoffman, 1.1)
 
 if test x"$CFLAGS" = x; then
         CFLAGS="-O3"
