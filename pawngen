@@ -1053,6 +1053,10 @@ sub validate_xml_control_file {
 	die "pawngen doesn't support symmetry\n";
     }
 
+    if ($XMLcontrolFile->findnodes('output')->size() > 0) {
+	die "pawngen doesn't support output elements in generation-controls\n";
+    }
+
     $white_prune_enable = $XMLcontrolFile->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type');
     $black_prune_enable = $XMLcontrolFile->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type');
 
