@@ -220,7 +220,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.6 $ $Locker: baccala $
+Hoffman $Revision: 1.7 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -245,7 +245,7 @@ Hoffman $Revision: 1.6 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.6 $ $Locker: baccala $</program>
+      <program>Hoffman $Revision: 1.7 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -320,7 +320,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.6 $ $Locker: baccala $
+Hoffman $Revision: 1.7 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -557,7 +557,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.6 $ $Locker: baccala $
+Hoffman $Revision: 1.7 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
@@ -665,7 +665,7 @@ generate an error:
 
 \begin{verbatim}
 C> ./hoffman -o fine67.htb -g fine67.xml
-Hoffman $Revision: 1.511 $ $Locker:  $
+Hoffman $Revision: 1.7 $ $Locker: baccala $
 Malloced 40MB for tablebase entries
 'kpk.htb': Too many missing pieces in futurebase
 Futurebase preload failed: 'kpk.htb'
@@ -686,15 +686,15 @@ makefile} listing the interdependencies between them.  Run the actual
 Hoffman analysis by typing ``make''.  Both Perl (needed to run
 pawngen) and make are fairly standard on Linux and other UNIX
 variants, but neither are included in the Hoffman distribution.  On
-Microsoft systems, I've used the ActivePerl and cygwin (which includes
-make) distributions successfully.
+Microsoft systems, I've used the cygwin distribution (which includes
+both programs) successfully.
 
 ``make'' runs Hoffman, yes, 173 times and produces a directory full of
 tablebases.  Once this is done, we use Hoffman to probe the tablebases:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.510 $ $Locker: baccala $
+Hoffman $Revision: 1.7 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
