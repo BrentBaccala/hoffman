@@ -4852,7 +4852,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.509 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.510 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6183,10 +6183,16 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
     global->en_passant_square = -1;
 
     if ((global->board[destination_square] == 'P') && (origin_square == destination_square - 16)) {
-	global->en_passant_square = destination_square - 8;
+	if (((destination_square % 8 != 0) && (global->board[destination_square - 8 - 1] == 'p'))
+	    || ((destination_square % 8 != 7) && (global->board[destination_square - 8 + 1] == 'p'))) {
+	    global->en_passant_square = destination_square - 8;
+	}
     }
     if ((global->board[destination_square] == 'p') && (origin_square == destination_square + 16)) {
-	global->en_passant_square = destination_square + 8;
+	if (((destination_square % 8 != 0) && (global->board[destination_square + 8 - 1] == 'P'))
+	    || ((destination_square % 8 != 7) && (global->board[destination_square + 8 + 1] == 'P'))) {
+	    global->en_passant_square = destination_square + 8;
+	}
     }
 
     return 1;
@@ -12278,7 +12284,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.509 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.510 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12458,7 +12464,7 @@ int main(int argc, char *argv[])
 	     */
 
 	    printf("FEN %s\n", global_position_to_FEN(&global_position));
-	    printf("Index %d\n", index);
+	    printf("Index %d (%s)\n", index, tb->filename);
 
 	    if (global_position.side_to_move == WHITE) {
 		ptm = "White";
@@ -12595,7 +12601,8 @@ int main(int argc, char *argv[])
 			 movementptr->square != -1;
 			 movementptr++) {
 
-			if (global_position.board[movementptr->square] != 0) continue;
+			/* break, not continue, because pawns can't jump over pieces */
+			if (global_position.board[movementptr->square] != 0) break;
 
 			if ((ROW(movementptr->square) != 0) && (ROW(movementptr->square) != 7)) {
 
@@ -12659,7 +12666,6 @@ int main(int argc, char *argv[])
 
 			    /* en passant capture */
 
-			    global_position.board[square] = 0;
 			    place_piece_in_global_position(&global_position, movementptr->square,
 							   piece_color, PAWN);
 
@@ -12682,6 +12688,12 @@ int main(int argc, char *argv[])
 					   algebraic_notation[square],
 					   algebraic_notation[movementptr->square]);
 				}
+			    }
+
+			    if (piece_color == WHITE) {
+				global_position.board[global_position.en_passant_square - 8] = 'p';
+			    } else {
+				global_position.board[global_position.en_passant_square + 8] = 'P';
 			    }
 
 			    continue;
@@ -12710,7 +12722,7 @@ int main(int argc, char *argv[])
 
 			    /* promotion capture */
 
-			    global_position.board[square] = 0;
+			    char captured_piece = global_position.board[movementptr->square];
 
 			    for (promoted_piece = promoted_pieces; *promoted_piece; promoted_piece ++) {
 
@@ -12735,9 +12747,13 @@ int main(int argc, char *argv[])
 				}
 			    }
 
+			    global_position.board[movementptr->square] = captured_piece;
+
 			    continue;
 
 			} else {
+
+			    char captured_piece = global_position.board[movementptr->square];
 
 			    global_position.board[square] = 0;
 			    place_piece_in_global_position(&global_position, movementptr->square,
@@ -12757,6 +12773,8 @@ int main(int argc, char *argv[])
 					   algebraic_notation[movementptr->square]);
 				}
 			    }
+
+			    global_position.board[movementptr->square] = captured_piece;
 			}
 		    }
 		    /* end of capture search */
