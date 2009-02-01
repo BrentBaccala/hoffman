@@ -4852,7 +4852,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.510 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.511 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8235,7 +8235,6 @@ int compute_reflections(tablebase_t *tb, tablebase_t *futurebase, int *reflectio
 int max_reflection;
 int reflections[8];
 
-int promoted_pawn;
 int promotion_color;
 int first_back_rank_square;
 int last_back_rank_square;
@@ -8314,7 +8313,15 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 		pawn = conversion_result & 0xff;                      /* missing_piece1 */
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece == NONE) || (pawn != promoted_pawn) || (missing_piece2 != NONE)) {
+		if ((extra_piece == NONE) || (pawn == NONE) || (missing_piece2 != NONE)) {
+		    fatal("Conversion error during promotion back-prop (extra %d; missing1 %d, missing2 %d)\n",
+			  extra_piece, pawn, missing_piece2);
+		    continue;
+		}
+
+		if ((current_tb->piece_type[pawn] != PAWN) || (futurebase->piece_type[extra_piece] == PAWN)
+		    || (!invert_colors_of_futurebase && (current_tb->piece_color[pawn] != futurebase->piece_color[extra_piece]))
+		    || (invert_colors_of_futurebase && (current_tb->piece_color[pawn] == futurebase->piece_color[extra_piece]))) {
 		    fatal("Conversion error during promotion back-prop\n");
 		    continue;
 		}
@@ -8496,7 +8503,14 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 		pawn = conversion_result & 0xff;                      /* missing_piece1 */
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece == NONE) || (pawn != promoted_pawn) || (missing_piece2 == NONE)) {
+		if ((extra_piece == NONE) || (pawn == NONE) || (missing_piece2 == NONE)) {
+		    fatal("Conversion error during promotion capture back-prop\n");
+		    continue;
+		}
+
+		if ((current_tb->piece_type[pawn] != PAWN) || (futurebase->piece_type[extra_piece] == PAWN)
+		    || (!invert_colors_of_futurebase && (current_tb->piece_color[pawn] != futurebase->piece_color[extra_piece]))
+		    || (invert_colors_of_futurebase && (current_tb->piece_color[pawn] == futurebase->piece_color[extra_piece]))) {
 		    fatal("Conversion error during promotion capture back-prop\n");
 		    continue;
 		}
@@ -9336,8 +9350,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename);
 
-		promoted_pawn = futurebase->missing_pawn;
-		promotion_color = tb->piece_color[promoted_pawn];
+		promotion_color = tb->piece_color[futurebase->missing_pawn];
 		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
@@ -9352,8 +9365,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename);
 
-		promoted_pawn = futurebase->missing_pawn;
-		promotion_color = tb->piece_color[promoted_pawn];
+		promotion_color = tb->piece_color[futurebase->missing_pawn];
 		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
@@ -12284,7 +12296,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.510 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.511 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
