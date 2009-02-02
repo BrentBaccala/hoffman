@@ -47,12 +47,23 @@ my $XMLcontrolFile;
 my $white_prune_enable;
 my $black_prune_enable;
 
-# This next hash is indexed by a 'position', which is a colon-separated string with four fields:
-# $white_pieces, $white_pawns, $black_pieces, $black_pawns.  The pieces are strings of capital
-# characters, one for each piece, and the pawns are strings of board squares in algebraic notation.
+my @white_XML_prunes;
+my @black_XML_prunes;
+
+# This next several hashes are indexed by a 'position', which is a colon-separated string with four
+# fields: $white_pieces, $white_pawns, $black_pieces, $black_pawns.  The pieces are strings of
+# capital characters, one for each piece, and the pawns are strings of board squares in algebraic
+# notation.  %positions is either a reference to an XML futurebase element, or a string indicating
+# the name of the generated control file that handles this position, or undef if we haven't assigned
+# a control file to this position yet.  %futurebases is an array ref to a list of XML futurebase
+# elements that we need for this position.  %prunes is an array ref to a list of XML prune elements
+# that we need for this position, and %prunes_hash is some kind of string hash of %prunes so we can
+# quickly ensure that only positions with identical prunes are grouped together in a control file.
 
 my %positions;
 my %futurebases;
+my %prunes;
+my %prunes_hash;
 
 my %white_base;
 my %white_pawns;
@@ -69,7 +80,8 @@ sub isort {
 # 5.8.8), as it modifies the array being sorted.
 
 sub uniqsort {
-#    return grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @_;
+#    my @copy = @_;
+#    return grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @copy;
     my @sorted = sort @_;
     for (my $i = 0; $i < $#sorted; $i++) {
 	splice @sorted,$i,1 while (($i < $#sorted) and ($sorted[$i] eq $sorted[$i+1]));
@@ -183,16 +195,16 @@ sub remove_piece_from_position {
     my ($white_pieces, $white_pawns, $black_pieces, $black_pawns) = split(/:/, $position);
 
     if ($color eq 'white') {
-	$white_pieces .= s/$piece//;
+	$white_pieces =~ s/$piece//;
     } else {
-	$black_pieces .= s/$piece//;
+	$black_pieces =~ s/$piece//;
     }
 
     return join(':', $white_pieces, $white_pawns, $black_pieces, $black_pawns);
 }
 
 sub compute_futurebases_from_one_pawn {
-    my ($color, $position, $pawn, $prunes) = @_;
+    my ($color, $position, $pawn, $prunes, $enemy_prunes) = @_;
     my ($white_pieces, $white_pawns, $black_pieces, $black_pawns) = split(/:/, $position);
 
     my @white_pieces = unpack "(a1)*", $white_pieces;
@@ -323,7 +335,7 @@ sub compute_futurebases_from_one_pawn {
     # if a friendly pawn is protecting this one, if so it can't be captured by the king.
 
     foreach my $enemy_piece (@enemy_pieces) {
-	if (not &match_prune("${enemy_piece}xP", @$prunes)) {
+	if (not &match_prune("${enemy_piece}xP", @$enemy_prunes)) {
 	    if ($enemy_piece eq 'K') {
 		my $protector1 = &reverse_pawn_move($color, $pawn);
 		my $protector2 = &reverse_pawn_move($color, $pawn);
@@ -349,38 +361,48 @@ sub compute_futurebases {
     my @black_pawns = sort unpack "(a2)*", $black_pawns;
 
     my @futurebases;
-    my (@white_prunes, @black_prunes);
+    my (@prunes, @white_prunes, @black_prunes);
 
-    print VERBOSE "Considering $position\n";
+    if ($position eq "K::K:c7d5") {
+	print VERBOSE "Considering $position\n";
+    }
 
     # Look into the global XML control file and extract the prune statements.  Not all of them may
     # apply to a given position; we allow arbitrary Perl code in the prune statement to selectively
     # apply them.  XXX need to track concede/discard, too
 
-    foreach my $white_prune ($XMLcontrolFile->findnodes('prune[@color = "white"]')) {
+    foreach my $white_prune (@white_XML_prunes) {
 	my $condition_present = $white_prune->findnodes('@pawngen-condition')->size();
-	my $condition = $white_prune->findvalue('@pawngen-condition');
-	if (not $condition_present or eval $condition) {
-	    push @white_prunes, $white_prune->findvalue('@move');
+	if ($condition_present) {
+	    my $condition = $white_prune->findvalue('@pawngen-condition');
+	    my $eval_result = eval $condition;
+	    die "Faulty pawngen-condition: $condition: $@\n" if not defined $eval_result;
+	    next unless $eval_result;
 	}
+	push @prunes, $white_prune;
+	push @white_prunes, $white_prune->findvalue('@move');
     }
 
-    foreach my $black_prune ($XMLcontrolFile->findnodes('prune[@color = "black"]')) {
+    foreach my $black_prune (@black_XML_prunes) {
 	my $condition_present = $black_prune->findnodes('@pawngen-condition')->size();
-	my $condition = $black_prune->findvalue('@pawngen-condition');
-	if (not $condition_present or eval $condition) {
-	    push @black_prunes, $black_prune->findvalue('@move');
+	if ($condition_present) {
+	    my $condition = $black_prune->findvalue('@pawngen-condition');
+	    my $eval_result = eval $condition;
+	    die "Faulty pawngen-condition: $condition: $@\n" if not defined $eval_result;
+	    next unless $eval_result;
 	}
+	push @prunes, $black_prune;
+	push @black_prunes, $black_prune->findvalue('@move');
     }
 
     # consider all pawn possibilities
 
     foreach my $white_pawn (@white_pawns) {
-	push @futurebases, &compute_futurebases_from_one_pawn('white', $position, $white_pawn, \@white_prunes);
+	push @futurebases, &compute_futurebases_from_one_pawn('white', $position, $white_pawn, \@white_prunes, \@black_prunes);
     }
 
     foreach my $black_pawn (@black_pawns) {
-	push @futurebases, &compute_futurebases_from_one_pawn('black', $position, $black_pawn, \@black_prunes);
+	push @futurebases, &compute_futurebases_from_one_pawn('black', $position, $black_pawn, \@black_prunes, \@white_prunes);
     }
 
     # consider piece-on-piece captures
@@ -407,6 +429,9 @@ sub compute_futurebases {
     }
 
     $futurebases{$position} = \@futurebases;
+    $prunes{$position} = \@prunes;
+    $prunes_hash{$position} = "@prunes";
+
     #return (\@futurebases, \@white_prunes, \@black_prunes);
     return @futurebases;
 }
@@ -519,7 +544,7 @@ sub expand_pattern_list {
 }
 
 #$OUTPUT_FIELD_SEPARATOR="\n";
-#print &expand_pattern_list("K", "g4g5g6g7", "K", "g4"), "\n";
+#print &expand_pattern_list("K", "c4+", "d3d4", "d3d4", "K"), "\n";
 #exit;
 
 # Assign all positions that match a given pattern list to a futurebase.  Can be passed in either a
@@ -543,6 +568,7 @@ sub assignallpositions {
 sub checkallpositions {
 
     my @input_positions = &expand_pattern_list(@_);
+    my $prune_hash;
 
     print DEBUG2 "Checking @_ : $#input_positions @input_positions\n";
 
@@ -553,6 +579,12 @@ sub checkallpositions {
     foreach my $position (@unique_positions) {
 	if ((not exists $positions{$position}) or (defined $positions{$position})) {
 	    print DEBUG2 "Rejecting because of $position\n";
+	    return 0;
+	}
+	if (not defined $prune_hash) {
+	    $prune_hash = $prunes_hash{$position};
+	} elsif ($prune_hash ne $prunes_hash{$position}) {
+	    print DEBUG2 "Rejecting because $position doesn't match prune hash\n";
 	    return 0;
 	}
     }
@@ -900,9 +932,9 @@ sub add_piece {
 }
 
 # Can be passed in either a string (for a tablebase that we're going to generate), or an XML node
-# pointer (for a futurebase specified in the original control file).
+# pointer (for a futurebase or prune element specified in the original control file).
 
-sub add_futurebase {
+sub add_futurebase_or_prune {
     my ($futurebase) = @_;
     my $new_futurebase;
 
@@ -914,16 +946,6 @@ sub add_futurebase {
     }
     $XMLroot->insertAfter($new_futurebase, $next_piece_location);
     $next_piece_location = $new_futurebase;
-}
-
-sub add_prune {
-    my ($color, $move, $type) = @_;
-    my $new_prune = XML::LibXML::Element->new('prune');
-    $new_prune->addChild(XML::LibXML::Attr->new('color', $color));
-    $new_prune->addChild(XML::LibXML::Attr->new('move', $move));
-    $new_prune->addChild(XML::LibXML::Attr->new('type', $type));
-    $XMLroot->insertAfter($new_prune, $next_piece_location);
-    $next_piece_location = $new_prune;
 }
 
 sub generate_control_file {
@@ -957,7 +979,7 @@ sub generate_control_file {
 
     $next_piece_location = ($XMLroot->findnodes('piece'))[0]->previousSibling();
 
-    $_->unbindNode() foreach ($XMLroot->findnodes('piece'), $XMLroot->findnodes('futurebase'));
+    $_->unbindNode() foreach ($XMLroot->findnodes('piece'), $XMLroot->findnodes('futurebase'), $XMLroot->findnodes('prune'));
 
     # Used to isort here to make sure a white queen came first... why?  I don't remember.
 
@@ -985,8 +1007,7 @@ sub generate_control_file {
     # of them to the control file.  Look at each position handled by this control file and add any
     # futurebases that any of them need.
 
-    my @positions = &expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns));
-    my @unique_positions = grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @positions;
+    my @unique_positions = &uniqsort(&expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns)));
 
     my @futurebases;
 
@@ -994,24 +1015,24 @@ sub generate_control_file {
 	push @futurebases, map { $positions{$_} } @{$futurebases{$subposition}};
     }
 
-    my @unique_futurebases = &uniqsort(@futurebases);
-    @unique_futurebases = grep {$_ ne $basename} @unique_futurebases;
+    my @unique_futurebases = grep {$_ ne $basename} &uniqsort(@futurebases);
 
     foreach my $futurebase (@unique_futurebases) {
-	&add_futurebase($futurebase);
+	&add_futurebase_or_prune($futurebase);
     }
 
-    # XXX Don't handle pruning the way I'd like to yet.  Just leave all the prune statements alone
-    # in the original XML.  I'd like to selectively include them based on Perl conditions specified
-    # in the XML.  I'd also like to only include the ones actually needed in output control files.
+    # We selectively include prune statements based on Perl conditions specified in the XML, so
+    # different positions can have different sets of prune statements.  Back in &checkallpositions
+    # we rejected patterns that matched positions with different prune statements.  Therefore, since
+    # each control file was generated from a single pattern, all the positions in that control file
+    # share an identical set of prunes.  That's why we only need look at the first position in
+    # @unique_positions here to figure out which prune statements we need to put in the control
+    # file.  I'd also like to only include the ones actually needed in output control files, but
+    # that would require some extra housekeeping that I don't bother with now.
 
-#    foreach my $white_prune (@unique_white_prunes) {
-#	&add_prune('white', $white_prune, 'discard');
-#    }
-#    foreach my $black_prune (@unique_black_prunes) {
-#	&add_prune('black', $black_prune, 'concede');
-#    }
-
+    for my $prune (@{$prunes{$unique_positions[0]}}) {
+	&add_futurebase_or_prune($prune);
+    }
 
     # Save the generated control file.  Using the original $XMLtree preserves the DTD header, and
     # using format '1' inserts whitespace text nodes.
@@ -1130,6 +1151,15 @@ sub pawngen {
 	&assign_futurebase($futurebase);
     }
 
+    # Extract the XML pruning statements from the control file.  I do this globally because I've
+    # found that each time I call findnodes I get a list of different XML::LibXML::Element's back -
+    # identical in content, but different.  Since I use their addresses to generate a hash
+    # indicating which prunes have been used in which positions, I need to make sure that those
+    # addresses are also the same.  So do this once, here, and use it in &compute_futurebases.
+
+    @white_XML_prunes = $XMLcontrolFile->findnodes('prune[@color = "white"]');
+    @black_XML_prunes = $XMLcontrolFile->findnodes('prune[@color = "black"]');
+
     # Starting from the position we identified above, and subject to pruning restrictions, populate
     # the %positions hash with all possible positions that can arise from the original one.
 
@@ -1154,6 +1184,10 @@ sub pawngen {
     # add a single comment right now to note their origin.
 
     $XMLtree->addChild(XML::LibXML::Comment->new(" Created by pawngen from $control_file "));
+
+    foreach my $prune (@white_XML_prunes, @black_XML_prunes) {
+	$_->unbindNode() foreach ($prune->findnodes('@pawngen-condition'));
+    }
 
     my $for_real = 1;
 
