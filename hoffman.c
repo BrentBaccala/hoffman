@@ -4860,7 +4860,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.512 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.513 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5552,6 +5552,9 @@ void invert_colors_of_global_position(global_position_t *global)
  * The function does not depend on the indexing scheme used by the foreign tablebase.  Instead, it
  * uses index_to_local_position() on the foreign tablebase.
  *
+ * This function never calls fatal(), returning -1 instead, since it's used while probing a set of
+ * tablebases to see which one of them matches a given position.
+ *
  * The only thing I don't like about this function right now is that it returns -1 if there is more
  * than one restricted piece, and we certainly could have liberal tablebases with lots of restricted
  * pieces that we want to back-prop from.
@@ -5694,9 +5697,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 	if (local_piece == local_tb->num_pieces) {
 	    if (extra_piece != NONE) {
-#if 0
-		fatal("More than one extra piece in translation\n");
-#endif
+		/* More than one extra piece in translation */
 		return -1;
 	    }
 	    extra_piece = foreign_piece;
@@ -5718,7 +5719,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 		    missing_piece2 = local_piece;
 		}
 	    } else {
-		fatal("More than one missing piece in translation\n");
+		/* More than one missing piece in translation */
 		return -1;
 	    }
 	}
@@ -12304,7 +12305,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.512 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.513 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
