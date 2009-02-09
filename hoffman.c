@@ -4870,7 +4870,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.516 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.517 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9597,9 +9597,14 @@ int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
     return type;
 }
 
-void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statement, int futuremove)
+void assign_pruning_statement(tablebase_t *tb, int color, int futuremove)
 {
     int type;
+    char * pruning_statement = movestr[color][futuremove];
+
+    if (futuremove == -1) return;
+
+    pruning_statement = movestr[color][futuremove];
 
     type = match_pruning_statement(tb, color, pruning_statement);
 
@@ -10058,7 +10063,8 @@ void print_futuremoves(void)
 }
 
 /* This is where we parse pruning statements.  Fill in the pruned_futuremoves bit vector with bits
- * set for the various pruned moves.
+ * set for the various pruned moves.  To make this routine easier, assign_pruning_statement() can be
+ * called with a '-1' futuremove, in which case it will do nothing.
  *
  * XXX something else I'd like to do here is to flag all of the pruning statements to make
  * sure we've used each one, and complain if any are left unused.
@@ -10075,7 +10081,6 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     int pawn;
     int sq;
     int promotion;
-    int i;
 
     /* Check pruning statements for consistency, and record stalemate pruning if specified */
 
@@ -10103,85 +10108,38 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
     if (fatal_errors != 0) return 0;
 
-    /* for each possible captured_piece (everything but the two kings), check for capture
-       futurebases
-     */
+    /* check pruning for each possible capture */
 
     for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
 
 	if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
-
-	    if (futurecaptures[capturing_piece][captured_piece] != -1) {
-
-		char * movestr1 = movestr[tb->piece_color[capturing_piece]][futurecaptures[capturing_piece][captured_piece]];
-
-		assign_pruning_statement(tb, tb->piece_color[capturing_piece], movestr1,
-					 futurecaptures[capturing_piece][captured_piece]);
-	    }
+	    assign_pruning_statement(tb, tb->piece_color[capturing_piece], futurecaptures[capturing_piece][captured_piece]);
 	}
     }
 
-    /* Pawns - check for both promotion and promotion capture futurebases here.  Same idea. */
+    /* Pawns - check for both promotion and promotion capture pruning here.  Same idea. */
 
     for (pawn = 0; pawn < tb->num_pieces; pawn ++) {
 
 	if (tb->piece_type[pawn] != PAWN) continue;
 
-	/* First, we're looking for promotion capture futurebases. */
+	/* First, we're looking for promotion captures. */
 
 	for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
 
 	    if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
-	    /* Check to see if the pawn can even be on a square where a promotion capture is
-	     * possible.
-	     */
-
-	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->legal_squares[pawn] & 0x00ff000000000000LL)) break;
-	    } else {
-		if (! (tb->legal_squares[pawn] & 0x000000000000ff00LL)) break;
-	    }
-
-	    /* Check to see that the other piece can be on a square where it could be promotion
-	     * captured.  It's still possible that the other piece could be on a back rank, but
-	     * never on a square where it could be captured by the pawn, but we leave that
-	     * possibility unchecked.  It'd probably be best to tie this code in with the code in
-	     * assign_numbers_to_futuremoves() - maybe by flagging which captures it was determined
-	     * that promotion was possible in?
-	     */
-
-	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->legal_squares[captured_piece] & 0xff00000000000000LL)) continue;
-	    } else {
-		if (! (tb->legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
-	    }
-
-	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
-
 	    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
-
-		if (promotion_captures[pawn][captured_piece][promotion] == -1) continue;
-
-		char * movestr1 = movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece][promotion]];
-
-		assign_pruning_statement(tb, tb->piece_color[pawn], movestr1,
-					 promotion_captures[pawn][captured_piece][promotion]);
+		assign_pruning_statement(tb, tb->piece_color[pawn], promotion_captures[pawn][captured_piece][promotion]);
 	    }
 	}
 
 	/* straight promotion futurebases */
 
-
-	for (i = 0; promoted_pieces[i] != 0; i ++) {
-
-	    if (promotions[pawn][i] == -1) continue;
-	    else {
-		char * movestr1 = movestr[tb->piece_color[pawn]][promotions[pawn][i]];
-		assign_pruning_statement(tb, tb->piece_color[pawn], movestr1, promotions[pawn][i]);
-	    }
+	for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+	    assign_pruning_statement(tb, tb->piece_color[pawn], promotions[pawn][promotion]);
 	}
     }
 
@@ -10190,14 +10148,8 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-
 	for (sq = 0; sq < 64; sq ++) {
-	    if (futuremoves[piece][sq] != -1) {
-
-		char * movestr1 = movestr[tb->piece_color[piece]][futuremoves[piece][sq]];
-
-		assign_pruning_statement(tb, tb->piece_color[piece], movestr1, futuremoves[piece][sq]);
-	    }
+	    assign_pruning_statement(tb, tb->piece_color[piece], futuremoves[piece][sq]);
 	}
     }
 
@@ -12355,7 +12307,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.516 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.517 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
