@@ -344,12 +344,10 @@ int futuremoves[MAX_PIECES][64];
 #define MOVESTR_CHARS 16
 char movestr[2][100][MOVESTR_CHARS];
 
-futurevector_t pruned_white_futuremoves = 0;
-futurevector_t pruned_black_futuremoves = 0;
-futurevector_t conceded_white_futuremoves = 0;
-futurevector_t conceded_black_futuremoves = 0;
-futurevector_t discarded_white_futuremoves = 0;
-futurevector_t discarded_black_futuremoves = 0;
+futurevector_t pruned_futuremoves[2] = {0, 0};
+futurevector_t conceded_futuremoves[2] = {0, 0};
+futurevector_t discarded_futuremoves[2] = {0, 0};
+futurevector_t optimized_futuremoves[2] = {0, 0};
 
 /* position - the data structures that represents a board position
  *
@@ -4860,7 +4858,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.513 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.514 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9457,21 +9455,19 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
  */
 
 int all_futuremoves_handled = 1;
-futurevector_t unpruned_white_futuremoves;
-futurevector_t unpruned_black_futuremoves;
+futurevector_t unpruned_futuremoves[2];
 
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
 
     int futuremove;
     int stm = index_to_side_to_move(tb, index);
 
-    if (futurevector & (stm == WHITE ? unpruned_white_futuremoves : unpruned_black_futuremoves)) {
+    if (futurevector & unpruned_futuremoves[stm]) {
 	global_position_t global;
 	index_to_global_position(tb, index, &global);
 	fatal("Futuremoves not handled: %d %s", index, global_position_to_FEN(&global));
 	for (futuremove = 0; futuremove < num_futuremoves[stm]; futuremove ++) {
-	    if (futurevector & FUTUREVECTOR(futuremove)
-		& (stm == WHITE ? unpruned_white_futuremoves : unpruned_black_futuremoves)) {
+	    if (futurevector & FUTUREVECTOR(futuremove)	& unpruned_futuremoves[stm]) {
 		fatal(" %s", movestr[stm][futuremove]);
 	    }
 	}
@@ -9481,7 +9477,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 
     /* concede - we treat these unhandled futuremoves as forced wins for PTM */
 
-    if (futurevector & (stm == WHITE ? conceded_white_futuremoves : conceded_black_futuremoves)) {
+    if (futurevector & conceded_futuremoves[stm]) {
 	/* PTM_wins(tb, index, 1, 1); */
 	/* We insert here with DTM=2 (mate in one), movecnt=1 (XXX), and no futuremove */
 	/* XXX I bet we want to insert with position's multiplicity as movecnt */
@@ -9491,10 +9487,9 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 
     /* discard - we ignore these unhandled futuremoves by decrementing movecnt */
 
-    if (futurevector & (stm == WHITE ? discarded_white_futuremoves : discarded_black_futuremoves)) {
+    if (futurevector & discarded_futuremoves[stm]) {
 	for (futuremove = 0; futuremove < num_futuremoves[stm]; futuremove ++) {
-	    if (futurevector & FUTUREVECTOR(futuremove)
-		& (stm == WHITE ? discarded_white_futuremoves : discarded_black_futuremoves)) {
+	    if (futurevector & FUTUREVECTOR(futuremove) & discarded_futuremoves[stm]) {
 
 		/* tb->entries[index].movecnt --; */
 		/* XXX this isn't handled right - a draw is different from a discard */
@@ -9600,54 +9595,27 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
 
     if (type != RESTRICTION_NONE) {
 
-	if (color == WHITE) {
+	if (pruned_futuremoves[color] & FUTUREVECTOR(futuremove)) {
+	    warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
+	}
 
-	    if (pruned_white_futuremoves & FUTUREVECTOR(futuremove)) {
-		warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
+	pruned_futuremoves[color] |= FUTUREVECTOR(futuremove);
+
+	if (type == RESTRICTION_CONCEDE) {
+	    conceded_futuremoves[color] |= FUTUREVECTOR(futuremove);
+	    if (discarded_futuremoves[color] & FUTUREVECTOR(futuremove)) {
+		fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+		      pruning_statement);
 	    }
-
-	    pruned_white_futuremoves |= FUTUREVECTOR(futuremove);
-
-	    if (type == RESTRICTION_CONCEDE) {
-		conceded_white_futuremoves |= FUTUREVECTOR(futuremove);
-		if (discarded_white_futuremoves & FUTUREVECTOR(futuremove)) {
-		    fatal("Conflicting pruning statements ('%s') match a futuremove\n",
-			  pruning_statement);
-		}
-	    }
-	    if (type == RESTRICTION_DISCARD) {
-		discarded_white_futuremoves |= FUTUREVECTOR(futuremove);
-		if (conceded_white_futuremoves & FUTUREVECTOR(futuremove)) {
-		    fatal("Conflicting pruning statements ('%s') match a futuremove\n",
-			  pruning_statement);
-		}
-	    }
-
-	} else {
-
-	    if (pruned_black_futuremoves & FUTUREVECTOR(futuremove)) {
-		warning("Multiple pruning statements ('%s') match a futuremove\n", pruning_statement);
-	    }
-
-	    pruned_black_futuremoves |= FUTUREVECTOR(futuremove);
-
-	    if (type == RESTRICTION_CONCEDE) {
-		conceded_black_futuremoves |= FUTUREVECTOR(futuremove);
-		if (discarded_black_futuremoves & FUTUREVECTOR(futuremove)) {
-		    fatal("Conflicting pruning statements ('%s') match a futuremove\n",
-			  pruning_statement);
-		}
-	    }
-	    if (type == RESTRICTION_DISCARD) {
-		discarded_black_futuremoves |= FUTUREVECTOR(futuremove);
-		if (conceded_black_futuremoves & FUTUREVECTOR(futuremove)) {
-		    fatal("Conflicting pruning statements ('%s') match a futuremove\n",
-			  pruning_statement);
-		}
+	}
+	if (type == RESTRICTION_DISCARD) {
+	    discarded_futuremoves[color] |= FUTUREVECTOR(futuremove);
+	    if (conceded_futuremoves[color] & FUTUREVECTOR(futuremove)) {
+		fatal("Conflicting pruning statements ('%s') match a futuremove\n",
+		      pruning_statement);
 	    }
 	}
     }
-
 }
 
 /* assign_numbers_to_futuremoves()
@@ -10079,6 +10047,9 @@ void print_futuremoves(void)
 {
     int i;
 
+    info("%d unpruned WHITE futuremoves\n", num_futuremoves[WHITE]);
+    info("%d unpruned BLACK futuremoves\n", num_futuremoves[BLACK]);
+
     for (i=0; i < num_futuremoves[WHITE]; i ++) {
 	info("WHITE Futuremove %i: %s\n", i, movestr[WHITE][i]);
     }
@@ -10229,8 +10200,8 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 	}
     }
 
-    unpruned_white_futuremoves = ~pruned_white_futuremoves;
-    unpruned_black_futuremoves = ~pruned_black_futuremoves;
+    unpruned_futuremoves[WHITE] = ~pruned_futuremoves[WHITE];
+    unpruned_futuremoves[BLACK] = ~pruned_futuremoves[BLACK];
 
     return (fatal_errors == 0);
 }
@@ -10306,20 +10277,24 @@ boolean check_pruning(tablebase_t *tb) {
 
 		if (futurecaptures[capturing_piece][captured_piece] != -1) {
 
-		    if (tb->piece_color[capturing_piece] == WHITE) {
-			if (! (pruned_white_futuremoves
-			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
-			    fatal("No futurebase or pruning for WHITE move %s\n",
-				  movestr[WHITE][futurecaptures[capturing_piece][captured_piece]]);
-			    return 0;
-			}
+		    if (! (pruned_futuremoves[tb->piece_color[capturing_piece]]
+			   & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
+			fatal("No futurebase or pruning for %s move %s\n",
+			      colors[tb->piece_color[capturing_piece]],
+			      movestr[tb->piece_color[capturing_piece]][futurecaptures[capturing_piece][captured_piece]]);
+			return 0;
+		    } else if (discarded_futuremoves[tb->piece_color[capturing_piece]]
+			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
+			optimized_futuremoves[tb->piece_color[capturing_piece]]
+			    |= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
+			futurecaptures[capturing_piece][captured_piece] = -2;
+		    } else if (conceded_futuremoves[tb->piece_color[capturing_piece]]
+			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
+			optimized_futuremoves[tb->piece_color[capturing_piece]]
+			    |= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
+			futurecaptures[capturing_piece][captured_piece] = -3;
 		    } else {
-			if (! (pruned_black_futuremoves
-			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
-			    fatal("No futurebase or pruning for BLACK move %s\n",
-				  movestr[BLACK][futurecaptures[capturing_piece][captured_piece]]);
-			    return 0;
-			}
+			fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
 		    }
 		}
 	    }
@@ -10397,20 +10372,12 @@ boolean check_pruning(tablebase_t *tb) {
 
 		if (promoted_pieces_handled & (1 << promoted_pieces[i])) continue;
 
-		if (tb->piece_color[pawn] == WHITE) {
-		    if (! (pruned_white_futuremoves
-			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece] + i))) {
-			fatal("No futurebase or pruning for WHITE move %s\n",
-			      movestr[WHITE][promotion_captures[pawn][captured_piece] + i]);
-			return 0;
-		    }
-		} else {
-		    if (! (pruned_black_futuremoves
-			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece] + i))) {
-			fatal("No futurebase or pruning for BLACK move %s\n",
-			      movestr[BLACK][promotion_captures[pawn][captured_piece] + i]);
-			return 0;
-		    }
+		if (! (pruned_futuremoves[tb->piece_color[pawn]]
+		       & FUTUREVECTOR(promotion_captures[pawn][captured_piece] + i))) {
+		    fatal("No futurebase or pruning for %s move %s\n",
+			  colors[tb->piece_color[pawn]],
+			  movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece] + i]);
+		    return 0;
 		}
 	    }
 	}
@@ -10436,18 +10403,11 @@ boolean check_pruning(tablebase_t *tb) {
 
 	    if (promoted_pieces_handled & (1 << promoted_pieces[i])) continue;
 
-	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (pruned_white_futuremoves & FUTUREVECTOR(promotions[pawn] + i))) {
-		    fatal("No futurebase or pruning for WHITE move %s\n",
-			  movestr[WHITE][promotions[pawn] + i]);
-		    return 0;
-		}
-	    } else {
-		if (! (pruned_black_futuremoves & FUTUREVECTOR(promotions[pawn] + i))) {
-		    fatal("No futurebase or pruning for BLACK move %s\n",
-			  movestr[BLACK][promotions[pawn] + i]);
-		    return 0;
-		}
+	    if (! (pruned_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn] + i))) {
+		fatal("No futurebase or pruning for %s move %s\n",
+		      colors[tb->piece_color[pawn]],
+		      movestr[tb->piece_color[pawn]][promotions[pawn] + i]);
+		return 0;
 	    }
 	}
     }
@@ -10476,18 +10436,11 @@ boolean check_pruning(tablebase_t *tb) {
 	    for (sq = 0; sq < 64; sq ++) {
 		if (futuremoves[piece][sq] >= 0) {
 
-		    if (tb->piece_color[piece] == WHITE) {
-			if (! (pruned_white_futuremoves & FUTUREVECTOR(futuremoves[piece][sq]))) {
-			    fatal("No futurebase or pruning for WHITE move %s\n",
-				  movestr[WHITE][futuremoves[piece][sq]]);
-			    return 0;
-			}
-		    } else {
-			if (! (pruned_black_futuremoves & FUTUREVECTOR(futuremoves[piece][sq]))) {
-			    fatal("No futurebase or pruning for BLACK move %s\n",
-				  movestr[BLACK][futuremoves[piece][sq]]);
-			    return 0;
-			}
+		    if (! (pruned_futuremoves[tb->piece_color[piece]] & FUTUREVECTOR(futuremoves[piece][sq]))) {
+			fatal("No futurebase or pruning for %s move %s\n",
+			      colors[tb->piece_color[piece]],
+			      movestr[tb->piece_color[piece]][futuremoves[piece][sq]]);
+			return 0;
 		    }
 		}
 	    }
@@ -10497,6 +10450,67 @@ boolean check_pruning(tablebase_t *tb) {
     return 1;
 }
 
+
+/* optimize_futuremoves()
+ *
+ * Once we've assigned futuremove numbers, then gone and checked pruning, some of those futuremoves
+ * might now be completely pruned.  If so, flag them for pruning during initialization (by changing
+ * their numbers to -2 or -3) and collapse the remaining futuremoves down into a smaller set.
+ */
+
+void remove_futuremove(futurevector_t *fvp, int fm)
+{
+    *fvp = ((*fvp) & (FUTUREVECTOR(fm)-1)) | (((*fvp) & ~(FUTUREVECTOR(fm+1)-1)) >> 1);
+}
+
+void optimize_futuremoves(tablebase_t *tb)
+{
+    int color, fm, fm2, piece, piece2, sq;
+
+    for (color = WHITE; color <= BLACK; color ++) {
+
+	for (fm = 0; fm < num_futuremoves[color]; fm++) {
+
+	    if (optimized_futuremoves[color] & FUTUREVECTOR(fm)) {
+
+		for (piece = 0; piece < tb->num_pieces; piece ++) {
+		    for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
+			if (tb->piece_color[piece] == color && tb->piece_color[piece2] != color) {
+			    if (futurecaptures[piece][piece2] > fm) {
+				futurecaptures[piece][piece2] --;
+			    }
+			    if (promotion_captures[piece][piece2] > fm) {
+				promotion_captures[piece][piece2] --;
+			    }
+			}
+		    }
+		    for (sq = 0; sq < 64; sq ++) {
+			if (futuremoves[piece][sq] > fm) {
+			    futuremoves[piece][sq] --;
+			}
+		    }
+		    if (promotions[piece] > fm) {
+			promotions[piece] --;
+		    }
+		}
+
+		remove_futuremove(&(pruned_futuremoves[color]), fm);
+		remove_futuremove(&(conceded_futuremoves[color]), fm);
+		remove_futuremove(&(discarded_futuremoves[color]), fm);
+		remove_futuremove(&(optimized_futuremoves[color]), fm);
+
+		info("Pruned %s futuremove %s\n", colors[color], movestr[color][fm]);
+
+		for (fm2 = fm + 1; fm2 < num_futuremoves[color]; fm2++) {
+		    strcpy(movestr[color][fm2-1], movestr[color][fm2]);
+		}
+
+		num_futuremoves[color] --;
+		fm --;
+	    }
+	}
+    }
+}
 
 /***** INTRA-TABLE MOVE PROPAGATION *****/
 
@@ -11905,9 +11919,10 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     if (! preload_all_futurebases(tb)) return 0;
     assign_numbers_to_futuremoves(tb);
-    print_futuremoves();
     if (! compute_pruned_futuremoves(tb)) return 0;
     if (! check_pruning(tb)) return 0;
+    optimize_futuremoves(tb);
+    print_futuremoves();
 
     if (! check_1000_indices(tb)) return 0;
     /* check_1000_positions(tb); */  /* This becomes a problem with symmetry, among other things */
@@ -12305,7 +12320,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.513 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.514 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
