@@ -5,7 +5,7 @@
  * by Brent Baccala
  *
  * begun coding    August, 2006
- * last modified   May, 2008
+ * last modified   February, 2009
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
@@ -334,13 +334,13 @@ typedef uint32 futurevector_t;
  * be safely assigned to the same bit), or completely pruned with a -2 or -3 (no bit position).
  *
  * There is one place in the code (propagate_moves_from_promotion_futurebase) that assumes that the
- * piece ordering in promotions's second array index matches the piece ordering in piece_name and
- * piece_char.
+ * piece ordering in the last array index of promotions and promotion_captures matches the piece
+ * ordering in piece_name and piece_char.
  */
 
 int num_futuremoves[2] = {0, 0};
 int futurecaptures[MAX_PIECES][MAX_PIECES];
-int promotion_captures[MAX_PIECES][MAX_PIECES];
+int promotion_captures[MAX_PIECES][MAX_PIECES][PROMOTION_POSSIBILITIES];
 int promotions[MAX_PIECES][PROMOTION_POSSIBILITIES];
 int futuremoves[MAX_PIECES][64];
 
@@ -348,7 +348,15 @@ int futuremoves[MAX_PIECES][64];
 #define MOVESTR_CHARS 16
 char movestr[2][100][MOVESTR_CHARS];
 
+/* Pairs of futurevectors (one for each color) indicating which futuremoves have been pruned by
+ * either conceding or discarding them.  pruned_futuremoves = conceded_futuremoves |
+ * discarded_futuremoves, and unpruned_futuremoves = ~pruned_futuremoves.  optimized_futuremoves
+ * indicates futuremoves that have been flagged for optimization, as they have no futurebases that
+ * could match them and can thus be handled during initialization.
+ */
+
 futurevector_t pruned_futuremoves[2] = {0, 0};
+futurevector_t unpruned_futuremoves[2] = {0, 0};
 futurevector_t conceded_futuremoves[2] = {0, 0};
 futurevector_t discarded_futuremoves[2] = {0, 0};
 futurevector_t optimized_futuremoves[2] = {0, 0};
@@ -4862,7 +4870,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.515 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.516 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8606,7 +8614,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 			 */
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								      promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+								      promotion_captures[true_pawn][true_captured_piece][futurebase->piece_type[extra_piece] - 1],
 								      &position);
 
 			/* We're about to use this position again, so put the board_vector back... */
@@ -8636,7 +8644,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 			true_pawn = position.permuted_piece[pawn];
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								      promotion_captures[true_pawn][true_captured_piece] + futurebase->piece_type[extra_piece] - 1,
+								      promotion_captures[true_pawn][true_captured_piece][futurebase->piece_type[extra_piece] - 1],
 								      &position);
 
 			/* We're about to use this position again, so put the board_vector back... */
@@ -9458,7 +9466,6 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
  */
 
 int all_futuremoves_handled = 1;
-futurevector_t unpruned_futuremoves[2];
 
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
 
@@ -9647,10 +9654,6 @@ void assign_pruning_statement(tablebase_t *tb, int color, char *pruning_statemen
  * possible) and we try to reuse bit positions for pawn capture-promotions if the pawns are
  * sufficiently restricted so that only one or the other could capture the enemy piece in a given
  * position.
- *
- * We could do a lot better, though.  For moves that are pruned without any matching futurebase,
- * there's really no reason to track them at all, since there are no futurebases that could possibly
- * generate them.  The pruning for such moves could be performed during tablebase initialization.
  */
 
 void assign_numbers_to_futuremoves(tablebase_t *tb) {
@@ -9660,6 +9663,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     int capturing_piece;
     int sq;
     int dir;
+    int promotion;
     int i;
     struct movement *movementptr;
     uint64 possible_captures[MAX_PIECES];
@@ -9720,7 +9724,10 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
 	    futurecaptures[capturing_piece][captured_piece] = -1;
-	    promotion_captures[capturing_piece][captured_piece] = -1;
+
+	    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+		promotion_captures[capturing_piece][captured_piece][promotion] = -1;
+	    }
 
 	    if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) continue;
 
@@ -9751,7 +9758,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			    : ((possible_captures[capturing_piece] & 0x0000000000ff0000LL) << 8))
 			   & tb->legal_squares[captured_piece]))) {
 
-		    int futuremoves_needed;
 		    int candidate_futuremove = -1;
 		    int candidate_piece = -1;
 		    char candidate_movestr[MOVESTR_CHARS];
@@ -9777,73 +9783,61 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			continue;
 		    }
 
-		    futuremoves_needed = PROMOTION_POSSIBILITIES;
-		    sprintf(candidate_movestr, "Px%c=%c",
-			    piece_char[tb->piece_type[captured_piece]],
-			    piece_char[promoted_pieces[0]]);
+		    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
 
-		    /* Be conservative about handing out bit positions in the futurevector.  Look
-		     * through the other pieces that have been assigned bit positions and see if we
-		     * can find one with an identical movestr that can never capture onto the
-		     * squares that our piece can capture onto and reuse its bit positions.
-		     *
-		     * This code could be a lot more aggressively conservative, but for now I settle
-		     * for handling the common simple case of pawns more than two files apart never
-		     * being able to capture the same piece.  I only look at futuremoves for the
-		     * current captured_piece, and only so far as the current capturing_piece.
-		     * That's why the nesting order of the two captured_piece and capturing_piece
-		     * loops is important above.  First we look for a candidate futuremove, then we
-		     * try to bust it by looking for overlaps.  We only check the movestr for the
-		     * first of the PROMOTION_POSSIBILITIES, since if it matched for the first one,
-		     * it will have to match for the remaining ones, too.
-		     */
+			candidate_futuremove = -1;
 
-		    for (piece = 0; piece < capturing_piece; piece ++) {
-			if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
-			if (promotion_captures[piece][captured_piece] != -1) {
-			    if ((! (possible_captures[capturing_piece] & possible_captures[piece]))
-				&& (! strcmp(candidate_movestr, movestr[tb->piece_color[piece]][promotion_captures[piece][captured_piece]]))) {
-				candidate_futuremove = promotion_captures[piece][captured_piece];
-				candidate_piece = piece;
+			sprintf(candidate_movestr, "Px%c=%c",
+				piece_char[tb->piece_type[captured_piece]],
+				piece_char[promoted_pieces[promotion]]);
+
+			/* Be conservative about handing out bit positions in the futurevector.
+			 * Look through the other pieces that have been assigned bit positions and
+			 * see if we can find one with an identical movestr that can never capture
+			 * onto the squares that our piece can capture onto and reuse its bit
+			 * positions.
+			 *
+			 * This code could be a lot more aggressively conservative, but for now I
+			 * settle for handling the common simple case of pawns more than two files
+			 * apart never being able to capture the same piece.  I only look at
+			 * futuremoves for the current captured_piece, and only so far as the
+			 * current capturing_piece.  That's why the nesting order of the two
+			 * captured_piece and capturing_piece loops is important above.  First we
+			 * look for a candidate futuremove, then we try to bust it by looking for
+			 * overlaps.
+			 */
+
+			for (piece = 0; piece < capturing_piece; piece ++) {
+			    if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
+			    if (promotion_captures[piece][captured_piece][promotion] != -1) {
+				if ((! (possible_captures[capturing_piece] & possible_captures[piece]))
+				    && (! strcmp(candidate_movestr, movestr[tb->piece_color[piece]][promotion_captures[piece][captured_piece][promotion]]))) {
+				    candidate_futuremove = promotion_captures[piece][captured_piece][promotion];
+				    candidate_piece = piece;
+				}
 			    }
 			}
-		    }
 
-		    for (piece = 0; piece < capturing_piece; piece ++) {
-			if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
-			if (piece == candidate_piece) continue;
-			if (promotion_captures[piece][captured_piece] != -1) {
-			    if ((candidate_futuremove != -1)
-				&& (promotion_captures[piece][captured_piece] >= candidate_futuremove)
-				&& (promotion_captures[piece][captured_piece] <
-				    candidate_futuremove + futuremoves_needed)) {
-				candidate_futuremove = -1;
-				break;
+			if (candidate_futuremove != -1) {
+			    for (piece = 0; piece < capturing_piece; piece ++) {
+				if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
+				if (! (possible_captures[capturing_piece] & possible_captures[piece])) continue;
+				if (promotion_captures[piece][captured_piece][promotion] != -1) {
+				    if (promotion_captures[piece][captured_piece][promotion] == candidate_futuremove) {
+					candidate_futuremove = -1;
+					break;
+				    }
+				}
 			    }
 			}
-		    }
 
-		    if (candidate_futuremove == -1) {
-			candidate_futuremove = num_futuremoves[tb->piece_color[capturing_piece]];
-		    }
-
-		    promotion_captures[capturing_piece][captured_piece] = candidate_futuremove;
-
-		    strcpy(movestr[tb->piece_color[capturing_piece]][candidate_futuremove],
-			   candidate_movestr);
-
-		    if (futuremoves_needed > 1) {
-			for (i=1; i<futuremoves_needed; i++) {
-			    sprintf(movestr[tb->piece_color[capturing_piece]][candidate_futuremove + i],
-				    "Px%c=%c", piece_char[tb->piece_type[captured_piece]],
-				    piece_char[promoted_pieces[i]]);
+			if (candidate_futuremove == -1) {
+			    candidate_futuremove = num_futuremoves[tb->piece_color[capturing_piece]] ++;
+			    strcpy(movestr[tb->piece_color[capturing_piece]][candidate_futuremove], candidate_movestr);
 			}
-		    }
 
-		    if (candidate_futuremove + futuremoves_needed
-			> num_futuremoves[tb->piece_color[capturing_piece]]) {
-			num_futuremoves[tb->piece_color[capturing_piece]]
-			    = candidate_futuremove + futuremoves_needed;
+			promotion_captures[capturing_piece][captured_piece][promotion] = candidate_futuremove;
+
 		    }
 		}
 	    }
@@ -10080,6 +10074,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     int capturing_piece;
     int pawn;
     int sq;
+    int promotion;
     int i;
 
     /* Check pruning statements for consistency, and record stalemate pruning if specified */
@@ -10166,14 +10161,14 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
 
-	    if (promotion_captures[pawn][captured_piece] == -1) continue;
+	    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
 
-	    for (i = 0; promoted_pieces[i] != 0; i ++) {
+		if (promotion_captures[pawn][captured_piece][promotion] == -1) continue;
 
-		char * movestr1 = movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece] + i];
+		char * movestr1 = movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece][promotion]];
 
 		assign_pruning_statement(tb, tb->piece_color[pawn], movestr1,
-					 promotion_captures[pawn][captured_piece] + i);
+					 promotion_captures[pawn][captured_piece][promotion]);
 	    }
 	}
 
@@ -10225,6 +10220,9 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
  * the end of program with unhandled futurebases, so we can save ourselves a long computation by
  * making this basic check now.
  *
+ * If no futurebases exist for a given futuremove and it is correctly pruned, then flag it for
+ * optimization, since there is no need to track its futurebase back propagation.
+ *
  * There is an off chance that piece restrictions will prevent a futuremove from taking place, but
  * this code will conclude nevertheless that it is possible and demand either a prune statement or a
  * futurebase.  In this rare case, introducing an extraneous prune statement or two should solve the
@@ -10240,7 +10238,6 @@ boolean check_pruning(tablebase_t *tb) {
     int pawn;
     int sq;
     int futurebase_cnt;
-    int i;
 
     /* for each possible captured_piece (i.e, everything but the two kings) check for capture
      * futurebases
@@ -10312,7 +10309,6 @@ boolean check_pruning(tablebase_t *tb) {
     for (pawn = 0; pawn < tb->num_pieces; pawn ++) {
 
 	int promotion;
-	int promoted_pieces_handled;
 
 	if (tb->piece_type[pawn] != PAWN) continue;
 
@@ -10348,44 +10344,53 @@ boolean check_pruning(tablebase_t *tb) {
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
 
-	    promoted_pieces_handled = 0;
+	    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
 
-	    if (promotion_captures[pawn][captured_piece] == -1) continue;
+		int promoted_piece_handled = 0;
 
-	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-		if ((futurebases[fbnum]->extra_piece != -1)
-		    && (futurebases[fbnum]->piece_color[futurebases[fbnum]->extra_piece]
-			== (futurebases[fbnum]->invert_colors ? 1 - tb->piece_color[pawn] : tb->piece_color[pawn]))
-		    && (futurebases[fbnum]->missing_non_pawn != -1)
-		    && (tb->piece_color[futurebases[fbnum]->missing_non_pawn]
-			== tb->piece_color[captured_piece])
-		    && (tb->piece_type[futurebases[fbnum]->missing_non_pawn]
-			== tb->piece_type[captured_piece])
-		    && (futurebases[fbnum]->missing_pawn != -1)
-		    && (tb->piece_color[futurebases[fbnum]->missing_pawn] == tb->piece_color[pawn])) {
+		if (promotion_captures[pawn][captured_piece][promotion] == -1) continue;
 
-		    promoted_pieces_handled
-			|= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
+		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+		    if ((futurebases[fbnum]->extra_piece != -1)
+			&& (futurebases[fbnum]->piece_color[futurebases[fbnum]->extra_piece]
+			    == (futurebases[fbnum]->invert_colors ? 1 - tb->piece_color[pawn] : tb->piece_color[pawn]))
+			&& (futurebases[fbnum]->missing_non_pawn != -1)
+			&& (tb->piece_color[futurebases[fbnum]->missing_non_pawn]
+			    == tb->piece_color[captured_piece])
+			&& (tb->piece_type[futurebases[fbnum]->missing_non_pawn]
+			    == tb->piece_type[captured_piece])
+			&& (futurebases[fbnum]->missing_pawn != -1)
+			&& (tb->piece_color[futurebases[fbnum]->missing_pawn] == tb->piece_color[pawn])
+			&& (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == promoted_pieces[promotion])) {
 
+			promoted_piece_handled = 1;
+		    }
 		}
-	    }
 
-	    /* If no such futurebase exists, then for every other piece, see if the piece
-	     * restrictions would permit it to capture the original piece in question.  If so, there
-	     * must be a prune statement, or it's an error.
-	     */
+		/* If no such futurebase exists, then there must be a prune statement, or it's an
+		 * error.
+		 */
 
-	    for (i = 0; promoted_pieces[i] != 0; i ++) {
-
-		if (promoted_pieces_handled & (1 << promoted_pieces[i])) continue;
+		if (promoted_piece_handled) continue;
 
 		if (! (pruned_futuremoves[tb->piece_color[pawn]]
-		       & FUTUREVECTOR(promotion_captures[pawn][captured_piece] + i))) {
+		       & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]))) {
 		    fatal("No futurebase or pruning for %s move %s\n",
 			  colors[tb->piece_color[pawn]],
-			  movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece] + i]);
+			  movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece][promotion]]);
 		    return 0;
+		} else if (discarded_futuremoves[tb->piece_color[pawn]]
+			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
+		    optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
+		    promotion_captures[pawn][captured_piece][promotion] = -2;
+		} else if (conceded_futuremoves[tb->piece_color[pawn]]
+			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
+		    optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
+		    promotion_captures[pawn][captured_piece][promotion] = -3;
+		} else {
+		    fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
 		}
+
 	    }
 	}
 
@@ -10400,11 +10405,10 @@ boolean check_pruning(tablebase_t *tb) {
 	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		if ((futurebases[fbnum]->extra_piece != -1)
 		    && (futurebases[fbnum]->missing_non_pawn == -1)
-		    && (futurebases[fbnum]->missing_pawn != -1)) {
+		    && (futurebases[fbnum]->missing_pawn != -1)
+		    && (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == promoted_pieces[promotion])) {
 
-		    if (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == promoted_pieces[promotion]) {
-			promoted_piece_handled = 1;
-		    }
+		    promoted_piece_handled = 1;
 		}
 	    }
 
@@ -10495,8 +10499,12 @@ void optimize_futuremoves(tablebase_t *tb)
 			    if (futurecaptures[piece][piece2] > fm) {
 				futurecaptures[piece][piece2] --;
 			    }
-			    if (promotion_captures[piece][piece2] > fm) {
-				promotion_captures[piece][piece2] --;
+			    if (tb->piece_type[piece] == PAWN) {
+				for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+				    if (promotion_captures[piece][piece2][promotion] > fm) {
+					promotion_captures[piece][piece2][promotion] --;
+				    }
+				}
 			    }
 			}
 		    }
@@ -11311,8 +11319,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				} else if (promotions[piece][promotion] < 0) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %c=%s\n", global_position_to_FEN(&global),
-					  piece_char[tb->piece_type[piece]], promoted_pieces[promotion]);
+				    fatal("No futuremove: %s %c=%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->piece_type[piece]], piece_char[promoted_pieces[promotion]]);
 				} else if (futurevector & FUTUREVECTOR(promotions[piece][promotion])) {
 				    fatal("Duplicate futuremove!\n");
 				} else {
@@ -11463,27 +11471,30 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					movecnt ++;
 				    }
 				} else {
-				    if (promotion_captures[piece][i] == -2) {
-					/* discard prune - do nothing */
-				    } else if (promotion_captures[piece][i] == -3) {
-					/* concede prune */
-					initialize_entry_with_DTM(tb, index, 2);
-					return 0;
-				    } else if (promotion_captures[piece][i] < 0) {
-					global_position_t global;
-					index_to_global_position(tb, index, &global);
-					fatal("No futuremove: %s %cx%c=*\n", global_position_to_FEN(&global),
-					      piece_char[tb->piece_type[piece]],
-					      piece_char[tb->piece_type[i]]);
-				    } else if (futurevector
-					       & FUTUREVECTORS(promotion_captures[piece][i],
-							       PROMOTION_POSSIBILITIES)) {
-					fatal("Duplicate futuremove!\n");
-				    } else {
-					futurevector |= FUTUREVECTORS(promotion_captures[piece][i],
-								      PROMOTION_POSSIBILITIES);
-					futuremovecnt += PROMOTION_POSSIBILITIES;
-					movecnt += PROMOTION_POSSIBILITIES;
+				    int promotion;
+
+				    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+
+					if (promotion_captures[piece][i][promotion] == -2) {
+					    /* discard prune - do nothing */
+					} else if (promotion_captures[piece][i][promotion] == -3) {
+					    /* concede prune */
+					    initialize_entry_with_DTM(tb, index, 2);
+					    return 0;
+					} else if (promotion_captures[piece][i][promotion] < 0) {
+					    global_position_t global;
+					    index_to_global_position(tb, index, &global);
+					    fatal("No futuremove: %s %cx%c=%c\n", global_position_to_FEN(&global),
+						  piece_char[tb->piece_type[piece]],
+						  piece_char[tb->piece_type[i]],
+						  piece_char[promoted_pieces[promotion]]);
+					} else if (futurevector & FUTUREVECTOR(promotion_captures[piece][i][promotion])) {
+					    fatal("Duplicate futuremove!\n");
+					} else {
+					    futurevector |= FUTUREVECTOR(promotion_captures[piece][i][promotion]);
+					    futuremovecnt ++;
+					    movecnt ++;
+					}
 				    }
 				}
 			    }
@@ -12344,7 +12355,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.515 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.516 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
