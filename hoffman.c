@@ -4870,7 +4870,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.517 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.518 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -10063,8 +10063,10 @@ void print_futuremoves(void)
 }
 
 /* This is where we parse pruning statements.  Fill in the pruned_futuremoves bit vector with bits
- * set for the various pruned moves.  To make this routine easier, assign_pruning_statement() can be
- * called with a '-1' futuremove, in which case it will do nothing.
+ * set for the various pruned moves.  We call this routine after assign_numbers_to_futuremoves(),
+ * which also prints strings into the movestr array, and now we use those strings to match against
+ * pruning statements.  To make this routine easier, assign_pruning_statement() can be called with a
+ * '-1' futuremove, in which case it will do nothing.
  *
  * XXX something else I'd like to do here is to flag all of the pruning statements to make
  * sure we've used each one, and complain if any are left unused.
@@ -10075,12 +10077,8 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
     int prune;
-    int piece;
-    int captured_piece;
-    int capturing_piece;
-    int pawn;
-    int sq;
-    int promotion;
+    int color;
+    int fm;
 
     /* Check pruning statements for consistency, and record stalemate pruning if specified */
 
@@ -10108,48 +10106,9 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
     if (fatal_errors != 0) return 0;
 
-    /* check pruning for each possible capture */
-
-    for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
-
-	if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
-
-	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
-	    assign_pruning_statement(tb, tb->piece_color[capturing_piece], futurecaptures[capturing_piece][captured_piece]);
-	}
-    }
-
-    /* Pawns - check for both promotion and promotion capture pruning here.  Same idea. */
-
-    for (pawn = 0; pawn < tb->num_pieces; pawn ++) {
-
-	if (tb->piece_type[pawn] != PAWN) continue;
-
-	/* First, we're looking for promotion captures. */
-
-	for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
-
-	    if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
-
-	    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
-		assign_pruning_statement(tb, tb->piece_color[pawn], promotion_captures[pawn][captured_piece][promotion]);
-	    }
-	}
-
-	/* straight promotion futurebases */
-
-	for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
-	    assign_pruning_statement(tb, tb->piece_color[pawn], promotions[pawn][promotion]);
-	}
-    }
-
-    /* Check for any futurebases that match our piece types exactly.  It (or they) must correspond
-     * to restricted piece movements.
-     */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	for (sq = 0; sq < 64; sq ++) {
-	    assign_pruning_statement(tb, tb->piece_color[piece], futuremoves[piece][sq]);
+    for (color = WHITE; color <= BLACK; color ++) {
+	for (fm = 0; fm < num_futuremoves[color]; fm ++) {
+	    assign_pruning_statement(tb, color, fm);
 	}
     }
 
@@ -10162,8 +10121,8 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 /* check_pruning()
  *
- * We run this function after we've assigned numbers to the futuremoves, but before we initialize
- * the tablebase.
+ * We run this function after we've assigned numbers to the futuremoves and then matched pruning
+ * statements against them, but before we initialize the tablebase.
  *
  * Check the futurebases to see if there are any for a given futuremove.  If not, check to make sure
  * the futuremove is pruned.  Otherwise, signal an error and exit right now.  Just because this test
@@ -12307,7 +12266,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.517 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.518 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
