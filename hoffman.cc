@@ -332,12 +332,16 @@ typedef uint32 futurevector_t;
  * assigned for each color, NOT the total number of possible futuremoves, since futuremoves can be
  * multiply assigned to bits (if two futuremoves can't both happen from the same position, they can
  * be safely assigned to the same bit), or completely pruned with a -2 or -3 (no bit position).
+ *
+ * There is one place in the code (propagate_moves_from_promotion_futurebase) that assumes that the
+ * piece ordering in promotions's second array index matches the piece ordering in piece_name and
+ * piece_char.
  */
 
 int num_futuremoves[2] = {0, 0};
 int futurecaptures[MAX_PIECES][MAX_PIECES];
 int promotion_captures[MAX_PIECES][MAX_PIECES];
-int promotions[MAX_PIECES];
+int promotions[MAX_PIECES][PROMOTION_POSSIBILITIES];
 int futuremoves[MAX_PIECES][64];
 
 /* XXX hardwired 100 futuremove max per color here */
@@ -4858,7 +4862,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.514 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.515 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8403,8 +8407,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 			true_pawn = position.permuted_piece[pawn];
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								      promotions[true_pawn]
-								      + futurebase->piece_type[extra_piece] - 1,
+								      promotions[true_pawn][futurebase->piece_type[extra_piece] - 1],
 								      &position);
 
 			/* We may be about to use this position again, so put the board_vector back... */
@@ -9858,19 +9861,21 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	promotions[piece] = -1;
+	for (i = 0; promoted_pieces[i] != 0; i ++) {
+	    promotions[piece][i] = -1;
+	}
 	if (tb->piece_type[piece] == PAWN) {
 	    for (sq = (tb->piece_color[piece] == WHITE ? 48 : 8);
 		 sq <= (tb->piece_color[piece] == WHITE ? 55 : 15); sq++) {
 		if (tb->legal_squares[piece] & BITVECTOR(sq)) {
-		    promotions[piece] = num_futuremoves[tb->piece_color[piece]];
 
 		    for (i = 0; promoted_pieces[i] != 0; i ++) {
-			sprintf(movestr[tb->piece_color[piece]][promotions[piece] + i],
+			promotions[piece][i] = num_futuremoves[tb->piece_color[piece]];
+			sprintf(movestr[tb->piece_color[piece]][promotions[piece][i]],
 				"P=%c", piece_char[promoted_pieces[i]]);
+			num_futuremoves[tb->piece_color[piece]] ++;
 		    }
 
-		    num_futuremoves[tb->piece_color[piece]] += PROMOTION_POSSIBILITIES;
 		    break;
 		}
 	    }
@@ -10174,13 +10179,14 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 
 	/* straight promotion futurebases */
 
-	if (promotions[pawn] == -1) continue;
 
 	for (i = 0; promoted_pieces[i] != 0; i ++) {
 
-	    char * movestr1 = movestr[tb->piece_color[pawn]][promotions[pawn] + i];
-
-	    assign_pruning_statement(tb, tb->piece_color[pawn], movestr1, promotions[pawn] + i);
+	    if (promotions[pawn][i] == -1) continue;
+	    else {
+		char * movestr1 = movestr[tb->piece_color[pawn]][promotions[pawn][i]];
+		assign_pruning_statement(tb, tb->piece_color[pawn], movestr1, promotions[pawn][i]);
+	    }
 	}
     }
 
@@ -10305,6 +10311,7 @@ boolean check_pruning(tablebase_t *tb) {
 
     for (pawn = 0; pawn < tb->num_pieces; pawn ++) {
 
+	int promotion;
 	int promoted_pieces_handled;
 
 	if (tb->piece_type[pawn] != PAWN) continue;
@@ -10384,30 +10391,39 @@ boolean check_pruning(tablebase_t *tb) {
 
 	/* straight promotion futurebases */
 
-	if (promotions[pawn] == -1) continue;
+	for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
 
-	promoted_pieces_handled = 0;
+	    int promoted_piece_handled = 0;
 
-	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	    if ((futurebases[fbnum]->extra_piece != -1)
-		&& (futurebases[fbnum]->missing_non_pawn == -1)
-		&& (futurebases[fbnum]->missing_pawn != -1)) {
+	    if (promotions[pawn][promotion] == -1) continue;
 
-		promoted_pieces_handled
-		    |= (1 << futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece]);
+	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+		if ((futurebases[fbnum]->extra_piece != -1)
+		    && (futurebases[fbnum]->missing_non_pawn == -1)
+		    && (futurebases[fbnum]->missing_pawn != -1)) {
 
+		    if (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == promoted_pieces[promotion]) {
+			promoted_piece_handled = 1;
+		    }
+		}
 	    }
-	}
 
-	for (i = 0; promoted_pieces[i] != 0; i ++) {
 
-	    if (promoted_pieces_handled & (1 << promoted_pieces[i])) continue;
+	    if (promoted_piece_handled) continue;
 
-	    if (! (pruned_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn] + i))) {
+	    if (! (pruned_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion]))) {
 		fatal("No futurebase or pruning for %s move %s\n",
 		      colors[tb->piece_color[pawn]],
-		      movestr[tb->piece_color[pawn]][promotions[pawn] + i]);
+		      movestr[tb->piece_color[pawn]][promotions[pawn][promotion]]);
 		return 0;
+	    } else if (discarded_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion])) {
+		optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotions[pawn][promotion]);
+		promotions[pawn][promotion] = -2;
+	    } else if (conceded_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion])) {
+		optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotions[pawn][promotion]);
+		promotions[pawn][promotion] = -3;
+	    } else {
+		fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
 	    }
 	}
     }
@@ -10465,7 +10481,7 @@ void remove_futuremove(futurevector_t *fvp, int fm)
 
 void optimize_futuremoves(tablebase_t *tb)
 {
-    int color, fm, fm2, piece, piece2, sq;
+    int color, fm, fm2, piece, piece2, sq, promotion;
 
     for (color = WHITE; color <= BLACK; color ++) {
 
@@ -10489,8 +10505,12 @@ void optimize_futuremoves(tablebase_t *tb)
 			    futuremoves[piece][sq] --;
 			}
 		    }
-		    if (promotions[piece] > fm) {
-			promotions[piece] --;
+		    if (tb->piece_type[piece] == PAWN) {
+			for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+			    if (promotions[piece][promotion] > fm) {
+				promotions[piece][promotion] --;
+			    }
+			}
 		    }
 		}
 
@@ -11278,24 +11298,28 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
-			    if (promotions[piece] == -2) {
-				/* discard prune - do nothing */
-			    } else if (promotions[piece] == -3) {
-				/* concede prune */
-				initialize_entry_with_DTM(tb, index, 2);
-				return 0;
-			    } else if (promotions[piece] < 0) {
-				global_position_t global;
-				index_to_global_position(tb, index, &global);
-				fatal("No futuremove: %s %c=?\n", global_position_to_FEN(&global),
-				      piece_char[tb->piece_type[piece]]);
-			    } else if (futurevector
-				       & FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES)) {
-				fatal("Duplicate futuremove!\n");
-			    } else {
-				futurevector |= FUTUREVECTORS(promotions[piece], PROMOTION_POSSIBILITIES);
-				futuremovecnt += PROMOTION_POSSIBILITIES;
-				movecnt += PROMOTION_POSSIBILITIES;
+			    int promotion;
+
+			    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+
+				if (promotions[piece][promotion] == -2) {
+				    /* discard prune - do nothing */
+				} else if (promotions[piece][promotion] == -3) {
+				    /* concede prune */
+				    initialize_entry_with_DTM(tb, index, 2);
+				    return 0;
+				} else if (promotions[piece][promotion] < 0) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %c=%s\n", global_position_to_FEN(&global),
+					  piece_char[tb->piece_type[piece]], promoted_pieces[promotion]);
+				} else if (futurevector & FUTUREVECTOR(promotions[piece][promotion])) {
+				    fatal("Duplicate futuremove!\n");
+				} else {
+				    futurevector |= FUTUREVECTOR(promotions[piece][promotion]);
+				    futuremovecnt ++;
+				    movecnt ++;
+				}
 			    }
 
 			} else {
@@ -12320,7 +12344,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.514 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.515 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
