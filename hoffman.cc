@@ -4870,7 +4870,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.518 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.519 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -10405,8 +10405,10 @@ void optimize_futuremoves(tablebase_t *tb)
 	    if (optimized_futuremoves[color] & FUTUREVECTOR(fm)) {
 
 		for (piece = 0; piece < tb->num_pieces; piece ++) {
-		    for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
-			if (tb->piece_color[piece] == color && tb->piece_color[piece2] != color) {
+
+		    if (tb->piece_color[piece] == color) {
+
+			for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
 			    if (futurecaptures[piece][piece2] > fm) {
 				futurecaptures[piece][piece2] --;
 			    }
@@ -10418,16 +10420,18 @@ void optimize_futuremoves(tablebase_t *tb)
 				}
 			    }
 			}
-		    }
-		    for (sq = 0; sq < 64; sq ++) {
-			if (futuremoves[piece][sq] > fm) {
-			    futuremoves[piece][sq] --;
+
+			for (sq = 0; sq < 64; sq ++) {
+			    if (futuremoves[piece][sq] > fm) {
+				futuremoves[piece][sq] --;
+			    }
 			}
-		    }
-		    if (tb->piece_type[piece] == PAWN) {
-			for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
-			    if (promotions[piece][promotion] > fm) {
-				promotions[piece][promotion] --;
+
+			if (tb->piece_type[piece] == PAWN) {
+			    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+				if (promotions[piece][promotion] > fm) {
+				    promotions[piece][promotion] --;
+				}
 			    }
 			}
 		    }
@@ -11233,7 +11237,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    fatal("No futuremove: %s %c=%c\n", global_position_to_FEN(&global),
 					  piece_char[tb->piece_type[piece]], piece_char[promoted_pieces[promotion]]);
 				} else if (futurevector & FUTUREVECTOR(promotions[piece][promotion])) {
-				    fatal("Duplicate futuremove!\n");
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("Duplicate futuremove: %s %s\n", global_position_to_FEN(&global),
+					  movestr[tb->piece_color[piece]][promotions[piece][promotion]]);
 				} else {
 				    futurevector |= FUTUREVECTOR(promotions[piece][promotion]);
 				    futuremovecnt ++;
@@ -12266,7 +12273,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.518 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.519 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
