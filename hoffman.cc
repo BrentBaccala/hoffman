@@ -4870,7 +4870,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.519 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.520 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11849,8 +11849,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 		  strerror(errno));
 	    return 0;
 	} else {
-	    info("Malloced %dMB for tablebase entries\n",
-		 LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/(1024*1024));
+	    int kilobytes = LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/1024;
+	    if (kilobytes < 1024) {
+		info("Malloced %dKB for tablebase entries\n", kilobytes);
+	    } else {
+		info("Malloced %dMB for tablebase entries\n", kilobytes/1024);
+	    }
 	}
 	/* Don't really need this, since they will all get initialized anyway */
 	/* XXX actually do this need right now, because initialization isn't complete */
@@ -11863,7 +11867,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    fatal("Can't malloc proptable: %s\n", strerror(errno));
 	    return 0;
 	} else {
-	    info("Malloced %dMB for proptable\n", (num_propentries * PROPTABLE_FORMAT_BYTES)/(1024*1024));
+	    int kilobytes = (num_propentries * PROPTABLE_FORMAT_BYTES)/1024;
+	    if (kilobytes < 1024) {
+		info("Malloced %dKB for proptable\n", kilobytes);
+	    } else {
+		info("Malloced %dMB for proptable\n", kilobytes/1024);
+	    }
 	}
 
 	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
@@ -11917,7 +11926,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 		  strerror(errno));
 	    return 0;
 	} else {
-	    info("Malloced %dMB for tablebase futurevectors\n", futurevector_bytes/(1024*1024));
+	    int kilobytes = futurevector_bytes/1024;
+	    if (kilobytes < 1024) {
+		info("Malloced %dKB for tablebase futurevectors\n", kilobytes);
+	    } else {
+		info("Malloced %dMB for tablebase futurevectors\n", kilobytes/1024);
+	    }
 	}
 	/* Don't really need this, since they will all get initialized anyway */
 	memset(tb->futurevectors, 0, futurevector_bytes);
@@ -12273,7 +12287,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.519 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.520 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
