@@ -123,7 +123,8 @@
 <!ATTLIST prune
 	color	(white|black)	#REQUIRED
 	move	CDATA		#REQUIRED
-	type	(concede|discard)	#REQUIRED>
+	type	(concede|discard)	#REQUIRED
+	pawngen-condition	CDATA	#IMPLIED>
 
 <!-- move-restriction is the older, deprecated name for prune-enable -->
 <!ATTLIST prune-enable
