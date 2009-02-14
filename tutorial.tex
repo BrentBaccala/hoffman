@@ -220,7 +220,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.7 $ $Locker: baccala $
+Hoffman $Revision: 1.8 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -245,7 +245,7 @@ Hoffman $Revision: 1.7 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.7 $ $Locker: baccala $</program>
+      <program>Hoffman $Revision: 1.8 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -320,7 +320,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.7 $ $Locker: baccala $
+Hoffman $Revision: 1.8 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -557,7 +557,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.7 $ $Locker: baccala $
+Hoffman $Revision: 1.8 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
@@ -665,7 +665,7 @@ generate an error:
 
 \begin{verbatim}
 C> ./hoffman -o fine67.htb -g fine67.xml
-Hoffman $Revision: 1.7 $ $Locker: baccala $
+Hoffman $Revision: 1.8 $ $Locker: baccala $
 Malloced 40MB for tablebase entries
 'kpk.htb': Too many missing pieces in futurebase
 Futurebase preload failed: 'kpk.htb'
@@ -679,9 +679,9 @@ movements, captures, and promotions, and output a series of
 interlinked control files that Hoffman can process.  Obviously,
 considering all possible promotions in this case would result in
 positions with multiple queens that would be impossible for Hoffman to
-process.  Pawngen, however, does honor the {\tt prune} elements and
-will not generate any control files for promotion possibilities.  For
-this example, pawngen created 173 control files, along with a {\tt
+process.  Pawngen, however, does honor the {\tt prune} elements.  For
+this example, pawngen ignored all promotion possibilities (note the
+{\tt prune} elements) and created 173 control files, along with a {\tt
 makefile} listing the interdependencies between them.  Run the actual
 Hoffman analysis by typing ``make''.  Both Perl (needed to run
 pawngen) and make are fairly standard on Linux and other UNIX
@@ -694,7 +694,7 @@ tablebases.  Once this is done, we use Hoffman to probe the tablebases:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.7 $ $Locker: baccala $
+Hoffman $Revision: 1.521 $ $Locker:  $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
@@ -736,6 +736,100 @@ move in this position, although the pruning in the Hoffman analysis
 only guarantees that White can force a queen before Black can.  In
 particular, d4 only draws because Black has the recourse b4 which
 allows him to blockade the position.
+
+\begin{figure}
+\hrule\ 
+{\small\begin{verbatim}
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Diagram 67 from Rubin Fine's "Basic Chess Endings" -->
+
+<tablebase>
+   <prune-enable color="white" type="discard"/>
+   <prune-enable color="black" type="concede"/>
+   <index type="compact"/>
+   <format><dtm bits="8"/></format>
+   <piece color="white" type="king"/>
+   <piece color="white" type="pawn" location="b3+"/>
+   <piece color="white" type="pawn" location="c2+"/>
+   <piece color="white" type="pawn" location="d3+"/>
+   <piece color="black" type="king"/>
+   <piece color="black" type="pawn" location="b5+"/>
+   <piece color="black" type="pawn" location="c7+"/>
+   <piece color="black" type="pawn" location="d5+"/>
+   <futurebase filename="kpk.htb"/>
+   <futurebase filename="kpk.htb" colors="invert"/>
+   <futurebase filename="kqk.htb"/>
+   <futurebase filename="kqkp.htb"/>
+   <futurebase filename="kqpk.htb"/>
+   <prune color="white" type="discard" move="P=Q"
+      pawngen-condition="grep(/Q/,@white_pieces)==1"/>
+   <prune color="white" type="discard" move="P=[RNB]"/>
+   <prune color="black" type="concede" move="P*=?"/>
+   <prune color="black" type="concede" move="?xQ"/>
+   <prune color="black" type="concede" move="?xP"
+      pawngen-condition="grep(/Q/,@white_pieces)==0 and $#white_pawns==0"/>
+</tablebase>
+\end{verbatim}}
+\hrule
+\caption{\tt fine67a.xml}
+\end{figure}
+
+Of course, we'd really like to know if White can win, not just force a
+queen.  A more sophisticated analysis (Figure 7) is {\tt fine67a.xml}.
+Notice the {\tt pawngen-condition} attributes on two of the {\tt
+prune} elements.  These attributes specify Perl expressions that will
+be evaluated by pawngen to selectively include or exclude the {\tt
+prune} elements.  In this example, we want to allow a {\it single}
+white queen promotion, so we unconditionally discard all white
+promotions into rooks, knights, or bishops, as well as white queen
+promotions if a white queen is already present.  Thus we'll consider
+positions with a single white queen, but not two.  In addition to
+promotions, we'll also concede some other moves to black that should
+simplify our analysis somewhat.  We never want to allow black to
+capture the white queen, so we concede ``{\tt ?xQ}'', and there's no
+reason to allow black to capture the last white pawn if white hasn't
+queened, so we selectively prune ``{\tt ?xP}''.  The syntax of this
+last statement is somewhat confusing unless you know that the Perl
+operator {\tt \$\#} counts starting at zero, so {\tt \$\#white\_pawns==0}
+actually tests if there is a single white pawn present.
+
+Pawngen, when run on {\tt fine67a.xml}, produces 229 control files, of
+which 78 contain queens, so this analysis takes longer to run than
+{\tt fine67.xml} (half a day instead of an hour).  When complete, its
+output tablebases can be queried for the original position:
+
+\begin{verbatim}
+C> ./hoffman -p *.htb
+Hoffman $Revision: 1.521 $ $Locker:  $
+0 piece Nalimov tablebases found
+Loading 'Kb3b3c4Kd5.htb'
+Loading 'Kb3b4c4K.htb'
+Loading 'Kb3b4d3Kc7.htb'
+...
+Loading 'KQKd5d4.htb'
+Loading 'KQKd6b5.htb'
+Loading 'KQKd6c4.htb'
+FEN? 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8 w
+FEN 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8 w - -
+Index 12369740 (Kb3c2d3Kd5c7b5.htb)
+White moves and wins in 27
+Can't find Nalimov tablebase
+   Pc2c3    Black moves and wins in 11
+   Pc2c4    Black moves and wins in 5
+   Pb3b4    White wins in 27
+   Pd3d4    Draw
+   Kf5g5    Black moves and wins in 10
+   Kf5f6    Draw
+   Kf5f4    Draw
+   Kf5g6    Black moves and wins in 10
+   Kf5g4    Black moves and wins in 15
+FEN or move?
+\end{verbatim}
+
+Again, we show a white win with {\tt b4}.  This time, however, we know
+that this is actually a white {\it win} and not just a queening
+solution.
 
 Pawngen currently accepts only a subset of Hoffman's XML syntax --- no
 {\tt location} attributes are allowed on any non-pawns, and pawns must
