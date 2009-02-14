@@ -64,7 +64,20 @@ allowed on any non-pawns, and pawns must have {\tt location}
 attributes specifying a specific starting square followed by a plus
 sign.  Pawngen does understand {\tt futurebase} and {\tt prune}
 elements, and will use them to truncate its analysis and thus limit
-the number of generated control files.
+the number of generated control files.  Also, pawgen understands the
+{\tt pawngen-condition} attribute on {\tt prune} elements, which can
+be used to prune more selectively than otherwise possible.
+
+Put simply, pawngen considers individual pawn formations and pawn
+moves (including captures and promotions), while allowing the other
+pieces to move freely around the board.  Hoffman, on the other hand,
+can only consider one set of pieces at a time, requiring futurebases
+to handle captures and promotions.  Furthermore, for Hoffman to
+compute the complicated changes in pawn formation that can result from
+various captures would require fairly unrestricted pawn locations that
+would produce prohibitively large tablebases.
+
+\vfil\eject
 
 Unlike Hoffman, which is written in C, pawngen is a Perl script, so
 you must have Perl installed (along with its {\tt XML::LibXML} module)
@@ -74,7 +87,6 @@ Both Perl and make are fairly standard on Linux and other UNIX
 variants.  On Microsoft systems, I've used the cygwin distribution
 (which includes both programs) successfully.
 
-\vfil\eject
 \section{Parallel Processing with Hoffman}
 
 A Hoffman analysis can be quite compute-intensive.  The program can be
@@ -89,9 +101,7 @@ tablebases to be stored on a server accessable over a network.  A
 basic Perl CGI script ({\tt hoffman.cgi}) is provided which, when
 installed on a web server and supplied with a directory full of
 Hoffman XML files, will hand them out in the proper order to Hoffman
-clients for processing.  Unfortunately, the process of creating those
-multiple interlinked XML files remains largely unautomated at this
-time.
+clients for processing.
 
 \section{Propagation tables}
 
@@ -290,7 +300,7 @@ the current tablebase's {\tt prune-enable} elements.
 {\bf Note:} The only {\tt url} scheme currently supported for this
 element is {\tt ftp}.
 
-\subsection{\tt <prune color="white|black" move="{\it string}" type="concede|discard"/>}
+\subsection{\tt <prune color="white|black" move="{\it string}" type="concede|discard" \hfil\break\hbox{\qquad} pawngen-condition="{\it perl-expression}"/>}
 
 Futuremoves not handled by specifying futurebases must be pruned using
 one or more of these elements, or an error will result.  All three
@@ -310,6 +320,27 @@ A single {\tt prune} element may be specified with {\tt
 move="stalemate"} and {\tt type="concede"}.  In this case, the {\tt
 color} attribute indicates to which side stalemates should be conceded
 as wins.
+
+The optional {\tt pawngen-condition} attribute is not allowed directly
+by Hoffman, but can be present on control files input to pawngen.  It
+specifies a Perl expression to be tested on each position considered
+by pawngen --- i.e, every distinct pawn formation with an associated
+set of non-pawn pieces.  The prune statement will be included in the
+resulting Hoffman control file only if the Perl expression evaluates
+true.  The Perl expression is evaluated in the following context: {\tt
+@white\_pieces} is an array of one-character strings listing the
+non-pawn white pieces, i.e, {\tt ("K", "Q")}; {\tt @white\_pawns} is
+an array of two-character strings listing the board squares of the
+white pawns, i.e, {\tt ("a4", "c6")}; and likewise for {\tt
+@black\_pieces} and {\tt @black\_pawns}.  This context may change
+slightly in future releases.
+
+{\bf Note:} If a {\tt prune} element is specified for a futuremove
+handled by a futurebase, then the futurebase takes precedence.
+However, this case is handled by tracking every futuremove in every
+position, so it is possible to specify futurebases that handle a
+subset of the possible futuremoves, then use {\tt prune} elements to
+handle the rest by default.
 
 {\bf Note:} {\tt prune} elements are only allowed if they match a {\tt
 prune-enable} element.  If no {\tt prune-enable} elements were
