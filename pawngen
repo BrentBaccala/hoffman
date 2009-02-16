@@ -44,8 +44,8 @@ $XMLparser->validation(1);
 my $XMLtree;
 my $XMLcontrolFile;
 
-my $white_prune_enable;
-my $black_prune_enable;
+my @white_prune_enables;
+my @black_prune_enables;
 
 my @white_XML_prunes;
 my @black_XML_prunes;
@@ -882,12 +882,16 @@ sub assign_futurebase {
 
     close(FILE);
 
-    if (($XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type') ne ""
-	 and $XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type') ne $white_prune_enable)
-	or ($XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type') ne ""
-	    and $XMLfuturebase->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type') ne $black_prune_enable)) {
-	die "Futurebase pruning incompatible ($filename)\n";
+    for my $white_prune_enable (map {lc $_->to_literal} $XMLfuturebase->findnodes('*[self::prune-enable or self::move-restriction][@color="white"]/@type')) {
+	die "Futurebase pruning incompatible ($filename)\n"
+	    if (grep({ $_ eq $white_prune_enable } @white_prune_enables) == 0);
     }
+
+    for my $black_prune_enable (map {lc $_->to_literal} $XMLfuturebase->findnodes('*[self::prune-enable or self::move-restriction][@color="black"]/@type')) {
+	die "Futurebase pruning incompatible ($filename)\n"
+	    if (grep({ $_ eq $black_prune_enable } @black_prune_enables) == 0);
+    }
+
 
     foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "white" and @type != "pawn"]')) {
 	die "Futurebases can't have non-pawn restrictions ($filename)\n" if ($XMLpiece->findvalue('@location') ne "");
@@ -1078,12 +1082,17 @@ sub validate_xml_control_file {
 	die "pawngen doesn't support output elements in generation-controls\n";
     }
 
-    $white_prune_enable = $XMLcontrolFile->findvalue('*[self::prune-enable or self::move-restriction][@color="white"]/@type');
-    $black_prune_enable = $XMLcontrolFile->findvalue('*[self::prune-enable or self::move-restriction][@color="black"]/@type');
+    @white_prune_enables = map {lc $_->to_literal} $XMLcontrolFile->findnodes('*[self::prune-enable or self::move-restriction][@color="white"]/@type');
+    @black_prune_enables = map {lc $_->to_literal} $XMLcontrolFile->findnodes('*[self::prune-enable or self::move-restriction][@color="black"]/@type');
 
-    if (($XMLcontrolFile->findnodes("prune[\@color='white' and \@type != '$white_prune_enable']")->size() > 0)
-	or ($XMLcontrolFile->findnodes("prune[\@color='black' and \@type != '$black_prune_enable']")->size() > 0)) {
-	die "At least one prune statement incompatible with prune-enable\n";
+    for my $white_prune (map {lc $_->to_literal} $XMLcontrolFile->findnodes('prune[@color="white"]/@type')) {
+	die "At least one prune statement incompatible with prune-enable\n"
+	    if (grep({ $_ eq $white_prune } @white_prune_enables) == 0);
+    }
+
+    for my $black_prune (map {lc $_->to_literal} $XMLcontrolFile->findnodes('prune[@color="black"]/@type')) {
+	die "At least one prune statement incompatible with prune-enable\n"
+	    if (grep({ $_ eq $black_prune } @black_prune_enables) == 0);
     }
 }
 
