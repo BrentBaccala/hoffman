@@ -4720,11 +4720,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    if ((color == -1) || (type == -1)) {
 		fatal("Illegal prune-enable\n");
 	    } else {
-		if ((tb->prune_enable[color] > 0) && (tb->prune_enable[color] != type)) {
-		    fatal("Incompatible prune enables\n");
-		} else {
-		    tb->prune_enable[color] = type;
-		}
+		tb->prune_enable[color] |= type;
 	    }
 
 	    if (color_str != NULL) xmlFree(color_str);
@@ -4870,7 +4866,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.520 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.521 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5062,9 +5058,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
     /* Check futurebase to make sure its prune enable(s) match our own */
 
     for (color = 0; color < 2; color ++) {
-	if ((futurebase->prune_enable[color] != RESTRICTION_NONE)
-	    && (futurebase->prune_enable[color]
-		!= tb->prune_enable[futurebase->invert_colors ? 1 - color : color])) {
+	if (futurebase->prune_enable[color] & ~(tb->prune_enable[futurebase->invert_colors ? 1 - color : color])) {
 	    fatal("'%s': Futurebase doesn't match prune-enables!\n", filename);
 	    return 0;
 	}
@@ -10093,7 +10087,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
 	int color = find_name_in_array((char *) prune_color, colors);
 	int type = find_name_in_array((char *) prune_type, restriction_types);
 
-	if (type != tb->prune_enable[color]) {
+	if (! (type & tb->prune_enable[color])) {
 	    fatal("Prune statements don't match tablebase prune-enables\n");
 	}
 
@@ -12287,7 +12281,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.520 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.521 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
