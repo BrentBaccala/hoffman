@@ -622,7 +622,12 @@ sub genset {
     my @white_pieces = unpack "(a1)*", $white_pieces;
     my @black_pieces = unpack "(a1)*", $black_pieces;
 
-    #print "genset: $white_base @white_pawns $black_base @black_pawns\n";
+    # We'll multiply the number of pawn positions by 64 ^ (number of fully mobile pieces) to get a
+    # count of the number of positions.  We do the kings separately, since there's only 3612 legal
+    # king position pairs, as opposed to the naive 64^2 = 4096, and multiply by two to handle
+    # side-to-move.
+
+    my $KiloPositionMultiple = (1 << (6*(length($white_pieces) + length($black_pieces) - 2))) * 7224/1000;
 
     # There's two different ways we can expand the location of each pawn - by turning it into a
     # plus-pawn, or by explicitly adding to its list of squares.  It's really not clear just what
@@ -789,10 +794,7 @@ sub genset {
 	}
     }
 
-    # multiply $best_count by 64 ^ (number of fully mobile pieces) to get a count
-    # of the number of positions
-
-    my $KiloPositions = $best_count << (6*(length($white_pieces) + length($black_pieces)) - 10);
+    my $KiloPositions = int($best_count * $KiloPositionMultiple);
 
     my $basename = &pattern_to_name($white_pieces, @best_white_pawns, $black_pieces, @best_black_pawns);
 
