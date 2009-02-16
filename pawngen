@@ -246,7 +246,7 @@ sub compute_futurebases_from_one_pawn {
 	    # consider capture promotions
 
 	    foreach my $enemy_piece (@enemy_pieces) {
-		if ($enemy_piece != 'K' and not &match_prune("Px$enemy_piece=$promotion", @$prunes)) {
+		if ($enemy_piece ne 'K' and not &match_prune("Px$enemy_piece=$promotion", @$prunes)) {
 		    my $position2 = &remove_piece_from_position($position, $enemy_color, $enemy_piece);
 		    $position2 = &add_piece_to_position($position2, $color, $promotion);
 		    $position2 = &remove_pawn_from_position($position2, $pawn);
@@ -299,7 +299,7 @@ sub compute_futurebases_from_one_pawn {
 	    # XXX figure how to make this work again
 
 	    foreach my $enemy_piece (@enemy_pieces) {
-		if ($enemy_piece != 'K' and not &match_prune("Px$enemy_piece", @$prunes) and $pawns !~ /$capture_move/) {
+		if ($enemy_piece ne 'K' and not &match_prune("Px$enemy_piece", @$prunes) and $pawns !~ /$capture_move/) {
 		    my $position2 = &remove_piece_from_position($position, $enemy_color, $enemy_piece);
 		    $position2 = &replace_pawn_in_position($position2, $pawn, $capture_move);
 		    push @futurebases, &normalize_position($position2);
