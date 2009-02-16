@@ -4866,7 +4866,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.521 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.522 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6326,8 +6326,7 @@ inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
 	cached_entries = NULL;
 	cached_indices = NULL;
 	num_cached_entries = 0;
-
-	cached_tb = tb;
+	cached_tb = NULL;
     }
 
     /* If cache isn't big enough, build it or expand it */
@@ -6337,6 +6336,7 @@ inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
 	cached_indices = realloc(cached_indices, sizeof(index_t) * (n+1));
 	memset(cached_indices + num_cached_entries, 0xff, sizeof(index_t) * ((n+1) - num_cached_entries));
 	num_cached_entries = n+1;
+	cached_tb = tb;
     }
 
     /* It's not there, so fetch it and cache it */
@@ -6595,7 +6595,7 @@ inline void set_entry_movecnt(index_t index, int movecnt)
 
 inline int get_flag(tablebase_t *tb, index_t index)
 {
-    return get_unsigned_field(fetch_current_entry_pointer(index),
+    return get_unsigned_field(fetch_entry_pointer(tb, index),
 			      1,
 			      tb->format.flag_offset + ((index << tb->format.bits) % 8));
 }
@@ -12281,7 +12281,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.521 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.522 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
