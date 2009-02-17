@@ -4866,7 +4866,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.522 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.523 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6266,7 +6266,8 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 
 	if (LEFTSHIFT(index, tb->format.bits - 3)
 	    < LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
-	    if (zlib_seek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET) != 0) {
+	    if (zlib_seek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET)
+		!= tb->offset + LEFTSHIFT(index, tb->format.bits - 3)) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
 	    }
 	}
@@ -12193,18 +12194,33 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
 
 void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm, int pntm_offset)
 {
-    /* int dtm = fetch_DTM_from_disk(tb, index); */
-    /* int dtm = get_entry_DTM(index); */
-    int dtm = get_raw_DTM(tb, index);
+    if (tb->format.dtm_bits > 0) {
 
-    if (dtm == 0) {
-	printf("Draw\n");
-    } else if (dtm == 1) {
-	printf("Illegal position\n");
-    } else if (dtm > 1) {
-	printf("%s moves and wins in %d\n", ptm, dtm-1);
-    } else if (dtm < 0) {
-	printf("%s wins in %d\n", pntm, pntm_offset-dtm-1);
+	int dtm = get_raw_DTM(tb, index);
+
+	if (dtm == 0) {
+	    printf("Draw\n");
+	} else if (dtm == 1) {
+	    printf("Illegal position\n");
+	} else if (dtm > 1) {
+	    printf("%s moves and wins in %d\n", ptm, dtm-1);
+	} else if (dtm < 0) {
+	    printf("%s wins in %d\n", pntm, pntm_offset-dtm-1);
+	}
+
+    } else if (tb->format.flag_type != FORMAT_FLAG_NONE) {
+	boolean flag = get_flag(tb, index);
+
+	if (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) {
+	    if (flag) printf("White wins\n");
+	    else printf("Black wins or draws\n");
+	} else {
+	    if (flag) printf("White wins or draws\n");
+	    else printf("Black wins\n");
+	}
+
+    } else {
+	printf("NO SCORE AVAILABLE\n");
     }
 }
 
@@ -12281,7 +12297,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.522 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.523 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
