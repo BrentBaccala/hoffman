@@ -779,7 +779,7 @@ int verbose = 1;
  * a single move.
  */
 
-/* #define DEBUG_MOVE 34061 */
+/* #define DEBUG_MOVE 1602726 */
 
 /* #define DEBUG_FUTUREMOVE 798 */
 
@@ -4866,7 +4866,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.525 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.526 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6714,13 +6714,12 @@ void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
 
 void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
 {
-    /* This kind of position is "illegal" in the chess sense - PNTM's king can be captured.  The
-     * design of Hoffman is simplified somewhat by treating this as a legal position, and then back
-     * propagating from it to determine the true checkmate positions, one ply earlier, that can't
-     * avoid this kind of illegal position.  DTM is one here - PTM wins.
+    /* This kind of position is "illegal" in the chess sense - PNTM's king can be captured.  We
+     * don't count moves into check as part of "movecnt", so we don't want to back propagate from
+     * this position.  So we just flag it as a propagated win and DTM to one here - PTM wins.
      */
 
-    initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, 1);
+    initialize_entry(tb, index, MOVECNT_PTM_WINS_PROPED, 1);
 
     /* total_PNTM_mated_positions ++; */
     (void) __sync_fetch_and_add(&total_PNTM_mated_positions, 1);
@@ -7086,7 +7085,8 @@ void insert_at_propentry(int propentry, proptable_entry_t * pentry)
 
 #ifdef DEBUG_MOVE
     if (get_propentry_index(pentry) == DEBUG_MOVE)
-	fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) pentry), *(((uint64 *) pentry) + 1));
+	fprintf(stderr, "Propentry: " UINT64_HEX_FORMAT " " UINT64_HEX_FORMAT "\n",
+		*((uint64 *) pentry), *(((uint64 *) pentry) + 1));
 #endif
 }
 
@@ -7513,7 +7513,7 @@ void proptable_pass(int target_dtm)
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE)
-		fprintf(stderr, "Commiting sorting element 1: %llx %llx <-%d\n",
+		fprintf(stderr, "Commiting sorting element 1: " UINT64_HEX_FORMAT " " UINT64_HEX_FORMAT " <-%d\n",
 			*((uint64 *) SORTING_NETWORK_ELEM(1)), *(((uint64 *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
 #endif
 
@@ -7892,7 +7892,8 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE)
-	    fprintf(stderr, "Propentry: %llx %llx\n", *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
+	    fprintf(stderr, "Propentry: " UINT64_HEX_FORMAT " " UINT64_HEX_FORMAT "\n",
+		    *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
 #endif
 
 	insert_into_proptable(ptr);
@@ -10490,7 +10491,9 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 
 #ifdef DEBUG_MOVE
     if (current_index == DEBUG_MOVE)
-	printf("propagate_one_minimove_within_table:  current_index=%d; dtm=%d\n", current_index, dtm);
+	printf("propagate_one_minimove_within_table:  current_index="
+	       INDEX_T_DECIMAL_FORMAT "; future_index=" INDEX_T_DECIMAL_FORMAT "; dtm=%d\n",
+	       current_index, future_index, dtm);
 #endif
 
     /* Parent position is the FUTURE position.  We now back-propagate to
@@ -12328,7 +12331,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.525 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.526 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
