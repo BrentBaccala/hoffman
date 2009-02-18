@@ -4866,7 +4866,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.526 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.527 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6614,13 +6614,6 @@ inline int get_flag(tablebase_t *tb, index_t index)
     return get_unsigned_field(fetch_entry_pointer(tb, index),
 			      1,
 			      tb->format.flag_offset + ((index << tb->format.bits) % 8));
-}
-
-inline int get_entry_flag(index_t index)
-{
-    return get_unsigned_field(fetch_current_entry_pointer(index),
-			      1,
-			      ENTRIES_FORMAT_FLAG_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
 }
 
 inline short does_PTM_win(index_t index)
@@ -11685,8 +11678,6 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     char str[16];
     char entrybuf[MAX_FORMAT_BYTES];
     void *entry = entrybuf;
-    int dtm;
-    int raw_dtm;
 
 #ifdef HAVE_LIBFTP
     if (strncmp(filename, "ftp:", 4) == 0) {
@@ -11745,21 +11736,14 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
     for (index = 0; index <= tb->max_index; index ++) {
 
-	dtm = get_entry_DTM(index);
-	raw_dtm = get_entry_raw_DTM(index);
+	/* Right now, there's only two possible fields in the tablebase format itself (as opposed to
+	 * the intermediate entries and proptable formats) - dtm and flag.
+	 */
 
 	if (tb->format.dtm_bits > 0) {
-	    /* If we're saving movecnt, then use the raw DTM, else "cook" it. */
 	    set_signed_field(entry, tb->format.dtm_mask,
 			     tb->format.dtm_offset + ((index << tb->format.bits) % 8),
-			     (tb->format.movecnt_bits > 0) ? raw_dtm : dtm);
-	}
-
-	if (tb->format.movecnt_bits > 0) {
-	    int movecnt = get_entry_movecnt(index);
-	    set_unsigned_field(entry, tb->format.movecnt_mask,
-			       tb->format.movecnt_offset + ((index << tb->format.bits) % 8),
-			       movecnt);
+			     get_entry_DTM(index));
 	}
 
 	switch (tb->format.flag_type) {
@@ -12331,7 +12315,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.526 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.527 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
