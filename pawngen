@@ -22,6 +22,12 @@ $LIST_SEPARATOR = undef;
 
 my $url_prefix;
 
+# Upper limit on number of positions we'll assign to a single control file.  Hardwired now at 1 Gig.
+# Would like this to become a command-line option.  Would like to take size of entries table and
+# futuremoves table into account.
+
+my $positions_upper_limit = 1024*1024*1024;
+
 my %piece_names;
 
 $piece_names{'K'} = "king";
@@ -622,12 +628,18 @@ sub genset {
     my @white_pieces = unpack "(a1)*", $white_pieces;
     my @black_pieces = unpack "(a1)*", $black_pieces;
 
-    # We'll multiply the number of pawn positions by 64 ^ (number of fully mobile pieces) to get a
-    # count of the number of positions.  We do the kings separately, since there's only 3612 legal
-    # king position pairs, as opposed to the naive 64^2 = 4096, and multiply by two to handle
-    # side-to-move.
+    # Ignoring pawns for the moment, figure how many positions we've got just from the pieces.  This
+    # is roughly 64 ^ (number of fully mobile pieces), though we do the kings separately, since
+    # there's only 3612 legal king position pairs, as opposed to the naive 64^2 = 4096, and multiply
+    # by two to handle side-to-move.
 
-    my $KiloPositionMultiple = (1 << (6*(length($white_pieces) + length($black_pieces) - 2))) * 7224/1000;
+    my $PositionMultiple = (1 << (6*(length($white_pieces) + length($black_pieces) - 2))) * 7224;
+    my $KiloPositionMultiple = $PositionMultiple / 1024;
+
+    # Based on the number of piece positions and an upper limit on the total number of positions,
+    # compute an upper limit on the number of distinct pawn configuration.
+
+    my $count_upper_limit = int($positions_upper_limit/$PositionMultiple);
 
     # There's two different ways we can expand the location of each pawn - by turning it into a
     # plus-pawn, or by explicitly adding to its list of squares.  It's really not clear just what
@@ -677,7 +689,7 @@ sub genset {
 
 	my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
 						 $black_pieces, (sort @black_pawns));
-	if ($candidate_count >= $best_count) {
+	if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
 	    $best_count = $candidate_count;
 	    @best_white_pawns = sort @white_pawns;
 	    @best_black_pawns = isort @black_pawns;
@@ -696,7 +708,7 @@ sub genset {
 
 		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
 							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count) {
+		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
 			$best_count = $candidate_count;
 			@best_white_pawns = sort @white_pawns;
 			@best_black_pawns = isort @black_pawns;
@@ -719,7 +731,7 @@ sub genset {
 
 		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
 							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count) {
+		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
 			$best_count = $candidate_count;
 			@best_white_pawns = sort @white_pawns;
 			@best_black_pawns = isort @black_pawns;
@@ -740,7 +752,7 @@ sub genset {
 
 		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
 							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count) {
+		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
 			$best_count = $candidate_count;
 			@best_white_pawns = sort @white_pawns;
 			@best_black_pawns = isort @black_pawns;
@@ -763,7 +775,7 @@ sub genset {
 
 		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
 							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count) {
+		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
 			$best_count = $candidate_count;
 			@best_white_pawns = sort @white_pawns;
 			@best_black_pawns = isort @black_pawns;
@@ -786,7 +798,7 @@ sub genset {
 
 		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
 							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count) {
+		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
 			$best_count = $candidate_count;
 			@best_white_pawns = sort @white_pawns;
 			@best_black_pawns = isort @black_pawns;
@@ -807,7 +819,7 @@ sub genset {
 
 		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
 							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count) {
+		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
 			$best_count = $candidate_count;
 			@best_white_pawns = sort @white_pawns;
 			@best_black_pawns = isort @black_pawns;
