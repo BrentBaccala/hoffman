@@ -633,6 +633,9 @@ sub genset {
     # plus-pawn, or by explicitly adding to its list of squares.  It's really not clear just what
     # combination of these ways is best, so we try both possibilties for each file, keeping count of
     # which of them could assign the most positions, and use that at the end.
+    #
+    # When we save the positions, sort the black pawns in reverse order here so that doubled pawns
+    # appear in board order, as is (currently) required by Hoffman.
 
     my $files_in_play;
 
@@ -643,9 +646,9 @@ sub genset {
     my $num_files_in_play = length($files_in_play);
     my $file_limit = (1 << $num_files_in_play);
 
-    my $best_count = 0;
-    my @best_white_pawns;
-    my @best_black_pawns;
+    my $best_count = 1;
+    my @best_white_pawns = sort unpack "(a2)*", $white_pawns;
+    my @best_black_pawns = isort unpack "(a2)*", $black_pawns;
 
     for (my $file_types = 0; $file_types < $file_limit; $file_types ++) {
 
@@ -672,21 +675,34 @@ sub genset {
 	    $pawn .= "+" if (index($plus_files, $pawn_file) != -1);
 	}
 
+	my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
+						 $black_pieces, (sort @black_pawns));
+	if ($candidate_count >= $best_count) {
+	    $best_count = $candidate_count;
+	    @best_white_pawns = sort @white_pawns;
+	    @best_black_pawns = isort @black_pawns;
+	} elsif ($candidate_count == 0) {
+	    next;
+	}
+
 	foreach my $white_pawn (@white_pawns) {
 
 	    if (length($white_pawn) == 3) {
 
 		# A plus pawn.  Back it up as far as it can go.
 
-		if (&checkallpositions($white_pieces, (isort @white_pawns),
-				       $black_pieces, (sort @black_pawns))) {
-		    while ($white_pawn =~ /^(.[3-7])/) {
-			$white_pawn =~ tr/[3-7]/[2-6]/;
-			if (not &checkallpositions($white_pieces, (isort @white_pawns),
-						   $black_pieces, (sort @black_pawns))) {
-			    $white_pawn =~ tr/[2-6]/[3-7]/;
-			    last;
-			}
+		while ($white_pawn =~ /^(.[3-7])/) {
+		    $white_pawn =~ tr/[3-7]/[2-6]/;
+
+		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
+							     $black_pieces, (sort @black_pawns));
+		    if ($candidate_count >= $best_count) {
+			$best_count = $candidate_count;
+			@best_white_pawns = sort @white_pawns;
+			@best_black_pawns = isort @black_pawns;
+		    } elsif ($candidate_count == 0) {
+			$white_pawn =~ tr/[2-6]/[3-7]/;
+			last;
 		    }
 		}
 
@@ -698,10 +714,16 @@ sub genset {
 		    my $lastpawn = $1;
 		    $lastpawn =~ tr/[2-6]/[3-7]/;
 
-		    #last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
+		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
 		    $white_pawn .= $lastpawn;
-		    if (not &checkallpositions($white_pieces, (isort @white_pawns),
-					       $black_pieces, (sort @black_pawns))) {
+
+		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
+							     $black_pieces, (sort @black_pawns));
+		    if ($candidate_count >= $best_count) {
+			$best_count = $candidate_count;
+			@best_white_pawns = sort @white_pawns;
+			@best_black_pawns = isort @black_pawns;
+		    } elsif ($candidate_count == 0) {
 			$white_pawn = substr($white_pawn, 0, -2);
 			last;
 		    }
@@ -713,10 +735,16 @@ sub genset {
 		    my $lastpawn = $1;
 		    $lastpawn =~ tr/[3-7]/[2-6]/;
 
-		    #last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
+		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
 		    $white_pawn = $lastpawn . $white_pawn;
-		    if (not &checkallpositions($white_pieces, (isort @white_pawns),
-					       $black_pieces, (sort @black_pawns))) {
+
+		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
+							     $black_pieces, (sort @black_pawns));
+		    if ($candidate_count >= $best_count) {
+			$best_count = $candidate_count;
+			@best_white_pawns = sort @white_pawns;
+			@best_black_pawns = isort @black_pawns;
+		    } elsif ($candidate_count == 0) {
 			$white_pawn = substr($white_pawn, 2);
 			last;
 		    }
@@ -730,15 +758,18 @@ sub genset {
 
 		# A plus pawn.  Back it up as far as it can go.
 
-		if (&checkallpositions($white_pieces, (isort @white_pawns),
-				       $black_pieces, (sort @black_pawns))) {
-		    while ($black_pawn =~ /^(.[2-6])/) {
-			$black_pawn =~ tr/[2-6]/[3-7]/;
-			if (not &checkallpositions($white_pieces, (isort @white_pawns),
-						   $black_pieces, (sort @black_pawns))) {
-			    $black_pawn =~ tr/[3-7]/[2-6]/;
-			    last;
-			}
+		while ($black_pawn =~ /^(.[2-6])/) {
+		    $black_pawn =~ tr/[2-6]/[3-7]/;
+
+		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
+							     $black_pieces, (sort @black_pawns));
+		    if ($candidate_count >= $best_count) {
+			$best_count = $candidate_count;
+			@best_white_pawns = sort @white_pawns;
+			@best_black_pawns = isort @black_pawns;
+		    } elsif ($candidate_count == 0) {
+			$black_pawn =~ tr/[3-7]/[2-6]/;
+			last;
 		    }
 		}
 
@@ -750,11 +781,16 @@ sub genset {
 		    my $lastpawn = $1;
 		    $lastpawn =~ tr/[3-7]/[2-6]/;
 
-		    #last if ("@white_pawns@black_pawns" =~ /$lastpawn/);
 		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
 		    $black_pawn .= $lastpawn;
-		    if (not &checkallpositions($white_pieces, (isort @white_pawns),
-					       $black_pieces, (sort @black_pawns))) {
+
+		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
+							     $black_pieces, (sort @black_pawns));
+		    if ($candidate_count >= $best_count) {
+			$best_count = $candidate_count;
+			@best_white_pawns = sort @white_pawns;
+			@best_black_pawns = isort @black_pawns;
+		    } elsif ($candidate_count == 0) {
 			$black_pawn = substr($black_pawn, 0, -2);
 			last;
 		    }
@@ -766,31 +802,21 @@ sub genset {
 		    my $lastpawn = $1;
 		    $lastpawn =~ tr/[2-6]/[3-7]/;
 
-		    #last if ("@white_pawns@black_pawns" =~ /$lastpawn/);
 		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
 		    $black_pawn = $lastpawn . $black_pawn;
-		    if (not &checkallpositions($white_pieces, (isort @white_pawns),
-					       $black_pieces, (sort @black_pawns))) {
+
+		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
+							     $black_pieces, (sort @black_pawns));
+		    if ($candidate_count >= $best_count) {
+			$best_count = $candidate_count;
+			@best_white_pawns = sort @white_pawns;
+			@best_black_pawns = isort @black_pawns;
+		    } elsif ($candidate_count == 0) {
 			$black_pawn = substr($black_pawn, 2);
 			last;
 		    }
 		}
 	    }
-	}
-
-	# Save current configuration if it's the best.  The difference between ">=" and ">"
-	# is to prefer plus-pawns (because they are tested last) over an explicit location
-	# list.
-
-	# When we save them, sort the black pawns in reverse order here so that doubled pawns appear
-	# in board order, as is (currently) required by Hoffman.
-
-	my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
-						 $black_pieces, (sort @black_pawns));
-	if ($candidate_count >= $best_count) {
-	    $best_count = $candidate_count;
-	    @best_white_pawns = sort @white_pawns;
-	    @best_black_pawns = isort @black_pawns;
 	}
     }
 
