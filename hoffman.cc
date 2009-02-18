@@ -4866,7 +4866,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.524 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.525 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7916,10 +7916,12 @@ int propagation_pass(int target_dtm)
     index_t index;
 #endif
 
-    if (((target_dtm > 0) && (target_dtm > (ENTRIES_FORMAT_DTM_MASK >> 1)))
-	|| ((target_dtm < 0) && (target_dtm < -(ENTRIES_FORMAT_DTM_MASK >> 1)))) {
-	fatal("DTM entry field size exceeded\n");
-	terminate();
+    if (ENTRIES_FORMAT_DTM_OFFSET != -1) {
+	if (((target_dtm > 0) && (target_dtm > (ENTRIES_FORMAT_DTM_MASK >> 1)))
+	    || ((target_dtm < 0) && (target_dtm < -(ENTRIES_FORMAT_DTM_MASK >> 1)))) {
+	    fatal("DTM entry field size exceeded\n");
+	    terminate();
+	}
     }
 
     if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
@@ -11608,26 +11610,40 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 	positions_finalized_on_last_pass = 1;
     }
 
-    while ((dtm <= max_tracked_dtm) || (-dtm >= min_tracked_dtm)) {
+    /* If we're tracking DTM (i.e, if a DTM field exists in the entries format), then run at least
+     * until we've looked at all the DTM values that came in from the futurebases.
+     */
 
-	/* PTM wins */
-	if (positive_passes_needed[dtm] || (using_proptables && (positions_finalized_on_last_pass > 0)))
-	    positions_finalized_on_last_pass = propagation_pass(dtm);
-	else
-	    positions_finalized_on_last_pass = 0;
+    if (ENTRIES_FORMAT_DTM_OFFSET != -1) {
 
-	positive_passes_needed[dtm] = 0;
+	while ((dtm <= max_tracked_dtm) || (-dtm >= min_tracked_dtm)) {
 
-	/* PNTM wins */
-	if (negative_passes_needed[dtm] || (using_proptables && (positions_finalized_on_last_pass > 0)))
-	    positions_finalized_on_last_pass = propagation_pass(-dtm);
-	else
-	    positions_finalized_on_last_pass = 0;
+	    /* PTM wins */
+	    if (positive_passes_needed[dtm] || (using_proptables && (positions_finalized_on_last_pass > 0)))
+		positions_finalized_on_last_pass = propagation_pass(dtm);
+	    else
+		positions_finalized_on_last_pass = 0;
 
-	negative_passes_needed[dtm] = 0;
+	    positive_passes_needed[dtm] = 0;
 
-	dtm ++;
+	    /* PNTM wins */
+	    if (negative_passes_needed[dtm] || (using_proptables && (positions_finalized_on_last_pass > 0)))
+		positions_finalized_on_last_pass = propagation_pass(-dtm);
+	    else
+		positions_finalized_on_last_pass = 0;
+
+	    negative_passes_needed[dtm] = 0;
+
+	    dtm ++;
+	}
+
+    } else {
+
+	positions_finalized_on_last_pass = 1;
+
     }
+
+    /* Now keep running until there's nothing left to process */
 
     while (1) {
 
@@ -12312,7 +12328,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.524 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.525 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
