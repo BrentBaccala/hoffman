@@ -234,8 +234,6 @@ Such a format is more compact and requires less time to generate, but
 requires more effort to use, since care must be taken to avoid loops
 when following winning lines.
 
-{\bf Note:} Bitbases have been rarely used and remain poorly tested.
-
 {\bf Default:} 8-bit DTM.
 
 
@@ -392,20 +390,20 @@ of bits required must be a power-of-two byte boundary, i.e, 8, 16, 32,
 
 \begin{description}
 
-\item[{\tt dtm}] Exactly as specified in the {\tt format}.
+\item[{\tt dtm}] Distance-to-mate.  Required to generate a tablebase
+with a {\tt dtm} {\tt format}; otherwise useless and optional.  Can be
+used with any number of {\tt bits} (unlike the {\tt dtm} element in
+the tablebase {\tt format}, which can only have 8 or 16 {\tt bits}),
+but a fatal error will result during tablebase propagation if this
+field is too small.
 
-\item[{\tt flag}] Single-bit-only field.  Exactly as specified in the
-{\tt format}.  A {\tt type} attribute (as in {\tt format}) must be
-specified.  Should be specified instead of a {\tt dtm} field if a
-bitbase is being constructed.
-
-\item[{\tt movecnt}] Used to count the number of possible moves from a
-given position.  Has four reserved values, and must be able to count
-down to zero, so an $n$-bit {\tt movecnt} allows positions with up to
-$2^n-5$ moves.  If 8-way symmetry is in use, then many positions
-require their moves to be counted twice, effectively halving that
-number.  If positions exist with too many possible moves to fit into
-{\tt movecnt}, a fatal error will result during tablebase
+\item[{\tt movecnt}] Required. Used to count the number of possible
+moves from a given position.  Has four reserved values, and must be
+able to count down to zero, so an $n$-bit {\tt movecnt} allows
+positions with up to $2^n-5$ moves.  If 8-way symmetry is in use, then
+many positions require their moves to be counted twice, effectively
+halving that number.  If positions exist with too many possible moves
+to fit into {\tt movecnt}, a fatal error will result during tablebase
 initialization.
 
 \item[{\tt locking-bit}] Single-bit-only field.  Optional, but
