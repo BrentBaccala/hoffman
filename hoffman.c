@@ -210,14 +210,37 @@ long contended_indices = 0;
 
 /* If we're multithreaded, we use gcc 4's built-ins for atomic memory access, which are identical to
  * Intel's.  If the compiler doesn't feature these built-ins, then the simplest way to fix that is
- * to turn off multithreading, and use these #defines instead:
+ * to turn off multithreading, and use these functions here instead.  I distinguish between
+ * __sync_fetch_and_XXX and __sync_XXX because the first variant returns the original, unmodified
+ * value, and the second variant (of my own creation) returns nothing.  Naming them differently
+ * hopefully helps make the code clearer and less error prone.  We condition on
+ * HAVE_INTEL_ATOMIC_OPS instead of USE_THREADS because even if we're not using threads, the builtin
+ * functions might still be defined.
  */
 
-#ifndef USE_THREADS
-#define __sync_fetch_and_or(ptr, val) (*(ptr) |= (val))
-#define __sync_fetch_and_and(ptr, val) (*(ptr) &= (val))
-#define __sync_fetch_and_xor(ptr, val) (*(ptr) ^= (val))
-#define __sync_fetch_and_add(ptr, val) (*(ptr) += (val))
+#ifdef HAVE_INTEL_ATOMIC_OPS
+
+#define __sync_or __sync_fetch_and_or
+#define __sync_xor __sync_fetch_and_xor
+#define __sync_add __sync_fetch_and_add
+#define __sync_and __sync_fetch_and_and
+
+#else
+
+#define __sync_or(ptr, val) (*(ptr) |= (val))
+#define __sync_xor(ptr, val) (*(ptr) ^= (val))
+#define __sync_add(ptr, val) (*(ptr) += (val))
+
+#define __sync_fetch_and_and  __non_builtin_sync_fetch_and_and
+
+inline uint32 __sync_fetch_and_and(uint32 *ptr, uint32 val) {
+    uint32 tmp = *ptr;
+    *(ptr) &= (val);
+    return tmp;
+}
+
+#define __sync_and __sync_fetch_and_and
+
 #endif
 
 /* I don't have an 8-byte sync_fetch_and_add on i686, so I use this instead. */
@@ -781,7 +804,7 @@ int verbose = 1;
  * a single move.
  */
 
-/* #define DEBUG_MOVE 1602726 */
+/* #define DEBUG_MOVE 2244388 */
 
 /* #define DEBUG_FUTUREMOVE 798 */
 
@@ -1075,7 +1098,7 @@ inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
 	pthread_mutex_lock(mutex);
 
 	/* contended_locks ++; */
-	(void) __sync_fetch_and_add(&contended_locks, 1);
+	(void) __sync_add(&contended_locks, 1);
     }
 }
 
@@ -1205,6 +1228,8 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
 }
 
 
+#ifdef USE_THREADS
+
 /* lock_bit() spinlocks on a single bit, and returns non-zero if it actually had to wait for the
  * lock.
  */
@@ -1231,8 +1256,10 @@ inline void unlock_bit(uint32 *ptr, int offset)
 	ptr ++;
     }
 
-    __sync_fetch_and_xor(ptr, 1 << offset);
+    __sync_xor(ptr, 1 << offset);
 }
+
+#endif
 
 /***** MOVEMENT VECTORS *****/
 
@@ -4883,7 +4910,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.528 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.529 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6568,7 +6595,7 @@ inline void lock_entry(tablebase_t *tb, index_t index)
     if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
 	if (lock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET)) {
 	    /* contended_indices ++; */
-	    (void) __sync_fetch_and_add(&contended_indices, 1);
+	    (void) __sync_add(&contended_indices, 1);
 	}
     } else {
 	pthread_mutex_lock(&entries_lock);
@@ -6725,7 +6752,7 @@ void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
     initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, -1);
 
     /* total_legal_positions ++; */
-    (void) __sync_fetch_and_add(&total_legal_positions, 1);
+    (void) __sync_add(&total_legal_positions, 1);
 }
 
 void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
@@ -6738,7 +6765,7 @@ void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
     initialize_entry(tb, index, MOVECNT_PTM_WINS_PROPED, 1);
 
     /* total_PNTM_mated_positions ++; */
-    (void) __sync_fetch_and_add(&total_PNTM_mated_positions, 1);
+    (void) __sync_add(&total_PNTM_mated_positions, 1);
 }
 
 void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
@@ -6762,11 +6789,11 @@ void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
     } else {
 	initialize_entry(tb, index, MOVECNT_STALEMATE, 0);
 	/* total_stalemate_positions ++; */
-	(void) __sync_fetch_and_add(&total_stalemate_positions, 1);
+	(void) __sync_add(&total_stalemate_positions, 1);
     }
 
     /* total_legal_positions ++; */
-    (void) __sync_fetch_and_add(&total_legal_positions, 1);
+    (void) __sync_add(&total_legal_positions, 1);
 }
 
 void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt)
@@ -6778,7 +6805,7 @@ void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt)
     initialize_entry(tb, index, movecnt, 0);
 
     /* total_legal_positions ++; */
-    (void) __sync_fetch_and_add(&total_legal_positions, 1);
+    (void) __sync_add(&total_legal_positions, 1);
 }
 
 void initialize_entry_with_DTM(tablebase_t *tb, index_t index, int dtm)
@@ -6796,7 +6823,7 @@ void initialize_entry_with_DTM(tablebase_t *tb, index_t index, int dtm)
     }
 
     /* total_legal_positions ++; */
-    (void) __sync_fetch_and_add(&total_legal_positions, 1);
+    (void) __sync_add(&total_legal_positions, 1);
 }
 
 inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
@@ -11493,10 +11520,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	} else {
 
 	    /* total_moves += movecnt; */
-	    (void) __sync_fetch_and_add(&total_moves, movecnt);
+	    (void) __sync_add(&total_moves, movecnt);
 
 	    /* total_futuremoves += futuremovecnt; */
-	    (void) __sync_fetch_and_add(&total_futuremoves, futuremovecnt);
+	    (void) __sync_add(&total_futuremoves, futuremovecnt);
 
 	    /* What's this?  Well, diagonal symmetry is more difficult to handle than other types of
 	     * symmetry because the piece along the diagonal don't actually move when you reflect
@@ -11560,8 +11587,8 @@ void * initialize_tablebase_section(void * ptr)
 	/* *futurevectorptr &= (-1 << (current_tb->futurevector_bits + (bit_offset & 7))) | ((1 << (bit_offset & 7))-1); */
 	/* *futurevectorptr |= initialize_tablebase_entry(current_tb, index) << (bit_offset & 7); */
 
-	__sync_fetch_and_and(futurevectorptr, (-1 << (current_tb->futurevector_bits + (bit_offset & 7))) | ((1 << (bit_offset & 7))-1));
-	__sync_fetch_and_or(futurevectorptr, initialize_tablebase_entry(current_tb, index) << (bit_offset & 7));
+	__sync_and(futurevectorptr, (-1 << (current_tb->futurevector_bits + (bit_offset & 7))) | ((1 << (bit_offset & 7))-1));
+	__sync_or(futurevectorptr, initialize_tablebase_entry(current_tb, index) << (bit_offset & 7));
     }
 
     return NULL;
@@ -12401,7 +12428,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.528 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.529 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
