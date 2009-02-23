@@ -33,6 +33,19 @@ if keeping the input and output files (or some similar split) on
 seperate disks/controllers can be exploited.
 
 
+- use an FPGA
+
+Use of a Field-Programmable Gate Array (FPGA) is perhaps the single
+best performance enhancement possible with Hoffman.  Using one of the
+knjn.com boards, for example - the PCI-attached Dragon or the
+USB-attached Xylo - we could offload the compute-intensive parts to a
+pipelined coprocessor.  Initialization (where we just need to spit out
+a stream of bytes) and backpropagation (where we need to back an index
+out) could both be pipelined effectively.  Moving up to something like
+the Digilent Virtex-5 development board could make six piece
+tablebases practical.
+
+
 - investigate the Library Sort of Bender, et al. (2004)
 
 Get the paper (FUN04.pdf) on-line.  Looks like it might have
