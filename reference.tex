@@ -216,8 +216,8 @@ to specify a specific prime.
 
 \subsection{\tt <format> \ldots\quad </format>}
 
-This element specifies the format of the tablebase entries.  It has no
-attributes, and must contain exactly one of the following two
+This optional element specifies the format of the tablebase entries.
+It has no attributes, and must contain exactly one of the following
 elements:
 
 {\tt <dtm bits="8|16"/>} specifies a {\it distance to mate} metric
@@ -227,12 +227,15 @@ positions where the moving side can capture the opposing king, so a
 one byte dtm can record mate-in distances up to 126.  A two byte dtm
 has no such (practical) limitation.
 
+{\tt <basic/>} specifies a {\it bitbase} where two bits are used for
+each position, and no distance information is stored --- only an
+indication of the ultimate outcome (win, lose, or draw).  Such a format
+is more compact and requires less time to generate, but requires more
+effort to use, since care must be taken to avoid loops when following
+winning lines.
+
 {\tt <flag type="white-wins|white-draws"/>} specifies a {\it bitbase}
-where only a single bit is used for each position, and no distance
-information is stored --- only an indicator of the ultimate outcome.
-Such a format is more compact and requires less time to generate, but
-requires more effort to use, since care must be taken to avoid loops
-when following winning lines.
+where only a single bit is used for each position.
 
 {\bf Default:} 8-bit DTM.
 
