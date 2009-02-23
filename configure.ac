@@ -85,9 +85,10 @@ AM_PATH_XML2(,,AC_MSG_ERROR(You must have libxml2))
 
 dnl Check for readline
 
-AC_CHECK_LIB(readline, readline,, AC_MSG_WARN([No readline support]))
+m4_include(vl_lib_readline.m4)
+VL_LIB_READLINE
 
-if test $ac_cv_lib_readline_readline = yes; then
+if test "$ac_cv_header_readline_readline_h" = "yes"; then
    AC_SUBST([READLINE_CPPFLAGS], ["-I /usr/include/readline"])
 fi
 
