@@ -488,9 +488,10 @@ struct format {
     int flag_offset;
     int flag_type;
     int PTM_wins_flag_offset;
+    int basic_offset;
 };
 
-char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag", "ptm-wins-flag", "locking-bit", NULL};
+char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag", "ptm-wins-flag", "locking-bit", "basic", NULL};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_MOVECNT 1
@@ -499,6 +500,7 @@ char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag
 #define FORMAT_FIELD_FLAG 4
 #define FORMAT_FIELD_PTM_WINS_FLAG 5
 #define FORMAT_FIELD_LOCKING_BIT 6
+#define FORMAT_FIELD_BASIC 7
 
 char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
@@ -544,7 +546,7 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 /* This is the "one-byte-dtm" format */
 
-struct format one_byte_dtm_format = {3,1, -1, 0xff,0,8};
+struct format one_byte_dtm_format = {3,1, -1, 0xff,0,8, 0,-1,0, 0,-1,0, 0,-1,0, -1,FORMAT_FLAG_NONE, -1, -1};
 
 /* This is the two byte format we use by default for the entries table.  Equivalent to:
  *
@@ -555,7 +557,7 @@ struct format one_byte_dtm_format = {3,1, -1, 0xff,0,8};
  * </entries-format>
  */
 
-struct format default_entries_format = {4,2, 8, 0xff,0,8, 0x7f,9,7, 0,-1,0, 0,-1,0, -1,FORMAT_FLAG_NONE, -1};
+struct format default_entries_format = {4,2, 8, 0xff,0,8, 0x7f,9,7, 0,-1,0, 0,-1,0, -1,FORMAT_FLAG_NONE, -1, -1};
 
 /* And this is the sixteen byte format we use by default for proptable entries.  Equivalent to:
  *
@@ -569,7 +571,7 @@ struct format default_entries_format = {4,2, 8, 0xff,0,8, 0x7f,9,7, 0,-1,0, 0,-1
 
 struct format default_proptable_format = {7,16, -1, 0xffff,32,16, 0xff,56,8,
 					  0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
-					  -1,FORMAT_FLAG_NONE, -1};
+					  -1,FORMAT_FLAG_NONE, -1, -1};
 
 
 
@@ -3520,6 +3522,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     format->futurevector_offset = -1;
     format->flag_offset = -1;
     format->PTM_wins_flag_offset = -1;
+    format->basic_offset = -1;
 
     for (child = formatNode->children; child != NULL; child = child->next) {
 	if (child->type == XML_ELEMENT_NODE) {
@@ -3547,6 +3550,16 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		}
 		if (bits != 1) {
 		    fatal("Format field '%s' only accepts bits=\"1\"\n", (char *) child->name);
+		    return 0;
+		}
+	    }
+
+	    if (format_field == FORMAT_FIELD_BASIC) {
+		if (bitstr == NULL) {
+		    bits = 2;
+		}
+		if (bits != 2) {
+		    fatal("Format field '%s' only accepts bits=\"2\"\n", (char *) child->name);
 		    return 0;
 		}
 	    }
@@ -3634,6 +3647,9 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		    return 0;
 		}
 		break;
+	    case FORMAT_FIELD_BASIC:
+		format->basic_offset = offset;
+		break;
 	    case FORMAT_FIELD_PTM_WINS_FLAG:
 		format->PTM_wins_flag_offset = offset;
 		break;
@@ -3680,14 +3696,15 @@ char * print_format(char *name, struct format *format)
 
     snprintf(outstr, sizeof(outstr),
 	     "   const struct format %s = {%d,%d, %d, " UINT32_HEX_FORMAT ",%d,%d, " UINT32_HEX_FORMAT ",%d,%d, "
-	     UINT32_HEX_FORMAT ",%d,%d, " UINT64_HEX_FORMAT ",%d,%d, %d,%d, %d};\n",
+	     UINT32_HEX_FORMAT ",%d,%d, " UINT64_HEX_FORMAT ",%d,%d, %d,%d, %d, %d};\n",
 
 	     name, format->bits, format->bytes, format->locking_bit_offset,
 	     format->dtm_mask, format->dtm_offset, format->dtm_bits,
 	     format->movecnt_mask, format->movecnt_offset, format->movecnt_bits,
 	     format->index_mask, format->index_offset, format->index_bits,
 	     format->futurevector_mask, format->futurevector_offset, format->futurevector_bits,
-	     format->flag_offset, format->flag_type, format->PTM_wins_flag_offset);
+	     format->flag_offset, format->flag_type, format->PTM_wins_flag_offset,
+	     format->basic_offset);
 
     return outstr;
 }
@@ -4866,7 +4883,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.527 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.528 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5412,12 +5429,12 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
      * white-wins-or-draws-positions.
      */
 
-    if ((tb->format.dtm_bits > 0) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
+    if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, player_wins[0]);
 	xmlNewChild(node, NULL, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
     }
-    if (tb->format.dtm_bits > 0) {
+    if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, player_wins[1]);
 	xmlNewChild(node, NULL, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
@@ -6614,6 +6631,12 @@ inline int get_flag(tablebase_t *tb, index_t index)
     return get_unsigned_field(fetch_entry_pointer(tb, index),
 			      1,
 			      tb->format.flag_offset + ((index << tb->format.bits) % 8));
+}
+
+inline int get_basic(tablebase_t *tb, index_t index)
+{
+    return get_unsigned_field(fetch_entry_pointer(tb, index), 3,
+			      tb->format.basic_offset + ((index << tb->format.bits) % 8));
 }
 
 inline short does_PTM_win(index_t index)
@@ -8016,6 +8039,18 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	    insert_or_commit_propentry(current_index, -dtm, movecnt, futuremove);
 	} else if (dtm < 0) {
 	    insert_or_commit_propentry(current_index, -dtm+1, movecnt, futuremove);
+	} else {
+	    insert_or_commit_propentry(current_index, 0, movecnt, futuremove);
+	}
+
+    } else if (futurebase->format.basic_offset != -1) {
+
+	int basic = get_basic(futurebase, future_index);
+
+	if (basic == 1) {
+	    insert_or_commit_propentry(current_index, -2, movecnt, futuremove);
+	} else if (basic == 2) {
+	    insert_or_commit_propentry(current_index, 2, movecnt, futuremove);
 	} else {
 	    insert_or_commit_propentry(current_index, 0, movecnt, futuremove);
 	}
@@ -11736,14 +11771,33 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
     for (index = 0; index <= tb->max_index; index ++) {
 
-	/* Right now, there's only two possible fields in the tablebase format itself (as opposed to
-	 * the intermediate entries and proptable formats) - dtm and flag.
+	/* Right now, there's only three possible fields in the tablebase format itself (as opposed
+	 * to the intermediate entries and proptable formats) - dtm, basic, and flag.
 	 */
 
 	if (tb->format.dtm_bits > 0) {
 	    set_signed_field(entry, tb->format.dtm_mask,
 			     tb->format.dtm_offset + ((index << tb->format.bits) % 8),
 			     get_entry_DTM(index));
+	}
+
+	if (tb->format.basic_offset != -1) {
+	    int basic;
+
+	    /* "3" is reserved to flag an illegal position, but we don't do that now, because we
+	     * don't distinguish illegal positions from draws - see initialize_entry_as_illegal()
+	     */
+
+	    if (does_PTM_win(index)) {
+		basic = 1;
+	    } else if (does_PNTM_win(index)) {
+		basic = 2;
+	    } else {
+		basic = 0;
+	    }
+	    set_unsigned_field(entry, 3,
+			       tb->format.basic_offset + ((index << tb->format.bits) % 8),
+			       basic);
 	}
 
 	switch (tb->format.flag_type) {
@@ -12159,6 +12213,26 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		    }
 		}
 
+		if (tb->format.basic_offset != -1) {
+
+		    int basic = get_basic(tb, index);
+		    static char * basic_meaning[3] = {"draw", "PTM wins", "PNTM wins"};
+
+		    if (global.side_to_move == BLACK) score *= -1;
+
+		    if ((basic != 2) && (score < 0)) {
+			fprintf(stderr, "%s (%d): Nalimov says PNTM wins, but we say %s\n",
+				global_position_to_FEN(&global), index, basic_meaning[basic]);
+		    } else if ((basic != 1) && (score > 0)) {
+			fprintf(stderr, "%s (%d): Nalimov says PTM wins, but we say %s\n",
+				global_position_to_FEN(&global), index, basic_meaning[basic]);
+		    } else if ((basic != 0) && (score == 0)) {
+			fprintf(stderr, "%s (%d): Nalimov says draw, but we say %s\n",
+				global_position_to_FEN(&global), index, basic_meaning[basic]);
+		    }
+
+		}
+
 		if (tb->format.flag_type != FORMAT_FLAG_NONE) {
 
 		    boolean flag = get_flag(tb, index);
@@ -12224,6 +12298,18 @@ void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm, int pntm
 	    printf("%s moves and wins in %d\n", ptm, dtm-1);
 	} else if (dtm < 0) {
 	    printf("%s wins in %d\n", pntm, pntm_offset-dtm-1);
+	}
+
+    } else if (tb->format.basic_offset != -1) {
+
+	int basic = get_basic(tb, index);
+
+	if (basic == 1) {
+	    printf("%s wins\n", ptm);
+	} else if (basic == 2) {
+	    printf("%s wins\n", pntm);
+	} else {
+	    printf("Draw\n");
 	}
 
     } else if (tb->format.flag_type != FORMAT_FLAG_NONE) {
@@ -12315,7 +12401,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.527 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.528 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
