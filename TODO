@@ -1,4 +1,38 @@
 
+- handle more than two identical pieces
+
+With this current restriction, we can't create tablebases like kpppkr.
+This would make Hoffman fully as powerful as the Nalimov program.
+Actually, can't handle more than two identical pieces "with
+overlapping move restrictions", so we're able to process tablebases
+with a bunch of pawns in them, so long as no more than two of them
+overlap (in terms of what squares they can be one).  Nevertheless,
+I've moved this item to the top of the TODO list because it is
+currently the program's single greatest obstacle to handling the kinds
+of positions that actually come up in practice.  Currently, when
+"normalizing" a position, the program considers swapping the two
+identical pieces to get them onto legal squares.  With more than two
+pieces, it should consider all possible permutations, which is
+probably best handled by created a table of permutations during
+initialization, then running through the table when attempting
+normalization.
+
+
+- verify futurebase format compatibility
+
+There are actually hidden bugs here, because we don't ensure that
+futurebase formats are consistent with the one we are trying to
+generate.  For example, if we're trying to generate a 'flag' format,
+we have to make sure that any flags in the futurebases are of the
+correct "sense"... and that sense is inverted if the futurebase is
+inverted!  Also, as a sanity check, I think we shouldn't allow 'dtm'
+metrics to be created from 'flag' or 'basic' futurebases... because
+they're not really distance-to-mates!  Instead, let's go ahead and add
+a 'dtc' (distance-to-conversion) metric or maybe 'dtf'
+(distance-to-futurebase) would be a better name, to handle back
+propagation with distances from futurebases that have none.
+
+
 - general speed improvements
 
 The program can operate in two modes (in-memory or proptables), and
@@ -213,12 +247,6 @@ I don't have), this shouldn't been difficult.  Also consider that
 Hoffman tablebases are (currently) much bigger than Nalimov
 tablebases, and fully 1TB of storage is required for a full set of
 6-piece Nalimovs.
-
-
-- handle more than two identical pieces
-
-With this current restriction, we can't create tablebases like kpppkr.
-This would make Hoffman fully as powerful as the Nalimov program.
 
 
 - restrict range of indices we look at during a backprop
