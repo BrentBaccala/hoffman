@@ -341,6 +341,12 @@ futurevector handling) of non-word-aligned word accesses.  I doubt it
 would run on a SPARC.
 
 
+- pawngen
+
+Check for conflicting prune statements, so we don't have to wait until
+we get into a hoffman run before we find out about them.
+
+
 - revisit all the XXXs
 
   - check for movecnt overflow when merging proptable entries
