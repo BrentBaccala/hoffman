@@ -220,7 +220,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.8 $ $Locker: baccala $
+Hoffman $Revision: 1.9 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -245,7 +245,7 @@ Hoffman $Revision: 1.8 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.8 $ $Locker: baccala $</program>
+      <program>Hoffman $Revision: 1.9 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -320,7 +320,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.8 $ $Locker: baccala $
+Hoffman $Revision: 1.9 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -557,7 +557,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.8 $ $Locker: baccala $
+Hoffman $Revision: 1.9 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
@@ -665,7 +665,7 @@ generate an error:
 
 \begin{verbatim}
 C> ./hoffman -o fine67.htb -g fine67.xml
-Hoffman $Revision: 1.8 $ $Locker: baccala $
+Hoffman $Revision: 1.9 $ $Locker: baccala $
 Malloced 40MB for tablebase entries
 'kpk.htb': Too many missing pieces in futurebase
 Futurebase preload failed: 'kpk.htb'
@@ -694,7 +694,7 @@ tablebases.  Once this is done, we use Hoffman to probe the tablebases:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.521 $ $Locker:  $
+Hoffman $Revision: 1.9 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
@@ -801,7 +801,7 @@ output tablebases can be queried for the original position:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.521 $ $Locker:  $
+Hoffman $Revision: 1.9 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
@@ -830,6 +830,16 @@ FEN or move?
 Again, we show a white win with {\tt b4}.  This time, however, we know
 that this is actually a white {\it win} and not just a queening
 solution.
+
+{\tt fine67b.xml} is a slight variant on this analysis that uses the
+{\tt basic} format type and an appropriate {\tt entries-format} to
+generate a {\it bitbase} --- a tablebase that records only win, lose,
+or draw information, without the distances we've seen so far in all of
+these examples.  A bitbase is more compact to store, faster to
+generate, and (thanks to the custom {\tt entries-format}) uses about
+half as much memory during generation.  Its generation is also more
+predictable, as there is no chance of overflowing its {\tt dtm} field,
+which would result in a fatal error fairly deep into its calculation.
 
 Pawngen currently accepts only a subset of Hoffman's XML syntax --- no
 {\tt location} attributes are allowed on any non-pawns, and pawns must
