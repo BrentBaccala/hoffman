@@ -346,6 +346,12 @@ would run on a SPARC.
 Check for conflicting prune statements, so we don't have to wait until
 we get into a hoffman run before we find out about them.
 
+Add ability to restrict piece locations.  This should let us do the
+fortress example with a single control file.
+
+Add 'freeze' pruning type for promotions - promote and freeze new
+piece on the promotion square.
+
 
 - revisit all the XXXs
 
