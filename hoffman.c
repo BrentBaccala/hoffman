@@ -1158,8 +1158,13 @@ inline void set_signed_field(uint32 *ptr, uint32 mask, int offset, int val)
     }
 #endif
 
-    *ptr &= (~ (mask << offset));
-    *ptr |= (val & mask) << offset;
+    /* These operations have to be atomic, since the computer uses 32 or 64 bit words, and those
+     * words will contain other entries that other threads may be working on, even though this entry
+     * will be locked by the current thread.
+     */
+
+    __sync_and(ptr, ~ (mask << offset));
+    __sync_or(ptr, (val & mask) << offset);
 }
 
 inline unsigned int get_unsigned_field(uint32 *ptr, uint32 mask, int offset)
@@ -1188,8 +1193,8 @@ inline void set_unsigned_field(uint32 *ptr, uint32 mask, int offset, unsigned in
 	fatal("value too large in set_unsigned_field\n");
     }
 #endif
-    *ptr &= (~ (mask << offset));
-    *ptr |= (val & mask) << offset;
+    __sync_and(ptr, ~ (mask << offset));
+    __sync_or(ptr, (val & mask) << offset);
 }
 
 inline uint64 get_unsigned64bit_field(void *fieldptr, uint64 mask, int offset)
@@ -1223,8 +1228,8 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
     }
 #endif
 
-    *ptr &= (~ (mask << offset));
-    *ptr |= (val & mask) << offset;
+    __sync_and(ptr, ~ (mask << offset));
+    __sync_or(ptr, (val & mask) << offset);
 }
 
 
@@ -4910,7 +4915,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.529 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.530 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12428,7 +12433,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.529 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.530 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
