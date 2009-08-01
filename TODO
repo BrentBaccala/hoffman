@@ -18,6 +18,18 @@ initialization, then running through the table when attempting
 normalization.
 
 
+- a testsuite
+
+Initially, I used the Nalimov tablebases to check Hoffman tablebases
+for accuracy, but as Hoffman has become more sophisticated, this
+solution is less and less acceptable.  Hoffman needs a capability to
+check a tablebase for integrity - Are all of its XML statistics
+correct?  Are all of the DTM values in its entries internally
+consistent?  Are they consistent with its futurebases?  This new
+feature should be used within a dejagnu framework to systematically
+verify program operation within as few runs as feasible.
+
+
 - verify futurebase format compatibility
 
 There are actually hidden bugs here, because we don't ensure that
@@ -125,6 +137,19 @@ in the code depend on the side-to-move flag being LSB; they need to be
 found, investigated, and made more flexible.  Then we can add a
 <side-to-move-flag/> element to the XML, that gets put into the pieces
 list at the position that we'd like the flag to be.
+
+Also, we could use a modified gzip library that lets us flag certain
+bytes as 'irrelevant', which instructs the library to fill these bytes
+using the shortest possible encoding.  There's always going to be
+illegal positions, no matter how cleaver our encoding scheme.
+
+Another idea would be to store DTM information for only positive DTMs.
+The negative DTMs would have to be interpolated at decode time, and
+their positions in the tablebase file would be filled with a common
+(and thus easily compressed) value.  Nalimov uses a variant of this
+idea by splitting tablebases into two separate files depending on the
+side-to-move.  This idea could be expanded by only storing DTM
+information modulo some settable number.
 
 
 - ability to reformat tablebases
@@ -351,6 +376,17 @@ fortress example with a single control file.
 
 Add 'freeze' pruning type for promotions - promote and freeze new
 piece on the promotion square.
+
+
+- random access to tablebase files
+
+Would require a modified gzip format.  Nalimov used a variant of
+Lempel-Ziv developed by Andrew Kadatch; I'm not sure how it works.
+Maybe preprocess the file to develop a single, constant Huffman table
+and store it at the beginning of the file along with a table of byte
+offsets that can be binary searched to figure where in the file you
+need to start decompressing.  Other people have looked at this; a
+literature search seems to be in order.
 
 
 - revisit all the XXXs
