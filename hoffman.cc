@@ -1211,6 +1211,8 @@ inline uint64 get_unsigned64bit_field(void *fieldptr, uint64 mask, int offset)
     return (*ptr >> offset) & mask;
 }
 
+#if !defined(USE_THREADS) || defined(HAVE_SYNC_FETCH_AND_ADD_8)
+
 inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uint64 val)
 {
     uint64 *ptr = (uint64 *)fieldptr;
@@ -1222,15 +1224,40 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
 	ptr ++;
     }
 
-#if 0
-    if (val > mask) {
-	fatal("value too large in set_unsigned_field\n");
-    }
-#endif
-
     __sync_and(ptr, ~ (mask << offset));
     __sync_or(ptr, (val & mask) << offset);
 }
+
+#else
+
+/* If we're multi-threaded and don't have __sync_fetch_and_add_8, then we're unlikely to have
+ * __sync_fetch_and_and_8 or __sync_fetch_and_or_8 (though we didn't check for them explicitly), so
+ * the above code won't work (it depends on atomic 64-bit accesses).  Emulate instead.
+ *
+ * XXX This is one of several places in the program where we could get into trouble running on
+ * either a big-endian architecture on one with stringent word alignment requirements.
+ */
+
+inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uint64 val)
+{
+    uint64 *ptr = (uint64 *)fieldptr;
+
+    /* if (offset == -1) return; */
+
+    while (offset >= 64) {
+	offset -= 64;
+	ptr ++;
+    }
+
+    if (offset < 32) {
+	set_unsigned_field((uint32 *)ptr, mask & 0xffffffff, offset, val & 0xffffffff);
+    }
+    if ((mask >> 32) != 0) {
+	set_unsigned_field(((uint32 *)ptr)+1, mask >> 32, offset - 32, val >> 32);
+    }
+}
+
+#endif
 
 
 #ifdef USE_THREADS
@@ -4915,7 +4942,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.530 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.531 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12433,7 +12460,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.530 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.531 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
