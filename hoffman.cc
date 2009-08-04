@@ -4942,7 +4942,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.531 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.532 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6997,18 +6997,20 @@ void back_propagate_index(index_t index, int target_dtm)
 	if (current_tb->symmetry == 8) {
 	    back_propagate_index_within_table(current_tb, index, REFLECTION_DIAGONAL);
 	}
-	positions_finalized[total_passes] ++;
 
-	/* Track "player wins" statistics.  We don't want to count illegal (PNTM mated)
-	 * positions, so we don't increment anything if DTM is 1.
+	/* Track statistics.  If we're multi-threaded, we need to make sure these increments are
+	 * done atomically.  For the "player wins" statistics, we don't want to count illegal (PNTM
+	 * mated) positions, so we don't increment anything if DTM is 1.
 	 */
+
+	(void) __sync_add(&positions_finalized[total_passes], 1);
 
 	if (get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED) {
 	    set_entry_movecnt(index, MOVECNT_PTM_WINS_PROPED);
-	    if (target_dtm > 1) player_wins[index_to_side_to_move(current_tb, index)] ++;
+	    if (target_dtm > 1) (void) __sync_add(&player_wins[index_to_side_to_move(current_tb, index)], 1);
 	} else {
 	    set_entry_movecnt(index, MOVECNT_PNTM_WINS_PROPED);
-	    player_wins[1 - index_to_side_to_move(current_tb, index)] ++;
+	    (void) __sync_add(&player_wins[1 - index_to_side_to_move(current_tb, index)], 1);
 	}
 
     }
@@ -12460,7 +12462,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.531 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.532 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
