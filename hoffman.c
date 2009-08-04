@@ -663,6 +663,7 @@ typedef struct tablebase {
     index_t modulus;
     int white_king;
     int black_king;
+    int positions_with_adjacent_kings_are_illegal;
 
     int symmetry;
     int total_legal_piece_positions[MAX_PIECES];
@@ -1914,11 +1915,8 @@ void verify_movements()
  * on the type of index we're using for a particular tablebase.  These functions are used
  * extensively during all types of back propagation.
  *
- * local_position_to_index() also updates the position's board_vector (which doesn't have to be
- * valid going in), but not the PTM_vector.  It does this to check for illegal en passant positions.
- * It returns either an index into the table, or -1 if the position is illegal.
- *
- * Actually, it doesn't update the board vector anymore because we work on a copy of the position.
+ * local_position_to_index() returns either an index into the table, or -1 if the position is
+ * illegal.  The only change it makes to the position is to set the multiplicity.
  *
  * index_to_local_position(), given an index, fills in a board position.  Obviously has to correspond
  * to local_position_to_index() and it's a big bug if it doesn't.  The boolean that gets returned is
@@ -1935,8 +1933,6 @@ void verify_movements()
  * futuremove, then it'd better lead to a legal position, because we'll never backprop from an
  * illegal one, and that would imbalance the forward and reverse move counting.  For speed purposes,
  * the move counting code currently does not actually check positions to see if they are illegal.
- * So we can't, for example, flag positions with adjacent kings as illegal without updating that
- * code.
  *
  * En passant.  This is another case where subtle concepts of "legality" show up.  When we back
  * propagate a local position from either a futurebase or intratable, we generate en passant
@@ -3179,10 +3175,13 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
     index_t index;
     int piece;
 
-#if CHECK_KING_LEGALITY_EARLY
-    if (! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
+    /* This is a good place to make this check, since all of the position-to-index code passes
+     * through here.
+     */
+
+    if (tb->positions_with_adjacent_kings_are_illegal
+	&& ! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
 	return -1;
-#endif
 
     if ((tb->index_type == NO_EN_PASSANT_INDEX) && (position->en_passant_square != -1))
 	return -1;
@@ -3341,10 +3340,14 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 	}
     }
 
-#if CHECK_KING_LEGALITY_EARLY
-    if (! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
+    /* Some of the index types (like 'compact' and 'no-en-passant') never return adjacent kings
+     * because they detected the positions_with_adjacent_kings_are_illegal flag during
+     * initialization.  The other index types require this check.
+     */
+
+    if (tb->positions_with_adjacent_kings_are_illegal
+	&& ! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
 	return 0;
-#endif
 
     if ((tb->symmetry == 8)
 	&& (ROW(position->piece_position[tb->white_king]) == COL(position->piece_position[tb->white_king]))
@@ -3895,6 +3898,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	fatal("Too many pieces!\n");
 	return NULL;
     }
+
+    tb->positions_with_adjacent_kings_are_illegal = 1;
 
     tb->num_pieces = result->nodesetval->nodeNr;
 
@@ -4569,9 +4574,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
 		if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
 		    && (ROW(black_king_square) > COL(black_king_square))) continue;
-#if CHECK_KING_LEGALITY_EARLY
-		if (! check_king_legality(white_king_square, black_king_square)) continue;
-#endif
+
+		if (tb->positions_with_adjacent_kings_are_illegal
+		    && ! check_king_legality(white_king_square, black_king_square)) continue;
+
 		tb->compact_white_king_positions[tb->total_legal_compact_king_positions] = white_king_square;
 		tb->compact_black_king_positions[tb->total_legal_compact_king_positions] = black_king_square;
 		tb->compact_king_indices[white_king_square][black_king_square] = tb->total_legal_compact_king_positions;
@@ -4651,9 +4657,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
 		if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
 		    && (ROW(black_king_square) > COL(black_king_square))) continue;
-#if CHECK_KING_LEGALITY_EARLY
-		if (! check_king_legality(white_king_square, black_king_square)) continue;
-#endif
+
+		if (tb->positions_with_adjacent_kings_are_illegal
+		    && ! check_king_legality(white_king_square, black_king_square)) continue;
+
 		tb->compact_white_king_positions[tb->total_legal_compact_king_positions] = white_king_square;
 		tb->compact_black_king_positions[tb->total_legal_compact_king_positions] = black_king_square;
 		tb->compact_king_indices[white_king_square][black_king_square] = tb->total_legal_compact_king_positions;
@@ -4942,7 +4949,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.532 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.533 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11154,17 +11161,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
 
-#if CHECK_KING_LEGALITY_EARLY
-			if (piece == tb->white_king) {
-			    if (! check_king_legality(movementptr->square,
-						      position.piece_position[tb->black_king])) continue;
-			}
-			if (piece == tb->black_king) {
-			    if (! check_king_legality(movementptr->square,
-						      position.piece_position[tb->white_king])) continue;
-			}
-#endif
-
 			/* Completely discard king moves into check by frozen pieces */
 
 			if ((piece == tb->white_king)
@@ -11221,26 +11217,17 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		    }
 
 		    /* Now check to see if the movement ended because we hit against another piece
-		     * of the opposite color.  If so, add another move for the capture.
+		     * of the opposite color.  If so, add another move for the capture.  As before,
+		     * ignore moves into check.
 		     *
 		     * Actually, we check to see that we DIDN'T hit a piece of our OWN color.  The
 		     * difference is that this way we don't register a capture if we hit the end of
 		     * the list of movements in a given direction.
 		     *
 		     * We also check to see if the capture was against the enemy king! in which case
-		     * this position is a "mate in 0" (i.e, illegal)
+		     * this position is a PNTM-mated.
 		     */
 
-#if CHECK_KING_LEGALITY_EARLY
-		    if (piece == tb->white_king) {
-			if (! check_king_legality(movementptr->square, position.piece_position[tb->black_king]))
-			    continue;
-		    }
-		    if (piece == tb->black_king) {
-			if (! check_king_legality(movementptr->square, position.piece_position[tb->white_king]))
-			    continue;
-		    }
-#endif
 		    /* Completely discard king moves into check by frozen pieces */
 
 		    if ((piece == tb->white_king)
@@ -12462,7 +12449,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.532 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.533 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
