@@ -1,4 +1,6 @@
 
+HOFFMAN ?= ./hoffman
+
 CFLAGS= @CFLAGS@ @READLINE_CPPFLAGS@ @XML_CPPFLAGS@ @CURL_CFLAGS@
 
 hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@
@@ -54,9 +56,8 @@ proptables.pdf: proptables.tex proptables-fig1.eps
 proptables-fig1.eps: proptables-fig1.fig
 	fig2dev -L eps proptables-fig1.fig proptables-fig1.eps
 
-#%.htb: %.xml
-#	./hoffman -g -o $@ $<
-#	./hoffman -v -n Nalimov $@
+%.htb: %.xml
+	$(HOFFMAN) -g -o $@ $<
 
 # %.htb.gz: %.xml
 #	./hoffman -g -o $*.htb $<
