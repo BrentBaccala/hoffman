@@ -533,13 +533,20 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 #define MAX_FORMAT_BYTES 16
 
 /* entries_format is the format that we use for in-memory tablebase arrays, and proptable_format is
- * the format for proptable entries.  They're 'const' for efficiency, and in a separate file for
- * convenience.
- *
- * If the program wants them changed, it will let you know ;-)
+ * the format for proptable entries.  Basically, the are C structures whose fields can be adjusted
+ * at run-time.  If USE_CONST_FORMATS is set, then they're set at compile-time: 'const' for
+ * efficiency, in a separate file for convenience, and if the program wants them changed, it will
+ * let you know ;-)
  */
 
+#define USE_CONST_FORMATS 0
+
+#if USE_CONST_FORMATS
 #include "formats.h"
+#else
+struct format entries_format;
+struct format proptable_format;
+#endif
 
 #define ENTRIES_FORMAT_BITS (entries_format.bits)
 #define ENTRIES_FORMAT_BYTES (entries_format.bytes)
@@ -4345,16 +4352,18 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		fatal("Entries format must contain a movecnt field\n");
 		return NULL;
 	    }
-	    if (memcmp(&specified_entries_format, &entries_format, sizeof(struct format))) {
-		fatal("Specified entries format incompatible with compiled-in format\n");
-		format_mismatch = 1;
-	    }
-	} else {
-	    if (memcmp(&default_entries_format, &entries_format, sizeof(struct format))) {
-		fatal("Default entries format incompatible with compiled-in format\n");
-		format_mismatch = 1;
-	    }
 	}
+
+#if USE_CONST_FORMATS
+	if (memcmp(&specified_entries_format, &entries_format, sizeof(struct format))) {
+	    fatal("%s entries format incompatible with compiled-in format\n",
+		  (result->nodesetval->nodeNr == 1) ? "Specified" : "Default");
+	    format_mismatch = 1;
+	}
+#else
+	memcpy(&entries_format, &specified_entries_format, sizeof(struct format));
+#endif
+
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
 
@@ -4368,16 +4377,18 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		fatal("Proptable format must contain an index field\n");
 		return NULL;
 	    }
-	    if (memcmp(&specified_proptable_format, &proptable_format, sizeof(struct format))) {
-		fatal("Specified proptable format incompatible with compiled-in format\n");
-		format_mismatch = 1;
-	    }
-	} else {
-	    if (memcmp(&default_proptable_format, &proptable_format, sizeof(struct format))) {
-		fatal("Default proptable format incompatible with compiled-in format\n");
-		format_mismatch = 1;
-	    }
 	}
+
+#if USE_CONST_FORMATS
+	if (memcmp(&default_proptable_format, &proptable_format, sizeof(struct format))) {
+	    fatal("%s proptable format incompatible with compiled-in format\n",
+		  (result->nodesetval->nodeNr == 1) ? "Specified" : "Default");
+	    format_mismatch = 1;
+	}
+#else
+	memcpy(&proptable_format, &specified_proptable_format, sizeof(struct format));
+#endif
+
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
 
@@ -4948,7 +4959,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.535 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.536 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12499,7 +12510,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.535 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.536 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
