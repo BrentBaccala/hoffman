@@ -271,11 +271,9 @@ inline uint64 __sync_fetch_and_add_8(uint64 *ptr, uint64 val) {
 
 #define MAX_PIECES 16
 
-/* Number of possibilities for pawn promotions.  "2" means queen and knight, but that can cause some
- * problems, as I've learned the hard (and embarrassing) way.
- */
+/* Maximum number of possibilities for pawn promotions (see promotion_possibilities below). */
 
-#define PROMOTION_POSSIBILITIES 4
+#define MAX_PROMOTION_POSSIBILITIES 5
 
 /* seven possible pieces: KQRBNP; 64 possible squares, up to 8 directions per piece, up to 7
  * movements in one direction
@@ -363,8 +361,8 @@ typedef uint32 futurevector_t;
 
 int num_futuremoves[2] = {0, 0};
 int futurecaptures[MAX_PIECES][MAX_PIECES];
-int promotion_captures[MAX_PIECES][MAX_PIECES][PROMOTION_POSSIBILITIES];
-int promotions[MAX_PIECES][PROMOTION_POSSIBILITIES];
+int promotion_captures[MAX_PIECES][MAX_PIECES][MAX_PROMOTION_POSSIBILITIES];
+int promotions[MAX_PIECES][MAX_PROMOTION_POSSIBILITIES];
 int futuremoves[MAX_PIECES][64];
 
 /* XXX hardwired 100 futuremove max per color here */
@@ -474,13 +472,19 @@ char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
 
 char * colors[3] = {"WHITE", "BLACK", NULL};
 
-int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, 0};
-
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
 
 #define WHITE 0
 #define BLACK 1
+
+/* Possibilities for pawn promotions.  "2" means queen and knight, but that can cause some problems,
+ * as I've learned the hard (and embarrassing) way.  "4" is typical, but "5" is used for suicide
+ * analysis, where promotion to king is allowed.
+ */
+
+int promotion_possibilities = 4;
+int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, KING};
 
 
 /* A 'struct format' gives the layout of a dynamic structure (one whose bit layout is specified at
@@ -4944,7 +4948,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.534 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.535 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8421,10 +8425,10 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 	return NULL;
     }
 
-    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 	if (futurebase->piece_type[futurebase->extra_piece] == promoted_pieces[promotion]) break;
     }
-    if (promoted_pieces[promotion] == 0) {
+    if (promotion == promotion_possibilities) {
 	fatal("Couldn't find futurebase's extra piece in promoted_pieces list\n");
 	return NULL;
     }
@@ -8626,10 +8630,10 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 	return NULL;
     }
 
-    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 	if (futurebase->piece_type[futurebase->extra_piece] == promoted_pieces[promotion]) break;
     }
-    if (promoted_pieces[promotion] == 0) {
+    if (promotion == promotion_possibilities) {
 	fatal("Couldn't find futurebase's extra piece in promoted_pieces list\n");
 	return NULL;
     }
@@ -9825,7 +9829,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     int sq;
     int dir;
     int promotion;
-    int i;
     struct movement *movementptr;
     uint64 possible_captures[MAX_PIECES];
     char local_movestr[MOVESTR_CHARS];
@@ -9886,7 +9889,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	    futurecaptures[capturing_piece][captured_piece] = -1;
 
-	    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+	    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 		promotion_captures[capturing_piece][captured_piece][promotion] = -1;
 	    }
 
@@ -9944,7 +9947,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			continue;
 		    }
 
-		    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
 			candidate_futuremove = -1;
 
@@ -10016,18 +10019,18 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	for (i = 0; promoted_pieces[i] != 0; i ++) {
-	    promotions[piece][i] = -1;
+	for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
+	    promotions[piece][promotion] = -1;
 	}
 	if (tb->piece_type[piece] == PAWN) {
 	    for (sq = (tb->piece_color[piece] == WHITE ? 48 : 8);
 		 sq <= (tb->piece_color[piece] == WHITE ? 55 : 15); sq++) {
 		if (tb->legal_squares[piece] & BITVECTOR(sq)) {
 
-		    for (i = 0; promoted_pieces[i] != 0; i ++) {
-			promotions[piece][i] = num_futuremoves[tb->piece_color[piece]];
-			sprintf(movestr[tb->piece_color[piece]][promotions[piece][i]],
-				"P=%c", piece_char[promoted_pieces[i]]);
+		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
+			promotions[piece][promotion] = num_futuremoves[tb->piece_color[piece]];
+			sprintf(movestr[tb->piece_color[piece]][promotions[piece][promotion]],
+				"P=%c", piece_char[promoted_pieces[promotion]]);
 			num_futuremoves[tb->piece_color[piece]] ++;
 		    }
 
@@ -10411,7 +10414,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
 
-	    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+	    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
 		int promoted_piece_handled = 0;
 
@@ -10463,7 +10466,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 	/* straight promotion futurebases */
 
-	for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+	for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
 	    int promoted_piece_handled = 0;
 
@@ -10569,7 +10572,7 @@ void optimize_futuremoves(tablebase_t *tb)
 				futurecaptures[piece][piece2] --;
 			    }
 			    if (tb->piece_type[piece] == PAWN) {
-				for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+				for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 				    if (promotion_captures[piece][piece2][promotion] > fm) {
 					promotion_captures[piece][piece2][promotion] --;
 				    }
@@ -10584,7 +10587,7 @@ void optimize_futuremoves(tablebase_t *tb)
 			}
 
 			if (tb->piece_type[piece] == PAWN) {
-			    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 				if (promotions[piece][promotion] > fm) {
 				    promotions[piece][promotion] --;
 				}
@@ -11351,17 +11354,17 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		    if (! PTM_in_check(tb, &position)) {
 
 			/* If the piece is a pawn and we're moving to the last rank, then this has
-			 * to be a promotion move, in fact, PROMOTION_POSSIBILITIES moves.  (queen,
-			 * knight, maybe rook and bishop).  As such, they will require back
-			 * propagation from futurebases and must therefore be flagged as
-			 * futuremoves.
+			 * to be a promotion move, in fact, promotion_possibilities moves.  (queen,
+			 * knight, maybe rook and bishop, king for suicide).  As such, they will
+			 * require back propagation from futurebases and must therefore be flagged
+			 * as futuremoves.
 			 */
 
 			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
 
 			    int promotion;
 
-			    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
 				if (promotions[piece][promotion] == -2) {
 				    /* discard prune - do nothing */
@@ -11439,7 +11442,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     movementptr++) {
 
 		    /* If we're capturing to the last rank, then this has to be a promotion move, in
-		     * fact, PROMOTION_POSSIBILITIES moves.  (queen, knight, maybe rook and bishop).
+		     * fact, promotion_possibilities moves.
 		     */
 
 		    int is_promotion_capture =
@@ -11529,7 +11532,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				} else {
 				    int promotion;
 
-				    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+				    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
 					if (promotion_captures[piece][i][promotion] == -2) {
 					    /* discard prune - do nothing */
@@ -12496,7 +12499,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.534 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.535 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12639,7 +12642,7 @@ int main(int argc, char *argv[])
 	int dir, square;
 	int piece_color;
 	int piece_type;
-	int *promoted_piece;
+	int promotion;
 	struct movement * movementptr;
 	index_t index;
 #ifdef USE_NALIMOV
@@ -12841,10 +12844,10 @@ int main(int argc, char *argv[])
 
 			    /* non-capture promotion */
 
-			    for (promoted_piece = promoted_pieces; *promoted_piece; promoted_piece ++) {
+			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
 				place_piece_in_global_position(&global_position, movementptr->square,
-							       piece_color, *promoted_piece);
+							       piece_color, promoted_pieces[promotion]);
 
 
 				if (! global_PNTM_in_check(&global_position)) {
@@ -12853,13 +12856,13 @@ int main(int argc, char *argv[])
 					printf ("   P%s%s=%c  ",
 						algebraic_notation[square],
 						algebraic_notation[movementptr->square],
-						piece_char[*promoted_piece]);
+						piece_char[promoted_pieces[promotion]]);
 					print_score(tb2, index2, pntm, ptm, 1);
 				    } else {
 					printf("   P%s%s=%c  NO DATA\n",
 					       algebraic_notation[square],
 					       algebraic_notation[movementptr->square],
-					       piece_char[*promoted_piece]);
+					       piece_char[promoted_pieces[promotion]]);
 				    }
 				}
 			    }
@@ -12936,10 +12939,10 @@ int main(int argc, char *argv[])
 
 			    char captured_piece = global_position.board[movementptr->square];
 
-			    for (promoted_piece = promoted_pieces; *promoted_piece; promoted_piece ++) {
+			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
 				place_piece_in_global_position(&global_position, movementptr->square,
-							       piece_color, *promoted_piece);
+							       piece_color, promoted_pieces[promotion]);
 
 				if (! global_PNTM_in_check(&global_position)) {
 				    if (search_tablebases_for_global_position(tbs, &global_position,
@@ -12948,13 +12951,13 @@ int main(int argc, char *argv[])
 					printf ("   P%sx%s=%c ",
 						algebraic_notation[square],
 						algebraic_notation[movementptr->square],
-						piece_char[*promoted_piece]);
+						piece_char[promoted_pieces[promotion]]);
 					print_score(tb2, index2, pntm, ptm, 1);
 				    } else {
 					printf("   P%sx%s=%c NO DATA\n",
 					       algebraic_notation[square],
 					       algebraic_notation[movementptr->square],
-					       piece_char[*promoted_piece]);
+					       piece_char[promoted_pieces[promotion]]);
 				    }
 				}
 			    }
