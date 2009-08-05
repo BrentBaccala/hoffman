@@ -474,11 +474,6 @@ char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
 
 char * colors[3] = {"WHITE", "BLACK", NULL};
 
-/* We make a tacit assumption later (during promotion back propagation, when we compute the
- * futuremove number) that these numbers (QUEEN to KNIGHT) range from 1 to 4, and that they appear
- * in this array in numerical order.
- */
-
 int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, 0};
 
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
@@ -4949,7 +4944,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.533 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.534 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5647,6 +5642,11 @@ void invert_colors_of_global_position(global_position_t *global)
  * pieces that we want to back-prop from.
  *
  * XXX need to ASSERT that sizeof(..._pieces_processed_bitvector) is at least MAX_PIECES!!
+ *
+ * XXX newer versions of hoffman precompute missing/extra/restricted pieces as part of futurebase
+ * auto-detection (we used to have to explicitly tell the program which kind of futurebase each one
+ * was).  There's probably no reason we couldn't precompute an entire piece-to-piece mapping table
+ * from the futurebase to the local tablebase, which should speed up this routine dramatically.
  */
 
 #define NONE 0x80
@@ -8377,10 +8377,24 @@ index_t next_future_index;
 pthread_mutex_t next_future_index_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
-/* Back propagate promotion moves
+/* The four futurebase back-propagation functions
  *
- * Passed a piece (a global position character) that the pawn is promoting into.  Searches
- * futurebase for positions with that piece on the last rank and back-props.
+ * All work the same way - they are passed in the current thread number, cast as a pointer, which is
+ * only used to tell fetch_entry_pointer_n which cache entry to use (and that probably could be
+ * cleaned up).  These functions handle threading differently from the intra-table case, where we
+ * split the tablebase up into N sections for the N threads and let each thread tear into its own
+ * section.  This time, we're reading the futurebase from disk, and it might be biiiig, so we want
+ * to proceed through it sequentially.  Each thread calls the appropriate one of these functions,
+ * and they loop until everything is done.  Right at the beginning of the loop you see that they
+ * mutex lock to pick up the next future index that needs to be processed.
+ *
+ * reflections[] is a global variable that gets computed for every futurebase.  See comments on
+ * compute_reflections().
+ *
+ * For each possible reflection of each possible futuremove, we attempt to translate the futurebase
+ * pieces into corresponding local tablebase pieces.  Actually, we did this for the entire
+ * futurebase when we loaded it, and those piece assignments should never change within a single
+ * futurebase, so all we really do is blunder check.
  */
 
 void * propagate_moves_from_promotion_futurebase(void * ptr)
@@ -8393,8 +8407,31 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
     int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_pawn;
     int reflection;
+    int promotion;
 
-    /* We could limit the range of future_index here */
+    /* Shouldn't really need this silly blunder check, but it's outside the loop and has been here a long time. */
+
+    if ((current_tb->piece_type[futurebase->missing_pawn] != PAWN)
+	|| (futurebase->piece_type[futurebase->extra_piece] == PAWN)
+	|| (!invert_colors_of_futurebase
+	    && (current_tb->piece_color[futurebase->missing_pawn] != futurebase->piece_color[futurebase->extra_piece]))
+	|| (invert_colors_of_futurebase
+	    && (current_tb->piece_color[futurebase->missing_pawn] == futurebase->piece_color[futurebase->extra_piece]))) {
+	fatal("Conversion error during promotion back-prop\n");
+	return NULL;
+    }
+
+    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+	if (futurebase->piece_type[futurebase->extra_piece] == promoted_pieces[promotion]) break;
+    }
+    if (promoted_pieces[promotion] == 0) {
+	fatal("Couldn't find futurebase's extra piece in promoted_pieces list\n");
+	return NULL;
+    }
+
+    /* XXX We could limit the range of future_index here to only those positions where the promoted
+     * piece appears on the back rank.
+     */
 
     while (1) {
 
@@ -8413,9 +8450,9 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 
 	if (future_index > futurebase->max_index) break;
 
-	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
-	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
-	 * the simplest way to do that is to run this loop even for draws.
+	/* It's tempting to break out the loop here if the position isn't a win, but we want to
+	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
+	 * is to run this loop even for draws.
 	 */
 
 	for (reflection = 0; reflection < max_reflection; reflection ++) {
@@ -8427,7 +8464,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 	     * restricted squares.
 	     */
 
-	    if (! index_to_local_position(futurebase, future_index, reflection[reflections],
+	    if (! index_to_local_position(futurebase, future_index, reflections[reflection],
 					  &foreign_position)) continue;
 
 	    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
@@ -8441,16 +8478,9 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 		pawn = conversion_result & 0xff;                      /* missing_piece1 */
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece == NONE) || (pawn == NONE) || (missing_piece2 != NONE)) {
+		if ((extra_piece != futurebase->extra_piece) || (pawn != futurebase->missing_pawn) || (missing_piece2 != NONE)) {
 		    fatal("Conversion error during promotion back-prop (extra %d; missing1 %d, missing2 %d)\n",
 			  extra_piece, pawn, missing_piece2);
-		    continue;
-		}
-
-		if ((current_tb->piece_type[pawn] != PAWN) || (futurebase->piece_type[extra_piece] == PAWN)
-		    || (!invert_colors_of_futurebase && (current_tb->piece_color[pawn] != futurebase->piece_color[extra_piece]))
-		    || (invert_colors_of_futurebase && (current_tb->piece_color[pawn] == futurebase->piece_color[extra_piece]))) {
-		    fatal("Conversion error during promotion back-prop\n");
 		    continue;
 		}
 
@@ -8524,7 +8554,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 			true_pawn = position.permuted_piece[pawn];
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								      promotions[true_pawn][futurebase->piece_type[extra_piece] - 1],
+								      promotions[true_pawn][promotion],
 								      &position);
 
 			/* We may be about to use this position again, so put the board_vector back... */
@@ -8582,8 +8612,31 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
     int true_captured_piece;
     int true_pawn;
     int reflection;
+    int promotion;
 
-    /* We could limit the range of future_index here */
+    /* Shouldn't really need this silly blunder check, but it's outside the loop and has been here a long time. */
+
+    if ((current_tb->piece_type[futurebase->missing_pawn] != PAWN)
+	|| (futurebase->piece_type[futurebase->extra_piece] == PAWN)
+	|| (!invert_colors_of_futurebase
+	    && (current_tb->piece_color[futurebase->missing_pawn] != futurebase->piece_color[futurebase->extra_piece]))
+	|| (invert_colors_of_futurebase
+	    && (current_tb->piece_color[futurebase->missing_pawn] == futurebase->piece_color[futurebase->extra_piece]))) {
+	fatal("Conversion error during promotion capture back-prop\n");
+	return NULL;
+    }
+
+    for (promotion = 0; promoted_pieces[promotion] != 0; promotion ++) {
+	if (futurebase->piece_type[futurebase->extra_piece] == promoted_pieces[promotion]) break;
+    }
+    if (promoted_pieces[promotion] == 0) {
+	fatal("Couldn't find futurebase's extra piece in promoted_pieces list\n");
+	return NULL;
+    }
+
+    /* XXX We could limit the range of future_index here to only those positions where the promoted
+     * piece appears on the back rank.
+     */
 
     while (1) {
 
@@ -8602,9 +8655,9 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 
 	if (future_index > futurebase->max_index) break;
 
-	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
-	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
-	 * the simplest way to do that is to run this loop even for draws.
+	/* It's tempting to break out the loop here if the position isn't a win, but we want to
+	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
+	 * is to run this loop even for draws.
 	 */
 
 	for (reflection = 0; reflection < max_reflection; reflection ++) {
@@ -8630,14 +8683,8 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 		pawn = conversion_result & 0xff;                      /* missing_piece1 */
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece == NONE) || (pawn == NONE) || (missing_piece2 == NONE)) {
-		    fatal("Conversion error during promotion capture back-prop\n");
-		    continue;
-		}
-
-		if ((current_tb->piece_type[pawn] != PAWN) || (futurebase->piece_type[extra_piece] == PAWN)
-		    || (!invert_colors_of_futurebase && (current_tb->piece_color[pawn] != futurebase->piece_color[extra_piece]))
-		    || (invert_colors_of_futurebase && (current_tb->piece_color[pawn] == futurebase->piece_color[extra_piece]))) {
+		if ((extra_piece != futurebase->extra_piece) || (pawn != futurebase->missing_pawn)
+		    || (missing_piece2 != futurebase->missing_non_pawn)) {
 		    fatal("Conversion error during promotion capture back-prop\n");
 		    continue;
 		}
@@ -8723,7 +8770,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 			 */
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								      promotion_captures[true_pawn][true_captured_piece][futurebase->piece_type[extra_piece] - 1],
+								      promotion_captures[true_pawn][true_captured_piece][promotion],
 								      &position);
 
 			/* We're about to use this position again, so put the board_vector back... */
@@ -8753,7 +8800,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 			true_pawn = position.permuted_piece[pawn];
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								      promotion_captures[true_pawn][true_captured_piece][futurebase->piece_type[extra_piece] - 1],
+								      promotion_captures[true_pawn][true_captured_piece][promotion],
 								      &position);
 
 			/* We're about to use this position again, so put the board_vector back... */
@@ -12449,7 +12496,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.533 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.534 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
