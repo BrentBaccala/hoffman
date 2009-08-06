@@ -537,6 +537,9 @@ char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
  * at run-time.  If USE_CONST_FORMATS is set, then they're set at compile-time: 'const' for
  * efficiency, in a separate file for convenience, and if the program wants them changed, it will
  * let you know ;-)
+ *
+ * If the control file doesn't specify an entry (or proptable) format, we use a compiled-in default
+ * from the 'formats.xml' file that got converted to a string in the 'tablebase_dtd.h' file.
  */
 
 #define USE_CONST_FORMATS 0
@@ -576,34 +579,6 @@ struct format proptable_format;
 /* This is the "one-byte-dtm" format */
 
 struct format one_byte_dtm_format = {3,1, -1, 0xff,0,8, 0,-1,0, 0,-1,0, 0,-1,0, -1,FORMAT_FLAG_NONE, -1, -1};
-
-/* This is the two byte format we use by default for the entries table.  Equivalent to:
- *
- * <entries-format>
- *    <dtm bits="8" offset="0"/>
- *    <movecnt bits="7" offset="9"/>
- *    <locking-bit offset="8"/>
- * </entries-format>
- */
-
-struct format default_entries_format = {4,2, 8, 0xff,0,8, 0x7f,9,7, 0,-1,0, 0,-1,0, -1,FORMAT_FLAG_NONE, -1, -1};
-
-/* And this is the sixteen byte format we use by default for proptable entries.  Equivalent to:
- *
- * <proptable-format>
- *    <index bits="32" offset="0"/>
- *    <dtm bits="16" offset="32"/>
- *    <movecnt bits="8" offset="56"/>
- *    <futurevector bits="64" offset="64"/>
- * </proptable-format>
- */
-
-struct format default_proptable_format = {7,16, -1, 0xffff,32,16, 0xff,56,8,
-					  0xffffffff,0,32, 0xffffffffffffffffLL,64,64,
-					  -1,FORMAT_FLAG_NONE, -1, -1};
-
-
-
 
 typedef void entry_t;
 
@@ -3790,8 +3765,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 {
     tablebase_t *tb;
     int generating_version = 0;
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
+    xmlXPathContextPtr context, context2;
+    xmlXPathObjectPtr result, result2;
     xmlNodePtr tablebase;
     xmlNodePtr index_node;
     xmlChar * format;
@@ -4337,12 +4312,20 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     if (! is_futurebase) {
 
 	struct format specified_entries_format, specified_proptable_format;
+	xmlDocPtr default_formats;
 	int format_mismatch = 0;
 
-	memcpy(&specified_entries_format, &default_entries_format, sizeof(struct format));
-	memcpy(&specified_proptable_format, &default_proptable_format, sizeof(struct format));
+	/* XXX Will bleed memory during an error return, but this should be global anyway. */
 
-	/* If a custom entries format has been specified, get it too */
+	default_formats = xmlReadMemory(formats_xml, strlen(formats_xml), NULL, NULL, 0);
+
+	/* memcpy(&specified_entries_format, &default_entries_format, sizeof(struct format)); */
+	/* memcpy(&specified_proptable_format, &default_proptable_format, sizeof(struct format)); */
+
+	bzero(&specified_entries_format, sizeof(struct format));
+	bzero(&specified_proptable_format, sizeof(struct format));
+
+	/* If a custom entries format has been specified, use it */
 
 	context = xmlXPathNewContext(tb->xml);
 	result = xmlXPathEvalExpression(BAD_CAST "//entries-format", context);
@@ -4352,6 +4335,27 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		fatal("Entries format must contain a movecnt field\n");
 		return NULL;
 	    }
+	} else {
+
+	    /* Otherwise, use the compiled-in default */
+
+	    context2 = xmlXPathNewContext(default_formats);
+	    result2 = xmlXPathEvalExpression(BAD_CAST "//default-entries-format", context2);
+	    if (result2->nodesetval->nodeNr == 1) {
+		if (! parse_format(result2->nodesetval->nodeTab[0], &specified_entries_format)) {
+		    fatal("Can't parse compiled-in default entries format!\n");
+		    return NULL;
+		}
+		if (specified_entries_format.movecnt_bits == 0) {
+		    fatal("Compiled-in default entries format does not contain a movecnt field!\n");
+		    return NULL;
+		}
+	    } else {
+		fatal("No entries-format specified in control file and can't find compiled-in default\n");
+		return NULL;
+	    }
+	    xmlXPathFreeObject(result2);
+	    xmlXPathFreeContext(context2);
 	}
 
 #if USE_CONST_FORMATS
@@ -4367,7 +4371,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
 
-	/* custom proptable format? */
+	/* XXX shouldn't bother with any of this proptable stuff if -P flag wasn't specified */
+
+	/* custom proptable format? use it */
 
 	context = xmlXPathNewContext(tb->xml);
 	result = xmlXPathEvalExpression(BAD_CAST "//proptable-format", context);
@@ -4377,6 +4383,27 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		fatal("Proptable format must contain an index field\n");
 		return NULL;
 	    }
+	} else {
+
+	    /* Otherwise, use the compiled-in default */
+
+	    context2 = xmlXPathNewContext(default_formats);
+	    result2 = xmlXPathEvalExpression(BAD_CAST "//default-proptable-format", context2);
+	    if (result2->nodesetval->nodeNr == 1) {
+		if (! parse_format(result2->nodesetval->nodeTab[0], &specified_proptable_format)) {
+		    fatal("Can't parse compiled-in default proptable format!\n");
+		    return NULL;
+		}
+		if (specified_proptable_format.index_bits == 0) {
+		    fatal("Compiled-in default proptable format does not contain an index field!\n");
+		    return NULL;
+		}
+	    } else {
+		fatal("No proptable-format specified in control file and can't find compiled-in default\n");
+		return NULL;
+	    }
+	    xmlXPathFreeObject(result2);
+	    xmlXPathFreeContext(context2);
 	}
 
 #if USE_CONST_FORMATS
@@ -4391,6 +4418,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
+
+	xmlFreeDoc(default_formats);
 
 	if (format_mismatch) {
 	    fatal("Recompile using this \"formats.h\":\n");
@@ -4959,7 +4988,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.536 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.537 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12510,7 +12539,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.536 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.537 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

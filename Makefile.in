@@ -22,9 +22,12 @@ hoffman: $(hoffman_OBJS)
 
 hoffman.o: tablebase_dtd.h formats.h config.h
 
-tablebase_dtd.h: tablebase.dtd
+tablebase_dtd.h: tablebase.dtd formats.xml
 	echo "char * tablebase_dtd = \"\\" > $@
-	sed -e 's/"/\\"/g' -e 's/$$/\\/' $< >> $@
+	sed -e 's/"/\\"/g' -e 's/$$/\\/' tablebase.dtd >> $@
+	echo "\";" >> $@
+	echo "char * formats_xml = \"\\" >> $@
+	sed -e 's/"/\\"/g' -e 's/$$/\\/' formats.xml >> $@
 	echo "\";" >> $@
 
 formats.h:
