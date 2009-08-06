@@ -1,0 +1,18 @@
+<!-- This file contains the default XML formats used by the program. -->
+
+<default-formats>
+
+   <default-entries-format>
+      <dtm bits="8"/>
+      <movecnt bits="7"/>
+      <locking-bit/>
+   </default-entries-format>
+
+   <default-proptable-format>
+      <index-field bits="32" offset="0"/>
+      <dtm bits="16" offset="32"/>
+      <movecnt bits="8" offset="56"/>
+      <futurevector bits="64" offset="64"/>
+   </default-proptable-format>
+
+</default-formats>
