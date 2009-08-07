@@ -511,9 +511,11 @@ struct format {
     int flag_type;
     int PTM_wins_flag_offset;
     int basic_offset;
+    int capture_possible_flag_offset;
 };
 
-char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag", "ptm-wins-flag", "locking-bit", "basic", NULL};
+char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag", "ptm-wins-flag",
+			  "locking-bit", "basic", "capture-possible-flag", NULL};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_MOVECNT 1
@@ -523,6 +525,7 @@ char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag
 #define FORMAT_FIELD_PTM_WINS_FLAG 5
 #define FORMAT_FIELD_LOCKING_BIT 6
 #define FORMAT_FIELD_BASIC 7
+#define FORMAT_FIELD_CAPTURE_POSSIBLE_FLAG 8
 
 char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
@@ -561,6 +564,7 @@ struct format proptable_format;
 #define ENTRIES_FORMAT_MOVECNT_OFFSET (entries_format.movecnt_offset)
 #define ENTRIES_FORMAT_MOVECNT_BITS (entries_format.movecnt_bits)
 #define ENTRIES_FORMAT_FLAG_OFFSET (entries_format.flag_offset)
+#define ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET (entries_format.capture_possible_flag_offset)
 
 #define PROPTABLE_FORMAT_BYTES (proptable_format.bytes)
 #define PROPTABLE_FORMAT_INDEX_MASK (proptable_format.index_mask)
@@ -786,7 +790,7 @@ int verbose = 1;
  * a single move.
  */
 
-/* #define DEBUG_MOVE 2244388 */
+/* #define DEBUG_MOVE 182214 */
 
 /* #define DEBUG_FUTUREMOVE 798 */
 
@@ -3566,6 +3570,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     format->flag_offset = -1;
     format->PTM_wins_flag_offset = -1;
     format->basic_offset = -1;
+    format->capture_possible_flag_offset = -1;
 
     for (child = formatNode->children; child != NULL; child = child->next) {
 	if (child->type == XML_ELEMENT_NODE) {
@@ -3586,7 +3591,8 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 
 	    if ((format_field == FORMAT_FIELD_FLAG)
 		|| (format_field == FORMAT_FIELD_PTM_WINS_FLAG)
-		|| (format_field == FORMAT_FIELD_LOCKING_BIT)) {
+		|| (format_field == FORMAT_FIELD_LOCKING_BIT)
+		|| (format_field == FORMAT_FIELD_CAPTURE_POSSIBLE_FLAG)) {
 
 		if (bitstr == NULL) {
 		    bits = 1;
@@ -3698,6 +3704,9 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		break;
 	    case FORMAT_FIELD_LOCKING_BIT:
 		format->locking_bit_offset = offset;
+		break;
+	    case FORMAT_FIELD_CAPTURE_POSSIBLE_FLAG:
+		format->capture_possible_flag_offset = offset;
 		break;
 	    default:
 		fatal("Unknown field in format\n");
@@ -4988,7 +4997,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.537 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.538 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6631,7 +6640,7 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
 
     } else {
 
-	/* proptables - entries array is on dik, so make sure we've got the right buffer and then return the pointer */
+	/* proptables - entries array is on disk, so make sure we've got the right buffer and then return the pointer */
 
 	if (entry_buffer_start > index) reset_current_entries_file();
 	if (index >= entry_buffer_start + entry_buffer_size) advance_current_entries_file(index);
@@ -6736,6 +6745,21 @@ inline void set_entry_movecnt(index_t index, int movecnt)
 		       movecnt);
 }
 
+inline int get_entry_capture_possible_flag(index_t index)
+{
+    if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return 0;
+    return get_unsigned_field(fetch_current_entry_pointer(index), 1,
+			      ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
+}
+
+inline void set_entry_capture_possible_flag(index_t index, int flag)
+{
+    if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return;
+    set_unsigned_field(fetch_current_entry_pointer(index), 1,
+		       ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8),
+		       flag);
+}
+
 inline int get_flag(tablebase_t *tb, index_t index)
 {
     return get_unsigned_field(fetch_entry_pointer(tb, index),
@@ -6806,6 +6830,12 @@ void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm)
      */
     if (dtm > 0) positive_passes_needed[dtm] = 1;
     if (dtm < 0) negative_passes_needed[-dtm] = 1;
+
+    /* XXX there's a matching "XXX" down below where we malloc the entries table and then zero it
+     * with memset.  Might be more efficient to set the entire entry here, making sure that we zero
+     * out any fields other than movecnt and DTM.  Might be more efficient not to worry so much
+     * about efficiency.  ;-)
+     */
 
     set_entry_movecnt(index, movecnt);
     if (ENTRIES_FORMAT_DTM_BITS > 0) set_entry_raw_DTM(index, dtm);
@@ -11221,8 +11251,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	/* Now we need to count moves.  FORWARD moves. */
 	int movecnt = 0;
+	int capturecnt = 0;
 	int futuremovecnt = 0;
 	futurevector_t futurevector = 0;
+	futurevector_t capture_futurevector = 0;
 
 	/* En passant:
 	 *
@@ -11354,8 +11386,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 					fatal("Duplicate futuremove!\n");
 				    } else {
+					capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 					futuremovecnt ++;
+					capturecnt ++;
 					movecnt ++;
 				    }
 				}
@@ -11518,8 +11552,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 					fatal("Duplicate futuremove!\n");
 				    } else {
+					capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 					futuremovecnt ++;
+					capturecnt ++;
 					movecnt ++;
 				    }
 				}
@@ -11565,8 +11601,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 					fatal("Duplicate futuremove!\n");
 				    } else {
+					capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
 					futuremovecnt ++;
+					capturecnt ++;
 					movecnt ++;
 				    }
 				} else {
@@ -11590,8 +11628,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					} else if (futurevector & FUTUREVECTOR(promotion_captures[piece][i][promotion])) {
 					    fatal("Duplicate futuremove!\n");
 					} else {
+					    capture_futurevector |= FUTUREVECTOR(promotion_captures[piece][i][promotion]);
 					    futurevector |= FUTUREVECTOR(promotion_captures[piece][i][promotion]);
 					    futuremovecnt ++;
+					    capturecnt ++;
 					    movecnt ++;
 					}
 				    }
@@ -11655,6 +11695,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	    movecnt *= position.multiplicity;
 
 	    initialize_entry_with_movecnt(tb, index, movecnt);
+
+	    set_entry_capture_possible_flag(index, capturecnt != 0);
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE) {
@@ -12539,7 +12581,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.537 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.538 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
