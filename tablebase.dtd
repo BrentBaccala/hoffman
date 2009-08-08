@@ -1,9 +1,13 @@
-<!ELEMENT tablebase ((move-restriction|prune-enable)*, index?, format?, piece+, futurebase*, prune*, generation-controls?, tablebase-statistics?, generation-statistics*)>
+<!ELEMENT tablebase ((move-restriction|prune-enable)*, variant?, index?, format?, piece+, futurebase*, prune*, generation-controls?, tablebase-statistics?, generation-statistics*)>
 <!ELEMENT move-restriction EMPTY>
 <!ELEMENT prune-enable EMPTY>
 <!ELEMENT piece EMPTY>
 <!ELEMENT futurebase EMPTY>
 <!ELEMENT prune EMPTY>
+
+<!ELEMENT variant EMPTY>
+<!ATTLIST variant
+	name CDATA					#REQUIRED>
 
 <!ELEMENT index EMPTY>
 <!ATTLIST index
