@@ -5065,7 +5065,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.540 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.541 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12700,6 +12700,338 @@ void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm, int pntm
     }
 }
 
+void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *global_position_ptr, char *ptm, char *pntm)
+{
+    global_position_t global_position, saved_global_position;
+    tablebase_t *tb2;
+    index_t index2;
+    int dir, square;
+    int piece_color;
+    int piece_type;
+    int promotion;
+    struct movement * movementptr;
+
+    global_position = *global_position_ptr;
+    saved_global_position = global_position;
+
+    piece_color = global_position.side_to_move;
+
+    for (square = 0; square < 64; square ++) {
+
+	global_position = saved_global_position;
+
+	flip_side_to_move_global(&global_position);
+
+	if (global_position.board[square] == 0) continue;
+
+	/* We only want to consider pieces of the side which is to move... */
+
+	for (piece_type = 0; piece_type < NUM_PIECES; piece_type ++) {
+	    if (global_position.board[square] == global_pieces[piece_color][piece_type]) break;
+	}
+
+	if (piece_type == NUM_PIECES) continue;
+
+	global_position.board[square] = 0;
+
+	if (piece_type != PAWN) {
+
+	    global_position.en_passant_square = -1;
+
+	    for (dir = 0; dir < number_of_movement_directions[piece_type]; dir++) {
+
+		for (movementptr = movements[piece_type][square][dir];
+		     (movementptr->square != -1) && (global_position.board[movementptr->square] == 0);
+		     movementptr++) {
+
+		    global_position.board[movementptr->square]
+			= global_pieces[piece_color][piece_type];
+
+		    if (! global_PNTM_in_check(&global_position)) {
+			if (search_tablebases_for_global_position(tbs, &global_position,
+								  &tb2, &index2)){
+
+			    printf("   %c%s%s    ", piece_char[piece_type],
+				   algebraic_notation[square],
+				   algebraic_notation[movementptr->square]);
+			    print_score(tb2, index2, pntm, ptm, 1);
+			} else {
+			    printf("   %c%s%s    NO DATA\n", piece_char[piece_type],
+				   algebraic_notation[square],
+				   algebraic_notation[movementptr->square]);
+			}
+		    }
+
+		    global_position.board[movementptr->square] = 0;
+
+		}
+
+		/* Now we consider possible captures */
+
+		if (movementptr->square == -1) continue;
+
+		if (((piece_color == WHITE)
+		     && (global_position.board[movementptr->square] >= 'a')
+		     && (global_position.board[movementptr->square] <= 'z'))
+		    || ((piece_color == BLACK)
+			&& (global_position.board[movementptr->square] >= 'A')
+			&& (global_position.board[movementptr->square] <= 'Z'))) {
+
+		    char captured_piece = global_position.board[movementptr->square];
+
+		    if ((global_position.variant != VARIANT_SUICIDE)
+			&& ((captured_piece == 'K') || (captured_piece == 'k'))) {
+
+			/* printf("MATE\n"); */
+
+		    } else {
+
+			place_piece_in_global_position(&global_position, movementptr->square,
+						       piece_color, piece_type);
+
+			if (! global_PNTM_in_check(&global_position)) {
+			    if (search_tablebases_for_global_position(tbs, &global_position,
+								      &tb2, &index2)) {
+
+				printf ("   %c%sx%s   ", piece_char[piece_type],
+					algebraic_notation[square],
+					algebraic_notation[movementptr->square]);
+				print_score(tb2, index2, pntm, ptm, 1);
+			    } else if ((tb->variant == VARIANT_SUICIDE)
+				       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+				printf("   %c%sx%s   %s WINS\n", piece_char[piece_type],
+				       algebraic_notation[square],
+				       algebraic_notation[movementptr->square],
+				       colors[1 - piece_color]);
+			    } else {
+				printf("   %c%sx%s   NO DATA\n", piece_char[piece_type],
+				       algebraic_notation[square],
+				       algebraic_notation[movementptr->square]);
+			    }
+			}
+
+		    }
+
+		    global_position.board[movementptr->square] = captured_piece;
+		}
+
+		/* end of capture search */
+	    }
+
+	    global_position.board[square] = global_pieces[piece_color][piece_type];
+	    global_position.en_passant_square = saved_global_position.en_passant_square;
+
+	} else {
+
+	    /* PAWNs */
+
+	    for (movementptr = normal_pawn_movements[square][piece_color];
+		 movementptr->square != -1;
+		 movementptr++) {
+
+		/* break, not continue, because pawns can't jump over pieces */
+		if (global_position.board[movementptr->square] != 0) break;
+
+		if ((ROW(movementptr->square) != 0) && (ROW(movementptr->square) != 7)) {
+
+		    global_position.board[movementptr->square] = global_pieces[piece_color][PAWN];
+
+		    if (! global_PNTM_in_check(&global_position)) {
+			if (search_tablebases_for_global_position(tbs, &global_position,
+								  &tb2, &index2)){
+
+			    printf("   P%s%s    ",
+				   algebraic_notation[square],
+				   algebraic_notation[movementptr->square]);
+			    print_score(tb, index2, pntm, ptm, 1);
+			} else {
+			    printf("   P%s%s    NO DATA\n",
+				   algebraic_notation[square],
+				   algebraic_notation[movementptr->square]);
+			}
+		    }
+
+		    global_position.board[movementptr->square] = 0;
+
+		} else {
+
+		    /* non-capture promotion */
+
+		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
+
+			place_piece_in_global_position(&global_position, movementptr->square,
+						       piece_color, promoted_pieces[promotion]);
+
+
+			if (! global_PNTM_in_check(&global_position)) {
+			    if (search_tablebases_for_global_position(tbs, &global_position,
+								      &tb2, &index2)){
+				printf ("   P%s%s=%c  ",
+					algebraic_notation[square],
+					algebraic_notation[movementptr->square],
+					piece_char[promoted_pieces[promotion]]);
+				print_score(tb2, index2, pntm, ptm, 1);
+			    } else {
+				printf("   P%s%s=%c  NO DATA\n",
+				       algebraic_notation[square],
+				       algebraic_notation[movementptr->square],
+				       piece_char[promoted_pieces[promotion]]);
+			    }
+			}
+		    }
+
+		    global_position.board[movementptr->square] = 0;
+		}
+	    }
+
+	    /* capture pawn moves */
+
+	    for (movementptr = capture_pawn_movements[square][piece_color];
+		 movementptr->square != -1;
+		 movementptr++) {
+
+		if (movementptr->square == global_position.en_passant_square) {
+
+		    /* en passant capture */
+
+		    place_piece_in_global_position(&global_position, movementptr->square,
+						   piece_color, PAWN);
+
+		    if (piece_color == WHITE) {
+			global_position.board[global_position.en_passant_square - 8] = 0;
+		    } else {
+			global_position.board[global_position.en_passant_square + 8] = 0;
+		    }
+
+		    if (! global_PNTM_in_check(&global_position)) {
+			if (search_tablebases_for_global_position(tbs, &global_position,
+								  &tb2, &index2)) {
+
+			    printf ("   P%sx%s   ",
+				    algebraic_notation[square],
+				    algebraic_notation[movementptr->square]);
+			    print_score(tb2, index2, pntm, ptm, 1);
+			} else if ((tb->variant == VARIANT_SUICIDE)
+				   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+			    printf("   P%sx%s   %s WINS\n",
+				   algebraic_notation[square],
+				   algebraic_notation[movementptr->square],
+				   colors[1 - piece_color]);
+			} else {
+			    printf("   P%sx%s   NO DATA\n",
+				   algebraic_notation[square],
+				   algebraic_notation[movementptr->square]);
+			}
+		    }
+
+		    if (piece_color == WHITE) {
+			global_position.board[global_position.en_passant_square - 8] = 'p';
+		    } else {
+			global_position.board[global_position.en_passant_square + 8] = 'P';
+		    }
+
+		    continue;
+		}
+
+		if (global_position.board[movementptr->square] == 0) continue;
+
+		if (((piece_color == WHITE)
+		     && (global_position.board[movementptr->square] >= 'A')
+		     && (global_position.board[movementptr->square] <= 'Z'))
+		    || ((piece_color == BLACK)
+			&& (global_position.board[movementptr->square] >= 'a')
+			&& (global_position.board[movementptr->square] <= 'z'))) {
+		    continue;
+		}
+
+		if ((global_position.variant != VARIANT_SUICIDE)
+		    && ((global_position.board[movementptr->square] == 'K')
+			|| (global_position.board[movementptr->square] == 'k'))) {
+
+		    /* printf("MATE\n"); */
+		    continue;
+
+		}
+
+		if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+
+		    /* promotion capture */
+
+		    char captured_piece = global_position.board[movementptr->square];
+
+		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
+
+			place_piece_in_global_position(&global_position, movementptr->square,
+						       piece_color, promoted_pieces[promotion]);
+
+			if (! global_PNTM_in_check(&global_position)) {
+			    if (search_tablebases_for_global_position(tbs, &global_position,
+								      &tb2, &index2)) {
+
+				printf ("   P%sx%s=%c ",
+					algebraic_notation[square],
+					algebraic_notation[movementptr->square],
+					piece_char[promoted_pieces[promotion]]);
+				print_score(tb2, index2, pntm, ptm, 1);
+			    } else if ((tb->variant == VARIANT_SUICIDE)
+				       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+				printf("   P%sx%s=%c %s WINS\n",
+				       algebraic_notation[square],
+				       algebraic_notation[movementptr->square],
+				       piece_char[promoted_pieces[promotion]],
+				       colors[1 - piece_color]);
+			    } else {
+				printf("   P%sx%s=%c NO DATA\n",
+				       algebraic_notation[square],
+				       algebraic_notation[movementptr->square],
+				       piece_char[promoted_pieces[promotion]]);
+			    }
+			}
+		    }
+
+		    global_position.board[movementptr->square] = captured_piece;
+
+		    continue;
+
+		} else {
+
+		    char captured_piece = global_position.board[movementptr->square];
+
+		    global_position.board[square] = 0;
+		    place_piece_in_global_position(&global_position, movementptr->square,
+						   piece_color, PAWN);
+
+		    if (! global_PNTM_in_check(&global_position)) {
+			if (search_tablebases_for_global_position(tbs, &global_position,
+								  &tb2, &index2)) {
+
+			    printf ("   P%sx%s   ",
+				    algebraic_notation[square],
+				    algebraic_notation[movementptr->square]);
+			    print_score(tb2, index2, pntm, ptm, 1);
+			} else if ((tb->variant == VARIANT_SUICIDE)
+				   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+			    printf("   P%sx%s   %s WINS\n",
+				   algebraic_notation[square],
+				   algebraic_notation[movementptr->square],
+				   colors[1 - piece_color]);
+			} else {
+			    printf("   P%sx%s   NO DATA\n",
+				   algebraic_notation[square],
+				   algebraic_notation[movementptr->square]);
+			}
+		    }
+
+		    global_position.board[movementptr->square] = captured_piece;
+		}
+	    }
+	    /* end of capture search */
+
+
+	}
+    }
+}
+
 void usage(char *program_name)
 {
     fprintf(stderr, "\n");
@@ -12773,7 +13105,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.540 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.541 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12925,11 +13257,6 @@ int main(int argc, char *argv[])
 #else
 	char buffer[256];
 #endif
-	int dir, square;
-	int piece_color;
-	int piece_type;
-	int promotion;
-	struct movement * movementptr;
 	index_t index;
 #ifdef USE_NALIMOV
 	int score;
@@ -12970,9 +13297,6 @@ int main(int argc, char *argv[])
 
 	if (search_tablebases_for_global_position(tbs, &global_position, &tb, &index)) {
 
-	    global_position_t saved_global_position;
-	    tablebase_t *tb2;
-	    index_t index2;
 	    char *ptm, *pntm;
 
 	    /* 'index' is the index of the current position; 'index2' will be the index
@@ -13006,328 +13330,7 @@ int main(int argc, char *argv[])
 	    }
 #endif
 
-	    /* Now we want to print a move list */
-
-	    saved_global_position = global_position;
-
-	    piece_color = global_position.side_to_move;
-
-	    for (square = 0; square < 64; square ++) {
-
-		global_position = saved_global_position;
-
-		flip_side_to_move_global(&global_position);
-
-		if (global_position.board[square] == 0) continue;
-
-		/* We only want to consider pieces of the side which is to move... */
-
-		for (piece_type = 0; piece_type < NUM_PIECES; piece_type ++) {
-		    if (global_position.board[square] == global_pieces[piece_color][piece_type]) break;
-		}
-
-		if (piece_type == NUM_PIECES) continue;
-
-		global_position.board[square] = 0;
-
-		if (piece_type != PAWN) {
-
-		    global_position.en_passant_square = -1;
-
-		    for (dir = 0; dir < number_of_movement_directions[piece_type]; dir++) {
-
-			for (movementptr = movements[piece_type][square][dir];
-			     (movementptr->square != -1) && (global_position.board[movementptr->square] == 0);
-			     movementptr++) {
-
-			    global_position.board[movementptr->square]
-				= global_pieces[piece_color][piece_type];
-
-			    if (! global_PNTM_in_check(&global_position)) {
-				if (search_tablebases_for_global_position(tbs, &global_position,
-									  &tb2, &index2)){
-
-				    printf("   %c%s%s    ", piece_char[piece_type],
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square]);
-				    print_score(tb2, index2, pntm, ptm, 1);
-				} else {
-				    printf("   %c%s%s    NO DATA\n", piece_char[piece_type],
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square]);
-				}
-			    }
-
-			    global_position.board[movementptr->square] = 0;
-
-			}
-
-			/* Now we consider possible captures */
-
-			if (movementptr->square == -1) continue;
-
-			if (((piece_color == WHITE)
-			     && (global_position.board[movementptr->square] >= 'a')
-			     && (global_position.board[movementptr->square] <= 'z'))
-			    || ((piece_color == BLACK)
-				&& (global_position.board[movementptr->square] >= 'A')
-				&& (global_position.board[movementptr->square] <= 'Z'))) {
-
-			    char captured_piece = global_position.board[movementptr->square];
-
-			    if ((global_position.variant != VARIANT_SUICIDE)
-				&& ((captured_piece == 'K') || (captured_piece == 'k'))) {
-
-				/* printf("MATE\n"); */
-
-			    } else {
-
-				place_piece_in_global_position(&global_position, movementptr->square,
-							       piece_color, piece_type);
-
-				if (! global_PNTM_in_check(&global_position)) {
-				    if (search_tablebases_for_global_position(tbs, &global_position,
-									      &tb2, &index2)) {
-
-					printf ("   %c%sx%s   ", piece_char[piece_type],
-						algebraic_notation[square],
-						algebraic_notation[movementptr->square]);
-					print_score(tb2, index2, pntm, ptm, 1);
-				    } else if ((tb->variant == VARIANT_SUICIDE)
-					       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
-					printf("   %c%sx%s   %s WINS\n", piece_char[piece_type],
-					       algebraic_notation[square],
-					       algebraic_notation[movementptr->square],
-					       colors[1 - piece_color]);
-				    } else {
-					printf("   %c%sx%s   NO DATA\n", piece_char[piece_type],
-					       algebraic_notation[square],
-					       algebraic_notation[movementptr->square]);
-				    }
-				}
-
-			    }
-
-			    global_position.board[movementptr->square] = captured_piece;
-			}
-
-			/* end of capture search */
-		    }
-
-		    global_position.board[square] = global_pieces[piece_color][piece_type];
-		    global_position.en_passant_square = saved_global_position.en_passant_square;
-
-		} else {
-
-		    /* PAWNs */
-
-		    for (movementptr = normal_pawn_movements[square][piece_color];
-			 movementptr->square != -1;
-			 movementptr++) {
-
-			/* break, not continue, because pawns can't jump over pieces */
-			if (global_position.board[movementptr->square] != 0) break;
-
-			if ((ROW(movementptr->square) != 0) && (ROW(movementptr->square) != 7)) {
-
-			    global_position.board[movementptr->square] = global_pieces[piece_color][PAWN];
-
-			    if (! global_PNTM_in_check(&global_position)) {
-				if (search_tablebases_for_global_position(tbs, &global_position,
-									  &tb2, &index2)){
-
-				    printf("   P%s%s    ",
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square]);
-				    print_score(tb, index2, pntm, ptm, 1);
-				} else {
-				    printf("   P%s%s    NO DATA\n",
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square]);
-				}
-			    }
-
-			    global_position.board[movementptr->square] = 0;
-
-			} else {
-
-			    /* non-capture promotion */
-
-			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-
-				place_piece_in_global_position(&global_position, movementptr->square,
-							       piece_color, promoted_pieces[promotion]);
-
-
-				if (! global_PNTM_in_check(&global_position)) {
-				    if (search_tablebases_for_global_position(tbs, &global_position,
-									      &tb2, &index2)){
-					printf ("   P%s%s=%c  ",
-						algebraic_notation[square],
-						algebraic_notation[movementptr->square],
-						piece_char[promoted_pieces[promotion]]);
-					print_score(tb2, index2, pntm, ptm, 1);
-				    } else {
-					printf("   P%s%s=%c  NO DATA\n",
-					       algebraic_notation[square],
-					       algebraic_notation[movementptr->square],
-					       piece_char[promoted_pieces[promotion]]);
-				    }
-				}
-			    }
-
-			    global_position.board[movementptr->square] = 0;
-			}
-		    }
-
-		    /* capture pawn moves */
-
-		    for (movementptr = capture_pawn_movements[square][piece_color];
-			 movementptr->square != -1;
-			 movementptr++) {
-
-			if (movementptr->square == global_position.en_passant_square) {
-
-			    /* en passant capture */
-
-			    place_piece_in_global_position(&global_position, movementptr->square,
-							   piece_color, PAWN);
-
-			    if (piece_color == WHITE) {
-				global_position.board[global_position.en_passant_square - 8] = 0;
-			    } else {
-				global_position.board[global_position.en_passant_square + 8] = 0;
-			    }
-
-			    if (! global_PNTM_in_check(&global_position)) {
-				if (search_tablebases_for_global_position(tbs, &global_position,
-									  &tb2, &index2)) {
-
-				    printf ("   P%sx%s   ",
-					    algebraic_notation[square],
-					    algebraic_notation[movementptr->square]);
-				    print_score(tb2, index2, pntm, ptm, 1);
-				} else if ((tb->variant == VARIANT_SUICIDE)
-					   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
-				    printf("   P%sx%s   %s WINS\n",
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square],
-					   colors[1 - piece_color]);
-				} else {
-				    printf("   P%sx%s   NO DATA\n",
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square]);
-				}
-			    }
-
-			    if (piece_color == WHITE) {
-				global_position.board[global_position.en_passant_square - 8] = 'p';
-			    } else {
-				global_position.board[global_position.en_passant_square + 8] = 'P';
-			    }
-
-			    continue;
-			}
-
-			if (global_position.board[movementptr->square] == 0) continue;
-
-			if (((piece_color == WHITE)
-			     && (global_position.board[movementptr->square] >= 'A')
-			     && (global_position.board[movementptr->square] <= 'Z'))
-			    || ((piece_color == BLACK)
-				&& (global_position.board[movementptr->square] >= 'a')
-				&& (global_position.board[movementptr->square] <= 'z'))) {
-			    continue;
-			}
-
-			if ((global_position.variant != VARIANT_SUICIDE)
-			    && ((global_position.board[movementptr->square] == 'K')
-				|| (global_position.board[movementptr->square] == 'k'))) {
-
-			    /* printf("MATE\n"); */
-			    continue;
-
-			}
-
-			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
-
-			    /* promotion capture */
-
-			    char captured_piece = global_position.board[movementptr->square];
-
-			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-
-				place_piece_in_global_position(&global_position, movementptr->square,
-							       piece_color, promoted_pieces[promotion]);
-
-				if (! global_PNTM_in_check(&global_position)) {
-				    if (search_tablebases_for_global_position(tbs, &global_position,
-									      &tb2, &index2)) {
-
-					printf ("   P%sx%s=%c ",
-						algebraic_notation[square],
-						algebraic_notation[movementptr->square],
-						piece_char[promoted_pieces[promotion]]);
-					print_score(tb2, index2, pntm, ptm, 1);
-				    } else if ((tb->variant == VARIANT_SUICIDE)
-					       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
-					printf("   P%sx%s=%c %s WINS\n",
-					       algebraic_notation[square],
-					       algebraic_notation[movementptr->square],
-					       piece_char[promoted_pieces[promotion]],
-					       colors[1 - piece_color]);
-				    } else {
-					printf("   P%sx%s=%c NO DATA\n",
-					       algebraic_notation[square],
-					       algebraic_notation[movementptr->square],
-					       piece_char[promoted_pieces[promotion]]);
-				    }
-				}
-			    }
-
-			    global_position.board[movementptr->square] = captured_piece;
-
-			    continue;
-
-			} else {
-
-			    char captured_piece = global_position.board[movementptr->square];
-
-			    global_position.board[square] = 0;
-			    place_piece_in_global_position(&global_position, movementptr->square,
-							   piece_color, PAWN);
-
-			    if (! global_PNTM_in_check(&global_position)) {
-				if (search_tablebases_for_global_position(tbs, &global_position,
-									  &tb2, &index2)) {
-
-				    printf ("   P%sx%s   ",
-					    algebraic_notation[square],
-					    algebraic_notation[movementptr->square]);
-				    print_score(tb2, index2, pntm, ptm, 1);
-				} else if ((tb->variant == VARIANT_SUICIDE)
-					   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
-				    printf("   P%sx%s   %s WINS\n",
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square],
-					   colors[1 - piece_color]);
-				} else {
-				    printf("   P%sx%s   NO DATA\n",
-					   algebraic_notation[square],
-					   algebraic_notation[movementptr->square]);
-				}
-			    }
-
-			    global_position.board[movementptr->square] = captured_piece;
-			}
-		    }
-		    /* end of capture search */
-
-
-		}
-	    }
-
-	    global_position = saved_global_position;
+	    print_move_list(tbs, tb, &global_position, ptm, pntm);
 	}
     }
 
