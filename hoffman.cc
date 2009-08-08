@@ -340,19 +340,20 @@ typedef uint32 futurevector_t;
 
 /* These arrays hold the bit locations in the futurevector of various posible futuremoves -
  * captures, capture-promotions, promotions, and normal movements of a piece to all 64 squares.  The
- * values are either a bit location (starting at 0), or one of three negative numbers: -1 means that
+ * values are either a bit location (starting at 0), or one of four negative numbers: -1 means that
  * the move in question isn't a futuremove in the given tablebase (for example, promotion of a
  * non-pawn, or movement of a piece to a legal square) and that any attempt to assign that
  * futuremove is therefore an error.  -2 means that no futurebase exists for the futuremove, and
  * that a 'discard' pruning statement exists for it, so the futuremove can be immediately discarded
  * when it is encountered during initialization.  -3 means that no futurebase exists and a 'concede'
- * pruning statement is present, so the futuremove can be immedidiately conceded during
- * initialization.
+ * pruning statement is present, so the futuremove results in an immediate win during
+ * initialization.  -4 means that no futurebase exists and a 'resign' pruning statement is present
+ * (useful only for suicide analysis), resulting in an immediate lose during initialization.
  *
  * num_futuremoves[WHITE] and num_futuremoves[BLACK] are the total number of futurevector bits
  * assigned for each color, NOT the total number of possible futuremoves, since futuremoves can be
  * multiply assigned to bits (if two futuremoves can't both happen from the same position, they can
- * be safely assigned to the same bit), or completely pruned with a -2 or -3 (no bit position).
+ * be safely assigned to the same bit), or completely pruned with a -2, -3, or -4 (no bit position).
  *
  * There is one place in the code (propagate_moves_from_promotion_futurebase) that assumes that the
  * piece ordering in the last array index of promotions and promotion_captures matches the piece
@@ -440,6 +441,7 @@ typedef struct {
     unsigned char board[64];
     short side_to_move;
     short en_passant_square;
+    short variant;
 } global_position_t;
 
 
@@ -640,7 +642,11 @@ char * futurebase_types[] = {"capture", "promotion", "capture-promotion", "norma
 #define FUTUREBASE_CAPTURE_PROMOTION 2
 #define FUTUREBASE_NORMAL 3
 
+char * variant_names[] = {"normal", "suicide"};
+
 typedef struct tablebase {
+    enum { VARIANT_NORMAL = 0, VARIANT_SUICIDE } variant;
+    int sub_variant;
     int index_type;
     int index_offset;
     index_t max_index;
@@ -704,6 +710,7 @@ typedef struct tablebase {
      */
 
     int num_pieces;
+    short num_pieces_by_color[2];
     short piece_type[MAX_PIECES];
     short piece_color[MAX_PIECES];
     uint64 legal_squares[MAX_PIECES];
@@ -790,7 +797,7 @@ int verbose = 1;
  * a single move.
  */
 
-/* #define DEBUG_MOVE 182214 */
+/* #define DEBUG_MOVE 5217 */
 
 /* #define DEBUG_FUTUREMOVE 798 */
 
@@ -3805,6 +3812,33 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
+    /* Figure out which version of chess we're playing... */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//variant", context);
+    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	xmlChar * variant_name = xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "name");
+	tb->variant = find_name_in_array((char *) variant_name, variant_names);
+	if (tb->variant == -1) {
+	    fatal("Unknown variant '%s' specified\n", variant_name);
+	}
+    }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
+
+    switch (tb->variant) {
+
+    case VARIANT_NORMAL:
+	tb->positions_with_adjacent_kings_are_illegal = 1;
+	break;
+
+    case VARIANT_SUICIDE:
+	tb->positions_with_adjacent_kings_are_illegal = 0;
+	promotion_possibilities = 5;	/* A global var, but all futurebases have to use the same variant */
+	break;
+
+    }
+
     /* If it's a header on a generated tablebase, retrieve the version of Hoffman that created it.
      * The funky syntax on the sscanf is there to ensure that RCS co doesn't muck with THIS version
      * string!
@@ -3878,20 +3912,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
     context = xmlXPathNewContext(doc);
     result = xmlXPathEvalExpression(BAD_CAST "//piece", context);
-    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	fatal("No pieces!\n");
-	return NULL;
-    } else if (result->nodesetval->nodeNr < 2) {
-	fatal("Too few pieces!\n");
-	return NULL;
-    } else if (result->nodesetval->nodeNr > MAX_PIECES) {
-	fatal("Too many pieces!\n");
-	return NULL;
-    }
-
-    tb->positions_with_adjacent_kings_are_illegal = 1;
 
     tb->num_pieces = result->nodesetval->nodeNr;
+
+    if (tb->num_pieces > MAX_PIECES) {
+	fatal("Too many pieces (%d compiled-in maximum)!\n", MAX_PIECES);
+	return NULL;
+    }
 
     tb->white_king = -1;
     tb->black_king = -1;
@@ -3938,20 +3965,26 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    fatal("Illegal piece color (%s) or type (%s)\n", color, type);
 	}
 
-	if ((tb->piece_color[piece] == WHITE) && (tb->piece_type[piece] == KING)) {
-	    if (tb->white_king != -1) {
-		fatal("Must have one white king and one black one!\n");
-	    } else {
-		tb->white_king = piece;
-	    }
-	}
+	tb->num_pieces_by_color[tb->piece_color[piece]] ++;
 
-	if ((tb->piece_color[piece] == BLACK) && (tb->piece_type[piece] == KING)) {
-	    if (tb->black_king != -1) {
-		fatal("Must have one white king and one black one!\n");
-	    } else {
-		tb->black_king = piece;
+	if (tb->variant != VARIANT_SUICIDE) {
+
+	    if ((tb->piece_color[piece] == WHITE) && (tb->piece_type[piece] == KING)) {
+		if (tb->white_king != -1) {
+		    fatal("Must have one white king and one black one!\n");
+		} else {
+		    tb->white_king = piece;
+		}
 	    }
+
+	    if ((tb->piece_color[piece] == BLACK) && (tb->piece_type[piece] == KING)) {
+		if (tb->black_king != -1) {
+		    fatal("Must have one white king and one black one!\n");
+		} else {
+		    tb->black_king = piece;
+		}
+	    }
+
 	}
 
 	if (color != NULL) xmlFree(color);
@@ -3960,9 +3993,16 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	if (index_ordering != NULL) xmlFree(index_ordering);
     }
 
-    if ((tb->white_king == -1) || (tb->black_king == -1)) {
-	fatal("Must have one white king and one black one!\n");
+    if ((tb->num_pieces_by_color[WHITE] == 0) || (tb->num_pieces_by_color[BLACK] == 0)) {
+	fatal("Must have at least one white piece and one black piece!\n");
 	return NULL;
+    }
+
+    if (tb->variant != VARIANT_SUICIDE) {
+	if ((tb->white_king == -1) || (tb->black_king == -1)) {
+	    fatal("Must have one white king and one black one!\n");
+	    return NULL;
+	}
     }
 
 
@@ -4178,6 +4218,15 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	index = NULL;
     }
 
+    /* These two encoding schemes depend on a special encoding for the kings, which might not even
+     * be present if we're doing a suicide analysis.
+     */
+
+    if ((tb->variant == VARIANT_SUICIDE) && (tb->index_type >= COMPACT_INDEX)) {
+	fatal("Can't use 'compact' or 'no-en-passant' index types with 'suicide' variant (yet)\n");
+	return NULL;
+    }
+
     /* Now, I had this idea that I could completely discard those positions where the king was in
      * check from a frozen piece.  After all, how could a king ever move into check from a frozen
      * piece?  Well, the answer is that if we use this as a futurebase in a later analysis, the king
@@ -4262,10 +4311,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	}
     }
 
-    tb->legal_squares[tb->white_king] &= ~ tb->illegal_white_king_squares;
-    tb->legal_squares[tb->black_king] &= ~ tb->illegal_black_king_squares;
-    tb->semilegal_squares[tb->white_king] &= ~ tb->illegal_white_king_squares;
-    tb->semilegal_squares[tb->black_king] &= ~ tb->illegal_black_king_squares;
+    if (tb->variant != VARIANT_SUICIDE) {
+	tb->legal_squares[tb->white_king] &= ~ tb->illegal_white_king_squares;
+	tb->legal_squares[tb->black_king] &= ~ tb->illegal_black_king_squares;
+	tb->semilegal_squares[tb->white_king] &= ~ tb->illegal_white_king_squares;
+	tb->semilegal_squares[tb->black_king] &= ~ tb->illegal_black_king_squares;
+    }
 
     /* Strip the locations of frozen pieces off the legal squares bitvectors of all the other
      * pieces.  Like stripping the capture squares off the enemy king's legal bitvector, this is a
@@ -4344,12 +4395,20 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		fatal("Entries format must contain a movecnt field\n");
 		return NULL;
 	    }
+	    if ((tb->variant == VARIANT_SUICIDE) && (specified_entries_format.capture_possible_flag_offset == -1)) {
+		fatal("Entries format for a suicide analysis must contain a capture-possible-flag\n");
+		return NULL;
+	    }
 	} else {
 
 	    /* Otherwise, use the compiled-in default */
 
 	    context2 = xmlXPathNewContext(default_formats);
-	    result2 = xmlXPathEvalExpression(BAD_CAST "//default-entries-format", context2);
+	    if (tb->variant == VARIANT_NORMAL) {
+		result2 = xmlXPathEvalExpression(BAD_CAST "//default-entries-format", context2);
+	    } else {
+		result2 = xmlXPathEvalExpression(BAD_CAST "//default-suicide-entries-format", context2);
+	    }
 	    if (result2->nodesetval->nodeNr == 1) {
 		if (! parse_format(result2->nodesetval->nodeTab[0], &specified_entries_format)) {
 		    fatal("Can't parse compiled-in default entries format!\n");
@@ -4357,6 +4416,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		}
 		if (specified_entries_format.movecnt_bits == 0) {
 		    fatal("Compiled-in default entries format does not contain a movecnt field!\n");
+		    return NULL;
+		}
+		if ((tb->variant == VARIANT_SUICIDE) && (specified_entries_format.capture_possible_flag_offset == -1)) {
+		    fatal("Compiled-in suicide entries format does not contain a capture-possible-flag!\n");
 		    return NULL;
 		}
 	    } else {
@@ -4449,6 +4512,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	xmlFree(index_symmetry);
     } else {
 	tb->symmetry = 1;
+    }
+
+    if ((tb->variant == VARIANT_SUICIDE) && (tb->symmetry != 1)) {
+	fatal("Can't use symmetry with 'suicide' variant (yet)\n");
+	return NULL;
     }
 
     /* Check piece specification to make sure it matches symmetry
@@ -4997,7 +5065,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.538 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.539 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5308,6 +5376,11 @@ boolean preload_all_futurebases(tablebase_t *tb)
 
 	/* load_futurebase_from_file() already printed some kind of error message */
 	if (futurebases[fbnum] == NULL) continue;
+
+	if (futurebases[fbnum]->variant != tb->variant) {
+	    fatal("Futurebases have to use same 'variant' as tablebase under construction!\n");
+	    continue;
+	}
 
 	if (futurebases[fbnum]->symmetry < tb->symmetry) {
 	    fatal("Futurebases can't be less symmetric than the tablebase under construction\n");
@@ -6870,12 +6943,19 @@ void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
 
 void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
 {
-    /* This kind of position is "illegal" in the chess sense - PNTM's king can be captured.  We
-     * don't count moves into check as part of "movecnt", so we don't want to back propagate from
-     * this position.  So we just flag it as a propagated win and DTM to one here - PTM wins.
+    /* In ordinary chess, this kind of position is illegal - PNTM's king can be captured.  We don't
+     * count moves into check as part of "movecnt", so we don't want to back propagate from this
+     * position.  So we just flag it as a propagated win and DTM to one here - PTM wins.
+     *
+     * On the other hand, if we're doing a suicide analysis, a PNTM-mated position is a stalemate in
+     * ordinary terms (PTM can't move and therefore wins), so we do want to back propagate.
      */
 
-    initialize_entry(tb, index, MOVECNT_PTM_WINS_PROPED, 1);
+    if (tb->variant == VARIANT_NORMAL) {
+	initialize_entry(tb, index, MOVECNT_PTM_WINS_PROPED, 1);
+    } else {
+	initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, 1);
+    }
 
     /* total_PNTM_mated_positions ++; */
     (void) __sync_add(&total_PNTM_mated_positions, 1);
@@ -6943,20 +7023,37 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("PTM_wins; index=%d; dtm=%d\n", index, dtm);
+	printf("PTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, get_entry_raw_DTM(index));
 #endif
 
     if (dtm < 0) {
+
 	fatal("Negative distance to mate in PTM_wins!?\n");
+
     } else if ((get_entry_movecnt(index) != MOVECNT_PTM_WINS_PROPED)
-	       && (get_entry_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)) {
+	       && (get_entry_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)
+	       && (get_entry_movecnt(index) != MOVECNT_PNTM_WINS_PROPED)
+	       && (get_entry_movecnt(index) != MOVECNT_PNTM_WINS_UNPROPED)
+	       && (get_entry_movecnt(index) != MOVECNT_STALEMATE)) {
+
+	/* In ordinary chess, we should never get here with MOVECNT_PNTM_WINS_UNPROPED (or PROPED)
+	 * because we have to have decremented the movecnt already to zero to have gotten either of
+	 * those flags.  However, if this is a suicide analysis, we can get a MOVECNT_PNTM_WINS from
+	 * a forced capture, so we have to exclude this cases.  In any event, this code fragment
+	 * only runs for a "normal" movecnt field - none of the five special cases.
+	 */
+
 	set_entry_movecnt(index, MOVECNT_PTM_WINS_UNPROPED);
 	set_entry_raw_DTM(index, dtm);
 	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 1;
-    } else if (dtm < get_entry_raw_DTM(index)) {
+
+    } else if ((dtm < get_entry_raw_DTM(index))
+	       && (get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)) {
+
 	/* This can happen if we get a PTM mate during futurebase back prop, then, later during
 	 * futurebase back prop or during intra-table back prop, improve upon the mate.
 	 */
+
 	set_entry_raw_DTM(index, dtm);
 	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 1;
     }
@@ -6977,9 +7074,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 	       && (get_entry_movecnt(index) != MOVECNT_PNTM_WINS_UNPROPED)
 	       && (get_entry_movecnt(index) != MOVECNT_STALEMATE)) {
 
-	/* We should never get here with MOVECNT_PNTM_WINS_UNPROPED (or PROPED) because we have to
-	 * have decremented the movecnt already to zero to have gotten either of those flags.
-	 */
+	/* Again, this is the code for a "normal" movecnt field. */
 
 	set_entry_movecnt(index, get_entry_movecnt(index) - 1);
 
@@ -6989,8 +7084,8 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 	}
 
 	if (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED) {  /* i.e, zero */
-	    /* The DTM passed in was the one that pushed movecnt to zero, but it might not be the
-	     * best line, so that's why we fetch entry DTM here.
+	    /* This call pushed movecnt to zero, but the passed-in DTM might not be the best line,
+	     * so that's why we fetch entry DTM here.
 	     */
 #ifdef DEBUG_PASS_DEPENDANCIES
 	    if ((get_entry_raw_DTM(index) >= min_tracked_dtm)
@@ -7021,6 +7116,19 @@ void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futu
 #endif
 
     lock_entry(current_tb, index);
+
+    /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
+     * non-capture move into a position where a capture was possible.  For such a position, the only
+     * bits in our futurevector correspond to capture moves, so the code in proptable_pass should
+     * have rejected non-capture futuremoves into such a position (XXX check this).  Now we check
+     * the intra-tablebase case and return if the capture-possible-flag is set.
+     */
+
+    if ((current_tb->variant == VARIANT_SUICIDE) && (futurevector == 0)
+	&& get_entry_capture_possible_flag(index)) {
+	unlock_entry(current_tb, index);
+	return;
+    }
 
     if (PROPTABLE_FORMAT_DTM_BITS > 0) {
 	if (dtm > 0) {
@@ -8001,6 +8109,19 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 		return;
 	    }
 
+	}
+
+	/* If we're doing a suicide analysis, captures are forced, so we never want to
+	 * back-propagate a non-capture move into a position where a capture was possible.  For such
+	 * a position, the only bits in our futurevector correspond to capture moves, so the code
+	 * just above already rejected non-capture futuremoves into such a position.  Now we check
+	 * the intra-tablebase case and return if the capture-possible-flag is set.
+	 */
+
+	if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
+	    && get_entry_capture_possible_flag(index)) {
+	    unlock_entry(current_tb, index);
+	    return;
 	}
 
 	if (dtm > 0) {
@@ -9957,6 +10078,22 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
+	    /* If this is a suicide analysis and we can capture a player's only (i.e, last) piece,
+	     * we lose.  Treat this just like a 'resign' prune, except that we don't need prune or
+	     * prune-enable statements, since these are the rules of the game!
+	     */
+
+	    if ((tb->variant == VARIANT_SUICIDE) && (tb->num_pieces_by_color[tb->piece_color[captured_piece]] == 1)) {
+
+		futurecaptures[capturing_piece][captured_piece] = -4;
+
+		for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
+		    promotion_captures[capturing_piece][captured_piece][promotion] = -4;
+		}
+
+		continue;
+	    }
+
 	    futurecaptures[capturing_piece][captured_piece] = -1;
 
 	    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
@@ -10418,7 +10555,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 	    for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
-		if (futurecaptures[capturing_piece][captured_piece] != -1) {
+		if (futurecaptures[capturing_piece][captured_piece] >= 0) {
 
 		    if (! (pruned_futuremoves[tb->piece_color[capturing_piece]]
 			   & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
@@ -10488,7 +10625,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 		int promoted_piece_handled = 0;
 
-		if (promotion_captures[pawn][captured_piece][promotion] == -1) continue;
+		if (promotion_captures[pawn][captured_piece][promotion] < 0) continue;
 
 		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		    if ((futurebases[fbnum]->extra_piece != -1)
@@ -10540,7 +10677,7 @@ boolean check_pruning(tablebase_t *tb) {
 
 	    int promoted_piece_handled = 0;
 
-	    if (promotions[pawn][promotion] == -1) continue;
+	    if (promotions[pawn][promotion] < 0) continue;
 
 	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		if ((futurebases[fbnum]->extra_piece != -1)
@@ -11021,6 +11158,10 @@ int PTM_in_check(tablebase_t *tb, local_position_t *position)
     int dir;
     struct movement *movementptr;
 
+    /* The concept of check doesn't exist in suicide - kings are normal pieces */
+
+    if (tb->variant == VARIANT_SUICIDE) return 0;
+
     for (piece = 0; piece < tb->num_pieces; piece++) {
 
 	/* We only want to consider pieces of the side which is NOT to move... */
@@ -11077,6 +11218,8 @@ int global_PTM_in_check(global_position_t *position)
     int dir;
     struct movement *movementptr;
 
+    if (position->variant == VARIANT_SUICIDE) return 0;
+
     for (square = 0; square < 64; square ++) {
 
 	/* We only want to consider pieces of the side which is NOT to move... */
@@ -11130,6 +11273,8 @@ int global_PNTM_in_check(global_position_t *position)
     int dir;
     struct movement *movementptr;
 
+    if (position->variant == VARIANT_SUICIDE) return 0;
+
     for (square = 0; square < 64; square ++) {
 
 	/* We only want to consider pieces of the side which is to move... */
@@ -11181,6 +11326,8 @@ int PNTM_in_check(tablebase_t *tb, local_position_t *position)
     int dir;
     int origin_square;
     struct movement *movementptr;
+
+    if (tb->variant == VARIANT_SUICIDE) return 0;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
 
@@ -11316,6 +11463,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    /* it's a concede - PTM wins */
 				    initialize_entry_with_DTM(tb, index, 2);
 				    return 0;
+				} else if (futuremoves[piece][movementptr->square] == -4) {
+				    /* it's a resign - PTM loses */
+				    initialize_entry_with_DTM(tb, index, -2);
+				    return 0;
 				} else if (futuremoves[piece][movementptr->square] < 0) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
@@ -11376,6 +11527,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    } else if (futurecaptures[piece][i] == -3) {
 					/* concede prune */
 					initialize_entry_with_DTM(tb, index, 2);
+					return 0;
+				    } else if (futurecaptures[piece][i] == -4) {
+					/* resign prune (or an actual suicide loss if capturing last piece) */
+					initialize_entry_with_DTM(tb, index, -2);
 					return 0;
 				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
@@ -11446,6 +11601,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    /* concede prune */
 				    initialize_entry_with_DTM(tb, index, 2);
 				    return 0;
+				} else if (promotions[piece][promotion] == -4) {
+				    /* resign prune */
+				    initialize_entry_with_DTM(tb, index, -2);
+				    return 0;
 				} else if (promotions[piece][promotion] < 0) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
@@ -11479,6 +11638,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				} else if (futuremoves[piece][movementptr->square] == -3) {
 				    /* concede prune */
 				    initialize_entry_with_DTM(tb, index, 2);
+				    return 0;
+				} else if (futuremoves[piece][movementptr->square] == -4) {
+				    /* resign prune */
+				    initialize_entry_with_DTM(tb, index, -2);
 				    return 0;
 				} else if (futuremoves[piece][movementptr->square] < 0) {
 				    global_position_t global;
@@ -11543,6 +11706,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					/* concede prune */
 					initialize_entry_with_DTM(tb, index, 2);
 					return 0;
+				    } else if (futurecaptures[piece][i] == -4) {
+					/* resign prune (or an actual suicide loss if capturing last piece) */
+					initialize_entry_with_DTM(tb, index, -2);
+					return 0;
 				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
@@ -11592,6 +11759,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					/* concede prune */
 					initialize_entry_with_DTM(tb, index, 2);
 					return 0;
+				    } else if (futurecaptures[piece][i] == -4) {
+					/* resign prune (or an actual suicide loss if capturing last piece) */
+					initialize_entry_with_DTM(tb, index, -2);
+					return 0;
 				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
@@ -11617,6 +11788,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					} else if (promotion_captures[piece][i][promotion] == -3) {
 					    /* concede prune */
 					    initialize_entry_with_DTM(tb, index, 2);
+					    return 0;
+					} else if (promotion_captures[piece][i][promotion] == -4) {
+					    /* resign prune (or an actual suicide loss if capturing last piece) */
+					    initialize_entry_with_DTM(tb, index, -2);
 					    return 0;
 					} else if (promotion_captures[piece][i][promotion] < 0) {
 					    global_position_t global;
@@ -11658,16 +11833,21 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	}
 
 	/* Finally, if every possible moves leads us into check, we determine if we're in check,
-	 * being the difference between this being checkmate or stalemate.
+	 * being the difference between this being checkmate or stalemate.  In suicide analysis, a
+	 * stalemate is a win for the stalemated player (international rules).
 	 */
 
 	if (movecnt == 0) {
-	    if (PTM_in_check(tb, &position)) {
+
+	    if (tb->variant == VARIANT_SUICIDE) {
+		initialize_entry_with_PNTM_mated(tb, index);
+	    } else if (PTM_in_check(tb, &position)) {
 		initialize_entry_with_PTM_mated(tb, index);
 	    } else {
 		initialize_entry_with_stalemate(tb, index);
 	    }
 	    return 0;
+
 	} else {
 
 	    /* total_moves += movecnt; */
@@ -11676,27 +11856,32 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	    /* total_futuremoves += futuremovecnt; */
 	    (void) __sync_add(&total_futuremoves, futuremovecnt);
 
-	    /* What's this?  Well, diagonal symmetry is more difficult to handle than other types of
-	     * symmetry because the piece along the diagonal don't actually move when you reflect
-	     * the board.  So, here, we double the movecnt to account for the symmetry so long as
-	     * the white king isn't on the a1/h8 diagonal.
-	     *
-	     * Other kinds of symmetry (horizontal and vertical) we can basically ignore at this
-	     * point, but please explain why.
+	    /* In suicide, captures are forced, so if any captures are possible they are our only
+	     * moves.  Of course, if we can capture the opponent's last piece, then we win!
 	     */
 
-	    /* Symmetry and multiplicty.  If we're using a symmetric index, then there might be more
+	    if ((tb->variant == VARIANT_SUICIDE) && (capturecnt != 0)) {
+		movecnt = capturecnt;
+		futurevector = capture_futurevector;
+	    }
+
+	    set_entry_capture_possible_flag(index, capturecnt != 0);
+
+	    /* Symmetry and multiplicity.  If we're using a symmetric index, then there might be more
 	     * than one actual board position that corresponds to a given index value.  The number
 	     * of non-identical board positions for a given index is called its multiplicity.  So
 	     * here we multiply the movecnt by the multiplicity of the position to get the total
 	     * number of moves out of all possible positions that correspond to this index.
+	     *
+	     * Actually, when computing position.multiplicity, we ignore horizontal and vertical
+	     * symmetry because they always result in doubled (or quadrupled) board positions.
+	     * Diagonal symmetry is more difficult to handle because the pieces along the diagonal
+	     * don't move when you reflect the board.  So we need to use position.multiplicity to
+	     * distinguish between the two kings being on the a1/h8 diagonal (multiplicity 1), and
+	     * one of them being off the diagnoal (multiplicity 2).
 	     */
 
-	    movecnt *= position.multiplicity;
-
-	    initialize_entry_with_movecnt(tb, index, movecnt);
-
-	    set_entry_capture_possible_flag(index, capturecnt != 0);
+	    initialize_entry_with_movecnt(tb, index, movecnt * position.multiplicity);
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE) {
@@ -11950,6 +12135,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     xmlFree(buf);
 
     for (index = 0; index <= tb->max_index; index ++) {
+
+#ifdef DEBUG_MOVE
+	if (index == DEBUG_MOVE) {
+	    fprintf(stderr, "Writing %d: DTM %d; movecnt %d\n", index,
+		    get_entry_DTM(index), get_entry_movecnt(index));
+	}
+#endif
 
 	/* Right now, there's only three possible fields in the tablebase format itself (as opposed
 	 * to the intermediate entries and proptable formats) - dtm, basic, and flag.
@@ -12581,7 +12773,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.538 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.539 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12711,6 +12903,11 @@ int main(int argc, char *argv[])
 
     /* Probing only */
 
+    if (tbs[0] == NULL) {
+	fatal("No valid tablebases to probe!\n");
+	terminate();
+    }
+
 #ifdef HAVE_LIBREADLINE
     read_history(".hoffman_history");
 #endif
@@ -12747,6 +12944,7 @@ int main(int argc, char *argv[])
 	    continue;
 	}
 
+	global_position.variant = tbs[0]->variant;
 	global_position_valid = 1;
 
 	if (search_tablebases_for_global_position(tbs, &global_position, &tb, &index)) {
@@ -12855,7 +13053,8 @@ int main(int argc, char *argv[])
 
 			    char captured_piece = global_position.board[movementptr->square];
 
-			    if ((captured_piece == 'K') || (captured_piece == 'k')) {
+			    if ((global_position.variant != VARIANT_SUICIDE)
+				&& ((captured_piece == 'K') || (captured_piece == 'k'))) {
 
 				/* printf("MATE\n"); */
 
