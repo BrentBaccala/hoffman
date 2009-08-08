@@ -8,6 +8,13 @@
       <locking-bit/>
    </default-entries-format>
 
+   <default-suicide-entries-format>
+      <dtm bits="7"/>
+      <movecnt bits="7"/>
+      <capture-possible-flag/>
+      <locking-bit/>
+   </default-suicide-entries-format>
+
    <default-proptable-format>
       <index-field bits="32" offset="0"/>
       <dtm bits="16" offset="32"/>
