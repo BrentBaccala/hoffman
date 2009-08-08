@@ -5065,7 +5065,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.541 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.542 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12700,7 +12700,8 @@ void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm, int pntm
     }
 }
 
-void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *global_position_ptr, char *ptm, char *pntm)
+int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *global_position_ptr, char *ptm, char *pntm,
+		    int print_non_captures, int print_captures)
 {
     global_position_t global_position, saved_global_position;
     tablebase_t *tb2;
@@ -12710,6 +12711,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
     int piece_type;
     int promotion;
     struct movement * movementptr;
+    int moves_printed = 0;
 
     global_position = *global_position_ptr;
     saved_global_position = global_position;
@@ -12747,7 +12749,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 		    global_position.board[movementptr->square]
 			= global_pieces[piece_color][piece_type];
 
-		    if (! global_PNTM_in_check(&global_position)) {
+		    if (! global_PNTM_in_check(&global_position) && print_non_captures) {
 			if (search_tablebases_for_global_position(tbs, &global_position,
 								  &tb2, &index2)){
 
@@ -12760,6 +12762,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square]);
 			}
+			moves_printed ++;
 		    }
 
 		    global_position.board[movementptr->square] = 0;
@@ -12789,7 +12792,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 			place_piece_in_global_position(&global_position, movementptr->square,
 						       piece_color, piece_type);
 
-			if (! global_PNTM_in_check(&global_position)) {
+			if (! global_PNTM_in_check(&global_position) && print_captures) {
 			    if (search_tablebases_for_global_position(tbs, &global_position,
 								      &tb2, &index2)) {
 
@@ -12808,6 +12811,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 				       algebraic_notation[square],
 				       algebraic_notation[movementptr->square]);
 			    }
+			    moves_printed ++;
 			}
 
 		    }
@@ -12836,7 +12840,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 
 		    global_position.board[movementptr->square] = global_pieces[piece_color][PAWN];
 
-		    if (! global_PNTM_in_check(&global_position)) {
+		    if (! global_PNTM_in_check(&global_position) && print_non_captures) {
 			if (search_tablebases_for_global_position(tbs, &global_position,
 								  &tb2, &index2)){
 
@@ -12849,6 +12853,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square]);
 			}
+			moves_printed ++;
 		    }
 
 		    global_position.board[movementptr->square] = 0;
@@ -12863,7 +12868,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 						       piece_color, promoted_pieces[promotion]);
 
 
-			if (! global_PNTM_in_check(&global_position)) {
+			if (! global_PNTM_in_check(&global_position) && print_non_captures) {
 			    if (search_tablebases_for_global_position(tbs, &global_position,
 								      &tb2, &index2)){
 				printf ("   P%s%s=%c  ",
@@ -12877,6 +12882,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 				       algebraic_notation[movementptr->square],
 				       piece_char[promoted_pieces[promotion]]);
 			    }
+			    moves_printed ++;
 			}
 		    }
 
@@ -12903,7 +12909,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 			global_position.board[global_position.en_passant_square + 8] = 0;
 		    }
 
-		    if (! global_PNTM_in_check(&global_position)) {
+		    if (! global_PNTM_in_check(&global_position) && print_captures) {
 			if (search_tablebases_for_global_position(tbs, &global_position,
 								  &tb2, &index2)) {
 
@@ -12922,6 +12928,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square]);
 			}
+			moves_printed ++;
 		    }
 
 		    if (piece_color == WHITE) {
@@ -12964,7 +12971,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 			place_piece_in_global_position(&global_position, movementptr->square,
 						       piece_color, promoted_pieces[promotion]);
 
-			if (! global_PNTM_in_check(&global_position)) {
+			if (! global_PNTM_in_check(&global_position) && print_captures) {
 			    if (search_tablebases_for_global_position(tbs, &global_position,
 								      &tb2, &index2)) {
 
@@ -12986,6 +12993,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 				       algebraic_notation[movementptr->square],
 				       piece_char[promoted_pieces[promotion]]);
 			    }
+			    moves_printed ++;
 			}
 		    }
 
@@ -13001,7 +13009,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 		    place_piece_in_global_position(&global_position, movementptr->square,
 						   piece_color, PAWN);
 
-		    if (! global_PNTM_in_check(&global_position)) {
+		    if (! global_PNTM_in_check(&global_position) && print_captures) {
 			if (search_tablebases_for_global_position(tbs, &global_position,
 								  &tb2, &index2)) {
 
@@ -13020,6 +13028,7 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square]);
 			}
+			moves_printed ++;
 		    }
 
 		    global_position.board[movementptr->square] = captured_piece;
@@ -13027,9 +13036,10 @@ void print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *glob
 	    }
 	    /* end of capture search */
 
-
 	}
     }
+
+    return moves_printed;
 }
 
 void usage(char *program_name)
@@ -13105,7 +13115,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.541 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.542 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -13330,7 +13340,15 @@ int main(int argc, char *argv[])
 	    }
 #endif
 
-	    print_move_list(tbs, tb, &global_position, ptm, pntm);
+	    /* In suicide, capture moves are forced, so if any exist they are the only moves. */
+
+	    if (global_position.variant != VARIANT_SUICIDE) {
+		print_move_list(tbs, tb, &global_position, ptm, pntm, 1, 1);
+	    } else {
+		if (print_move_list(tbs, tb, &global_position, ptm, pntm, 0, 1) == 0) {
+		    print_move_list(tbs, tb, &global_position, ptm, pntm, 1, 0);
+		}
+	    }
 	}
     }
 
