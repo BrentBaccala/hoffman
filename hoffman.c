@@ -5065,7 +5065,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.539 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.540 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12773,7 +12773,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.539 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.540 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -12908,6 +12908,13 @@ int main(int argc, char *argv[])
 	terminate();
     }
 
+    for (i=1; tbs[i] != NULL; i ++) {
+	if (tbs[i]->variant != tbs[0]->variant) {
+	    fatal("All probed tablebases must use same variant!\n");
+	    terminate();
+	}
+    }
+
 #ifdef HAVE_LIBREADLINE
     read_history(".hoffman_history");
 #endif
@@ -12937,6 +12944,20 @@ int main(int argc, char *argv[])
 	printf(global_position_valid ? "FEN or move? " : "FEN? ");
 	if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
 #endif
+
+	if (!strcmp(buffer, ".")) {
+	    int i;
+	    for (i = 0; i < 64; i++) {
+		char c = global_position.board[i % 8 + 8*(7-i/8)];
+		if (i % 8 == 0)
+		    printf("%c |",'8'-i/8);
+		printf(" %s%c\e[0m", c >= 'a' ? "\e[7m" : "", c ? c : '.');
+		if (i % 8 == 7)
+		    printf("\n");
+	    }
+	    printf("  +----------------\n    a b c d e f g h\n");
+	    continue;
+	}
 
 	if (!(global_position_valid && parse_move_in_global_position(buffer, &global_position))
 	    && !parse_FEN_to_global_position(buffer, &global_position)) {
@@ -12972,7 +12993,8 @@ int main(int argc, char *argv[])
 	    print_score(tb, index, ptm, pntm, 0);
 
 #ifdef USE_NALIMOV
-	    if (EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
+	    if ((global_position.variant == VARIANT_NORMAL)
+		&& EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
 		printf("\nNalimov score: ");
 		if (score > 0) {
 		    printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
@@ -13071,6 +13093,12 @@ int main(int argc, char *argv[])
 						algebraic_notation[square],
 						algebraic_notation[movementptr->square]);
 					print_score(tb2, index2, pntm, ptm, 1);
+				    } else if ((tb->variant == VARIANT_SUICIDE)
+					       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+					printf("   %c%sx%s   %s WINS\n", piece_char[piece_type],
+					       algebraic_notation[square],
+					       algebraic_notation[movementptr->square],
+					       colors[1 - piece_color]);
 				    } else {
 					printf("   %c%sx%s   NO DATA\n", piece_char[piece_type],
 					       algebraic_notation[square],
@@ -13179,6 +13207,12 @@ int main(int argc, char *argv[])
 					    algebraic_notation[square],
 					    algebraic_notation[movementptr->square]);
 				    print_score(tb2, index2, pntm, ptm, 1);
+				} else if ((tb->variant == VARIANT_SUICIDE)
+					   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+				    printf("   P%sx%s   %s WINS\n",
+					   algebraic_notation[square],
+					   algebraic_notation[movementptr->square],
+					   colors[1 - piece_color]);
 				} else {
 				    printf("   P%sx%s   NO DATA\n",
 					   algebraic_notation[square],
@@ -13206,8 +13240,9 @@ int main(int argc, char *argv[])
 			    continue;
 			}
 
-			if ((global_position.board[movementptr->square] == 'K')
-			    || (global_position.board[movementptr->square] == 'k')) {
+			if ((global_position.variant != VARIANT_SUICIDE)
+			    && ((global_position.board[movementptr->square] == 'K')
+				|| (global_position.board[movementptr->square] == 'k'))) {
 
 			    /* printf("MATE\n"); */
 			    continue;
@@ -13234,6 +13269,13 @@ int main(int argc, char *argv[])
 						algebraic_notation[movementptr->square],
 						piece_char[promoted_pieces[promotion]]);
 					print_score(tb2, index2, pntm, ptm, 1);
+				    } else if ((tb->variant == VARIANT_SUICIDE)
+					       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+					printf("   P%sx%s=%c %s WINS\n",
+					       algebraic_notation[square],
+					       algebraic_notation[movementptr->square],
+					       piece_char[promoted_pieces[promotion]],
+					       colors[1 - piece_color]);
 				    } else {
 					printf("   P%sx%s=%c NO DATA\n",
 					       algebraic_notation[square],
@@ -13263,6 +13305,12 @@ int main(int argc, char *argv[])
 					    algebraic_notation[square],
 					    algebraic_notation[movementptr->square]);
 				    print_score(tb2, index2, pntm, ptm, 1);
+				} else if ((tb->variant == VARIANT_SUICIDE)
+					   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+				    printf("   P%sx%s   %s WINS\n",
+					   algebraic_notation[square],
+					   algebraic_notation[movementptr->square],
+					   colors[1 - piece_color]);
 				} else {
 				    printf("   P%sx%s   NO DATA\n",
 					   algebraic_notation[square],
