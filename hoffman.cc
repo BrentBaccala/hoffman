@@ -4218,12 +4218,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	index = NULL;
     }
 
-    /* These two encoding schemes depend on a special encoding for the kings, which might not even
+    /* The other encoding schemes depend on a special encoding for the kings, which might not even
      * be present if we're doing a suicide analysis.
      */
 
-    if ((tb->variant == VARIANT_SUICIDE) && (tb->index_type >= COMPACT_INDEX)) {
-	fatal("Can't use 'compact' or 'no-en-passant' index types with 'suicide' variant (yet)\n");
+    if ((tb->variant == VARIANT_SUICIDE) && (tb->index_type != NAIVE_INDEX) && (tb->index_type != SIMPLE_INDEX)) {
+	fatal("Only 'naive' and 'simple' indices are compatible with 'suicide' variant\n");
 	return NULL;
     }
 
@@ -5065,7 +5065,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.544 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.545 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13115,7 +13115,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.544 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.545 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
