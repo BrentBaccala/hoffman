@@ -799,7 +799,7 @@ int verbose = 1;
 
 /* #define DEBUG_MOVE 5217 */
 
-/* #define DEBUG_FUTUREMOVE 798 */
+/* #define DEBUG_FUTUREMOVE 4719110 */
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -5065,7 +5065,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.545 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.546 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8719,43 +8719,55 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 		    if (invert_colors_of_futurebase)
 			promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-		    /* The extra piece has to be on the back rank.  We can safely 'break' here due
-		     * to identical pieces being sorted into ascending square number.  If we've
-		     * backed up to an extra piece that isn't on the back rank, then there can't be
-		     * any more identical pieces on the back rank.
+		    /* The extra piece has to be on the back rank.
+		     *
+		     * I used to (pre 1.547) 'break' here if it wasn't, figuring that since
+		     * identical pieces are sorted into ascending square numbers, if we'd backed up
+		     * to an extra piece that wasn't on the back rank, then there couldn't be any
+		     * more identical pieces on the back rank.
+		     *
+		     * But Laurent Bartholdi exposed that as a bug.  If black is promoting, then we
+		     * start with the piece with the highest square number - that isn't on the back
+		     * rank - and have to back up to find one that is.
+		     *
+		     * We could invert the whole piece processing order to make the original
+		     * optimization work, but then when you consider what can happen if there are
+		     * movement restrictions in the futurebase, maybe the pieces aren't even going
+		     * to show up in the right order.  Better to ditch that whole idea, I think.
 		     */
 
-		    if ((promotion_sq < first_back_rank_square) || (promotion_sq > last_back_rank_square))
-			break;
+		    if ((promotion_sq >= first_back_rank_square) && (promotion_sq <= last_back_rank_square)) {
 
-		    /* There has to be an empty square right behind where the pawn came from, and it
-		     * has to be at least semilegal for the pawn.
-		     */
-
-		    if (!(position.board_vector & BITVECTOR(promotion_sq - promotion_move))
-			&& (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
-
-			/* Because the promoted piece was 'extra' it doesn't appear in the local
-			 * position, so we don't have to worry about taking it off the board.  Put
-			 * the missing pawn on the seventh (or second).
+			/* There has to be an empty square right behind where the pawn came from, and it
+			 * has to be at least semilegal for the pawn.
 			 */
 
-			position.piece_position[pawn] = promotion_sq - promotion_move;
+			if (!(position.board_vector & BITVECTOR(promotion_sq - promotion_move))
+			    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
 
-			/* Normalize the position, and back prop it. */
+			    /* Because the promoted piece was 'extra' it doesn't appear in the local
+			     * position, so we don't have to worry about taking it off the board.  Put
+			     * the missing pawn on the seventh (or second).
+			     */
 
-			normalize_position(current_tb, &position);
+			    position.piece_position[pawn] = promotion_sq - promotion_move;
 
-			true_pawn = position.permuted_piece[pawn];
+			    /* Normalize the position, and back prop it. */
 
-			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								      promotions[true_pawn][promotion],
-								      &position);
+			    normalize_position(current_tb, &position);
 
-			/* We may be about to use this position again, so put the board_vector back... */
+			    true_pawn = position.permuted_piece[pawn];
 
-			denormalize_position(current_tb, &position);
-			position.board_vector &=~ BITVECTOR(position.piece_position[pawn]);
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
+									  promotions[true_pawn][promotion],
+									  &position);
+
+			    /* We may be about to use this position again, so put the board_vector back... */
+
+			    denormalize_position(current_tb, &position);
+			    position.board_vector &=~ BITVECTOR(position.piece_position[pawn]);
+			}
+
 		    }
 
 		    /* If there's an piece identical to the extra piece in the futurebase's
@@ -8924,92 +8936,103 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 		    if (invert_colors_of_futurebase)
 			promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-		    /* The extra piece has to be on the back rank.  We can safely 'break' here due
-		     * to identical pieces being sorted into ascending square number.  If we've
-		     * backed up to an extra piece that isn't on the back rank, then there can't be
-		     * any more identical pieces on the back rank.
+		    /* The extra piece has to be on the back rank.
+		     *
+		     * I used to (pre 1.547) 'break' here if it wasn't, figuring that since
+		     * identical pieces are sorted into ascending square numbers, if we'd backed up
+		     * to an extra piece that wasn't on the back rank, then there couldn't be any
+		     * more identical pieces on the back rank.
+		     *
+		     * But Laurent Bartholdi exposed that as a bug.  If black is promoting, then we
+		     * start with the piece with the highest square number - that isn't on the back
+		     * rank - and have to back up to find one that is.
+		     *
+		     * We could invert the whole piece processing order to make the original
+		     * optimization work, but then when you consider what can happen if there are
+		     * movement restrictions in the futurebase, maybe the pieces aren't even going
+		     * to show up in the right order.  Better to ditch that whole idea, I think.
 		     */
 
+		    if ((promotion_sq >= first_back_rank_square) && (promotion_sq <= last_back_rank_square)) {
 
-		    if ((promotion_sq < first_back_rank_square) || (promotion_sq > last_back_rank_square))
-			break;
+			/* Put the piece that was captured onto the board on the promotion square. */
 
-		    /* Put the piece that was captured onto the board on the promotion square. */
+			position.piece_position[missing_piece2] = promotion_sq;
 
-		    position.piece_position[missing_piece2] = promotion_sq;
-
-		    /* Consider first a capture to the left (white's left).  There has to be an
-		     * empty square where the pawn came from, and it has to be at least semilegal.
-		     */
-
-		    if ((COL(promotion_sq) != 0)
-			&& !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
-			&& (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
-
-			/* Because the promoted piece was 'extra' it doesn't appear in the local
-			 * position, so we don't have to worry about taking it off the board.  Put
-			 * the missing pawn on the seventh (or second).
+			/* Consider first a capture to the left (white's left).  There has to be an
+			 * empty square where the pawn came from, and it has to be at least semilegal.
 			 */
 
-			position.piece_position[pawn] = promotion_sq - promotion_move - 1;
+			if ((COL(promotion_sq) != 0)
+			    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
+			    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
 
-			/* Back propagate the resulting position */
+			    /* Because the promoted piece was 'extra' it doesn't appear in the local
+			     * position, so we don't have to worry about taking it off the board.  Put
+			     * the missing pawn on the seventh (or second).
+			     */
 
-			normalize_position(current_tb, &position);
+			    position.piece_position[pawn] = promotion_sq - promotion_move - 1;
 
-			true_captured_piece = position.permuted_piece[missing_piece2];
-			true_pawn = position.permuted_piece[pawn];
+			    /* Back propagate the resulting position */
 
-			/* This function also back props any similar positions with one of the pawns
-			 * from the side that didn't promote in an en passant state.
+			    normalize_position(current_tb, &position);
+
+			    true_captured_piece = position.permuted_piece[missing_piece2];
+			    true_pawn = position.permuted_piece[pawn];
+
+			    /* This function also back props any similar positions with one of the pawns
+			     * from the side that didn't promote in an en passant state.
+			     */
+
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
+									  promotion_captures[true_pawn][true_captured_piece][promotion],
+									  &position);
+
+			    /* We're about to use this position again, so put the board_vector back... */
+
+			    denormalize_position(current_tb, &position);
+			    position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
+			}
+
+			/* Now consider a capture to the right (white's right).  Again, there has to be
+			 * an empty square where the pawn came from, and it has to be semilegal.
 			 */
 
-			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								      promotion_captures[true_pawn][true_captured_piece][promotion],
-								      &position);
+			if ((COL(promotion_sq) != 7)
+			    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
+			    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
 
-			/* We're about to use this position again, so put the board_vector back... */
+			    /* Because the promoted piece was 'extra' it doesn't appear in the local
+			     * position, so we don't have to worry about taking it off the board.  Put
+			     * the missing pawn on the seventh (or second).
+			     */
 
-			denormalize_position(current_tb, &position);
-			position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
+			    position.piece_position[pawn] = promotion_sq - promotion_move + 1;
+
+			    normalize_position(current_tb, &position);
+
+			    true_captured_piece = position.permuted_piece[missing_piece2];
+			    true_pawn = position.permuted_piece[pawn];
+
+			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
+									  promotion_captures[true_pawn][true_captured_piece][promotion],
+									  &position);
+
+			    /* We're about to use this position again, so put the board_vector back... */
+
+			    denormalize_position(current_tb, &position);
+			    position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
+			}
+
+			/* Remove the piece from the promotion square, at least in board_vector.  We'll
+			 * change its position next time around this do/while loop, if there's another
+			 * possibility for the "extra" piece.
+			 */
+
+			position.board_vector &= ~BITVECTOR(promotion_sq);
+
 		    }
-
-		    /* Now consider a capture to the right (white's right).  Again, there has to be
-		     * an empty square where the pawn came from, and it has to be semilegal.
-		     */
-
-		    if ((COL(promotion_sq) != 7)
-			&& !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
-			&& (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
-
-			/* Because the promoted piece was 'extra' it doesn't appear in the local
-			 * position, so we don't have to worry about taking it off the board.  Put
-			 * the missing pawn on the seventh (or second).
-			 */
-
-			position.piece_position[pawn] = promotion_sq - promotion_move + 1;
-
-			normalize_position(current_tb, &position);
-
-			true_captured_piece = position.permuted_piece[missing_piece2];
-			true_pawn = position.permuted_piece[pawn];
-
-			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								      promotion_captures[true_pawn][true_captured_piece][promotion],
-								      &position);
-
-			/* We're about to use this position again, so put the board_vector back... */
-
-			denormalize_position(current_tb, &position);
-			position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
-		    }
-
-		    /* Remove the piece from the promotion square, at least in board_vector.  We'll
-		     * change its position next time around this do/while loop, if there's another
-		     * possibility for the "extra" piece.
-		     */
-
-		    position.board_vector &= ~BITVECTOR(promotion_sq);
 
 		    /* If there's an piece identical to the extra piece in the futurebase's
 		     * position, then figure out which of our pieces it was mapped to, swap them,
@@ -13115,7 +13138,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.545 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.546 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
