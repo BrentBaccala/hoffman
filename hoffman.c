@@ -230,6 +230,7 @@ long contended_indices = 0;
 #define __sync_or(ptr, val) (*(ptr) |= (val))
 #define __sync_xor(ptr, val) (*(ptr) ^= (val))
 #define __sync_add(ptr, val) (*(ptr) += (val))
+#define __sync_and(ptr, val) (*(ptr) &= (val))
 
 #define __sync_fetch_and_and  __non_builtin_sync_fetch_and_and
 
@@ -238,8 +239,6 @@ inline uint32 __sync_fetch_and_and(uint32 *ptr, uint32 val) {
     *(ptr) &= (val);
     return tmp;
 }
-
-#define __sync_and __sync_fetch_and_and
 
 #endif
 
@@ -5065,7 +5064,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.546 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.547 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13138,7 +13137,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.546 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.547 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
