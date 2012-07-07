@@ -720,6 +720,7 @@ typedef struct tablebase {
     uint64 illegal_white_king_squares;
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
+    int *permutations[MAX_PIECES];
 
     int prune_enable[2];		/* one for each color */
     int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
@@ -796,7 +797,7 @@ int verbose = 1;
  * a single move.
  */
 
-/* #define DEBUG_MOVE 5217 */
+/* #define DEBUG_MOVE 135791621 */
 
 /* #define DEBUG_FUTUREMOVE 4719110 */
 
@@ -2976,7 +2977,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
     return 1;
 }
 
-/* Normalization - normalize_position() and denormalize_position()
+/* Normalization
  *
  * Not all positions are created equal.  For example, interchanging two identical pieces doesn't
  * change the position at all, so a position with rook #1 on e4 and rook #2 on g6 is the same as one
@@ -2996,35 +2997,36 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
  *
  * So, we deal with this using "normalization".  We call normalize_position() to apply all the
  * reflection and sorting needed to get the position to a point where it can be directly converted
- * to an index.  We record these transformations using the 'reflection' variable and an array of
- * permutations in the position structure, so we can put everything back with
- * denormalize_position().
+ * to an index.  We record these transformations using the 'reflection' variable and a permutation
+ * array in the position structure.
  *
- * Oh, and we can look into the permutation array to figure out which piece has been swapped where,
- * so we can figure out futuremove bit vectors accordingly.  So the way we move a rook, like in the
- * example above, is to move it e5, normalize, back prop, denormalize, then move it to e6,
- * normalize, back prop, denormalize, move it to e7, etc.
+ * We can look into the permutation array to figure out which piece has been swapped where, so we
+ * can figure out futuremove bit vectors accordingly.  So the way we move a rook, like in the
+ * example above, is to move it e5, normalize, back prop, move it to e6, normalize, back prop, move
+ * it to e7, etc.
  *
- * We also recompute the board vector in both functions, because the reflections can change it
- * around.
+ * We also recompute the board vector, because the reflections can change it around.
  */
 
-void transpose_pieces(local_position_t *position, int piece1, int piece2)
+void transpose_pieces(local_position_t *position, int *permutation, int piece1, int piece2)
 {
     int square = position->piece_position[piece2];
-    int permuted_piece = position->permuted_piece[piece2];
 
     position->piece_position[piece2] = position->piece_position[piece1];
     position->piece_position[piece1] = square;
 
-    position->permuted_piece[piece2] = position->permuted_piece[piece1];
-    position->permuted_piece[piece1] = permuted_piece;
+    if (permutation) {
+	int permuted_piece = permutation[piece2];
+	permutation[piece2] = permutation[piece1];
+	permutation[piece1] = permuted_piece;
+    }
 }
 
 
 void normalize_position(tablebase_t *tb, local_position_t *position)
 {
     int piece, piece2;
+    int permutation[MAX_PIECES];
 
     /* Reflect the pieces around to get the white king where we want him for symmetry.
      *
@@ -3084,6 +3086,10 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 #endif
     }
 
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	permutation[piece] = piece;
+    }
+
     /* Sort any identical pieces so that the lowest square number always comes first. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -3091,74 +3097,60 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 	while ((tb->last_identical_piece[piece2] != -1)
 	       && (position->piece_position[piece2]
 		   < position->piece_position[tb->last_identical_piece[piece2]])) {
-	    transpose_pieces(position, piece2, tb->last_identical_piece[piece2]);
+	    transpose_pieces(position, permutation, piece2, tb->last_identical_piece[piece2]);
 	    piece2 = tb->last_identical_piece[piece2];
 	}
     }
 
-    /* Now swap identical pieces to try and get them onto legal squares (if needed)
+    /* Now permute identical pieces to try and get them onto legal squares (if needed).
      *
-     * This code certainly isn't perfect, but since parse_XML_into_tablebase() currently disallows
-     * more than two identical pieces, all it has to do is swap.
-     *
-     * If the swap doesn't work, we don't care.  This position is then illegal and will get rejected
-     * when we try to convert it to an index.
+     * The order of the permutations is significant only in that identical board positions must
+     * always generate identical indices.  So we first sort the pieces into a standard order (the
+     * previous step), and then systematically apply permutations until we find the first one that
+     * places all the pieces onto legal squares.  If none of the permutations work, we don't care.
+     * This position is then illegal and will get rejected when we try to convert it to an index.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (! (tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece]))) {
-	    if (tb->next_identical_piece[piece] != -1) {
-		transpose_pieces(position, piece, tb->next_identical_piece[piece]);
-	    }
-	    if (tb->last_identical_piece[piece] != -1) {
-		transpose_pieces(position, piece, tb->last_identical_piece[piece]);
+
+	/* run this loop once for each set of identical pieces */
+	if (tb->permutations[piece] != NULL) {
+	    int perm = 0;
+
+	    while (tb->permutations[piece][perm] != 0) {
+
+		int piece2;
+
+		/* check for legality of all pieces in this set */
+		for (piece2 = piece; piece2 != -1; piece2 = tb->next_identical_piece[piece2]) {
+		    if (! (tb->legal_squares[piece2] & BITVECTOR(position->piece_position[piece2]))) {
+			break;
+		    }
+		}
+
+		if (piece2 == -1) {
+		    /* we're legal */
+		    break;
+		}
+
+		/* permute */
+		transpose_pieces(position, permutation,
+				 tb->permutations[piece][perm] & 0xff, tb->permutations[piece][perm] >> 8);
+		perm ++;
 	    }
 	}
     }
+
+    /* Finally, reconstruct the board vector and invert the permutation, so that the permuted_piece
+     * array in the position gives the new pieces as a function of the old ones.
+     */
 
     position->board_vector = 0;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	position->board_vector |= BITVECTOR(position->piece_position[piece]);
+	position->permuted_piece[permutation[piece]] = piece;
     }
-}
-
-void denormalize_position(tablebase_t *tb, local_position_t *position)
-{
-    int piece;
-
-    position->board_vector = 0;
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (position->permuted_piece[piece] != piece) {
-	    transpose_pieces(position, piece, position->permuted_piece[piece]);
-	}
-
-	if ((position->reflection & 1) == 1) {
-	    position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
-	}
-	if ((position->reflection & 2) == 2) {
-	    position->piece_position[piece] = vertical_reflection(position->piece_position[piece]);
-	}
-	if ((position->reflection & 4) == 4) {
-	    position->piece_position[piece] = horizontal_reflection(position->piece_position[piece]);
-	}
-	position->board_vector |= BITVECTOR(position->piece_position[piece]);
-    }
-
-    if (position->en_passant_square != -1) {
-	if ((position->reflection & 1) == 1) {
-	    position->en_passant_square = diagonal_reflection(position->en_passant_square);
-	}
-	if ((position->reflection & 2) == 2) {
-	    position->en_passant_square = vertical_reflection(position->en_passant_square);
-	}
-	if ((position->reflection & 4) == 4) {
-	    position->en_passant_square = horizontal_reflection(position->en_passant_square);
-	}
-    }
-
-    position->reflection = 0;
 }
 
 index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position)
@@ -3420,7 +3412,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 	    while ((tb->last_identical_piece[piece2] != -1)
 		   && (position->piece_position[piece2]
 		       < position->piece_position[tb->last_identical_piece[piece2]])) {
-		transpose_pieces(position, piece2, tb->last_identical_piece[piece2]);
+		transpose_pieces(position, NULL, piece2, tb->last_identical_piece[piece2]);
 	    }
 	}
     }
@@ -3776,6 +3768,10 @@ char * print_format(char *name, struct format *format)
  * second argument is a flag to distinguish between them.
  */
 
+int factorial(int n) {
+    return (n <= 2) ? n : (n * factorial(n-1));
+}
+
 tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 {
     tablebase_t *tb;
@@ -3793,6 +3789,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     int reverse_index_ordering[MAX_PIECES];
     xmlChar * king_positions;
     int no_frozen_check_king_positions = 0;
+    int starting_fatal_errors = fatal_errors;
 
     tb = malloc(sizeof(tablebase_t));
     if (tb == NULL) {
@@ -4157,21 +4154,94 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    }
 	}
 
-	/* Later, if we're trying to process a position with two identical pieces that aren't on
-	 * legal squares, we swap them and see if we can get them onto legal squares that way.  If
-	 * there were more than two identical pieces, we'd have to try more combinations, probably a
-	 * full set of possible permutations, and the simplest way to do that is to prohibit it here
-	 * - at least for now.
-	 */
-
 	if (tb->last_identical_piece[piece] != -1) {
-	    if (tb->last_identical_piece[tb->last_identical_piece[piece]] != -1) {
-		fatal("More than two identical pieces with overlapping move restrictions\n");
-		return NULL;
-	    }
 	    tb->next_identical_piece[tb->last_identical_piece[piece]] = piece;
 	}
     }
+
+    /* Later, if we're trying to process a position with identical pieces that aren't on legal
+     * squares, we permute them and see if we can get them onto legal squares that way.  Construct
+     * the full set of possible permutations now.
+     *
+     * XXX probably don't need to do this at all if the semilegal and legal squares are the same,
+     * because permuting wouldn't do anything for us then.
+     */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if (tb->last_identical_piece[piece] == -1 && tb->next_identical_piece[piece] != -1) {
+
+	    int identical_pieces = 0;
+	    int piece2;
+
+	    int position[MAX_PIECES];
+	    int directions[MAX_PIECES];
+	    int i;
+	    int j;
+
+	    for (piece2 = piece; piece2 != -1; piece2 = tb->next_identical_piece[piece2]) {
+		position[identical_pieces] = piece2;
+		directions[identical_pieces] = -1;
+		identical_pieces ++;
+	    }
+	    directions[0] = 0;
+
+	    tb->permutations[piece] = calloc(factorial(identical_pieces), sizeof(int));
+	    j = 0;
+
+	    /* Use Johnson–Trotter algorithm to generate all permutations as a series of
+	     * transpositions.
+	     */
+
+	    while (1) {
+		int largest_i_with_nonzero_direction;
+		int direction;
+		int saved_position;
+
+		largest_i_with_nonzero_direction = -1;
+
+		for (i=0; i<identical_pieces; i++) {
+		    if ((directions[i] != 0)
+			&& ((largest_i_with_nonzero_direction == -1) 
+			    || position[i] > position[largest_i_with_nonzero_direction])) {
+			largest_i_with_nonzero_direction = i;
+		    }
+		}
+
+		if (largest_i_with_nonzero_direction == -1) break;
+
+		tb->permutations[piece][j++] = (position[largest_i_with_nonzero_direction] << 8)
+		    | position[largest_i_with_nonzero_direction + directions[largest_i_with_nonzero_direction]];
+
+		direction = directions[largest_i_with_nonzero_direction];
+
+		saved_position = position[largest_i_with_nonzero_direction];
+		position[largest_i_with_nonzero_direction] = position[largest_i_with_nonzero_direction + direction];
+		position[largest_i_with_nonzero_direction + direction] = saved_position;
+
+		directions[largest_i_with_nonzero_direction] = directions[largest_i_with_nonzero_direction + direction];
+		directions[largest_i_with_nonzero_direction + direction] = direction;
+
+		largest_i_with_nonzero_direction += direction;
+
+		if ((largest_i_with_nonzero_direction == 0)
+		    || (largest_i_with_nonzero_direction == identical_pieces-1)
+		    || (position[largest_i_with_nonzero_direction + directions[largest_i_with_nonzero_direction]] > 
+			position[largest_i_with_nonzero_direction])) {
+		    directions[largest_i_with_nonzero_direction] = 0;
+		}
+
+		for (i=0; i<largest_i_with_nonzero_direction; i++) {
+		    if (position[i] > position[largest_i_with_nonzero_direction]) directions[i] = +1;
+		}
+		for (i=largest_i_with_nonzero_direction; i<identical_pieces; i++) {
+		    if (position[i] > position[largest_i_with_nonzero_direction]) directions[i] = -1;
+		}
+	    }
+
+	}
+    }
+
 
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
@@ -4929,7 +4999,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    return (fatal_errors == 0) ? tb : NULL;
+    return (fatal_errors == starting_fatal_errors) ? tb : NULL;
 }
 
 /* Parses an XML control file.
@@ -5064,7 +5134,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.547 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.548 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8478,7 +8548,7 @@ void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t 
 	    if (tb->piece_color[piece] == position->side_to_move) continue;
 	    if (tb->piece_type[piece] != PAWN) continue;
 
-	    /* I took care in the calling routines to update board_vector specifically so we can
+	    /* I took care in normalize_position() to update board_vector specifically so we can
 	     * check for en passant legality here.
 	     */
 
@@ -8597,6 +8667,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
     index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
+    local_position_t normalized_position;
     uint32 conversion_result;
     int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_pawn;
@@ -8753,18 +8824,15 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 
 			    /* Normalize the position, and back prop it. */
 
-			    normalize_position(current_tb, &position);
+			    normalized_position = position;
 
-			    true_pawn = position.permuted_piece[pawn];
+			    normalize_position(current_tb, &normalized_position);
+
+			    true_pawn = normalized_position.permuted_piece[pawn];
 
 			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotions[true_pawn][promotion],
-									  &position);
-
-			    /* We may be about to use this position again, so put the board_vector back... */
-
-			    denormalize_position(current_tb, &position);
-			    position.board_vector &=~ BITVECTOR(position.piece_position[pawn]);
+									  &normalized_position);
 			}
 
 		    }
@@ -8813,6 +8881,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
     index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
+    local_position_t normalized_position;
     uint32 conversion_result;
     int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_captured_piece;
@@ -8975,10 +9044,12 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 
 			    /* Back propagate the resulting position */
 
-			    normalize_position(current_tb, &position);
+			    normalized_position = position;
 
-			    true_captured_piece = position.permuted_piece[missing_piece2];
-			    true_pawn = position.permuted_piece[pawn];
+			    normalize_position(current_tb, &normalized_position);
+
+			    true_captured_piece = normalized_position.permuted_piece[missing_piece2];
+			    true_pawn = normalized_position.permuted_piece[pawn];
 
 			    /* This function also back props any similar positions with one of the pawns
 			     * from the side that didn't promote in an en passant state.
@@ -8986,12 +9057,8 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 
 			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece][promotion],
-									  &position);
+									  &normalized_position);
 
-			    /* We're about to use this position again, so put the board_vector back... */
-
-			    denormalize_position(current_tb, &position);
-			    position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
 			}
 
 			/* Now consider a capture to the right (white's right).  Again, there has to be
@@ -9009,27 +9076,18 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 
 			    position.piece_position[pawn] = promotion_sq - promotion_move + 1;
 
-			    normalize_position(current_tb, &position);
+			    normalized_position = position;
 
-			    true_captured_piece = position.permuted_piece[missing_piece2];
-			    true_pawn = position.permuted_piece[pawn];
+			    normalize_position(current_tb, &normalized_position);
+
+			    true_captured_piece = normalized_position.permuted_piece[missing_piece2];
+			    true_pawn = normalized_position.permuted_piece[pawn];
 
 			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 									  promotion_captures[true_pawn][true_captured_piece][promotion],
-									  &position);
+									  &normalized_position);
 
-			    /* We're about to use this position again, so put the board_vector back... */
-
-			    denormalize_position(current_tb, &position);
-			    position.board_vector &= ~BITVECTOR(position.piece_position[pawn]);
 			}
-
-			/* Remove the piece from the promotion square, at least in board_vector.  We'll
-			 * change its position next time around this do/while loop, if there's another
-			 * possibility for the "extra" piece.
-			 */
-
-			position.board_vector &= ~BITVECTOR(promotion_sq);
 
 		    }
 
@@ -9085,6 +9143,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 {
     int dir;
     struct movement *movementptr;
+    local_position_t normalized_position;
     int true_captured_piece;
     int true_capturing_piece;
 
@@ -9120,10 +9179,6 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 	for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[capturing_piece]]; dir++) {
 
-	    /* Make sure we start each movement of the capturing piece from the capture square */
-
-	    position->piece_position[capturing_piece] = position->piece_position[captured_piece];
-
 	    for (movementptr = movements[current_tb->piece_type[capturing_piece]][position->piece_position[capturing_piece]][dir];
 		 (movementptr->vector & position->board_vector) == 0;
 		 movementptr++) {
@@ -9138,30 +9193,20 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		 *
 		 * We have to figure out the "true" capturing and captured pieces, which might not
 		 * be the pieces we started with (see comments on normalization).
-		 *
-		 * normalize_position() and denormalize_position() both update board_vector.  This
-		 * is good for normalization because I want to check for en passant legality before
-		 * I call local_position_to_index().  It just makes the code a little more robust at
-		 * this point, because then there should be no reason for local_position_to_index()
-		 * to return -1.  After denormalization though, we do want to clear the bit in
-		 * board_vector for the capturing_piece, because we're about to move it somewhere
-		 * else, and we don't want that for loop above us to get the idea that there's
-		 * a piece on a square that's actually vacant.
 		 */
 
-		position->piece_position[capturing_piece] = movementptr->square;
+		normalized_position = *position;
 
-		normalize_position(current_tb, position);
+		normalized_position.piece_position[capturing_piece] = movementptr->square;
 
-		true_capturing_piece = position->permuted_piece[capturing_piece];
-		true_captured_piece = position->permuted_piece[captured_piece];
+		normalize_position(current_tb, &normalized_position);
+
+		true_capturing_piece = normalized_position.permuted_piece[capturing_piece];
+		true_captured_piece = normalized_position.permuted_piece[captured_piece];
 
 		propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 							      futurecaptures[true_capturing_piece][true_captured_piece],
-							      position);
-
-		denormalize_position(current_tb, position);
-		position->board_vector &= ~BITVECTOR(movementptr->square);
+							      &normalized_position);
 	    }
 	}
 
@@ -9187,18 +9232,16 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 	    if ((current_tb->semilegal_squares[captured_piece]
 		 & BITVECTOR(position->piece_position[captured_piece]))) {
 
-		normalize_position(current_tb, position);
+		normalized_position = *position;
 
-		true_capturing_piece = position->permuted_piece[capturing_piece];
-		true_captured_piece = position->permuted_piece[captured_piece];
+		normalize_position(current_tb, &normalized_position);
+
+		true_capturing_piece = normalized_position.permuted_piece[capturing_piece];
+		true_captured_piece = normalized_position.permuted_piece[captured_piece];
 
 		propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 							      futurecaptures[true_capturing_piece][true_captured_piece],
-							      position);
-
-		denormalize_position(current_tb, position);
-
-		position->board_vector &= ~BITVECTOR(movementptr->square);
+							      &normalized_position);
 
 	    }
 
@@ -9222,38 +9265,25 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		     * The white pawn is actually a rank higher than usual.
 		     */
 
-		    position->en_passant_square = position->piece_position[captured_piece];
-		    position->piece_position[captured_piece] += 8;
+		    normalized_position = *position;
+
+		    normalized_position.en_passant_square = position->piece_position[captured_piece];
+		    normalized_position.piece_position[captured_piece] += 8;
 
 		    if ((current_tb->semilegal_squares[captured_piece]
-			 & BITVECTOR(position->piece_position[captured_piece]))) {
+			 & BITVECTOR(normalized_position.piece_position[captured_piece]))) {
 
-			position->board_vector &= ~BITVECTOR(position->en_passant_square);
-			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
-			position->board_vector |= BITVECTOR(movementptr->square);
+			normalize_position(current_tb, &normalized_position);
 
-			normalize_position(current_tb, position);
-
-			true_capturing_piece = position->permuted_piece[capturing_piece];
-			true_captured_piece = position->permuted_piece[captured_piece];
+			true_capturing_piece = normalized_position.permuted_piece[capturing_piece];
+			true_captured_piece = normalized_position.permuted_piece[captured_piece];
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 								      futurecaptures[true_capturing_piece][true_captured_piece],
-								      position);
+								      &normalized_position);
 
-			denormalize_position(current_tb, position);
-
-			position->board_vector |= BITVECTOR(position->en_passant_square);
-			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
-			position->board_vector &= ~BITVECTOR(movementptr->square);
 		    }
 
-		    /* Yes, we're in a for loop and could might this position again, so put things
-		     * back where they came from...
-		     */
-
-		    position->en_passant_square = -1;
-		    position->piece_position[captured_piece] -= 8;
 		}
 
 		if ((current_tb->piece_color[capturing_piece] == WHITE) && (ROW(movementptr->square) == 4)) {
@@ -9263,38 +9293,24 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		     * The black pawn is actually a rank lower than usual.
 		     */
 
-		    position->en_passant_square = position->piece_position[captured_piece];
-		    position->piece_position[captured_piece] -= 8;
+		    normalized_position = *position;
+
+		    normalized_position.en_passant_square = position->piece_position[captured_piece];
+		    normalized_position.piece_position[captured_piece] -= 8;
 
 		    if ((current_tb->semilegal_squares[captured_piece]
-			 & BITVECTOR(position->piece_position[captured_piece]))) {
+			 & BITVECTOR(normalized_position.piece_position[captured_piece]))) {
 
-			position->board_vector &= ~BITVECTOR(position->en_passant_square);
-			position->board_vector |= BITVECTOR(position->piece_position[captured_piece]);
-			position->board_vector |= BITVECTOR(movementptr->square);
+			normalize_position(current_tb, &normalized_position);
 
-			normalize_position(current_tb, position);
-
-			true_capturing_piece = position->permuted_piece[capturing_piece];
-			true_captured_piece = position->permuted_piece[captured_piece];
+			true_capturing_piece = normalized_position.permuted_piece[capturing_piece];
+			true_captured_piece = normalized_position.permuted_piece[captured_piece];
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-								 futurecaptures[true_capturing_piece][true_captured_piece],
-								 position);
+								      futurecaptures[true_capturing_piece][true_captured_piece],
+								      &normalized_position);
 
-			denormalize_position(current_tb, position);
-
-			position->board_vector |= BITVECTOR(position->en_passant_square);
-			position->board_vector &= ~BITVECTOR(position->piece_position[captured_piece]);
-			position->board_vector &= ~BITVECTOR(movementptr->square);
 		    }
-
-		    /* Yes, we're in a for loop and could might this position again, so put things
-		     * back where they came from...
-		     */
-
-		    position->en_passant_square = -1;
-		    position->piece_position[captured_piece] += 8;
 		}
 	    }
 
@@ -13137,7 +13153,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.547 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.548 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
