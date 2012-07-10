@@ -5100,32 +5100,28 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    }
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
-	     * identical pieces assumes that both pieces occupy the same range of squares.
+	     * identical pieces assumes that both pieces occupy the same range of squares.  We also
+	     * assign squares for en passant capturable pawns by using square numbers in the first
+	     * row (i.e, less than 8), since pawns can never be there.
 	     */
 
 	    for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
 		 (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
 		 (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
 
-		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) {
-		    tb->simple_piece_indices[piece][square] = -1;
-		    continue;
-		}
+		if ((tb->semilegal_squares[piece] & BITVECTOR(square))
+		    || ((tb->piece_type[piece] == PAWN)
+			&& (square < 8)
+			&& (tb->semilegal_squares[piece]
+			    & BITVECTOR(rowcol2square(square, tb->piece_color[piece] == WHITE ? 3 : 4))))) {
 
-		tb->simple_piece_indices[piece][square]
-		    = choose(tb->total_legal_piece_positions[piece], piece_in_set) * tb->max_index;
-		tb->total_legal_piece_positions[piece] ++;
-
-		/* if the pawn is en-passant capturable, add an index for that */
-		if ((tb->piece_type[piece] == PAWN)
-		    && (((tb->piece_color[piece] == WHITE) && (ROW(square) == 3))
-			|| ((tb->piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
-
-		    tb->simple_piece_indices[piece][COL(square)]
+		    tb->simple_piece_indices[piece][square]
 			= choose(tb->total_legal_piece_positions[piece], piece_in_set) * tb->max_index;
-
 		    tb->total_legal_piece_positions[piece] ++;
+		} else {
+		    tb->simple_piece_indices[piece][square] = -1;
 		}
+
 	    }
 
 	    if ((tb->last_identical_piece[piece] != -1)
@@ -5449,7 +5445,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.549 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.550 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13571,7 +13567,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.549 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.550 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
