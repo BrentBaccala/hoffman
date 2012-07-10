@@ -631,8 +631,9 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 #define SIMPLE_INDEX 2
 #define COMPACT_INDEX 3
 #define NO_EN_PASSANT_INDEX 4
+#define COMBINADIC_INDEX 5
 
-char * index_types[] = {"naive", "naive2", "simple", "compact", "no-en-passant"};
+char * index_types[] = {"naive", "naive2", "simple", "compact", "no-en-passant", "combinadic"};
 
 char * futurebase_types[] = {"capture", "promotion", "capture-promotion", "normal"};
 
@@ -658,7 +659,7 @@ typedef struct tablebase {
     int symmetry;
     int total_legal_piece_positions[MAX_PIECES];
     int simple_piece_positions[MAX_PIECES][64];
-    int simple_piece_indices[MAX_PIECES][64];
+    index_t simple_piece_indices[MAX_PIECES][64];
     int last_paired_piece[MAX_PIECES];
     int next_paired_piece[MAX_PIECES];
 
@@ -720,6 +721,7 @@ typedef struct tablebase {
     uint64 illegal_white_king_squares;
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
+    int reverse_index_ordering[MAX_PIECES];
     int *permutations[MAX_PIECES];
 
     int prune_enable[2];		/* one for each color */
@@ -2977,6 +2979,228 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
     return 1;
 }
 
+/* "combinadic" index
+ *
+ * The encoding of restricted pieces used in "simple", paired encoding of the kings so they can
+ * never be adjacent, and a combinatorial-based encoding of identical pieces.
+ */
+
+void transpose_array(int *array, int index1, int index2)
+{
+    int tmp = array[index2];
+    array[index2] = array[index1];
+    array[index1] = tmp;
+}
+
+void transpose_pieces(local_position_t *position, int *permutation, int piece1, int piece2)
+{
+    int square = position->piece_position[piece2];
+
+    position->piece_position[piece2] = position->piece_position[piece1];
+    position->piece_position[piece1] = square;
+
+    if (permutation) {
+	int permuted_piece = permutation[piece2];
+	permutation[piece2] = permutation[piece1];
+	permutation[piece1] = permuted_piece;
+    }
+}
+
+index_t local_position_to_combinadic_index(tablebase_t *tb, local_position_t *pos)
+{
+    index_t index;
+    int piece;
+    int vals[MAX_PIECES];
+
+    index = 0;
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	/* The way we encode en passant capturable pawns is use the column number of the
+	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
+	 * this is completely legit.
+	 */
+	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != -1)
+	    && (((tb->piece_color[piece] == WHITE)
+		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		|| ((tb->piece_color[piece] == BLACK)
+		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+	    /* vals[piece] = tb->simple_piece_indices[piece][COL(pos->en_passant_square)]; */
+	    vals[piece] = COL(pos->en_passant_square);
+	} else {
+	    /* vals[piece] = tb->simple_piece_indices[piece][pos->piece_position[piece]]; */
+	    vals[piece] = pos->piece_position[piece];
+	}
+    }
+
+    /* Sort identical pieces so that the lowest values always come first. */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	int piece2 = piece;
+	while ((tb->last_identical_piece[piece2] != -1)
+	       && (vals[piece2] < vals[tb->last_identical_piece[piece2]])) {
+	    transpose_array(vals, piece2, tb->last_identical_piece[piece2]);
+	    piece2 = tb->last_identical_piece[piece2];
+	}
+    }
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	/* Kings have their own encoding table */
+
+	if (piece == tb->white_king) {
+	    index += 2 * tb->compact_king_indices[pos->piece_position[tb->white_king]]
+		[pos->piece_position[tb->black_king]];
+	}
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	index += tb->simple_piece_indices[piece][vals[piece]];
+    }
+
+    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
+
+    index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+
+    return index;
+}
+
+boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+{
+    int piece;
+
+    memset(p, 0, sizeof(local_position_t));
+    p->en_passant_square = -1;
+
+    /* Each piece will have position values assigned to it multiplied by a multiplier for the set of
+     * identical pieces.  We search for the largest value in simple_piece_indices[] that is less
+     * than the index and convert the encoding numbers to square numbers on the board.  This works
+     * if identical pieces are grouped together.  This loop has to run in reverse order over the
+     * pieces, since a combinadic encoding should be backed out from the largest piece first.
+     */
+
+    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	int square;
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
+	     (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
+	     (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
+
+	    if ((tb->simple_piece_indices[piece][square] != -1)
+		&& (tb->simple_piece_indices[piece][square] <= index)) {
+		p->piece_position[piece] = square;
+	    }
+	}
+
+	index -= tb->simple_piece_indices[piece][p->piece_position[piece]];
+
+	/* En passant */
+	if ((tb->piece_type[piece] == PAWN) && (p->piece_position[piece] < 8)) {
+	    if (p->en_passant_square != -1) return 0;  /* can't have two en passant pawns */
+	    if (tb->piece_color[piece] == WHITE) {
+		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = p->piece_position[piece] + 2*8;
+		p->piece_position[piece] += 3*8;
+	    } else {
+		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		p->en_passant_square = p->piece_position[piece] + 5*8;
+		p->piece_position[piece] += 4*8;
+	    }
+	}
+
+    }
+
+    p->side_to_move = index % 2;
+    index /= 2;
+
+    if (index >= tb->total_legal_compact_king_positions) {
+	fatal("index >= total legal king positions in combinadic_index_to_local_position!\n");
+	return 0;
+    }
+
+    p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
+    p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
+
+    /* Now we have to decide the actual ordering in the piece array.  Use our recorded
+     * permutations to put pieces on legal squares, if possible.
+     */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	if (tb->permutations[piece] != NULL) {
+	    int perm = 0;
+
+	    while (tb->permutations[piece][perm] != 0) {
+
+		int piece2;
+
+		/* check for legality of all pieces in this set */
+		for (piece2 = piece; piece2 != -1; piece2 = tb->next_identical_piece[piece2]) {
+		    if (! (tb->legal_squares[piece2] & BITVECTOR(p->piece_position[piece2]))) {
+			break;
+		    }
+		}
+
+		if (piece2 == -1) {
+		    /* we're legal */
+		    break;
+		}
+
+		/* permute */
+		transpose_pieces(p, NULL,
+				 tb->permutations[piece][perm] & 0xff, tb->permutations[piece][perm] >> 8);
+		perm ++;
+	    }
+	}
+    }
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	int square = p->piece_position[piece];
+
+	/* This can happen if we have multiple identical pieces because we counted semilegal
+	 * positions to encode them with.
+	 */
+
+	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
+	    /* fprintf(stderr, "Illegal piece position in combinadic_index_to_local_position!\n"); */
+	    return 0;
+	}
+
+	if (p->board_vector & BITVECTOR(square)) {
+	    return 0;
+	}
+
+	p->board_vector |= BITVECTOR(square);
+	if (tb->piece_color[piece] == p->side_to_move) {
+	    p->PTM_vector |= BITVECTOR(square);
+	}
+    }
+
+    /* If there is an en passant capturable pawn in this position, then there can't be anything
+     * on the capture square or on the square right behind it (where the pawn just came from),
+     * or its an illegal position.
+     */
+
+    if (p->en_passant_square != -1) {
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->side_to_move == WHITE) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	} else {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	}
+    }
+
+    return 1;
+}
+
 /* Normalization
  *
  * Not all positions are created equal.  For example, interchanging two identical pieces doesn't
@@ -3007,21 +3231,6 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
  *
  * We also recompute the board vector, because the reflections can change it around.
  */
-
-void transpose_pieces(local_position_t *position, int *permutation, int piece1, int piece2)
-{
-    int square = position->piece_position[piece2];
-
-    position->piece_position[piece2] = position->piece_position[piece1];
-    position->piece_position[piece1] = square;
-
-    if (permutation) {
-	int permuted_piece = permutation[piece2];
-	permutation[piece2] = permutation[piece1];
-	permutation[piece1] = permuted_piece;
-    }
-}
-
 
 void normalize_position(tablebase_t *tb, local_position_t *position)
 {
@@ -3138,6 +3347,8 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 				 tb->permutations[piece][perm] & 0xff, tb->permutations[piece][perm] >> 8);
 		perm ++;
 	    }
+
+	    /* We don't check the final permutation for legality, just leave it alone. */
 	}
     }
 
@@ -3226,6 +3437,9 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
     case NO_EN_PASSANT_INDEX:
 	index = local_position_to_compact_index(tb, position);
 	break;
+    case COMBINADIC_INDEX:
+	index = local_position_to_combinadic_index(tb, position);
+	break;
     default:
 	fatal("Unknown index type in local_position_to_index()\n");
 	return -1;
@@ -3297,6 +3511,9 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
     case COMPACT_INDEX:
     case NO_EN_PASSANT_INDEX:
 	ret = compact_index_to_local_position(tb, index, position);
+	break;
+    case COMBINADIC_INDEX:
+	ret = combinadic_index_to_local_position(tb, index, position);
 	break;
     default:
 	fatal("Unknown index type in index_to_local_position()\n");
@@ -3515,7 +3732,7 @@ int check_1000_indices(tablebase_t *tb)
 	if (index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 	    index2 = local_position_to_index(tb, &position);
 	    if (index != index2) {
-		fatal("Mismatch in check_1000_indices()\n");
+		fatal("Mismatch in check_1000_indices() " INDEX_T_DECIMAL_FORMAT "\n", index);
 		ret = 0;
 	    }
 	}
@@ -3772,6 +3989,16 @@ int factorial(int n) {
     return (n <= 2) ? n : (n * factorial(n-1));
 }
 
+int choose(int n, int k) {
+    long retval = 1;
+    int i;
+
+    for (i=0; i<k; i++) retval *= (n-i);
+    for (i=1; i<=k; i++) retval /= i;
+
+    return retval;
+}
+
 tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 {
     tablebase_t *tb;
@@ -3786,7 +4013,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     xmlChar * index_symmetry;
     int piece, piece2, square, white_king_square, black_king_square, dir;
     int pass;
-    int reverse_index_ordering[MAX_PIECES];
     xmlChar * king_positions;
     int no_frozen_check_king_positions = 0;
     int starting_fatal_errors = fatal_errors;
@@ -3952,9 +4178,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	}
 
 	if ((index_ordering != NULL) && (strcmp((char *) index_ordering, "reverse") == 0)) {
-	    reverse_index_ordering[piece] = 1;
+	    tb->reverse_index_ordering[piece] = 1;
 	} else {
-	    reverse_index_ordering[piece] = 0;
+	    tb->reverse_index_ordering[piece] = 0;
 	}
 
 	if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
@@ -4161,10 +4387,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
     /* Later, if we're trying to process a position with identical pieces that aren't on legal
      * squares, we permute them and see if we can get them onto legal squares that way.  Construct
-     * the full set of possible permutations now.
+     * the full set of possible permutations now.  We'll also use these permutations when we're
+     * translating a foreign position (from a futurebase) into a local position.
      *
-     * XXX probably don't need to do this at all if the semilegal and legal squares are the same,
-     * because permuting wouldn't do anything for us then.
+     * XXX probably don't need to do this during normalization at all if the semilegal and legal
+     * squares are the same, because permuting wouldn't do anything for us then.  Still need
+     * it for futurebase translation.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -4191,6 +4419,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
 	    /* Use Johnson–Trotter algorithm to generate all permutations as a series of
 	     * transpositions.
+	     *
+	     * XXX looking at how these permutations get used, maybe we should add a final
+	     * transposition to bring us back to the original configuration
 	     */
 
 	    while (1) {
@@ -4719,9 +4950,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	tb->max_index = 2;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    for (square = (reverse_index_ordering[piece] ? 63 : 0);
-		 (reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-		 (reverse_index_ordering[piece] ? (square --) : (square ++))) {
+	    for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
+		 (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
+		 (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
 		if (! (tb->legal_squares[piece] & BITVECTOR(square))) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
@@ -4792,9 +5023,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	     * identical pieces assumes that both pieces occupy the same range of squares.
 	     */
 
-	    for (square = (reverse_index_ordering[piece] ? 63 : 0);
-		 (reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-		 (reverse_index_ordering[piece] ? (square --) : (square ++))) {
+	    for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
+		 (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
+		 (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
 
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
 
@@ -4823,6 +5054,90 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    } else {
 		tb->max_index *= tb->total_legal_piece_positions[piece]/2;
 	    }
+	}
+
+	tb->max_index --;
+	break;
+
+    case COMBINADIC_INDEX:
+
+	/* The "2" is because side-to-play is part of the position */
+	tb->max_index = 2;
+
+	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
+	    if (! (tb->legal_squares[tb->white_king] & BITVECTOR(white_king_square))) continue;
+	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
+		if (! (tb->legal_squares[tb->black_king] & BITVECTOR(black_king_square))) continue;
+		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+		if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+		    && (ROW(black_king_square) > COL(black_king_square))) continue;
+
+		if (tb->positions_with_adjacent_kings_are_illegal
+		    && ! check_king_legality(white_king_square, black_king_square)) continue;
+
+		tb->compact_white_king_positions[tb->total_legal_compact_king_positions] = white_king_square;
+		tb->compact_black_king_positions[tb->total_legal_compact_king_positions] = black_king_square;
+		tb->compact_king_indices[white_king_square][black_king_square] = tb->total_legal_compact_king_positions;
+		tb->total_legal_compact_king_positions ++;
+	    }
+	}
+	tb->max_index *= tb->total_legal_compact_king_positions;
+
+	int piece_in_set;
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if (tb->last_identical_piece[piece] == -1) {
+		piece_in_set = 1;
+	    } else if (tb->last_identical_piece[piece] == piece-1) {
+		piece_in_set ++;
+	    } else {
+		fatal("Combinadic index requires identical pieces to be adjacent in index\n");
+	    }
+
+	    /* We count semilegal and not legal squares here because the pair encoding used for
+	     * identical pieces assumes that both pieces occupy the same range of squares.
+	     */
+
+	    for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
+		 (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
+		 (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
+
+		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) {
+		    tb->simple_piece_indices[piece][square] = -1;
+		    continue;
+		}
+
+		tb->simple_piece_indices[piece][square]
+		    = choose(tb->total_legal_piece_positions[piece], piece_in_set) * tb->max_index;
+		tb->total_legal_piece_positions[piece] ++;
+
+		/* if the pawn is en-passant capturable, add an index for that */
+		if ((tb->piece_type[piece] == PAWN)
+		    && (((tb->piece_color[piece] == WHITE) && (ROW(square) == 3))
+			|| ((tb->piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
+
+		    tb->simple_piece_indices[piece][COL(square)]
+			= choose(tb->total_legal_piece_positions[piece], piece_in_set) * tb->max_index;
+
+		    tb->total_legal_piece_positions[piece] ++;
+		}
+	    }
+
+	    if ((tb->last_identical_piece[piece] != -1)
+		&& (tb->total_legal_piece_positions[piece]
+		    != tb->total_legal_piece_positions[tb->last_identical_piece[piece]])) {
+		fatal("BUG: Identical pieces don't have the same number of total semilegal positions\n");
+	    }
+
+	    if (tb->next_identical_piece[piece] == -1) {
+		tb->max_index *= choose(tb->total_legal_piece_positions[piece], piece_in_set);
+	    }
+
 	}
 
 	tb->max_index --;
@@ -4901,9 +5216,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	     * identical pieces assumes that both pieces occupy the same range of squares.
 	     */
 
-	    for (square = (reverse_index_ordering[piece] ? 63 : 0);
-		 (reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-		 (reverse_index_ordering[piece] ? (square --) : (square ++))) {
+	    for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
+		 (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
+		 (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
 
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
 
@@ -5134,7 +5449,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.548 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.549 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5851,7 +6166,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 						 int invert_colors)
 {
     int foreign_piece;
-    int local_piece;
+    int local_piece, local_piece2, local_piece3;
     int restricted_piece = NONE;
     int missing_piece1 = NONE;
     int missing_piece2 = NONE;
@@ -5872,8 +6187,8 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     if (invert_colors) flip_side_to_move_local(local_position);
 
     /* First, see if we can slot foreign pieces into the local tablebase on legal squares.  We start
-     * by slotting them onto semilegal squares, then swapping them around if needed to get them onto
-     * legal squares.
+     * by slotting them onto semilegal squares, then permuting them around if needed to get them
+     * onto legal squares.
      *
      * This code could probably be made more efficient by keeping pointers to the semilegal groups
      * of each piece color/type for each square on the board.
@@ -5894,40 +6209,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 		&& (local_tb->semilegal_squares[local_piece] & BITVECTOR(sq))
 		&& !(local_pieces_processed_bitvector & (1 << local_piece))) {
 
-		if (local_tb->legal_squares[local_piece] & BITVECTOR(sq)) {
-		    local_position->piece_position[local_piece] = sq;
-		} else {
-		    /* The square is semilegal for local_piece, but not legal.  The only way this
-		     * can happen is if this piece is part of a semilegal group, which currently can
-		     * only have two members.  Find its pair.  If paired_piece hasn't been assigned
-		     * yet, then do nothing, since we'll hit it later on in the local_pieces loop
-		     * and assign it them.  Otherwise, attempt to get a legal assignment by swapping
-		     * the two pieces.  We know the square is semilegal for local_piece, but not
-		     * legal, so it has to be legal for paired_piece.  Therefore, the only question
-		     * is whether paired_piece's previously assigned square is legal for
-		     * local_piece.  If it is, swap them and keep going.  If not, then give up on
-		     * this foreign_piece, since we're not going to find anywhere to place it.
-		     *
-		     * This is one of the places where we assume that each semilegal group has only
-		     * two pieces in it, and will need a more complex algorithm to consider
-		     * permutations of more pieces if and when we relax this assumption.
-		     */
-
-		    int paired_piece = (local_tb->last_paired_piece[local_piece] != -1)
-			? local_tb->last_paired_piece[local_piece] : local_tb->next_paired_piece[local_piece];
-
-		    if (!(local_pieces_processed_bitvector & (1 << paired_piece))) continue;
-		    if (local_tb->legal_squares[local_piece] & BITVECTOR(local_position->piece_position[paired_piece])) {
-			local_position->piece_position[local_piece] = local_position->piece_position[paired_piece];
-			local_position->piece_position[paired_piece] = sq;
-		    } else {
-			break;
-		    }
-		}
-
-		local_position->board_vector |= BITVECTOR(sq);
-		if (local_tb->piece_color[local_piece] == local_position->side_to_move)
-		    local_position->PTM_vector |= BITVECTOR(sq);
+		local_position->piece_position[local_piece] = sq;
 
 		local_pieces_processed_bitvector |= (1 << local_piece);
 		foreign_pieces_processed_bitvector |= (1 << foreign_piece);
@@ -5937,8 +6219,131 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	}
     }
 
+    /* Now permute pieces in the local tablebase to try and get them onto legal squares.
+     *
+     * XXX does the order of permutations in this function have to match up with normalize_position()?
+     */
+
+    for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
+
+	/* run this loop once for each set of identical pieces */
+	if (local_tb->permutations[local_piece] != NULL) {
+
+	    int perm = 0;
+	    int saved_position;
+
+	    while (local_tb->permutations[local_piece][perm] != 0) {
+
+		/* all pieces in this set must be on legal squares, or unassigned */
+		for (local_piece2 = local_piece; local_piece2 != -1;
+		     local_piece2 = local_tb->next_identical_piece[local_piece2]) {
+		    if ((local_position->piece_position[local_piece2] != -1)
+			&& ! (local_tb->legal_squares[local_piece2] & BITVECTOR(local_position->piece_position[local_piece2]))) {
+			break;
+		    }
+		}
+
+		if (local_piece2 == -1) {
+		    /* we're legal */
+		    break;
+		}
+
+		/* permute */
+		transpose_pieces(local_position, NULL,
+				 local_tb->permutations[local_piece][perm] & 0xff, local_tb->permutations[local_piece][perm] >> 8);
+		perm ++;
+	    }
+
+	    /* Did that work?  If not, we can try something else.  Take one of the pieces back off
+	     * the board and try again.  Maybe we can pick it up later as a restricted piece.
+	     */
+
+	    for (local_piece2 = local_piece; local_piece2 != -1;
+		 local_piece2 = local_tb->next_identical_piece[local_piece2]) {
+		if ((local_position->piece_position[local_piece2] != -1)
+		    && ! (local_tb->legal_squares[local_piece2] & BITVECTOR(local_position->piece_position[local_piece2]))) {
+		    break;
+		}
+	    }
+
+	    if (local_piece2 == -1) {
+		/* we're legal */
+		break;
+	    }
+
+	    /* Not legal.  Loop through all positions in this set, take each one off in turn, and see if
+	     * we can come up with a legal position.
+	     *
+	     * What if there are multiple possibilities for this?  Can we take off two different positions
+	     * and come up with a legal position each time, but with a different restricted piece?
+	     */
+
+	    for (local_piece3 = local_piece; local_piece3 != -1;
+		 local_piece3 = local_tb->next_identical_piece[local_piece3]) {
+
+		saved_position = local_position->piece_position[local_piece3];
+		local_position->piece_position[local_piece3] = -1;
+
+		for (perm=0; local_tb->permutations[local_piece][perm] != 0; perm++) {
+
+		    int local_piece2;
+
+		    /* all pieces in this set must be on legal squares, or unassigned */
+		    for (local_piece2 = local_piece; local_piece2 != -1;
+			 local_piece2 = local_tb->next_identical_piece[local_piece2]) {
+			if ((local_position->piece_position[local_piece2] != -1)
+			    && ! (local_tb->legal_squares[local_piece2] & BITVECTOR(local_position->piece_position[local_piece2]))) {
+			    break;
+			}
+		    }
+
+		    if (local_piece2 == -1) {
+			/* we're legal */
+			break;
+		    }
+
+		    /* permute */
+		    transpose_pieces(local_position, NULL,
+				     local_tb->permutations[local_piece][perm] & 0xff, local_tb->permutations[local_piece][perm] >> 8);
+		}
+
+		for (local_piece2 = local_piece; local_piece2 != -1;
+		     local_piece2 = local_tb->next_identical_piece[local_piece2]) {
+		    if ((local_position->piece_position[local_piece2] != -1)
+			&& ! (local_tb->legal_squares[local_piece2] & BITVECTOR(local_position->piece_position[local_piece2]))) {
+			break;
+		    }
+		}
+
+		if (local_piece2 == -1) {
+		    /* we're legal */
+		    break;
+		}
+
+		/* this final permutation should take us back to the original position */
+		transpose_pieces(local_position, NULL,
+				 local_piece, local_tb->next_identical_piece[local_piece]);
+
+		local_position->piece_position[local_piece3] = saved_position;
+	    }
+
+	    if (local_piece2 == -1) {
+
+		/* Whew!  That worked.  Reset our various bitvectors. */
+
+		local_pieces_processed_bitvector &= ~(1 << local_piece3);
+
+		for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
+		    if (foreign_position->piece_position[foreign_piece] == saved_position) {
+			foreign_pieces_processed_bitvector &= ~(1 << foreign_piece);
+		    }
+		}
+	    }
+	}
+    }
+
     /* If that didn't work for a foreign piece, see if we can slip it in on an illegal square.  We
-     * waited until we ran that first loop so we could tell which pieces are unassigned and thus
+     * waited until we ran those first loops so we could tell which pieces are unassigned and thus
      * available for a restricted piece.
      */
 
@@ -5987,10 +6392,19 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     }
 
 
-    /* Make sure all the local pieces but one or two have been accounted for. */
+    /* Make sure all the local pieces but one or two have been accounted for,
+     * and set up our bitboard vectors.
+     */
 
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
-	if (!(local_pieces_processed_bitvector & (1 << local_piece))) {
+	if (local_pieces_processed_bitvector & (1 << local_piece)) {
+
+	    local_position->board_vector |= BITVECTOR(local_position->piece_position[local_piece]);
+	    if (local_tb->piece_color[local_piece] == local_position->side_to_move)
+		local_position->PTM_vector |= BITVECTOR(local_position->piece_position[local_piece]);
+
+	} else {
+
 	    if (missing_piece1 == NONE) {
 		missing_piece1 = local_piece;
 	    } else if (missing_piece2 == NONE) {
@@ -6004,6 +6418,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 		/* More than one missing piece in translation */
 		return -1;
 	    }
+
 	}
     }
 
@@ -7161,7 +7576,8 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 		&& (negative_passes_needed[-get_entry_raw_DTM(index)] == 0)) {
 		global_position_t global;
 		index_to_global_position(current_tb, index, &global);
-		printf("%d pass needed by %d %s\n", get_entry_raw_DTM(index), index, global_position_to_FEN(&global));
+		printf("%d pass needed by " INDEX_T_DECIMAL_FORMAT " %s\n",
+		       get_entry_raw_DTM(index), index, global_position_to_FEN(&global));
 	    }
 #endif
 	    if (get_entry_raw_DTM(index) >= min_tracked_dtm) negative_passes_needed[-get_entry_raw_DTM(index)] = 1;
@@ -9510,6 +9926,8 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 	 * if none of them were on restricted squares, then this would be a position in the current
 	 * tablebase.
 	 */
+
+	/* XXX we need to permute the restricted piece around in its semilegal set */
 
 	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
 	 * with multiple restricted pieces that should be quietly ignored.
@@ -13153,7 +13571,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.548 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.549 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
