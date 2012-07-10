@@ -4470,6 +4470,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		}
 	    }
 
+	    if (j != factorial(identical_pieces)) {
+		fatal("BUG: did not generate factorial(identical_pieces) permutations\n");
+	    }
+
 	}
     }
 
@@ -5445,7 +5449,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.550 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.551 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7034,7 +7038,10 @@ inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
 	cached_tb = NULL;
     }
 
-    /* If cache isn't big enough, build it or expand it */
+    /* If cache isn't big enough, build it or expand it
+     *
+     * XXX might have a race condition here, if two threads are trying to expand the cache simultaneously
+     */
 
     if (n >= num_cached_entries) {
 	cached_entries = realloc(cached_entries, tb->format.bytes * (n+1));
@@ -12467,20 +12474,22 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 	while ((dtm <= max_tracked_dtm) || (-dtm >= min_tracked_dtm)) {
 
 	    /* PTM wins */
-	    if (positive_passes_needed[dtm] || (positions_finalized_on_last_pass > 0))
+	    if (((dtm <= max_tracked_dtm) && positive_passes_needed[dtm])
+		|| (positions_finalized_on_last_pass > 0))
 		positions_finalized_on_last_pass = propagation_pass(dtm);
 	    else
 		positions_finalized_on_last_pass = 0;
 
-	    positive_passes_needed[dtm] = 0;
+	    if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 0;
 
 	    /* PNTM wins */
-	    if (negative_passes_needed[dtm] || (positions_finalized_on_last_pass > 0))
+	    if (((-dtm >= min_tracked_dtm) && negative_passes_needed[dtm])
+		|| (positions_finalized_on_last_pass > 0))
 		positions_finalized_on_last_pass = propagation_pass(-dtm);
 	    else
 		positions_finalized_on_last_pass = 0;
 
-	    negative_passes_needed[dtm] = 0;
+	    if (-dtm >= min_tracked_dtm) negative_passes_needed[dtm] = 0;
 
 	    dtm ++;
 	}
@@ -13567,7 +13576,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.550 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.551 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
