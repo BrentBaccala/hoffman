@@ -799,7 +799,8 @@ int verbose = 1;
  * a single move.
  */
 
-/* #define DEBUG_MOVE 135791621 */
+index_t debug_move=-1;
+/* #define DEBUG_MOVE debug_move */
 
 /* #define DEBUG_FUTUREMOVE 4719110 */
 
@@ -813,7 +814,7 @@ char * completion_report_url = NULL;
 
 #define MAX_FATAL_ERRORS 10
 
-void terminate (void)
+ __attribute__((noreturn)) void terminate (void)
 {
 #ifdef USE_LIBCURL
     void * file;
@@ -3074,6 +3075,9 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
 
+    p->side_to_move = index % 2;
+    index -= p->side_to_move;
+
     /* Each piece will have position values assigned to it multiplied by a multiplier for the set of
      * identical pieces.  We search for the largest value in simple_piece_indices[] that is less
      * than the index and convert the encoding numbers to square numbers on the board.  This works
@@ -3115,7 +3119,6 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
 
     }
 
-    p->side_to_move = index % 2;
     index /= 2;
 
     if (index >= tb->total_legal_compact_king_positions) {
@@ -5117,7 +5120,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		    || ((tb->piece_type[piece] == PAWN)
 			&& (square < 8)
 			&& (tb->semilegal_squares[piece]
-			    & BITVECTOR(rowcol2square(square, tb->piece_color[piece] == WHITE ? 3 : 4))))) {
+			    & BITVECTOR(rowcol2square(tb->piece_color[piece] == WHITE ? 3 : 4, square))))) {
 
 		    tb->simple_piece_indices[piece][square]
 			= choose(tb->total_legal_piece_positions[piece], piece_in_set) * tb->max_index;
@@ -5449,7 +5452,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.551 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.552 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11302,7 +11305,7 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
     }
 
 #ifdef DEBUG_MOVE
-    if (current_index == DEBUG_MOVE)
+    if ((current_index == DEBUG_MOVE) || (future_index == DEBUG_MOVE))
 	printf("propagate_one_minimove_within_table:  current_index="
 	       INDEX_T_DECIMAL_FORMAT "; future_index=" INDEX_T_DECIMAL_FORMAT "; dtm=%d\n",
 	       current_index, future_index, dtm);
@@ -13503,6 +13506,140 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
     return moves_printed;
 }
 
+void probe_tablebases(tablebase_t **tbs) {
+    global_position_t global_position;
+    boolean global_position_valid = 0;
+    boolean probing_single_tablebase;
+    tablebase_t *tb = NULL;
+    int i;
+
+    if (tbs[0] == NULL) {
+	fatal("No valid tablebases to probe!\n");
+	terminate();
+    }
+
+    probing_single_tablebase = (tbs[1] == NULL);
+    if (probing_single_tablebase) tb = tbs[0];
+
+    for (i=1; tbs[i] != NULL; i ++) {
+	if (tbs[i]->variant != tbs[0]->variant) {
+	    fatal("All probed tablebases must use same variant!\n");
+	    terminate();
+	}
+    }
+
+#ifdef HAVE_LIBREADLINE
+    read_history(".hoffman_history");
+#endif
+
+    while (1) {
+#ifdef HAVE_LIBREADLINE
+	char *buffer;
+#else
+	char buffer[256];
+#endif
+	index_t index = 0;
+#ifdef USE_NALIMOV
+	int score;
+#endif
+
+#ifdef HAVE_LIBREADLINE
+	buffer = readline(global_position_valid ? "FEN or move? " : "FEN? ");
+	if (buffer == NULL) break;
+	if (*buffer == '\0') continue;
+	add_history(buffer);
+#else
+	printf(global_position_valid ? "FEN or move? " : "FEN? ");
+	if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
+#endif
+
+	/* the single period command - prints current position */
+	if (!strcmp(buffer, ".")) {
+	    int i;
+	    for (i = 0; i < 64; i++) {
+		char c = global_position.board[i % 8 + 8*(7-i/8)];
+		if (i % 8 == 0)
+		    printf("%c |",'8'-i/8);
+		printf(" %s%c\e[0m", c >= 'a' ? "\e[7m" : "", c ? c : '.');
+		if (i % 8 == 7)
+		    printf("\n");
+	    }
+	    printf("  +----------------\n");
+	    printf("    a b c d e f g h\n");
+	    printf("%s to move\n", colors[global_position.side_to_move]);
+	    continue;
+	}
+
+	if (!(global_position_valid && parse_move_in_global_position(buffer, &global_position))
+	    && !parse_FEN_to_global_position(buffer, &global_position)
+	    && (!probing_single_tablebase || (index = strtol(buffer, NULL, 10)) == 0)) {
+	    printf(global_position_valid ? "Bad FEN or move\n\n" : "Bad FEN\n\n");
+	    continue;
+	}
+
+	global_position.variant = tbs[0]->variant;
+	global_position_valid = 1;
+
+	if (index == 0) {
+	    search_tablebases_for_global_position(tbs, &global_position, &tb, &index);
+	} else {
+	    index_to_global_position(tb, index, &global_position);
+	}
+
+	if ((tb != NULL) && (index != 0)) {
+
+	    char *ptm, *pntm;
+
+	    /* 'index' is the index of the current position; 'index2' will be the index
+	     * of the various next positions that we'll consider
+	     */
+
+	    printf("FEN %s\n", global_position_to_FEN(&global_position));
+	    printf("Index %d (%s)\n", index, tb->filename);
+
+	    if (global_position.side_to_move == WHITE) {
+		ptm = "White";
+		pntm = "Black";
+	    } else {
+		ptm = "Black";
+		pntm = "White";
+	    }
+
+	    print_score(tb, index, ptm, pntm, 0);
+
+#ifdef USE_NALIMOV
+	    if ((global_position.variant == VARIANT_NORMAL)
+		&& EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
+		printf("\nNalimov score: ");
+		if (score > 0) {
+		    printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
+		} else if (score < 0) {
+		    printf("%s wins in %d\n", pntm, ((65536-4)/2)+score);
+		} else {
+		    printf("DRAW\n");
+		}
+	    }
+#endif
+
+	    /* In suicide, capture moves are forced, so if any exist they are the only moves. */
+
+	    if (global_position.variant != VARIANT_SUICIDE) {
+		print_move_list(tbs, tb, &global_position, ptm, pntm, 1, 1);
+	    } else {
+		if (print_move_list(tbs, tb, &global_position, ptm, pntm, 0, 1) == 0) {
+		    print_move_list(tbs, tb, &global_position, ptm, pntm, 1, 0);
+		}
+	    }
+	}
+    }
+
+#ifdef HAVE_LIBREADLINE
+    write_history(".hoffman_history");
+#endif
+
+    printf("\n");
+}
+
 void usage(char *program_name)
 {
     fprintf(stderr, "\n");
@@ -13531,9 +13668,7 @@ void usage(char *program_name)
 int main(int argc, char *argv[])
 {
     /* Make sure this tablebase array is one bigger than we need, so it can be NULL terminated */
-    tablebase_t *tb, **tbs;
-    global_position_t global_position;
-    boolean global_position_valid = 0;
+    tablebase_t **tbs;
     int argi;
     int i;
     int c;
@@ -13576,7 +13711,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.551 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.552 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -13593,13 +13728,25 @@ int main(int argc, char *argv[])
     init_movements();
     verify_movements();
 
+#ifdef DEBUG_MOVE
+#define DEBUG_FLAG "d:"
+#else
+#define DEBUG_FLAG ""
+#endif
+
     while (1) {
-	c = getopt(argc, argv, "hiqgpvo:n:P:t:");
+	c = getopt(argc, argv, "hiqgpvo:n:P:t:" DEBUG_FLAG);
 
 	if (c == -1) break;
 
 	switch (c) {
 
+#ifdef DEBUG_MOVE
+	case 'd':
+	    /* XXX might want strtoll or something here */
+	    debug_move = strtol(optarg, NULL, 0);
+	    break;
+#endif
 	case 'i':
 	    dump_info = 1;
 	    break;
@@ -13704,122 +13851,6 @@ int main(int argc, char *argv[])
 
     if (!probing) terminate();
 
-    /* Probing only */
-
-    if (tbs[0] == NULL) {
-	fatal("No valid tablebases to probe!\n");
-	terminate();
-    }
-
-    for (i=1; tbs[i] != NULL; i ++) {
-	if (tbs[i]->variant != tbs[0]->variant) {
-	    fatal("All probed tablebases must use same variant!\n");
-	    terminate();
-	}
-    }
-
-#ifdef HAVE_LIBREADLINE
-    read_history(".hoffman_history");
-#endif
-
-    while (1) {
-#ifdef HAVE_LIBREADLINE
-	char *buffer;
-#else
-	char buffer[256];
-#endif
-	index_t index;
-#ifdef USE_NALIMOV
-	int score;
-#endif
-
-#ifdef HAVE_LIBREADLINE
-	buffer = readline(global_position_valid ? "FEN or move? " : "FEN? ");
-	if (buffer == NULL) break;
-	if (*buffer == '\0') continue;
-	add_history(buffer);
-#else
-	printf(global_position_valid ? "FEN or move? " : "FEN? ");
-	if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
-#endif
-
-	if (!strcmp(buffer, ".")) {
-	    int i;
-	    for (i = 0; i < 64; i++) {
-		char c = global_position.board[i % 8 + 8*(7-i/8)];
-		if (i % 8 == 0)
-		    printf("%c |",'8'-i/8);
-		printf(" %s%c\e[0m", c >= 'a' ? "\e[7m" : "", c ? c : '.');
-		if (i % 8 == 7)
-		    printf("\n");
-	    }
-	    printf("  +----------------\n");
-	    printf("    a b c d e f g h\n");
-	    printf("%s to move\n", colors[global_position.side_to_move]);
-	    continue;
-	}
-
-	if (!(global_position_valid && parse_move_in_global_position(buffer, &global_position))
-	    && !parse_FEN_to_global_position(buffer, &global_position)) {
-	    printf(global_position_valid ? "Bad FEN or move\n\n" : "Bad FEN\n\n");
-	    continue;
-	}
-
-	global_position.variant = tbs[0]->variant;
-	global_position_valid = 1;
-
-	if (search_tablebases_for_global_position(tbs, &global_position, &tb, &index)) {
-
-	    char *ptm, *pntm;
-
-	    /* 'index' is the index of the current position; 'index2' will be the index
-	     * of the various next positions that we'll consider
-	     */
-
-	    printf("FEN %s\n", global_position_to_FEN(&global_position));
-	    printf("Index %d (%s)\n", index, tb->filename);
-
-	    if (global_position.side_to_move == WHITE) {
-		ptm = "White";
-		pntm = "Black";
-	    } else {
-		ptm = "Black";
-		pntm = "White";
-	    }
-
-	    print_score(tb, index, ptm, pntm, 0);
-
-#ifdef USE_NALIMOV
-	    if ((global_position.variant == VARIANT_NORMAL)
-		&& EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
-		printf("\nNalimov score: ");
-		if (score > 0) {
-		    printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
-		} else if (score < 0) {
-		    printf("%s wins in %d\n", pntm, ((65536-4)/2)+score);
-		} else {
-		    printf("DRAW\n");
-		}
-	    }
-#endif
-
-	    /* In suicide, capture moves are forced, so if any exist they are the only moves. */
-
-	    if (global_position.variant != VARIANT_SUICIDE) {
-		print_move_list(tbs, tb, &global_position, ptm, pntm, 1, 1);
-	    } else {
-		if (print_move_list(tbs, tb, &global_position, ptm, pntm, 0, 1) == 0) {
-		    print_move_list(tbs, tb, &global_position, ptm, pntm, 1, 0);
-		}
-	    }
-	}
-    }
-
-#ifdef HAVE_LIBREADLINE
-    write_history(".hoffman_history");
-#endif
-
-    printf("\n");
-
-    exit(EXIT_SUCCESS);
+    probe_tablebases(tbs);
+    terminate();
 }
