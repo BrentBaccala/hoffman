@@ -5452,7 +5452,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.552 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.553 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -10592,7 +10592,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			   & tb->legal_squares[captured_piece]))) {
 
 		    int candidate_futuremove = -1;
-		    int candidate_piece = -1;
 		    char candidate_movestr[MOVESTR_CHARS];
 
 		    /* start by dishing out a non-promotion futurecapture */
@@ -10646,7 +10645,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 				if ((! (possible_captures[capturing_piece] & possible_captures[piece]))
 				    && (! strcmp(candidate_movestr, movestr[tb->piece_color[piece]][promotion_captures[piece][captured_piece][promotion]]))) {
 				    candidate_futuremove = promotion_captures[piece][captured_piece][promotion];
-				    candidate_piece = piece;
 				}
 			    }
 			}
@@ -13711,7 +13709,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.552 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.553 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
