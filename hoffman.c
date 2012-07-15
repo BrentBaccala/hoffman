@@ -115,6 +115,7 @@
 #include <libxml/xpath.h>
 #include <libxml/xmlsave.h>
 
+#define STRICT_ZLIB_OPEN_DECLARATION 1
 #include "zlib_fopen.h"		/* My wrapper around the ZLIB compression library (required) */
 
 #ifdef USE_LIBCURL
@@ -197,6 +198,7 @@ typedef unsigned long long uint64;
 
 typedef uint32 index_t;
 #define INDEX_T_DECIMAL_FORMAT UINT32_DECIMAL_FORMAT
+#define INVALID_INDEX 0xffffffff
 
 
 /* If we're going to run multi-threaded, we need the POSIX threads library */
@@ -306,7 +308,7 @@ struct timeval program_end_time;
 int total_passes = 0;
 int max_passes = 0;
 
-char ** pass_type = NULL;
+const char ** pass_type = NULL;
 int * pass_target_dtms = NULL;
 int * positions_finalized = NULL;
 uint64 * backproped_moves = NULL;
@@ -468,10 +470,10 @@ typedef struct {
 #define KNIGHT 4
 #define PAWN 5
 
-char * piece_name[NUM_PIECES+1] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", NULL};
-char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
+const char * piece_name[NUM_PIECES+1] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", NULL};
+const char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
 
-char * colors[3] = {"WHITE", "BLACK", NULL};
+const char * colors[3] = {"WHITE", "BLACK", NULL};
 
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
@@ -515,8 +517,8 @@ struct format {
     int capture_possible_flag_offset;
 };
 
-char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag", "ptm-wins-flag",
-			  "locking-bit", "basic", "capture-possible-flag", NULL};
+const char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag", "ptm-wins-flag",
+				"locking-bit", "basic", "capture-possible-flag", NULL};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_MOVECNT 1
@@ -528,7 +530,7 @@ char * format_fields[] = {"dtm", "movecnt", "index-field", "futurevector", "flag
 #define FORMAT_FIELD_BASIC 7
 #define FORMAT_FIELD_CAPTURE_POSSIBLE_FLAG 8
 
-char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
+const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 #define FORMAT_FLAG_NONE 0
 #define FORMAT_FLAG_WHITE_WINS 1
@@ -619,12 +621,12 @@ typedef void entry_t;
 #define RESTRICTION_DISCARD 1
 #define RESTRICTION_CONCEDE 2
 
-char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
+const char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
 
 #define FORMAT_FOURBYTE 0
 #define FORMAT_ONE_BYTE_DTM 1
 
-char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
+const char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 
 #define NAIVE_INDEX 0
 #define NAIVE2_INDEX 1
@@ -633,22 +635,25 @@ char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 #define NO_EN_PASSANT_INDEX 4
 #define COMBINADIC_INDEX 5
 
-char * index_types[] = {"naive", "naive2", "simple", "compact", "no-en-passant", "combinadic"};
+const char * index_types[] = {"naive", "naive2", "simple", "compact", "no-en-passant", "combinadic"};
 
-char * futurebase_types[] = {"capture", "promotion", "capture-promotion", "normal"};
+const char * futurebase_types[] = {"capture", "promotion", "capture-promotion", "normal"};
 
 #define FUTUREBASE_CAPTURE 0
 #define FUTUREBASE_PROMOTION 1
 #define FUTUREBASE_CAPTURE_PROMOTION 2
 #define FUTUREBASE_NORMAL 3
 
-char * variant_names[] = {"normal", "suicide"};
+const char * variant_names[] = {"normal", "suicide"};
+
+#define VARIANT_NORMAL 0
+#define VARIANT_SUICIDE 1
 
 typedef struct tablebase {
-    enum { VARIANT_NORMAL = 0, VARIANT_SUICIDE } variant;
+    int variant;
     int sub_variant;
     int index_type;
-    int index_offset;
+    index_t index_offset;
     index_t max_index;
     index_t max_uninverted_index;
     index_t modulus;
@@ -665,13 +670,13 @@ typedef struct tablebase {
 
     uint8 compact_white_king_positions[64*64];
     uint8 compact_black_king_positions[64*64];
-    int compact_king_indices[64][64];
-    int total_legal_compact_king_positions;
+    index_t compact_king_indices[64][64];
+    uint total_legal_compact_king_positions;
 
     struct format format;
 
     /* for futurebases only */
-    FILE * file;
+    void * file;
     char * filename;
     int futurebase_type;
     index_t next_read_index;
@@ -851,7 +856,7 @@ char * completion_report_url = NULL;
     }
 }
 
-void fatal (char * format, ...)
+void fatal (const char * format, ...)
 {
     va_list va;
     static char strbuf[256] = {'\0'};
@@ -884,7 +889,7 @@ void fatal (char * format, ...)
     if (fatal_errors >= MAX_FATAL_ERRORS) terminate();
 }
 
-void warning (char * format, ...)
+void warning (const char * format, ...)
 {
     va_list va;
 
@@ -894,7 +899,7 @@ void warning (char * format, ...)
     va_end(va);
 }
 
-void info (char * format, ...)
+void info (const char * format, ...)
 {
     va_list va;
 
@@ -919,7 +924,7 @@ void sigaction_internal_error (int signal, siginfo_t * siginfo, void * ucontext)
  * Returns index in array of matching string, or -1 if there was no match.
  */
 
-int find_name_in_array(char * name, char * array[])
+int find_name_in_array(char * name, const char * array[])
 {
     int i=0;
 
@@ -938,13 +943,15 @@ int find_name_in_array(char * name, char * array[])
 
 int do_write(int fd, void *ptr, int length)
 {
+    char * cptr = (char *) ptr;
+
     while (length > 0) {
-	int writ = write(fd, ptr, length);
+	int writ = write(fd, cptr, length);
 	if (writ == -1) {
 	    perror("do_write");
 	    return -1;
 	}
-	ptr += writ;
+	cptr += writ;
 	length -= writ;
     }
     return 0;
@@ -954,13 +961,15 @@ int do_write(int fd, void *ptr, int length)
 
 int do_write_or_suspend(int fd, void *ptr, int length)
 {
+    char * cptr = (char *) ptr;
+
     while (length > 0) {
-	int writ = write(fd, ptr, length);
+	int writ = write(fd, cptr, length);
 	if (writ == -1) {
 	    perror("do_write");
 	    kill(getpid(), SIGSTOP);
 	} else {
-	    ptr += writ;
+	    cptr += writ;
 	    length -= writ;
 	}
     }
@@ -978,7 +987,7 @@ ssize_t read_ptr(void * ptr, char * buf, size_t count)
     return read(fd, buf, count);
 }
 
-ssize_t write_ptr(void * ptr, char * buf, size_t count)
+ssize_t write_ptr(void * ptr, const char * buf, size_t count)
 {
     int fd = (size_t) ptr;
     return write(fd, buf, count);
@@ -1074,10 +1083,10 @@ void expand_per_pass_statistics(void)
     if (max_passes == 0) max_passes = 100;
     else max_passes *= 2;
 
-    pass_type = realloc(pass_type, max_passes * sizeof(char *));
-    pass_target_dtms = realloc(pass_target_dtms, max_passes * sizeof(int));
-    positions_finalized = realloc(positions_finalized, max_passes * sizeof(int));
-    backproped_moves = realloc(backproped_moves, max_passes * sizeof(uint64));
+    pass_type = (const char **) realloc(pass_type, max_passes * sizeof(const char *));
+    pass_target_dtms = (int *) realloc(pass_target_dtms, max_passes * sizeof(int));
+    positions_finalized = (int *) realloc(positions_finalized, max_passes * sizeof(int));
+    backproped_moves = (uint64 *) realloc(backproped_moves, max_passes * sizeof(uint64));
 
     /* not all of these arrays are cumulative, but just zero them all to be on the safe size */
     bzero(pass_type + total_passes, (max_passes-total_passes)*sizeof(char *));
@@ -3095,7 +3104,7 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
 	     (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
 	     (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
 
-	    if ((tb->simple_piece_indices[piece][square] != -1)
+	    if ((tb->simple_piece_indices[piece][square] != INVALID_INDEX)
 		&& (tb->simple_piece_indices[piece][square] <= index)) {
 		p->piece_position[piece] = square;
 	    }
@@ -3378,10 +3387,10 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 
     if (tb->positions_with_adjacent_kings_are_illegal
 	&& ! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
-	return -1;
+	return INVALID_INDEX;
 
     if ((tb->index_type == NO_EN_PASSANT_INDEX) && (position->en_passant_square != -1))
-	return -1;
+	return INVALID_INDEX;
 
     /* Recompute board_vector, and check for legality of piece positions */
 
@@ -3392,7 +3401,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	if ((position->piece_position[piece] < 0) || (position->piece_position[piece] > 63)
 	    || !(tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
-	    return -1;
+	    return INVALID_INDEX;
 	}
 
 	/* Blocking pawns.  Reject any position where a pawn has "hopped" over the enemy pawn
@@ -3402,27 +3411,27 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_piece[piece] != -1)) {
 	    if (tb->piece_color[piece] == WHITE) {
 		if (position->piece_position[piece] > position->piece_position[tb->blocking_piece[piece]]) {
-		    return -1;
+		    return INVALID_INDEX;
 		}
 	    } else {
 		if (position->piece_position[piece] < position->piece_position[tb->blocking_piece[piece]]) {
-		    return -1;
+		    return INVALID_INDEX;
 		}
 	    }
 	}
 
-	if (position->board_vector & BITVECTOR(position->piece_position[piece])) return -1;
+	if (position->board_vector & BITVECTOR(position->piece_position[piece])) return INVALID_INDEX;
 	position->board_vector |= BITVECTOR(position->piece_position[piece]);
     }
 
     /* Check board_vector to make sure an en passant position is legal */
 
     if (position->en_passant_square != -1) {
-	if (position->board_vector & BITVECTOR(position->en_passant_square)) return -1;
+	if (position->board_vector & BITVECTOR(position->en_passant_square)) return INVALID_INDEX;
 	if (position->side_to_move == WHITE) {
-	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return -1;
+	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return INVALID_INDEX;
 	} else {
-	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return -1;
+	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return INVALID_INDEX;
 	}
     }
 
@@ -3445,12 +3454,12 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	break;
     default:
 	fatal("Unknown index type in local_position_to_index()\n");
-	return -1;
+	return INVALID_INDEX;
     }
 
     index += tb->index_offset;
 
-    if ((index != -1) && (index != 0) && (tb->modulus != 0)) {
+    if ((index != INVALID_INDEX) && (index != 0) && (tb->modulus != 0)) {
 	index = invert_in_finite_field(index, tb->modulus);
     }
 
@@ -3704,7 +3713,7 @@ int check_1000_positions(tablebase_t *tb)
 
 	index = local_position_to_index(tb, &position1);
 
-	if (index != -1) {
+	if (index != INVALID_INDEX) {
 
 	    /* PTM_vector wasn't set in position1, so don't check them now */
 
@@ -3960,7 +3969,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     return 1;
 }
 
-char * print_format(char *name, struct format *format)
+const char * print_format(const char *name, struct format *format)
 {
     static char outstr[256];
 
@@ -4020,7 +4029,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     int no_frozen_check_king_positions = 0;
     int starting_fatal_errors = fatal_errors;
 
-    tb = malloc(sizeof(tablebase_t));
+    tb = (tablebase_t *) malloc(sizeof(tablebase_t));
     if (tb == NULL) {
 	fatal("Can't malloc tablebase\n");
 	return NULL;
@@ -4417,7 +4426,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    }
 	    directions[0] = 0;
 
-	    tb->permutations[piece] = calloc(factorial(identical_pieces), sizeof(int));
+	    tb->permutations[piece] = (int *) calloc(factorial(identical_pieces), sizeof(int));
 	    j = 0;
 
 	    /* Use Johnson–Trotter algorithm to generate all permutations as a series of
@@ -5126,7 +5135,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 			= choose(tb->total_legal_piece_positions[piece], piece_in_set) * tb->max_index;
 		    tb->total_legal_piece_positions[piece] ++;
 		} else {
-		    tb->simple_piece_indices[piece][square] = -1;
+		    tb->simple_piece_indices[piece][square] = INVALID_INDEX;
 		}
 
 	    }
@@ -5323,7 +5332,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 /* Parses an XML control file.
  */
 
-xmlNodePtr create_GenStats_node(char *name)
+xmlNodePtr create_GenStats_node(const char *name)
 {
     xmlNodePtr node;
 
@@ -5452,7 +5461,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.553 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.554 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5510,7 +5519,7 @@ tablebase_t * parse_XML_control_file(char *filename)
 
 tablebase_t * preload_futurebase_from_file(char *filename)
 {
-    FILE * file = NULL;
+    void * file = NULL;
     xmlDocPtr doc;
     tablebase_t *tb = NULL;
     xmlNodePtr tablebase;
@@ -5739,7 +5748,7 @@ boolean preload_all_futurebases(tablebase_t *tb)
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression(BAD_CAST "//futurebase", context);
     num_futurebases = result->nodesetval->nodeNr;
-    futurebases = malloc(sizeof(tablebase_t *) * num_futurebases);
+    futurebases = (tablebase_t **) malloc(sizeof(tablebase_t *) * num_futurebases);
     if (futurebases == NULL) {
 	fatal("Can't malloc futurebases array\n");
 	return 0;
@@ -6490,7 +6499,7 @@ index_t global_position_to_index(tablebase_t *tb, global_position_t *global)
 {
     local_position_t local;
 
-    if (global_position_to_local_position(tb, global, &local) != 0x80808080) return -1;
+    if (global_position_to_local_position(tb, global, &local) != 0x80808080) return INVALID_INDEX;
 
     return local_position_to_index(tb, &local);
 }
@@ -6952,7 +6961,7 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 	}
 
 	do {
-	    if (zlib_read(tb->file, entry, 1) != 1) {
+	    if (zlib_read(tb->file, (char *) entry, 1) != 1) {
 		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	    }
 	    tb->next_read_index ++;
@@ -6984,7 +6993,7 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 	}
 
 	do {
-	    if (zlib_read(tb->file, entry, tb->format.bytes) != tb->format.bytes) {
+	    if (zlib_read(tb->file, (char *) entry, tb->format.bytes) != tb->format.bytes) {
 		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	    }
 
@@ -7048,7 +7057,7 @@ inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
 
     if (n >= num_cached_entries) {
 	cached_entries = realloc(cached_entries, tb->format.bytes * (n+1));
-	cached_indices = realloc(cached_indices, sizeof(index_t) * (n+1));
+	cached_indices = (index_t *) realloc(cached_indices, sizeof(index_t) * (n+1));
 	memset(cached_indices + num_cached_entries, 0xff, sizeof(index_t) * ((n+1) - num_cached_entries));
 	num_cached_entries = n+1;
 	cached_tb = tb;
@@ -7705,7 +7714,7 @@ typedef struct {
 
 void * back_propagate_section(void * ptr)
 {
-    intratable_propagation_control_t * control = ptr;
+    intratable_propagation_control_t * control = (intratable_propagation_control_t *) ptr;
     index_t index;
 
     for (index = control->start_index; index <= control->end_index; index ++) {
@@ -7975,7 +7984,7 @@ void proptable_full(void)
 
     gettimeofday(&tv1, NULL);
 
-    output_buffer = malloc(output_buffer_size);
+    output_buffer = (char *) malloc(output_buffer_size);
     if (output_buffer == NULL) {
 	fatal("Can't malloc proptable output buffer\n");
 	return;
@@ -8133,7 +8142,7 @@ void proptable_pass(int target_dtm)
 	int fd;
 	sprintf(infilename, "propfile%04d_in", tablenum);
 	if ((fd = open(infilename, O_RDONLY | O_LARGEFILE)) == -1) break;
-	proptable_input_fds = realloc(proptable_input_fds, (tablenum+1)*sizeof(int));
+	proptable_input_fds = (int *) realloc(proptable_input_fds, (tablenum+1)*sizeof(int));
 	if (proptable_input_fds == NULL) {
 	    fatal("Can't realloc proptable_input_fds in proptable_pass()\n");
 	    return;
@@ -8187,7 +8196,7 @@ void proptable_pass(int target_dtm)
     /* Malloc the sorting network */
 
     sorting_network = malloc(2*highbit * PROPTABLE_FORMAT_BYTES);
-    proptable_num = malloc(2*highbit * sizeof(int));
+    proptable_num = (int *) malloc(2*highbit * sizeof(int));
 
     if ((sorting_network == NULL) || (proptable_num == NULL)) {
 	fatal("Can't malloc sorting network in proptable_pass()\n");
@@ -8712,8 +8721,8 @@ int propagation_pass(int target_dtm)
 	int thread;
 
 	/* XXX check for malloc failure */
-	controls = malloc(sizeof(intratable_propagation_control_t) * num_threads);
-	threads = malloc(sizeof(pthread_t) * num_threads);
+	controls = (intratable_propagation_control_t *) malloc(sizeof(intratable_propagation_control_t) * num_threads);
+	threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
 
 	for (thread = 0; thread < num_threads; thread ++) {
 	    controls[thread].target_dtm = target_dtm;
@@ -10229,7 +10238,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
 	    int thread;
 
 	    /* XXX check for malloc failure */
-	    threads = malloc(sizeof(pthread_t) * num_threads);
+	    threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
 
 	    for (thread = 0; thread < num_threads; thread ++) {
 		pthread_create(&threads[thread], NULL, backprop_function, (void *)((size_t)thread));
@@ -12369,7 +12378,7 @@ typedef struct {
 
 void * initialize_tablebase_section(void * ptr)
 {
-    initialization_control_t *control = ptr;
+    initialization_control_t *control = (initialization_control_t *) ptr;
     index_t index;
 
     for (index=control->start_index; index <= control->end_index; index++) {
@@ -12410,8 +12419,8 @@ void initialize_tablebase(void)
     int thread;
 
     /* XXX check for malloc failure */
-    controls = malloc(sizeof(initialization_control_t) * num_threads);
-    threads = malloc(sizeof(pthread_t) * num_threads);
+    controls = (initialization_control_t *) malloc(sizeof(initialization_control_t) * num_threads);
+    threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
 
     for (thread = 0; thread < num_threads; thread ++) {
 	controls[thread].start_index = ((current_tb->max_index+1)*thread)/num_threads;
@@ -12953,7 +12962,7 @@ int FTbSetCacheSize(void    *pv, unsigned long   cbSize );
 
 void *EGTB_cache;
 
-char *nalimov_path = ".";
+char *nalimov_path = (char *) ".";
 
 void init_nalimov_code(void)
 {
@@ -13050,7 +13059,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		if (tb->format.basic_offset != -1) {
 
 		    int basic = get_basic(tb, index);
-		    static char * basic_meaning[3] = {"draw", "PTM wins", "PNTM wins"};
+		    static const char * basic_meaning[3] = {"draw", "PTM wins", "PNTM wins"};
 
 		    if (global.side_to_move == BLACK) score *= -1;
 
@@ -13108,7 +13117,7 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
 
     for (; *tbs != NULL; tbs++) {
 	index = global_position_to_index(*tbs, global_position);
-	if (index != -1) {
+	if (index != INVALID_INDEX) {
 	    *tbptr = *tbs;
 	    *indexptr = index;
 	    return 1;
@@ -13118,7 +13127,7 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
     return 0;
 }
 
-void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm, int pntm_offset)
+void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pntm, int pntm_offset)
 {
     if (tb->format.dtm_bits > 0) {
 
@@ -13162,7 +13171,8 @@ void print_score(tablebase_t *tb, index_t index, char *ptm, char *pntm, int pntm
     }
 }
 
-int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *global_position_ptr, char *ptm, char *pntm,
+int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *global_position_ptr,
+		    const char *ptm, const char *pntm,
 		    int print_non_captures, int print_captures)
 {
     global_position_t global_position, saved_global_position;
@@ -13586,7 +13596,7 @@ void probe_tablebases(tablebase_t **tbs) {
 
 	if ((tb != NULL) && (index != 0)) {
 
-	    char *ptm, *pntm;
+	    const char *ptm, *pntm;
 
 	    /* 'index' is the index of the current position; 'index2' will be the index
 	     * of the various next positions that we'll consider
@@ -13709,7 +13719,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.553 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.554 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -13830,7 +13840,7 @@ int main(int argc, char *argv[])
 
     i = 0;
     /* calloc (unlike malloc) zeros memory */
-    tbs = calloc(argc - optind + 1, sizeof(tablebase_t *));
+    tbs = (tablebase_t **) calloc(argc - optind + 1, sizeof(tablebase_t *));
 
     for (argi=optind; argi<argc; argi++) {
 	info("Loading '%s'\n", argv[argi]);
