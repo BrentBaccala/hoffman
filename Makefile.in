@@ -6,7 +6,7 @@ CFLAGS= @CFLAGS@ @READLINE_CPPFLAGS@ @XML_CPPFLAGS@ @CURL_CFLAGS@
 hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@
 
 configure_SRCS = configure configure.in Makefile.in config.h.in config.guess config.sub install-sh
-hoffman_SRCS = hoffman.c probe.c egtb.cpp lock.h tbdecode.h url_fopen.c ftp_fopen.c zlib_fopen.c url_fopen.h ftp_fopen.h zlib_fopen.h
+hoffman_SRCS = hoffman.c probe.c egtb.cpp lock.h tbdecode.h url_fopen.c ftp_fopen.c zlib_fopen.c url_fopen.h ftp_fopen.h zlib_fopen.h bitlib.h
 hoffman_DTD = tablebase.dtd formats.xml
 hoffman_SCRIPTS = pawngen genctlfile.pl gensuicide.pl genalltb genalltb.bat hoffman.nsi md5htb cgi-bin/*
 hoffman_DOCS = README COPYING ChangeLog TODO tutorial.pdf reference.pdf proptables.pdf
@@ -20,13 +20,13 @@ hoffman: $(hoffman_OBJS)
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
-hoffman.o: tablebase_dtd.h formats.h config.h
+hoffman.o: tablebase_dtd.h formats.h config.h bitlib.h
 
 tablebase_dtd.h: tablebase.dtd formats.xml
-	echo "char * tablebase_dtd = \"\\" > $@
+	echo "const char * tablebase_dtd = \"\\" > $@
 	sed -e 's/"/\\"/g' -e 's/$$/\\/' tablebase.dtd >> $@
 	echo "\";" >> $@
-	echo "char * formats_xml = \"\\" >> $@
+	echo "const char * formats_xml = \"\\" >> $@
 	sed -e 's/"/\\"/g' -e 's/$$/\\/' formats.xml >> $@
 	echo "\";" >> $@
 
