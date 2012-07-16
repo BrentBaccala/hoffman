@@ -733,7 +733,7 @@ typedef struct tablebase {
     int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
     int stalemate_prune_color;
 
-    entry_t *entries;
+    void * entries;
 
     char *futurevectors;
     int futurevector_bits;
@@ -5428,7 +5428,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.557 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.558 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7175,7 +7175,7 @@ inline void * current_entry_pointer(index_t index)
     if (!using_proptables) {
 
 	/* entries array exists in memory - so just return a pointer into it */
-	return (void *)(current_tb->entries);
+	return current_tb->entries;
 
     } else {
 
@@ -12742,7 +12742,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 
     if (!using_proptables) {
-	tb->entries = (entry_t *) malloc(LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
+	tb->entries = malloc(LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
 	if (tb->entries == NULL) {
 	    fatal("Can't malloc %dMB for tablebase entries: %s\n",
 		  LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/(1024*1024),
@@ -13709,7 +13709,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.557 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.558 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
