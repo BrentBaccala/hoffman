@@ -126,6 +126,7 @@
 #include "ftp_fopen.h"		/* My wrapper around ftplib (option, for ftp: URL support) */
 #endif
 
+#include "bitlib.h"
 
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
@@ -199,7 +200,6 @@ typedef unsigned long long uint64;
 typedef uint32 index_t;
 #define INDEX_T_DECIMAL_FORMAT UINT32_DECIMAL_FORMAT
 #define INVALID_INDEX 0xffffffff
-
 
 /* If we're going to run multi-threaded, we need the POSIX threads library */
 
@@ -5461,7 +5461,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.555 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.556 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7222,6 +7222,43 @@ inline entry_t * fetch_current_entry_pointer(index_t index)
 }
 
 
+inline void * current_entry_pointer(index_t index)
+{
+    if (!using_proptables) {
+
+	/* entries array exists in memory - so just return a pointer into it */
+	return (void *)(current_tb->entries);
+
+    } else {
+
+	/* proptables - entries array is on disk, so make sure we've got the right buffer and then return the pointer */
+
+	if (entry_buffer_start > index) reset_current_entries_file();
+	if (index >= entry_buffer_start + entry_buffer_size) advance_current_entries_file(index);
+
+	return entry_buffer;
+    }
+}
+
+inline bitoffset current_entry_bitoffset(index_t index)
+{
+    if (!using_proptables) {
+
+	/* entries array exists in memory - so just bit index into it */
+	return index << ENTRIES_FORMAT_BITS;
+
+    } else {
+
+	/* proptables - entries array is on disk, so make sure we've got the right buffer and then return the pointer */
+
+	if (entry_buffer_start > index) reset_current_entries_file();
+	if (index >= entry_buffer_start + entry_buffer_size) advance_current_entries_file(index);
+
+	return (index - entry_buffer_start) << ENTRIES_FORMAT_BITS;
+    }
+}
+
+
 /* MORE TABLEBASE OPERATIONS - those that probe and manipulate individual position entries
  *
  * "Designed to multi-thread"
@@ -7256,7 +7293,8 @@ pthread_mutex_t entries_lock = PTHREAD_MUTEX_INITIALIZER;
 inline void lock_entry(tablebase_t *tb, index_t index)
 {
 #ifdef USE_THREADS
-    if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
+    if (num_threads == 1) {
+    } else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
 	if (lock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET)) {
 	    /* contended_indices ++; */
 	    (void) __sync_add(&contended_indices, 1);
@@ -7270,7 +7308,8 @@ inline void lock_entry(tablebase_t *tb, index_t index)
 inline void unlock_entry(tablebase_t *tb, index_t index)
 {
 #ifdef USE_THREADS
-    if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
+    if (num_threads == 1) {
+    } else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
 	unlock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET);
     } else {
 	pthread_mutex_unlock(&entries_lock);
@@ -7288,48 +7327,49 @@ inline int get_raw_DTM(tablebase_t *tb, index_t index)
 inline int get_entry_raw_DTM(index_t index)
 {
     if (ENTRIES_FORMAT_DTM_BITS == 0) return 0;
-    return get_signed_field(fetch_current_entry_pointer(index),
-			    ENTRIES_FORMAT_DTM_MASK,
-			    ENTRIES_FORMAT_DTM_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
+    return get_int_field(current_entry_pointer(index),
+			 current_entry_bitoffset(index) + ENTRIES_FORMAT_DTM_OFFSET,
+			 ENTRIES_FORMAT_DTM_MASK);
 }
 
 inline void set_entry_raw_DTM(index_t index, int dtm)
 {
     if (ENTRIES_FORMAT_DTM_BITS == 0) return;
-    set_signed_field(fetch_current_entry_pointer(index),
-		     ENTRIES_FORMAT_DTM_MASK,
-		     ENTRIES_FORMAT_DTM_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8),
-		     dtm);
+    set_int_field(current_entry_pointer(index),
+		  current_entry_bitoffset(index) + ENTRIES_FORMAT_DTM_OFFSET,
+		  ENTRIES_FORMAT_DTM_MASK,
+		  dtm);
 }
 
 inline int get_entry_movecnt(index_t index)
 {
-    return get_unsigned_field(fetch_current_entry_pointer(index),
-			      ENTRIES_FORMAT_MOVECNT_MASK,
-			      ENTRIES_FORMAT_MOVECNT_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
+    return get_unsigned_int_field(current_entry_pointer(index),
+				  current_entry_bitoffset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
+				  ENTRIES_FORMAT_MOVECNT_MASK);
 }
 
 inline void set_entry_movecnt(index_t index, int movecnt)
 {
-    set_unsigned_field(fetch_current_entry_pointer(index),
-		       ENTRIES_FORMAT_MOVECNT_MASK,
-		       ENTRIES_FORMAT_MOVECNT_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8),
-		       movecnt);
+    set_unsigned_int_field(current_entry_pointer(index),
+			   current_entry_bitoffset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
+			   ENTRIES_FORMAT_MOVECNT_MASK,
+			   movecnt);
 }
 
 inline int get_entry_capture_possible_flag(index_t index)
 {
     if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return 0;
-    return get_unsigned_field(fetch_current_entry_pointer(index), 1,
-			      ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8));
+    return get_unsigned_int_field(current_entry_pointer(index),
+			      current_entry_bitoffset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET,
+			      1);
 }
 
 inline void set_entry_capture_possible_flag(index_t index, int flag)
 {
     if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return;
-    set_unsigned_field(fetch_current_entry_pointer(index), 1,
-		       ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET + ((index << ENTRIES_FORMAT_BITS) % 8),
-		       flag);
+    set_unsigned_int_field(current_entry_pointer(index),
+		       current_entry_bitoffset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET,
+		       1, flag);
 }
 
 inline int get_flag(tablebase_t *tb, index_t index)
@@ -13719,7 +13759,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.555 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.556 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
