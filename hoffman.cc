@@ -5298,7 +5298,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.563 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.564 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7168,7 +7168,7 @@ inline int get_entry_movecnt(index_t index)
 				  ENTRIES_FORMAT_MOVECNT_MASK);
 }
 
-inline void set_entry_movecnt(index_t index, int movecnt)
+inline void set_entry_movecnt(index_t index, unsigned int movecnt)
 {
     set_unsigned_int_field(current_entry_pointer(index),
 			   current_entry_bitoffset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
@@ -7176,29 +7176,28 @@ inline void set_entry_movecnt(index_t index, int movecnt)
 			   movecnt);
 }
 
-inline int get_entry_capture_possible_flag(index_t index)
+inline boolean get_entry_capture_possible_flag(index_t index)
 {
     if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return 0;
-    return get_unsigned_int_field(current_entry_pointer(index),
-			      current_entry_bitoffset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET,
-			      1);
+    return get_bit_field(current_entry_pointer(index),
+			 current_entry_bitoffset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET);
 }
 
-inline void set_entry_capture_possible_flag(index_t index, int flag)
+inline void set_entry_capture_possible_flag(index_t index, boolean flag)
 {
     if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return;
-    set_unsigned_int_field(current_entry_pointer(index),
-		       current_entry_bitoffset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET,
-		       1, flag);
+    set_bit_field(current_entry_pointer(index),
+		  current_entry_bitoffset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET,
+		  flag);
 }
 
-inline int get_flag(tablebase_t *tb, index_t index)
+inline boolean get_flag(tablebase_t *tb, index_t index)
 {
     return get_bit_field(fetch_entry_pointer(tb, index),
 			 tb->format.flag_offset + ((index << tb->format.bits) % 8));
 }
 
-inline int get_basic(tablebase_t *tb, index_t index)
+inline unsigned int get_basic(tablebase_t *tb, index_t index)
 {
     return get_unsigned_int_field(fetch_entry_pointer(tb, index),
 				  tb->format.basic_offset + ((index << tb->format.bits) % 8), 3);
@@ -7347,7 +7346,7 @@ void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
     (void) __sync_add(&total_legal_positions, 1);
 }
 
-void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, int movecnt)
+void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, unsigned int movecnt)
 {
     if (movecnt > MOVECNT_MAX) {
 	fatal("Attempting to initialize position with a movecnt that won't fit in field!\n");
@@ -11713,9 +11712,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
     } else {
 
 	/* Now we need to count moves.  FORWARD moves. */
-	int movecnt = 0;
-	int capturecnt = 0;
-	int futuremovecnt = 0;
+	unsigned int movecnt = 0;
+	unsigned int capturecnt = 0;
+	unsigned int futuremovecnt = 0;
 	futurevector_t futurevector = 0;
 	futurevector_t capture_futurevector = 0;
 
@@ -13567,7 +13566,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.563 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.564 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
