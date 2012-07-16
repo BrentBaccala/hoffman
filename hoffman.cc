@@ -1122,86 +1122,6 @@ inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
  * big enough to accommodate every possibility.
  */
 
-inline int get_signed_field(uint32 *ptr, uint32 mask, int offset)
-{
-    int val;
-
-    /* It is truly amazing how much of a difference commenting out this next idiot check makes in
-     * gcc 4.0.4's ability to optimize this code, at least on i386.
-     */
-
-    /* if (offset == -1) return 0; */
-
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-    val = (*ptr >> offset) & mask;
-
-    /* sign extend */
-    if (val > (mask >> 1)) val |= (~ (mask >> 1));
-
-    return val;
-}
-
-inline void set_signed_field(uint32 *ptr, uint32 mask, int offset, int val)
-{
-    /* if (offset == -1) return; */
-
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-#if 0
-    if ((val > 0) && (val > (mask >> 1))) {
-	fatal("value too large in set_signed_field\n");
-    }
-    if ((val < 0) && (val < ~(mask >> 1))) {
-	fatal("value too small in set_signed_field\n");
-    }
-#endif
-
-    /* These operations have to be atomic, since the computer uses 32 or 64 bit words, and those
-     * words will contain other entries that other threads may be working on, even though this entry
-     * will be locked by the current thread.
-     */
-
-    __sync_and(ptr, ~ (mask << offset));
-    __sync_or(ptr, (val & mask) << offset);
-}
-
-inline unsigned int get_unsigned_field(uint32 *ptr, uint32 mask, int offset)
-{
-    /* if (offset == -1) return 0; */
-
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-    return (*ptr >> offset) & mask;
-}
-
-inline void set_unsigned_field(uint32 *ptr, uint32 mask, int offset, unsigned int val)
-{
-    /* if (offset == -1) return; */
-
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-#if 0
-    if (val > mask) {
-	fatal("value too large in set_unsigned_field\n");
-    }
-#endif
-    __sync_and(ptr, ~ (mask << offset));
-    __sync_or(ptr, (val & mask) << offset);
-}
-
 inline uint64 get_unsigned64bit_field(void *fieldptr, uint64 mask, int offset)
 {
     uint64 *ptr = (uint64 *)fieldptr;
@@ -5428,7 +5348,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.560 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.561 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7269,9 +7189,9 @@ inline void unlock_entry(tablebase_t *tb, index_t index)
 
 inline int get_raw_DTM(tablebase_t *tb, index_t index)
 {
-    return get_signed_field(fetch_entry_pointer(tb, index),
-			    tb->format.dtm_mask,
-			    tb->format.dtm_offset + ((index << tb->format.bits) % 8));
+    return get_int_field(fetch_entry_pointer(tb, index),
+			 tb->format.dtm_offset + ((index << tb->format.bits) % 8),
+			 tb->format.dtm_mask);
 }
 
 inline int get_entry_raw_DTM(index_t index)
@@ -7324,15 +7244,14 @@ inline void set_entry_capture_possible_flag(index_t index, int flag)
 
 inline int get_flag(tablebase_t *tb, index_t index)
 {
-    return get_unsigned_field(fetch_entry_pointer(tb, index),
-			      1,
-			      tb->format.flag_offset + ((index << tb->format.bits) % 8));
+    return get_bit_field(fetch_entry_pointer(tb, index),
+			 tb->format.flag_offset + ((index << tb->format.bits) % 8));
 }
 
 inline int get_basic(tablebase_t *tb, index_t index)
 {
-    return get_unsigned_field(fetch_entry_pointer(tb, index), 3,
-			      tb->format.basic_offset + ((index << tb->format.bits) % 8));
+    return get_unsigned_int_field(fetch_entry_pointer(tb, index),
+				  tb->format.basic_offset + ((index << tb->format.bits) % 8), 3);
 }
 
 inline short does_PTM_win(index_t index)
@@ -7752,13 +7671,13 @@ int proptable_merges = 0;
 index_t get_propentry_index(proptable_entry_t *propentry)
 {
     uint32 *ptr = (uint32 *) propentry;
-    return get_unsigned_field(ptr, PROPTABLE_FORMAT_INDEX_MASK, PROPTABLE_FORMAT_INDEX_OFFSET);
+    return get_unsigned_int_field(ptr, PROPTABLE_FORMAT_INDEX_OFFSET, PROPTABLE_FORMAT_INDEX_MASK);
 }
 
 void set_propentry_index(proptable_entry_t *propentry, index_t index)
 {
     uint32 *ptr = (uint32 *) propentry;
-    set_unsigned_field(ptr, PROPTABLE_FORMAT_INDEX_MASK, PROPTABLE_FORMAT_INDEX_OFFSET, index);
+    set_unsigned_int_field(ptr, PROPTABLE_FORMAT_INDEX_OFFSET, PROPTABLE_FORMAT_INDEX_MASK, index);
 }
 
 futurevector_t get_propentry_futurevector(proptable_entry_t *propentry)
@@ -7777,7 +7696,7 @@ int get_propentry_dtm(proptable_entry_t *propentry)
 {
     uint32 *ptr = (uint32 *) propentry;
     if (PROPTABLE_FORMAT_DTM_BITS > 0) {
-	return get_signed_field(ptr, PROPTABLE_FORMAT_DTM_MASK, PROPTABLE_FORMAT_DTM_OFFSET);
+	return get_int_field(ptr, PROPTABLE_FORMAT_DTM_OFFSET, PROPTABLE_FORMAT_DTM_MASK);
     } else {
 	return 0;
     }
@@ -7787,20 +7706,20 @@ void set_propentry_dtm(proptable_entry_t *propentry, int distance)
 {
     uint32 *ptr = (uint32 *) propentry;
     if (PROPTABLE_FORMAT_DTM_BITS > 0) {
-	set_signed_field(ptr, PROPTABLE_FORMAT_DTM_MASK, PROPTABLE_FORMAT_DTM_OFFSET, distance);
+	set_int_field(ptr, PROPTABLE_FORMAT_DTM_OFFSET, PROPTABLE_FORMAT_DTM_MASK, distance);
     }
 }
 
 int get_propentry_movecnt(proptable_entry_t *propentry)
 {
     uint32 *ptr = (uint32 *) propentry;
-    return get_unsigned_field(ptr, PROPTABLE_FORMAT_MOVECNT_MASK, PROPTABLE_FORMAT_MOVECNT_OFFSET);
+    return get_unsigned_int_field(ptr, PROPTABLE_FORMAT_MOVECNT_OFFSET, PROPTABLE_FORMAT_MOVECNT_MASK);
 }
 
 void set_propentry_movecnt(proptable_entry_t *propentry, int movecnt)
 {
     uint32 *ptr = (uint32 *) propentry;
-    set_unsigned_field(ptr, PROPTABLE_FORMAT_MOVECNT_MASK, PROPTABLE_FORMAT_MOVECNT_OFFSET, movecnt);
+    set_unsigned_int_field(ptr, PROPTABLE_FORMAT_MOVECNT_OFFSET, PROPTABLE_FORMAT_MOVECNT_MASK, movecnt);
 }
 
 int get_propentry_PTM_wins_flag(proptable_entry_t *propentry)
@@ -7813,7 +7732,7 @@ int get_propentry_PTM_wins_flag(proptable_entry_t *propentry)
      */
 
     if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
-	return get_unsigned_field(ptr, 1, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET);
+	return get_bit_field(ptr, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET);
     } else {
 	return (get_propentry_dtm(ptr) > 0) ? 1 : 0;
     }
@@ -7823,7 +7742,7 @@ void set_propentry_PTM_wins_flag(proptable_entry_t *propentry, int PTM_wins_flag
 {
     uint32 *ptr = (uint32 *) propentry;
     if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
-	set_unsigned_field(ptr, 1, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET, PTM_wins_flag);
+	set_bit_field(ptr, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET, PTM_wins_flag);
     }
 }
 
@@ -12609,9 +12528,10 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	 */
 
 	if (tb->format.dtm_bits > 0) {
-	    set_signed_field(entry, tb->format.dtm_mask,
-			     tb->format.dtm_offset + ((index << tb->format.bits) % 8),
-			     get_entry_DTM(index));
+	    set_int_field(entry,
+			  tb->format.dtm_offset + ((index << tb->format.bits) % 8),
+			  tb->format.dtm_mask,
+			  get_entry_DTM(index));
 	}
 
 	if (tb->format.basic_offset != -1) {
@@ -12628,23 +12548,23 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    } else {
 		basic = 0;
 	    }
-	    set_unsigned_field(entry, 3,
-			       tb->format.basic_offset + ((index << tb->format.bits) % 8),
-			       basic);
+	    set_unsigned_int_field(entry,
+				   tb->format.basic_offset + ((index << tb->format.bits) % 8), 3,
+				   basic);
 	}
 
 	switch (tb->format.flag_type) {
 	case FORMAT_FLAG_WHITE_WINS:
-	    set_unsigned_field(entry, 1,
-			       tb->format.flag_offset + ((index << tb->format.bits) % 8),
-			       (index_to_side_to_move(tb, index) == WHITE)
-			       ? does_PTM_win(index) : does_PNTM_win(index));
+	    set_bit_field(entry,
+			  tb->format.flag_offset + ((index << tb->format.bits) % 8),
+			  (index_to_side_to_move(tb, index) == WHITE)
+			  ? does_PTM_win(index) : does_PNTM_win(index));
 	    break;
 	case FORMAT_FLAG_WHITE_DRAWS:
-	    set_unsigned_field(entry, 1,
-			       tb->format.flag_offset + ((index << tb->format.bits) % 8),
-			       (index_to_side_to_move(tb, index) == WHITE)
-			       ? !does_PNTM_win(index) : !does_PTM_win(index));
+	    set_bit_field(entry,
+			  tb->format.flag_offset + ((index << tb->format.bits) % 8),
+			  (index_to_side_to_move(tb, index) == WHITE)
+			  ? !does_PNTM_win(index) : !does_PTM_win(index));
 	    break;
 	}
 
@@ -13709,7 +13629,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.560 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.561 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
