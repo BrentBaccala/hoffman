@@ -1265,39 +1265,6 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
 #endif
 
 
-#ifdef USE_THREADS
-
-/* lock_bit() spinlocks on a single bit, and returns non-zero if it actually had to wait for the
- * lock.
- */
-
-inline int lock_bit(uint32 *ptr, int offset)
-{
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-    if (__sync_fetch_and_or(ptr, 1 << offset) & (1 << offset)) {
-	while (__sync_fetch_and_or(ptr, 1 << offset) & (1 << offset));
-	return 1;
-    } else {
-	return 0;
-    }
-}
-
-inline void unlock_bit(uint32 *ptr, int offset)
-{
-    while (offset >= 32) {
-	offset -= 32;
-	ptr ++;
-    }
-
-    __sync_xor(ptr, 1 << offset);
-}
-
-#endif
-
 /***** MOVEMENT VECTORS *****/
 
 /* The idea here is to calculate piece movements, and to do it FAST.
@@ -5461,7 +5428,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.556 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.557 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7203,25 +7170,6 @@ void advance_current_entries_file(index_t index)
     }
 }
 
-inline entry_t * fetch_current_entry_pointer(index_t index)
-{
-    if (!using_proptables) {
-
-	/* entries array exists in memory - so just return a pointer into it */
-	return (void *)(current_tb->entries) + LEFTSHIFT(index, ENTRIES_FORMAT_BITS - 3);
-
-    } else {
-
-	/* proptables - entries array is on disk, so make sure we've got the right buffer and then return the pointer */
-
-	if (entry_buffer_start > index) reset_current_entries_file();
-	if (index >= entry_buffer_start + entry_buffer_size) advance_current_entries_file(index);
-
-	return (void *) (entry_buffer + LEFTSHIFT(index - entry_buffer_start, ENTRIES_FORMAT_BITS - 3));
-    }
-}
-
-
 inline void * current_entry_pointer(index_t index)
 {
     if (!using_proptables) {
@@ -7295,7 +7243,8 @@ inline void lock_entry(tablebase_t *tb, index_t index)
 #ifdef USE_THREADS
     if (num_threads == 1) {
     } else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
-	if (lock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET)) {
+	if (spinlock_bit_field(current_entry_pointer(index),
+			       current_entry_bitoffset(index) + ENTRIES_FORMAT_LOCKING_BIT_OFFSET)) {
 	    /* contended_indices ++; */
 	    (void) __sync_add(&contended_indices, 1);
 	}
@@ -7310,7 +7259,8 @@ inline void unlock_entry(tablebase_t *tb, index_t index)
 #ifdef USE_THREADS
     if (num_threads == 1) {
     } else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
-	unlock_bit(fetch_current_entry_pointer(index), ENTRIES_FORMAT_LOCKING_BIT_OFFSET);
+	set_bit_field(current_entry_pointer(index),
+		      current_entry_bitoffset(index) + ENTRIES_FORMAT_LOCKING_BIT_OFFSET, 0);
     } else {
 	pthread_mutex_unlock(&entries_lock);
     }
@@ -13759,7 +13709,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.556 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.557 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

@@ -125,4 +125,69 @@ inline void set_int_field(void *ptr, bitoffset offset, unsigned int mask, int va
     set_unsigned_int_field(ptr, offset, mask, (unsigned int) val);
 }
 
+inline unsigned int get_bit_field(void * ptr, bitoffset offset)
+{
+    unsigned int * iptr;
+    unsigned int val;
+
+    /* It is truly amazing how much of a difference commenting out this next idiot check makes in
+     * gcc 4.0.4's ability to optimize this code, at least on i386.
+     */
+
+    /* if (offset == -1) return 0; */
+
+    iptr = (unsigned int *) ptr;
+    iptr += offset/(8*sizeof(unsigned int));
+    offset %= 8*sizeof(unsigned int);
+
+    /* little endian - bits counted from LSB
+     *
+     *          iptr+1           iptr
+     *    [----------iiiiii][iiiiii--------]
+     *                            | offset |
+     */
+
+    val = (*iptr >> offset);
+
+    return (val & 1);
+}
+
+inline void set_bit_field(void *ptr, bitoffset offset, unsigned int val)
+{
+    unsigned int * iptr;
+
+    iptr = (unsigned int *) ptr;
+    iptr += offset/(sizeof(unsigned int) * 8);
+    offset %= sizeof(unsigned int) * 8;
+
+    /* These operations have to be atomic, since the computer uses 32 or 64 bit words, and those
+     * words will contain other entries that other threads may be working on, even though this entry
+     * will be locked by the current thread.
+     */
+
+    __bitlib_sync_and(iptr, ~ (1 << offset));
+    __bitlib_sync_or(iptr, (val & 1) << offset);
+}
+
+/* spinlock on a bit and return 1 if we had to spin, 0 otherwise
+ *
+ * Be careful - this function can spin forever if you're not careful!
+ */
+
+inline unsigned int spinlock_bit_field(void *ptr, bitoffset offset)
+{
+    unsigned int * iptr;
+
+    iptr = (unsigned int *) ptr;
+    iptr += offset/(sizeof(unsigned int) * 8);
+    offset %= sizeof(unsigned int) * 8;
+
+    if (__bitlib_sync_or(iptr, 1 << offset) & (1 << offset)) {
+	while (__bitlib_sync_or(iptr, 1 << offset) & (1 << offset));
+	return 1;
+    } else {
+	return 0;
+    }
+}
+
 #endif
