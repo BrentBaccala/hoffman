@@ -284,7 +284,7 @@ uint8_t * negative_passes_needed = NULL;
  */
 
 typedef uint32_t futurevector_t;
-#define FUTUREVECTOR_HEX_FORMAT "0x%x"
+#define FUTUREVECTOR_HEX_FORMAT "0x%" PRIx32
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 #define NO_FUTUREMOVE -1
@@ -3811,8 +3811,8 @@ const char * print_format(const char *name, struct format *format)
     static char outstr[256];
 
     snprintf(outstr, sizeof(outstr),
-	     "   const struct format %s = {%d,%d, %d, %" PRIx32 ",%d,%d, %" PRIx32 ",%d,%d, %"
-	     PRIx32 ",%d,%d, %" PRIx64 ",%d,%d, %d,%d, %d, %d};\n",
+	     "   const struct format %s = {%d,%d, %d, 0x%" PRIx32 ",%d,%d, 0x%" PRIx32 ",%d,%d, 0x%"
+	     PRIx32 ",%d,%d, 0x%" PRIx64 ",%d,%d, %d,%d, %d, %d};\n",
 
 	     name, format->bits, format->bytes, format->locking_bit_offset,
 	     format->dtm_mask, format->dtm_offset, format->dtm_bits,
@@ -4332,7 +4332,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
 #if DEBUG
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	fprintf(stderr, "Piece %d: type %s color %s legal_squares " PRIx64 " semilegal_squares " PRIx64 "\n",
+	fprintf(stderr, "Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
 		piece, piece_name[tb->piece_type[piece]], colors[tb->piece_color[piece]],
 		tb->legal_squares[piece], tb->semilegal_squares[piece]);
     }
@@ -5298,7 +5298,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.564 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.565 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7698,7 +7698,7 @@ void insert_at_propentry(int propentry, proptable_entry_t * pentry)
 
 #ifdef DEBUG_MOVE
     if (get_propentry_index(pentry) == DEBUG_MOVE)
-	fprintf(stderr, "Propentry: " PRIx64 " " PRIx64 "\n",
+	fprintf(stderr, "Propentry: 0%" PRIx64 " 0%" PRIx64 "\n",
 		*((uint64_t *) pentry), *(((uint64_t *) pentry) + 1));
 #endif
 }
@@ -8125,7 +8125,7 @@ void proptable_pass(int target_dtm)
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE)
-		fprintf(stderr, "Commiting sorting element 1: " PRIx64 " " PRIx64 " <-%d\n",
+		fprintf(stderr, "Commiting sorting element 1: %0" PRIx64 " %0" PRIx64 " <-%d\n",
 			*((uint64_t *) SORTING_NETWORK_ELEM(1)), *(((uint64_t *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
 #endif
 
@@ -8517,7 +8517,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE)
-	    fprintf(stderr, "Propentry: " PRIx64 " " PRIx64 "\n",
+	    fprintf(stderr, "Propentry: %0" PRIx64 " %0" PRIx64 "\n",
 		    *((uint64_t *) ptr), *(((uint64_t *) ptr) + 1));
 #endif
 
@@ -13566,7 +13566,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.564 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.565 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
