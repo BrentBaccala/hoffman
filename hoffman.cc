@@ -5348,7 +5348,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.561 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.562 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7670,33 +7670,28 @@ int proptable_merges = 0;
 
 index_t get_propentry_index(proptable_entry_t *propentry)
 {
-    uint32 *ptr = (uint32 *) propentry;
-    return get_unsigned_int_field(ptr, PROPTABLE_FORMAT_INDEX_OFFSET, PROPTABLE_FORMAT_INDEX_MASK);
+    return get_unsigned_int_field(propentry, PROPTABLE_FORMAT_INDEX_OFFSET, PROPTABLE_FORMAT_INDEX_MASK);
 }
 
 void set_propentry_index(proptable_entry_t *propentry, index_t index)
 {
-    uint32 *ptr = (uint32 *) propentry;
-    set_unsigned_int_field(ptr, PROPTABLE_FORMAT_INDEX_OFFSET, PROPTABLE_FORMAT_INDEX_MASK, index);
+    set_unsigned_int_field(propentry, PROPTABLE_FORMAT_INDEX_OFFSET, PROPTABLE_FORMAT_INDEX_MASK, index);
 }
 
 futurevector_t get_propentry_futurevector(proptable_entry_t *propentry)
 {
-    uint32 *ptr = (uint32 *) propentry;
-    return get_unsigned64bit_field(ptr, PROPTABLE_FORMAT_FUTUREVECTOR_MASK, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET);
+    return get_unsigned64bit_field(propentry, PROPTABLE_FORMAT_FUTUREVECTOR_MASK, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET);
 }
 
 void set_propentry_futurevector(proptable_entry_t *propentry, futurevector_t futurevector)
 {
-    uint32 *ptr = (uint32 *) propentry;
-    set_unsigned64bit_field(ptr, PROPTABLE_FORMAT_FUTUREVECTOR_MASK, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET, futurevector);
+    set_unsigned64bit_field(propentry, PROPTABLE_FORMAT_FUTUREVECTOR_MASK, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET, futurevector);
 }
 
 int get_propentry_dtm(proptable_entry_t *propentry)
 {
-    uint32 *ptr = (uint32 *) propentry;
     if (PROPTABLE_FORMAT_DTM_BITS > 0) {
-	return get_int_field(ptr, PROPTABLE_FORMAT_DTM_OFFSET, PROPTABLE_FORMAT_DTM_MASK);
+	return get_int_field(propentry, PROPTABLE_FORMAT_DTM_OFFSET, PROPTABLE_FORMAT_DTM_MASK);
     } else {
 	return 0;
     }
@@ -7704,45 +7699,39 @@ int get_propentry_dtm(proptable_entry_t *propentry)
 
 void set_propentry_dtm(proptable_entry_t *propentry, int distance)
 {
-    uint32 *ptr = (uint32 *) propentry;
     if (PROPTABLE_FORMAT_DTM_BITS > 0) {
-	set_int_field(ptr, PROPTABLE_FORMAT_DTM_OFFSET, PROPTABLE_FORMAT_DTM_MASK, distance);
+	set_int_field(propentry, PROPTABLE_FORMAT_DTM_OFFSET, PROPTABLE_FORMAT_DTM_MASK, distance);
     }
 }
 
 int get_propentry_movecnt(proptable_entry_t *propentry)
 {
-    uint32 *ptr = (uint32 *) propentry;
-    return get_unsigned_int_field(ptr, PROPTABLE_FORMAT_MOVECNT_OFFSET, PROPTABLE_FORMAT_MOVECNT_MASK);
+    return get_unsigned_int_field(propentry, PROPTABLE_FORMAT_MOVECNT_OFFSET, PROPTABLE_FORMAT_MOVECNT_MASK);
 }
 
 void set_propentry_movecnt(proptable_entry_t *propentry, int movecnt)
 {
-    uint32 *ptr = (uint32 *) propentry;
-    set_unsigned_int_field(ptr, PROPTABLE_FORMAT_MOVECNT_OFFSET, PROPTABLE_FORMAT_MOVECNT_MASK, movecnt);
+    set_unsigned_int_field(propentry, PROPTABLE_FORMAT_MOVECNT_OFFSET, PROPTABLE_FORMAT_MOVECNT_MASK, movecnt);
 }
 
 int get_propentry_PTM_wins_flag(proptable_entry_t *propentry)
 {
-    uint32 *ptr = (uint32 *) propentry;
-
     /* This one is a little different.  A proptable can have either a PTM wins flag or a DTM field.
      * If the caller requests the PTM wins flag and it doesn't exist in this format, then use the
      * DTM field to "emulate" it.
      */
 
     if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
-	return get_bit_field(ptr, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET);
+	return get_bit_field(propentry, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET);
     } else {
-	return (get_propentry_dtm(ptr) > 0) ? 1 : 0;
+	return (get_propentry_dtm(propentry) > 0) ? 1 : 0;
     }
 }
 
 void set_propentry_PTM_wins_flag(proptable_entry_t *propentry, int PTM_wins_flag)
 {
-    uint32 *ptr = (uint32 *) propentry;
     if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
-	set_bit_field(ptr, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET, PTM_wins_flag);
+	set_bit_field(propentry, PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET, PTM_wins_flag);
     }
 }
 
@@ -7767,7 +7756,7 @@ void insert_at_propentry(int propentry, proptable_entry_t * pentry)
 
 void merge_at_propentry(int propentry, proptable_entry_t *src)
 {
-    uint32 *dest = (uint32 *) PROPTABLE_ELEM(propentry);
+    proptable_entry_t * dest = PROPTABLE_ELEM(propentry);
     int dest_dtm = get_propentry_dtm(dest);
     int src_dtm = get_propentry_dtm(src);
 
@@ -7830,12 +7819,11 @@ void merge_at_propentry(int propentry, proptable_entry_t *src)
 
 void commit_proptable_entry(proptable_entry_t *propentry)
 {
-    uint32 *ptr = (uint32 *) propentry;
     index_t index = get_propentry_index(propentry);
-    int dtm = get_propentry_dtm(ptr);
-    uint8 PTM_wins_flag = get_propentry_PTM_wins_flag(ptr);
-    int movecnt = get_propentry_movecnt(ptr);
-    futurevector_t futurevector = get_propentry_futurevector(ptr);
+    int dtm = get_propentry_dtm(propentry);
+    uint8 PTM_wins_flag = get_propentry_PTM_wins_flag(propentry);
+    int movecnt = get_propentry_movecnt(propentry);
+    futurevector_t futurevector = get_propentry_futurevector(propentry);
 
     commit_entry(index, dtm, PTM_wins_flag, movecnt, futurevector);
 }
@@ -13629,7 +13617,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.561 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.562 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
