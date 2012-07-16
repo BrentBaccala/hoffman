@@ -15,11 +15,6 @@ else
 	AC_MSG_WARN(You don't have gcc; Hoffman uses several gcc extensions)
 fi
 
-AC_CHECK_SIZEOF(unsigned short)
-AC_CHECK_SIZEOF(unsigned int)
-AC_CHECK_SIZEOF(unsigned long)
-AC_CHECK_SIZEOF(unsigned long long)
-
 AC_DEFUN([CHECK_INTEL_ATOMIC_OPS],
 [
 	AC_MSG_CHECKING([whether Intel atomic operations are available])

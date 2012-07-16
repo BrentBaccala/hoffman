@@ -95,6 +95,7 @@
 #include <time.h>		/* for putting timestamps on the output tablebases */
 #include <fcntl.h>		/* for O_RDONLY */
 #include <netdb.h>		/* for gethostbyname() */
+#include <inttypes.h>		/* C99 integer types */
 
 #include <fnmatch.h>		/* for glob matching of pruning statements */
 
@@ -144,61 +145,10 @@
 #endif
 
 
-/* Working in conjunction with the configure script, find a variable that is either exactly 32 bits
- * or longer, and one that is either exactly 64 bits or longer.  If this fails, we create the
- * typedef anyway to avoid a slew of compiler error messages.  I don't put things like 'LL' at the
- * end of the decimal formats because they're always used to print stuff in the XML that the user
- * might read, while the hex formats are invariably used for stuff we compile back into the program.
- */
+typedef int_fast8_t boolean;
 
-typedef unsigned char uint8;
-typedef unsigned char boolean;
-
-#if SIZEOF_UNSIGNED_SHORT >= 4
-typedef unsigned short uint32;
-#define UINT32_HEX_FORMAT "0x%hx"
-#define UINT32_DECIMAL_FORMAT "%hd"
-#elif SIZEOF_UNSIGNED_INT >= 4
-typedef unsigned int uint32;
-#define UINT32_HEX_FORMAT "0x%x"
-#define UINT32_DECIMAL_FORMAT "%d"
-#elif SIZEOF_UNSIGNED_LONG >= 4
-typedef unsigned long uint32;
-#define UINT32_HEX_FORMAT "0x%lxL"
-#define UINT32_DECIMAL_FORMAT "%ld"
-#elif SIZEOF_UNSIGNED_LONG_LONG >= 4
-typedef unsigned long long uint32;
-#define UINT32_HEX_FORMAT "0x%llxLL"
-#define UINT32_DECIMAL_FORMAT "%lld"
-#else
-# error Could not find a 32 bit unsigned integer variable
-typedef unsigned int uint32;
-#endif
-
-#if SIZEOF_UNSIGNED_SHORT >= 8
-typedef unsigned short uint64;
-#define UINT64_HEX_FORMAT "0x%016hx"
-#define UINT64_DECIMAL_FORMAT "%hd"
-#elif SIZEOF_UNSIGNED_INT >= 8
-typedef unsigned int uint64;
-#define UINT64_HEX_FORMAT "0x%016x"
-#define UINT64_DECIMAL_FORMAT "%d"
-#elif SIZEOF_UNSIGNED_LONG >= 8
-typedef unsigned long uint64;
-#define UINT64_HEX_FORMAT "0x%016lxL"
-#define UINT64_DECIMAL_FORMAT "%ld"
-#elif SIZEOF_UNSIGNED_LONG_LONG >= 8
-typedef unsigned long long uint64;
-#define UINT64_HEX_FORMAT "0x%016llxLL"
-#define UINT64_DECIMAL_FORMAT "%lld"
-#else
-# error Could not find a 64 bit unsigned integer variable
-typedef unsigned long long uint64;
-#endif
-
-
-typedef uint32 index_t;
-#define INDEX_T_DECIMAL_FORMAT UINT32_DECIMAL_FORMAT
+typedef uint32_t index_t;
+#define PRIindex PRIu32
 #define INVALID_INDEX 0xffffffff
 
 /* If we're going to run multi-threaded, we need the POSIX threads library */
@@ -236,8 +186,8 @@ long contended_indices = 0;
 
 #define __sync_fetch_and_and  __non_builtin_sync_fetch_and_and
 
-inline uint32 __sync_fetch_and_and(uint32 *ptr, uint32 val) {
-    uint32 tmp = *ptr;
+inline uint32_t __sync_fetch_and_and(uint32_t *ptr, uint32_t val) {
+    uint32_t tmp = *ptr;
     *(ptr) &= (val);
     return tmp;
 }
@@ -247,9 +197,9 @@ inline uint32 __sync_fetch_and_and(uint32 *ptr, uint32 val) {
 /* I don't have an 8-byte sync_fetch_and_add on i686, so I use this instead. */
 
 #if defined(USE_THREADS) && !defined(HAVE_SYNC_FETCH_AND_ADD_8)
-inline uint64 __sync_fetch_and_add_8(uint64 *ptr, uint64 val) {
+inline uint64_t __sync_fetch_and_add_8(uint64_t *ptr, uint64_t val) {
     static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-    uint64 ret;
+    uint64_t ret;
     pthread_mutex_lock(&lock);
     ret = *ptr;
     *ptr += val;
@@ -287,13 +237,13 @@ inline uint64 __sync_fetch_and_add_8(uint64 *ptr, uint64 val) {
 
 /* Variables for gathering statistics */
 
-uint64 total_legal_positions = 0;
-uint64 total_PNTM_mated_positions = 0;
-uint64 total_stalemate_positions = 0;
-uint64 total_moves = 0;
-uint64 total_futuremoves = 0;
-uint64 total_backproped_moves = 0;
-uint64 player_wins[2];
+uint64_t total_legal_positions = 0;
+uint64_t total_PNTM_mated_positions = 0;
+uint64_t total_stalemate_positions = 0;
+uint64_t total_moves = 0;
+uint64_t total_futuremoves = 0;
+uint64_t total_backproped_moves = 0;
+uint64_t player_wins[2];
 int max_dtm = 0;
 int min_dtm = 0;
 
@@ -311,15 +261,15 @@ int max_passes = 0;
 const char ** pass_type = NULL;
 int * pass_target_dtms = NULL;
 int * positions_finalized = NULL;
-uint64 * backproped_moves = NULL;
+uint64_t * backproped_moves = NULL;
 
 int proptable_writes = 0;
 struct timeval proptable_write_time = {0, 0};
 
 int min_tracked_dtm = -2;
 int max_tracked_dtm = 2;
-uint8 * positive_passes_needed = NULL;
-uint8 * negative_passes_needed = NULL;
+uint8_t * positive_passes_needed = NULL;
+uint8_t * negative_passes_needed = NULL;
 
 
 /***** DATA STRUCTURES *****/
@@ -333,7 +283,7 @@ uint8 * negative_passes_needed = NULL;
  * for the particular tablebase being generated.
  */
 
-typedef uint32 futurevector_t;
+typedef uint32_t futurevector_t;
 #define FUTUREVECTOR_HEX_FORMAT "0x%x"
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
@@ -423,14 +373,14 @@ futurevector_t optimized_futuremoves[2] = {0, 0};
 
 typedef struct {
     struct tablebase *tb;
-    uint64 board_vector;
-    uint64 PTM_vector;
+    uint64_t board_vector;
+    uint64_t PTM_vector;
     short side_to_move;
     short en_passant_square;
     short multiplicity;
     short piece_position[MAX_PIECES];
-    uint8 reflection;
-    uint8 permuted_piece[MAX_PIECES];
+    uint8_t reflection;
+    uint8_t permuted_piece[MAX_PIECES];
 } local_position_t;
 
 /* This is a global position, that doesn't depend on a particular tablebase.  It's slower to
@@ -495,21 +445,21 @@ int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, KING};
  */
 
 struct format {
-    uint8 bits;
-    uint8 bytes;
+    uint8_t bits;
+    uint8_t bytes;
     int locking_bit_offset;
-    uint32 dtm_mask;
+    uint32_t dtm_mask;
     int dtm_offset;
-    uint8 dtm_bits;
-    uint32 movecnt_mask;
+    uint8_t dtm_bits;
+    uint32_t movecnt_mask;
     int movecnt_offset;
-    uint8 movecnt_bits;
-    uint32 index_mask;
+    uint8_t movecnt_bits;
+    uint32_t index_mask;
     int index_offset;
-    uint8 index_bits;
-    uint64 futurevector_mask;
+    uint8_t index_bits;
+    uint64_t futurevector_mask;
     int futurevector_offset;
-    uint8 futurevector_bits;
+    uint8_t futurevector_bits;
     int flag_offset;
     int flag_type;
     int PTM_wins_flag_offset;
@@ -668,8 +618,8 @@ typedef struct tablebase {
     int last_paired_piece[MAX_PIECES];
     int next_paired_piece[MAX_PIECES];
 
-    uint8 compact_white_king_positions[64*64];
-    uint8 compact_black_king_positions[64*64];
+    uint8_t compact_white_king_positions[64*64];
+    uint8_t compact_black_king_positions[64*64];
     index_t compact_king_indices[64][64];
     uint total_legal_compact_king_positions;
 
@@ -718,12 +668,12 @@ typedef struct tablebase {
     short num_pieces_by_color[2];
     short piece_type[MAX_PIECES];
     short piece_color[MAX_PIECES];
-    uint64 legal_squares[MAX_PIECES];
-    uint64 semilegal_squares[MAX_PIECES];
-    uint64 frozen_pieces_vector;
+    uint64_t legal_squares[MAX_PIECES];
+    uint64_t semilegal_squares[MAX_PIECES];
+    uint64_t frozen_pieces_vector;
     int blocking_piece[MAX_PIECES];
-    uint64 illegal_black_king_squares;
-    uint64 illegal_white_king_squares;
+    uint64_t illegal_black_king_squares;
+    uint64_t illegal_white_king_squares;
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
     int reverse_index_ordering[MAX_PIECES];
@@ -1086,13 +1036,13 @@ void expand_per_pass_statistics(void)
     pass_type = (const char **) realloc(pass_type, max_passes * sizeof(const char *));
     pass_target_dtms = (int *) realloc(pass_target_dtms, max_passes * sizeof(int));
     positions_finalized = (int *) realloc(positions_finalized, max_passes * sizeof(int));
-    backproped_moves = (uint64 *) realloc(backproped_moves, max_passes * sizeof(uint64));
+    backproped_moves = (uint64_t *) realloc(backproped_moves, max_passes * sizeof(uint64_t));
 
     /* not all of these arrays are cumulative, but just zero them all to be on the safe size */
     bzero(pass_type + total_passes, (max_passes-total_passes)*sizeof(char *));
     bzero(pass_target_dtms + total_passes, (max_passes-total_passes)*sizeof(int));
     bzero(positions_finalized + total_passes, (max_passes-total_passes)*sizeof(int));
-    bzero(backproped_moves + total_passes, (max_passes-total_passes)*sizeof(uint64));
+    bzero(backproped_moves + total_passes, (max_passes-total_passes)*sizeof(uint64_t));
 }
 
 #ifdef USE_THREADS
@@ -1122,9 +1072,9 @@ inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
  * big enough to accommodate every possibility.
  */
 
-inline uint64 get_unsigned64bit_field(void *fieldptr, uint64 mask, int offset)
+inline uint64_t get_unsigned64bit_field(void *fieldptr, uint64_t mask, int offset)
 {
-    uint64 *ptr = (uint64 *)fieldptr;
+    uint64_t *ptr = (uint64_t *)fieldptr;
 
     /* if (offset == -1) return 0; */
 
@@ -1138,9 +1088,9 @@ inline uint64 get_unsigned64bit_field(void *fieldptr, uint64 mask, int offset)
 
 #if !defined(USE_THREADS) || defined(HAVE_SYNC_FETCH_AND_ADD_8)
 
-inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uint64 val)
+inline void set_unsigned64bit_field(void *fieldptr, uint64_t mask, int offset, uint64_t val)
 {
-    uint64 *ptr = (uint64 *)fieldptr;
+    uint64_t *ptr = (uint64_t *)fieldptr;
 
     /* if (offset == -1) return; */
 
@@ -1163,9 +1113,9 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
  * either a big-endian architecture on one with stringent word alignment requirements.
  */
 
-inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uint64 val)
+inline void set_unsigned64bit_field(void *fieldptr, uint64_t mask, int offset, uint64_t val)
 {
-    uint64 *ptr = (uint64 *)fieldptr;
+    uint64_t *ptr = (uint64_t *)fieldptr;
 
     /* if (offset == -1) return; */
 
@@ -1175,10 +1125,10 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
     }
 
     if (offset < 32) {
-	set_unsigned_field((uint32 *)ptr, mask & 0xffffffff, offset, val & 0xffffffff);
+	set_unsigned_field((uint32_t *)ptr, mask & 0xffffffff, offset, val & 0xffffffff);
     }
     if ((mask >> 32) != 0) {
-	set_unsigned_field(((uint32 *)ptr)+1, mask >> 32, offset - 32, val >> 32);
+	set_unsigned_field(((uint32_t *)ptr)+1, mask >> 32, offset - 32, val >> 32);
     }
 }
 
@@ -1198,7 +1148,7 @@ inline void set_unsigned64bit_field(void *fieldptr, uint64 mask, int offset, uin
  */
 
 struct movement {
-    uint64 vector;
+    uint64_t vector;
     short square;
 };
 
@@ -1929,7 +1879,7 @@ boolean check_king_legality(int kingA, int kingB) {
 
 #ifdef i386
 
-uint32 invert_in_finite_field(uint32 b, uint32 m)
+uint32_t invert_in_finite_field(uint32_t b, uint32_t m)
 {
     asm("                                                                                       \
                 /* Input                                                                    */  \
@@ -2028,12 +1978,12 @@ uint32 invert_in_finite_field(uint32 b, uint32 m)
 
 #else
 
-uint32 invert_in_finite_field(uint32 b, uint32 m)
+uint32_t invert_in_finite_field(uint32_t b, uint32_t m)
 {
-    uint32 x = m;
-    uint32 y = b;
-    uint32 bx = 0;
-    uint32 by = 1;
+    uint32_t x = m;
+    uint32_t y = b;
+    uint32_t bx = 0;
+    uint32_t by = 1;
 
     while ((y&1) == 0) {
 	y >>= 1;
@@ -2088,15 +2038,15 @@ uint32 invert_in_finite_field(uint32 b, uint32 m)
  * load, some very simple algorithms suffice.
  */
 
-boolean is_prime(uint32 test_number)
+boolean is_prime(uint32_t test_number)
 {
-    uint32 divisor, sqrt_test_number;
+    uint32_t divisor, sqrt_test_number;
 
     /* Quick, easy check to see if it's even (and thus can't be prime) */
     if ((test_number % 2) == 0) return 0;
 
     /* Now, check all odd numbers from 3 up to its square root to see if any divide it */
-    sqrt_test_number = (uint32) sqrt((double) test_number);
+    sqrt_test_number = (uint32_t) sqrt((double) test_number);
     for (divisor = 3; divisor <= sqrt_test_number; divisor += 2) {
 	if ((test_number % divisor) == 0) return 0;
     }
@@ -2105,9 +2055,9 @@ boolean is_prime(uint32 test_number)
     return 1;
 }
 
-uint32 round_up_to_prime(uint32 starting_number)
+uint32_t round_up_to_prime(uint32_t starting_number)
 {
-    uint32 number = starting_number;
+    uint32_t number = starting_number;
 
     if (number % 2 == 0) number ++;
 
@@ -2261,7 +2211,7 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
     /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
     index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
     int piece;
-    uint8 vals[MAX_PIECES];
+    uint8_t vals[MAX_PIECES];
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -2340,7 +2290,7 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
-    uint8 vals[MAX_PIECES];
+    uint8_t vals[MAX_PIECES];
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = -1;
@@ -2608,7 +2558,7 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 {
     index_t index;
     int piece;
-    uint8 vals[MAX_PIECES];
+    uint8_t vals[MAX_PIECES];
 
     index = 0;
 
@@ -2696,7 +2646,7 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
-    uint8 vals[MAX_PIECES];
+    uint8_t vals[MAX_PIECES];
     int king_index = 0;
 
     memset(p, 0, sizeof(local_position_t));
@@ -2790,7 +2740,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	if (tb->last_paired_piece[piece] != -1) {
 
 	    if (vals[piece] < vals[tb->last_paired_piece[piece]]) {
-		uint8 val = vals[piece];
+		uint8_t val = vals[piece];
 		vals[piece] = vals[tb->last_paired_piece[piece]];
 		vals[tb->last_paired_piece[piece]] = val;
 	    }
@@ -2799,7 +2749,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 		|| ! (tb->legal_squares[tb->last_paired_piece[piece]]
 		      & BITVECTOR(vals[tb->last_paired_piece[piece]]))) {
 
-		uint8 val = vals[piece];
+		uint8_t val = vals[piece];
 		vals[piece] = vals[tb->last_paired_piece[piece]];
 		vals[tb->last_paired_piece[piece]] = val;
 	    }
@@ -3631,7 +3581,7 @@ int check_1000_indices(tablebase_t *tb)
 	if (index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 	    index2 = local_position_to_index(tb, &position);
 	    if (index != index2) {
-		fatal("Mismatch in check_1000_indices() " INDEX_T_DECIMAL_FORMAT "\n", index);
+		fatal("Mismatch in check_1000_indices() %" PRIindex "\n", index);
 		ret = 0;
 	    }
 	}
@@ -3671,8 +3621,8 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     int total_bits = 0;
     int power_of_two;
     int bitnum;
-    uint64 bitmask1 = 0;
-    uint64 bitmask2 = 0;
+    uint64_t bitmask1 = 0;
+    uint64_t bitmask2 = 0;
 
     memset(format, 0, sizeof(struct format));
 
@@ -3861,8 +3811,8 @@ const char * print_format(const char *name, struct format *format)
     static char outstr[256];
 
     snprintf(outstr, sizeof(outstr),
-	     "   const struct format %s = {%d,%d, %d, " UINT32_HEX_FORMAT ",%d,%d, " UINT32_HEX_FORMAT ",%d,%d, "
-	     UINT32_HEX_FORMAT ",%d,%d, " UINT64_HEX_FORMAT ",%d,%d, %d,%d, %d, %d};\n",
+	     "   const struct format %s = {%d,%d, %d, %" PRIx32 ",%d,%d, %" PRIx32 ",%d,%d, %"
+	     PRIx32 ",%d,%d, %" PRIx64 ",%d,%d, %d,%d, %d, %d};\n",
 
 	     name, format->bits, format->bytes, format->locking_bit_offset,
 	     format->dtm_mask, format->dtm_offset, format->dtm_bits,
@@ -4171,7 +4121,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	if (tb->piece_type[piece] == PAWN) {
 
 	    xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
-	    uint64 pawn_positions = 0xffffffffffffffffLL;
+	    uint64_t pawn_positions = 0xffffffffffffffffLL;
 
 	    if ((location != NULL) && (location[2] == '+')) {
 
@@ -4382,7 +4332,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
 #if DEBUG
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	fprintf(stderr, "Piece %d: type %s color %s legal_squares " UINT64_HEX_FORMAT " semilegal_squares " UINT64_HEX_FORMAT "\n",
+	fprintf(stderr, "Piece %d: type %s color %s legal_squares " PRIx64 " semilegal_squares " PRIx64 "\n",
 		piece, piece_name[tb->piece_type[piece]], colors[tb->piece_color[piece]],
 		tb->legal_squares[piece], tb->semilegal_squares[piece]);
     }
@@ -5348,7 +5298,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.562 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.563 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5816,7 +5766,7 @@ void finalize_pass_statistics()
 	}
 	snprintf(strbuf, sizeof(strbuf), "%d", positions_finalized[total_passes]);
 	xmlNewProp(passNode, BAD_CAST "positions-finalized", BAD_CAST strbuf);
-	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, backproped_moves[total_passes]);
+	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, backproped_moves[total_passes]);
 	xmlNewProp(passNode, BAD_CAST "moves-generated", BAD_CAST strbuf);
     }
 
@@ -5882,16 +5832,16 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     }
 
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), INDEX_T_DECIMAL_FORMAT, tb->max_index + 1);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIindex, tb->max_index + 1);
     xmlNewChild(node, NULL, BAD_CAST "indices", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_PNTM_mated_positions);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_PNTM_mated_positions);
     xmlNewChild(node, NULL, BAD_CAST "PNTM-mated-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_legal_positions);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_legal_positions);
     xmlNewChild(node, NULL, BAD_CAST "legal-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_stalemate_positions);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_stalemate_positions);
     xmlNewChild(node, NULL, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
 
     /* If we generating a full tablebase, report both white-wins-positions and black-wins-positions.
@@ -5901,25 +5851,25 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, player_wins[0]);
+	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, player_wins[0]);
 	xmlNewChild(node, NULL, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
     }
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, player_wins[1]);
+	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, player_wins[1]);
 	xmlNewChild(node, NULL, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
     }
     if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_legal_positions - player_wins[1]);
+	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_legal_positions - player_wins[1]);
 	xmlNewChild(node, NULL, BAD_CAST "white-wins-or-draws-positions", BAD_CAST strbuf);
     }
 
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_moves);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_moves);
     xmlNewChild(node, NULL, BAD_CAST "forward-moves", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), UINT64_DECIMAL_FORMAT, total_futuremoves);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_futuremoves);
     xmlNewChild(node, NULL, BAD_CAST "futuremoves", BAD_CAST strbuf);
     if (tb->format.dtm_bits > 0) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7500,7 +7450,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 		&& (negative_passes_needed[-get_entry_raw_DTM(index)] == 0)) {
 		global_position_t global;
 		index_to_global_position(current_tb, index, &global);
-		printf("%d pass needed by " INDEX_T_DECIMAL_FORMAT " %s\n",
+		printf("%d pass needed by %" PRIindex " %s\n",
 		       get_entry_raw_DTM(index), index, global_position_to_FEN(&global));
 	    }
 #endif
@@ -7512,7 +7462,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 
 /***** PROPAGATION TABLES *****/
 
-void commit_entry(index_t index, int dtm, uint8 PTM_wins_flag, int movecnt, futurevector_t futurevector)
+void commit_entry(index_t index, int dtm, uint8_t PTM_wins_flag, int movecnt, futurevector_t futurevector)
 {
     int i;
 
@@ -7749,8 +7699,8 @@ void insert_at_propentry(int propentry, proptable_entry_t * pentry)
 
 #ifdef DEBUG_MOVE
     if (get_propentry_index(pentry) == DEBUG_MOVE)
-	fprintf(stderr, "Propentry: " UINT64_HEX_FORMAT " " UINT64_HEX_FORMAT "\n",
-		*((uint64 *) pentry), *(((uint64 *) pentry) + 1));
+	fprintf(stderr, "Propentry: " PRIx64 " " PRIx64 "\n",
+		*((uint64_t *) pentry), *(((uint64_t *) pentry) + 1));
 #endif
 }
 
@@ -7821,7 +7771,7 @@ void commit_proptable_entry(proptable_entry_t *propentry)
 {
     index_t index = get_propentry_index(propentry);
     int dtm = get_propentry_dtm(propentry);
-    uint8 PTM_wins_flag = get_propentry_PTM_wins_flag(propentry);
+    uint8_t PTM_wins_flag = get_propentry_PTM_wins_flag(propentry);
     int movecnt = get_propentry_movecnt(propentry);
     futurevector_t futurevector = get_propentry_futurevector(propentry);
 
@@ -8165,7 +8115,7 @@ void proptable_pass(int target_dtm)
 
 	if (get_propentry_index(SORTING_NETWORK_ELEM(1)) < index) {
 	    fatal("Out-of-order entries in sorting network: %llx %llx <-%d\n",
-		  *((uint64 *) SORTING_NETWORK_ELEM(1)), *(((uint64 *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
+		  *((uint64_t *) SORTING_NETWORK_ELEM(1)), *(((uint64_t *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
 	}
 
 	if (target_dtm == 0) {
@@ -8176,8 +8126,8 @@ void proptable_pass(int target_dtm)
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE)
-		fprintf(stderr, "Commiting sorting element 1: " UINT64_HEX_FORMAT " " UINT64_HEX_FORMAT " <-%d\n",
-			*((uint64 *) SORTING_NETWORK_ELEM(1)), *(((uint64 *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
+		fprintf(stderr, "Commiting sorting element 1: " PRIx64 " " PRIx64 " <-%d\n",
+			*((uint64_t *) SORTING_NETWORK_ELEM(1)), *(((uint64_t *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
 #endif
 
 	    /* These futuremoves might be moves into check, in which case they were discarded back
@@ -8456,7 +8406,7 @@ pthread_mutex_t commit_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int futuremove)
 {
-    uint8 PTM_wins_flag;
+    uint8_t PTM_wins_flag;
     char entry[MAX_FORMAT_BYTES];
     void *ptr = entry;
 
@@ -8568,8 +8518,8 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE)
-	    fprintf(stderr, "Propentry: " UINT64_HEX_FORMAT " " UINT64_HEX_FORMAT "\n",
-		    *((uint64 *) ptr), *(((uint64 *) ptr) + 1));
+	    fprintf(stderr, "Propentry: " PRIx64 " " PRIx64 "\n",
+		    *((uint64_t *) ptr), *(((uint64_t *) ptr) + 1));
 #endif
 
 	insert_into_proptable(ptr);
@@ -8996,7 +8946,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
     local_position_t foreign_position;
     local_position_t position;
     local_position_t normalized_position;
-    uint32 conversion_result;
+    uint32_t conversion_result;
     int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_pawn;
     int reflection;
@@ -9210,7 +9160,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
     local_position_t foreign_position;
     local_position_t position;
     local_position_t normalized_position;
-    uint32 conversion_result;
+    uint32_t conversion_result;
     int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_captured_piece;
     int true_pawn;
@@ -9662,7 +9612,7 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
     index_t future_index;
     local_position_t position;
     int piece;
-    uint32 conversion_result;
+    uint32_t conversion_result;
     int extra_piece, restricted_piece, captured_piece, missing_piece2;
     int reflection;
 
@@ -9807,7 +9757,7 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
     index_t future_index;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
-    uint32 conversion_result;
+    uint32_t conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
     int piece;
     int dir;
@@ -10389,7 +10339,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     int dir;
     int promotion;
     struct movement *movementptr;
-    uint64 possible_captures[MAX_PIECES];
+    uint64_t possible_captures[MAX_PIECES];
     char local_movestr[MOVESTR_CHARS];
     int futurebase_cnt;
     int fbnum;
@@ -11210,8 +11160,8 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 
 #ifdef DEBUG_MOVE
     if ((current_index == DEBUG_MOVE) || (future_index == DEBUG_MOVE))
-	printf("propagate_one_minimove_within_table:  current_index="
-	       INDEX_T_DECIMAL_FORMAT "; future_index=" INDEX_T_DECIMAL_FORMAT "; dtm=%d\n",
+	printf("propagate_one_minimove_within_table:  current_index=%"
+	       PRIindex "; future_index=%" PRIindex "; dtm=%d\n",
 	       current_index, future_index, dtm);
 #endif
 
@@ -12706,8 +12656,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     /* Part of preloading the futurebases was to compute the smallest and largest DTMs in them, so
      * we now know what the sizes of these two arrays have to be.
      */
-    positive_passes_needed = calloc(max_tracked_dtm + 1, sizeof(uint8));
-    negative_passes_needed = calloc(-min_tracked_dtm + 1, sizeof(uint8));
+    positive_passes_needed = calloc(max_tracked_dtm + 1, sizeof(uint8_t));
+    negative_passes_needed = calloc(-min_tracked_dtm + 1, sizeof(uint8_t));
 
     if ((positive_passes_needed == NULL) || (negative_passes_needed == NULL)) {
 	fatal("Can't calloc positive/negative_passes_needed\n");
@@ -13617,7 +13567,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.562 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.563 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
