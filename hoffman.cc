@@ -5244,7 +5244,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.568 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.569 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8338,24 +8338,60 @@ void insert_into_proptable(proptable_entry_t *pentry)
     goto retry;
 }
 
+void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, boolean PTM_wins_flag, int futuremove)
+{
+    char entry[MAX_FORMAT_BYTES];
+    void *ptr = entry;
+
+    /* If we're running multi-threaded, then there is a possibility that two different threads will
+     * try to insert into the proptable at the same time.
+     */
+
+#ifdef USE_THREADS
+    static pthread_mutex_t commit_lock = PTHREAD_MUTEX_INITIALIZER;
+#endif
+
+#ifdef USE_THREADS
+    pthread_mutex_lock_instrumented(&commit_lock);
+#endif
+
+    memset(ptr, 0, PROPTABLE_FORMAT_BYTES);
+
+    set_propentry_index(ptr, index);
+    set_propentry_dtm(ptr, dtm);
+    set_propentry_movecnt(ptr, movecnt);
+
+    if (futuremove != NO_FUTUREMOVE) {
+	set_propentry_futurevector(ptr, FUTUREVECTOR(futuremove));
+    }
+
+    set_propentry_PTM_wins_flag(ptr, PTM_wins_flag);
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	fprintf(stderr, "Propentry: %0" PRIx64 " %0" PRIx64 "\n",
+		*((uint64_t *) ptr), *(((uint64_t *) ptr) + 1));
+#endif
+
+    insert_into_proptable(ptr);
+
+#ifdef USE_THREADS
+    pthread_mutex_unlock(&commit_lock);
+#endif
+}
+
 
 /* If we're running multi-threaded, then there is a possibility that 1) two different positions will
  * try to backprop into the same position (if we're not using proptables), or that 2) two different
  * threads will try to insert into the proptable at the same time (if we're using proptables).
  *
- * The first case is handled by a lock/unlock sequence in commit_entry; the second case is handled
- * by a mutex lock on this next routine.
+ * The first case is handled by a lock/unlock sequence below; the second case is handled by a mutex
+ * lock in insert_new_propentry.
  */
-
-#ifdef USE_THREADS
-pthread_mutex_t commit_lock = PTHREAD_MUTEX_INITIALIZER;
-#endif
 
 void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int futuremove)
 {
     uint8_t PTM_wins_flag;
-    char entry[MAX_FORMAT_BYTES];
-    void *ptr = entry;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -8450,31 +8486,7 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 	    PTM_wins_flag = (index_to_side_to_move(current_tb, index) == win_side) ? 0 : 1;
 	}
 
-#ifdef USE_THREADS
-	pthread_mutex_lock_instrumented(&commit_lock);
-#endif
-
-	memset(ptr, 0, PROPTABLE_FORMAT_BYTES);
-
-	set_propentry_index(ptr, index);
-	set_propentry_dtm(ptr, dtm);
-	set_propentry_movecnt(ptr, movecnt);
-	set_propentry_futurevector(ptr, FUTUREVECTOR(futuremove));
-
-	set_propentry_PTM_wins_flag(ptr, PTM_wins_flag);
-
-#ifdef DEBUG_MOVE
-	if (index == DEBUG_MOVE)
-	    fprintf(stderr, "Propentry: %0" PRIx64 " %0" PRIx64 "\n",
-		    *((uint64_t *) ptr), *(((uint64_t *) ptr) + 1));
-#endif
-
-	insert_into_proptable(ptr);
-
-#ifdef USE_THREADS
-	pthread_mutex_unlock(&commit_lock);
-#endif
-
+	insert_new_propentry(index, dtm, movecnt, PTM_wins_flag, futuremove);
     }
 
 }
@@ -13513,7 +13525,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.568 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.569 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
