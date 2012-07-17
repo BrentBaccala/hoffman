@@ -84,7 +84,9 @@
 
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
 
+#ifndef _GNU_SOURCE
 #define _GNU_SOURCE		/* to get strsignal() and FNM_CASEFOLD */
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -146,6 +148,13 @@
 
 
 typedef int_fast8_t boolean;
+
+#ifndef PRIu32
+#define PRIu32 "u"
+#define PRIx32 "x"
+#define PRIu64 "llu"
+#define PRIx64 "llx"
+#endif
 
 typedef uint32_t index_t;
 #define PRIindex PRIu32
@@ -313,7 +322,7 @@ typedef uint32_t futurevector_t;
  * ordering in piece_name and piece_char.
  */
 
-int num_futuremoves[2] = {0, 0};
+unsigned int num_futuremoves[2] = {0, 0};
 int futurecaptures[MAX_PIECES][MAX_PIECES];
 int promotion_captures[MAX_PIECES][MAX_PIECES][MAX_PROMOTION_POSSIBILITIES];
 int promotions[MAX_PIECES][MAX_PROMOTION_POSSIBILITIES];
@@ -641,7 +650,7 @@ typedef struct tablebase {
     char * filename;
     int futurebase_type;
     index_t next_read_index;
-    long offset;
+    off_t offset;
     int max_dtm;
     int min_dtm;
     int invert_colors;
@@ -5233,7 +5242,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.566 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.567 $ $Locker:  $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5941,6 +5950,8 @@ void invert_colors_of_global_position(global_position_t *global)
  * auto-detection (we used to have to explicitly tell the program which kind of futurebase each one
  * was).  There's probably no reason we couldn't precompute an entire piece-to-piece mapping table
  * from the futurebase to the local tablebase, which should speed up this routine dramatically.
+ *
+ * XXX we assume that int holds at least 32 bits
  */
 
 #define NONE 0x80
@@ -6725,7 +6736,7 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 	/* Special case for the very common one-byte-DTM format */
 
 	if (index < tb->next_read_index) {
-	    if (zlib_seek(tb->file, tb->offset + index, SEEK_SET) != tb->offset + index) {
+	    if (zlib_seek(tb->file, tb->offset + (off_t)index, SEEK_SET) != tb->offset + (off_t)index) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
 	    } else {
 		tb->next_read_index = index;
@@ -6743,8 +6754,8 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 
 	if (LEFTSHIFT(index, tb->format.bits - 3)
 	    < LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
-	    if (zlib_seek(tb->file, tb->offset + LEFTSHIFT(index, tb->format.bits - 3), SEEK_SET)
-		!= tb->offset + LEFTSHIFT(index, tb->format.bits - 3)) {
+	    if (zlib_seek(tb->file, tb->offset + LEFTSHIFT((off_t)index, tb->format.bits - 3), SEEK_SET)
+		!= tb->offset + LEFTSHIFT((off_t)index, tb->format.bits - 3)) {
 		fatal("Seek failed in fetch_entry_pointer()\n");
 	    } else {
 		switch (tb->format.bits) {
@@ -6804,10 +6815,10 @@ inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
 	for (i=0; i<num_cached_entries; i++) {
 
 	    if (index == cached_indices[i])
-		return cached_entries + i*tb->format.bytes;
+		return (char *)cached_entries + i*tb->format.bytes;
 
 	    if (LEFTSHIFT(index, tb->format.bits - 3) == LEFTSHIFT(cached_indices[i], tb->format.bits - 3))
-		return cached_entries + i*tb->format.bytes;
+		return (char *)cached_entries + i*tb->format.bytes;
 	}
 
     } else if (cached_entries != NULL) {
@@ -6837,10 +6848,10 @@ inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
 
     /* It's not there, so fetch it and cache it */
 
-    prefetch_entry_pointer(tb, index, cached_entries + n*tb->format.bytes);
+    prefetch_entry_pointer(tb, index, (char *)cached_entries + n*tb->format.bytes);
     cached_indices[n] = index;
 
-    return (cached_entries + n*tb->format.bytes);
+    return (char *)cached_entries + n*tb->format.bytes;
 }
 
 inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
@@ -7550,7 +7561,7 @@ void * back_propagate_section(void * ptr)
 int proptable_entries = 0;
 int proptable_merges = 0;
 
-#define PROPTABLE_ELEM(n)  ((void *)proptable + PROPTABLE_FORMAT_BYTES * (n))
+#define PROPTABLE_ELEM(n)  ((char *)proptable + PROPTABLE_FORMAT_BYTES * (n))
 
 index_t get_propentry_index(proptable_entry_t *propentry)
 {
@@ -7855,15 +7866,15 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 	 * (PROPTABLE_FORMAT_INDEX_MASK) are empty slots and are skipped.
 	 */
 
-	while (proptable_buffer_ptr[tablenum] + PROPTABLE_FORMAT_BYTES <= proptable_buffer_limit[tablenum]) {
+	while ((char *)(proptable_buffer_ptr[tablenum]) + PROPTABLE_FORMAT_BYTES <= (char *)(proptable_buffer_limit[tablenum])) {
 
 	    if (get_propentry_index(proptable_buffer_ptr[tablenum]) != PROPTABLE_FORMAT_INDEX_MASK) {
 		memcpy(dest, proptable_buffer_ptr[tablenum], PROPTABLE_FORMAT_BYTES);
-		proptable_buffer_ptr[tablenum] += PROPTABLE_FORMAT_BYTES;
+		proptable_buffer_ptr[tablenum] = (char *)(proptable_buffer_ptr[tablenum]) + PROPTABLE_FORMAT_BYTES;
 		return;
 	    }
 
-	    proptable_buffer_ptr[tablenum] += PROPTABLE_FORMAT_BYTES;
+	    proptable_buffer_ptr[tablenum] = (char*)(proptable_buffer_ptr[tablenum]) + PROPTABLE_FORMAT_BYTES;
 	}
 
 	/* Finished with this buffer.  Issue a read request for what its next contents should be
@@ -7879,7 +7890,7 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 	    proptable_buffer_ptr[tablenum] = NULL;
 	} else {
 	    proptable_buffer_ptr[tablenum] = proptable_buffer[tablenum];
-	    proptable_buffer_limit[tablenum] = proptable_buffer[tablenum] + ret;
+	    proptable_buffer_limit[tablenum] = (char *)(proptable_buffer[tablenum]) + ret;
 	    if (ret % PROPTABLE_FORMAT_BYTES != 0) {
 		fatal("Proptable read split a proptable entry\n");
 	    }
@@ -7913,7 +7924,7 @@ void proptable_pass(int target_dtm)
 
     char infilename[256];
 
-#define SORTING_NETWORK_ELEM(n)  (sorting_network + PROPTABLE_FORMAT_BYTES * (n))
+#define SORTING_NETWORK_ELEM(n)  ((char *)sorting_network + PROPTABLE_FORMAT_BYTES * (n))
 
     index_t index;
 
@@ -7966,7 +7977,7 @@ void proptable_pass(int target_dtm)
 	    proptable_buffer_ptr[tablenum] = NULL;
 	} else {
 	    proptable_buffer_ptr[tablenum] = proptable_buffer[tablenum];
-	    proptable_buffer_limit[tablenum] = proptable_buffer[tablenum] + ret;
+	    proptable_buffer_limit[tablenum] = (char *)(proptable_buffer[tablenum]) + ret;
 	    if (ret % PROPTABLE_FORMAT_BYTES != 0) {
 		fatal("Proptable read split a proptable entry\n");
 	    }
@@ -8239,7 +8250,7 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	    for (zerooffset = 1; zerooffset <= MAX_ZEROOFFSET; zerooffset ++) {
 		if (get_propentry_index(PROPTABLE_ELEM(zerooffset)) == PROPTABLE_FORMAT_INDEX_MASK) {
 		    /* proptable[1:zerooffset] = proptable[0:zerooffset-1]; */
-		    memmove(proptable + PROPTABLE_FORMAT_BYTES, proptable,
+		    memmove((char *)proptable + PROPTABLE_FORMAT_BYTES, proptable,
 			    (zerooffset) * PROPTABLE_FORMAT_BYTES);
 		    /* proptable[0] = entry; */
 		    insert_at_propentry(0, pentry);
@@ -8274,8 +8285,8 @@ void insert_into_proptable(proptable_entry_t *pentry)
 		    /* proptable[num_propentries-zerooffset-1 : num_propentrys-2]
 		     *    = proptable[num_propentries-zerooffset : num_propentries-1];
 		     */
-		    memmove(proptable + (num_propentries - 1 - zerooffset) * PROPTABLE_FORMAT_BYTES,
-			    proptable + (num_propentries - zerooffset) * PROPTABLE_FORMAT_BYTES,
+		    memmove((char *)proptable + (num_propentries - 1 - zerooffset) * PROPTABLE_FORMAT_BYTES,
+			    (char *)proptable + (num_propentries - zerooffset) * PROPTABLE_FORMAT_BYTES,
 			    (zerooffset) * PROPTABLE_FORMAT_BYTES);
 		    /* proptable[num_propentries-1] = entry; */
 		    insert_at_propentry(num_propentries - 1, pentry);
@@ -8299,8 +8310,8 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	    /* proptable[propentry+2 : propentry+zerooffset]
 	     *    = proptable[propentry+1 : propentry+zerooffset-1];
 	     */
-	    memmove(proptable + PROPTABLE_FORMAT_BYTES * (propentry + 2),
-		    proptable + PROPTABLE_FORMAT_BYTES * (propentry + 1),
+	    memmove((char *)proptable + PROPTABLE_FORMAT_BYTES * (propentry + 2),
+		    (char *)proptable + PROPTABLE_FORMAT_BYTES * (propentry + 1),
 		    (zerooffset-1) * PROPTABLE_FORMAT_BYTES);
 	    /* proptable[propentry+1] = entry; */
 	    insert_at_propentry(propentry+1, pentry);
@@ -8311,8 +8322,8 @@ void insert_into_proptable(proptable_entry_t *pentry)
 	    /* proptable[propentry-zerooffset : propentry-1]
 	     *    = proptable[propentry-zerooffset+1 : propentry];
 	     */
-	    memmove(proptable + PROPTABLE_FORMAT_BYTES * (propentry - zerooffset),
-		    proptable + PROPTABLE_FORMAT_BYTES * (propentry - zerooffset + 1),
+	    memmove((char *)proptable + PROPTABLE_FORMAT_BYTES * (propentry - zerooffset),
+		    (char *)proptable + PROPTABLE_FORMAT_BYTES * (propentry - zerooffset + 1),
 		    zerooffset * PROPTABLE_FORMAT_BYTES);
 	    /* proptable[propentry] = entry; */
 	    insert_at_propentry(propentry, pentry);
@@ -8479,7 +8490,7 @@ int propagation_pass(int target_dtm)
 
     if (ENTRIES_FORMAT_DTM_OFFSET != -1) {
 	if (((target_dtm > 0) && (target_dtm > (ENTRIES_FORMAT_DTM_MASK >> 1)))
-	    || ((target_dtm < 0) && (target_dtm < -(ENTRIES_FORMAT_DTM_MASK >> 1)))) {
+	    || ((target_dtm < 0) && (target_dtm < -(int)(ENTRIES_FORMAT_DTM_MASK >> 1)))) {
 	    fatal("DTM entry field size exceeded\n");
 	    terminate();
 	}
@@ -8561,8 +8572,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	global_position_t global;
 
 	index_to_global_position(tb, current_index, &global);
-	fatal("Futuremove never assigned: %s %s\n", global_position_to_FEN(&global),
-	      movestr[global.side_to_move][futuremove]);
+	fatal("Futuremove never assigned: %s\n", global_position_to_FEN(&global));
 
 	return;
     }
@@ -8634,7 +8644,7 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *
 
     current_index = local_position_to_index(tb, current_position);
 
-    if (current_index == -1) {
+    if (current_index == INVALID_INDEX) {
 #if !CHECK_KING_LEGALITY_EARLY
 	/* This can happen if we don't fully check en passant legality (but right now, we do) */
 	fprintf(stderr, "Can't lookup local position in futurebase propagation!\n");
@@ -8714,7 +8724,7 @@ void propagate_mini_normalized_position_from_futurebase(tablebase_t *tb, tableba
 
     current_index = normalized_position_to_index(tb, current_position);
 
-    if (current_index == -1) {
+    if (current_index == INVALID_INDEX) {
 #if !CHECK_KING_LEGALITY_EARLY
 	/* This can happen if we don't fully check en passant legality (but right now, we do) */
 	fprintf(stderr, "Can't lookup local position in futurebase propagation!\n");
@@ -8880,7 +8890,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
     local_position_t foreign_position;
     local_position_t position;
     local_position_t normalized_position;
-    uint32_t conversion_result;
+    int conversion_result;
     int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_pawn;
     int reflection;
@@ -9094,7 +9104,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
     local_position_t foreign_position;
     local_position_t position;
     local_position_t normalized_position;
-    uint32_t conversion_result;
+    int conversion_result;
     int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_captured_piece;
     int true_pawn;
@@ -9546,7 +9556,7 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
     index_t future_index;
     local_position_t position;
     int piece;
-    uint32_t conversion_result;
+    int conversion_result;
     int extra_piece, restricted_piece, captured_piece, missing_piece2;
     int reflection;
 
@@ -9691,7 +9701,7 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
     index_t future_index;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
-    uint32_t conversion_result;
+    int conversion_result;
     int extra_piece, restricted_piece, missing_piece1, missing_piece2;
     int piece;
     int dir;
@@ -10072,7 +10082,7 @@ int all_futuremoves_handled = 1;
 
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
 
-    int futuremove;
+    unsigned int futuremove;
     int stm = index_to_side_to_move(tb, index);
 
     if (futurevector & unpruned_futuremoves[stm]) {
@@ -10665,7 +10675,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 void print_futuremoves(void)
 {
-    int i;
+    unsigned int i;
 
     info("%d unpruned WHITE futuremoves\n", num_futuremoves[WHITE]);
     info("%d unpruned BLACK futuremoves\n", num_futuremoves[BLACK]);
@@ -10694,7 +10704,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     xmlXPathObjectPtr result;
     int prune;
     int color;
-    int fm;
+    unsigned int fm;
 
     /* Check pruning statements for consistency, and record stalemate pruning if specified */
 
@@ -11016,7 +11026,7 @@ void optimize_futuremoves(tablebase_t *tb)
 
     for (color = WHITE; color <= BLACK; color ++) {
 
-	for (fm = 0; fm < num_futuremoves[color]; fm++) {
+	for (fm = 0; fm < (int) num_futuremoves[color]; fm++) {
 
 	    if (optimized_futuremoves[color] & FUTUREVECTOR(fm)) {
 
@@ -11060,7 +11070,7 @@ void optimize_futuremoves(tablebase_t *tb)
 
 		info("Pruned %s futuremove %s\n", colors[color], movestr[color][fm]);
 
-		for (fm2 = fm + 1; fm2 < num_futuremoves[color]; fm2++) {
+		for (fm2 = fm + 1; fm2 < (int) num_futuremoves[color]; fm2++) {
 		    strcpy(movestr[color][fm2-1], movestr[color][fm2]);
 		}
 
@@ -11084,7 +11094,7 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 
     current_index = local_position_to_index(tb, current_position);
 
-    if (current_index == -1) {
+    if (current_index == INVALID_INDEX) {
 #if !CHECK_KING_LEGALITY_EARLY
 	/* This can happen if we don't fully check en passant legality (but right now, we do) */
 	fprintf(stderr, "Can't lookup position in intratable propagation!\n");
@@ -11704,7 +11714,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			if (! PTM_in_check(tb, &position)) {
 
 			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
-				&& (local_position_to_index(tb, &position) == -1)) {
+				&& (local_position_to_index(tb, &position) == INVALID_INDEX)) {
 
 				if (futuremoves[piece][movementptr->square] == -2) {
 				    /* it's a discard - decrement movecnt so net change is zero */
@@ -11880,7 +11890,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			     */
 
 			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
-				&& (local_position_to_index(tb, &position) == -1)) {
+				&& (local_position_to_index(tb, &position) == INVALID_INDEX)) {
 
 				if (futuremoves[piece][movementptr->square] == -2) {
 				    /* discard prune */
@@ -12321,7 +12331,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 void write_tablebase_to_file(tablebase_t *tb, char *filename)
 {
     xmlDocPtr doc;
-    int index;
+    index_t index;
     void *file = NULL;
     xmlNodePtr tablebase;
     xmlChar *buf;
@@ -12443,7 +12453,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	/* If the next index will be aligned on a byte boundary, write out what we've buffered */
 
 	if ((((index + 1) << tb->format.bits) % 8) == 0) {
-	    if (zlib_write(file, entry, tb->format.bytes) != tb->format.bytes) {
+	    if (zlib_write(file, (char *) entry, tb->format.bytes) != tb->format.bytes) {
 		fatal("Tablebase write failed\n");
 		terminate();
 	    }
@@ -12453,7 +12463,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     /* If the last index plus one wasn't on a byte boundary, write out what we've buffered */
     
     if (((index << tb->format.bits) % 8) != 0) {
-	if (zlib_write(file, entry, tb->format.bytes) != tb->format.bytes) {
+	if (zlib_write(file, (char *) entry, tb->format.bytes) != tb->format.bytes) {
 	    fatal("Tablebase write failed\n");
 	    terminate();
 	}
@@ -12590,8 +12600,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     /* Part of preloading the futurebases was to compute the smallest and largest DTMs in them, so
      * we now know what the sizes of these two arrays have to be.
      */
-    positive_passes_needed = calloc(max_tracked_dtm + 1, sizeof(uint8_t));
-    negative_passes_needed = calloc(-min_tracked_dtm + 1, sizeof(uint8_t));
+    positive_passes_needed = (uint8_t *) calloc(max_tracked_dtm + 1, sizeof(uint8_t));
+    negative_passes_needed = (uint8_t *) calloc(-min_tracked_dtm + 1, sizeof(uint8_t));
 
     if ((positive_passes_needed == NULL) || (negative_passes_needed == NULL)) {
 	fatal("Can't calloc positive/negative_passes_needed\n");
@@ -13501,7 +13511,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.566 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.567 $ $Locker:  $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
