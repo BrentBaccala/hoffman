@@ -284,6 +284,8 @@ uint8_t * negative_passes_needed = NULL;
  */
 
 typedef uint32_t futurevector_t;
+#define get_futurevector_t_field get_uint32_t_field
+#define set_futurevector_t_field set_uint32_t_field
 #define FUTUREVECTOR_HEX_FORMAT "0x%" PRIx32
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
@@ -440,8 +442,17 @@ int promotion_possibilities = 4;
 int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, KING};
 
 
-/* A 'struct format' gives the layout of a dynamic structure (one whose bit layout is specified at
- * run time).  See the section "DYNAMIC STRUCTURES" for more details on how this bugger works.
+/* Hoffman uses "dynamic structures" extensively, for its entries and proptable arrays.  A dynamic
+ * structure is one whose bit layout is specified at run time by the XML control file.  Since we
+ * can't use standard C structures (they require bit layouts to be set at compile time), we've got
+ * to jump through hoops.  A lot of this is handled by 'bitlib'.
+ *
+ * Does it slow down the program?  You bet.  But for larger tablebases, which are disk bound and not
+ * CPU bound, this actually speeds things up by giving us the flexibility of setting structure
+ * layouts based on the needs of individual tablebases, and not having to use generic structures
+ * big enough to accommodate every possibility.
+ *
+ * A 'struct format' gives the layout of such a dynamic structure.
  */
 
 struct format {
@@ -1058,82 +1069,6 @@ inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
 }
 
 #endif
-
-/***** DYNAMIC STRUCTURES *****/
-
-/* Hoffman uses "dynamic structures" extensively, for its entries and proptable arrays.  A dynamic
- * structure is one whose bit layout is specified at run time by the XML control file.  Since we
- * can't use standard C structures (they require bit layouts to be set at compile time), we've got
- * to do all of this nonsense.
- *
- * Does it slow down the program?  You bet.  But for larger tablebases, which are disk bound and not
- * CPU bound, this actually speeds things up by giving us the flexibility of setting structure
- * layouts based on the needs of individual tablebases, and not having to use generic structures
- * big enough to accommodate every possibility.
- */
-
-inline uint64_t get_unsigned64bit_field(void *fieldptr, uint64_t mask, int offset)
-{
-    uint64_t *ptr = (uint64_t *)fieldptr;
-
-    /* if (offset == -1) return 0; */
-
-    while (offset >= 64) {
-	offset -= 64;
-	ptr ++;
-    }
-
-    return (*ptr >> offset) & mask;
-}
-
-#if !defined(USE_THREADS) || defined(HAVE_SYNC_FETCH_AND_ADD_8)
-
-inline void set_unsigned64bit_field(void *fieldptr, uint64_t mask, int offset, uint64_t val)
-{
-    uint64_t *ptr = (uint64_t *)fieldptr;
-
-    /* if (offset == -1) return; */
-
-    while (offset >= 64) {
-	offset -= 64;
-	ptr ++;
-    }
-
-    __sync_and(ptr, ~ (mask << offset));
-    __sync_or(ptr, (val & mask) << offset);
-}
-
-#else
-
-/* If we're multi-threaded and don't have __sync_fetch_and_add_8, then we're unlikely to have
- * __sync_fetch_and_and_8 or __sync_fetch_and_or_8 (though we didn't check for them explicitly), so
- * the above code won't work (it depends on atomic 64-bit accesses).  Emulate instead.
- *
- * XXX This is one of several places in the program where we could get into trouble running on
- * either a big-endian architecture on one with stringent word alignment requirements.
- */
-
-inline void set_unsigned64bit_field(void *fieldptr, uint64_t mask, int offset, uint64_t val)
-{
-    uint64_t *ptr = (uint64_t *)fieldptr;
-
-    /* if (offset == -1) return; */
-
-    while (offset >= 64) {
-	offset -= 64;
-	ptr ++;
-    }
-
-    if (offset < 32) {
-	set_unsigned_field((uint32_t *)ptr, mask & 0xffffffff, offset, val & 0xffffffff);
-    }
-    if ((mask >> 32) != 0) {
-	set_unsigned_field(((uint32_t *)ptr)+1, mask >> 32, offset - 32, val >> 32);
-    }
-}
-
-#endif
-
 
 /***** MOVEMENT VECTORS *****/
 
@@ -5298,7 +5233,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.565 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.566 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7629,12 +7564,12 @@ void set_propentry_index(proptable_entry_t *propentry, index_t index)
 
 futurevector_t get_propentry_futurevector(proptable_entry_t *propentry)
 {
-    return get_unsigned64bit_field(propentry, PROPTABLE_FORMAT_FUTUREVECTOR_MASK, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET);
+    return get_futurevector_t_field(propentry, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET, PROPTABLE_FORMAT_FUTUREVECTOR_MASK);
 }
 
 void set_propentry_futurevector(proptable_entry_t *propentry, futurevector_t futurevector)
 {
-    set_unsigned64bit_field(propentry, PROPTABLE_FORMAT_FUTUREVECTOR_MASK, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET, futurevector);
+    set_futurevector_t_field(propentry, PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET, PROPTABLE_FORMAT_FUTUREVECTOR_MASK, futurevector);
 }
 
 int get_propentry_dtm(proptable_entry_t *propentry)
@@ -13566,7 +13501,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.565 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.566 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
