@@ -51,7 +51,11 @@ typedef struct {
 
 /* Support functions */
 
+boolean index_to_global_position(tablebase_t *tb, index_t index, global_position_t *global);
 char * global_position_to_FEN(global_position_t *position);
+
+void add_timeval(struct timeval *dest, struct timeval *src);
+void subtract_timeval(struct timeval *dest, struct timeval *src);
 
 void fatal (const char * format, ...);
 void info (const char * format, ...);
@@ -59,14 +63,8 @@ void warning (const char * format, ...);
 
 /* Proptable interface functions - these functions are called by the main program */
 
-extern int proptable_writes;
-extern struct timeval proptable_write_time;
-
 int initialize_proptable(int proptable_MBs);
-
 void proptable_pass(int target_dtm);
-void finalize_proptable_pass(void);
-
 void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, boolean PTM_wins_flag, int futuremove);
 
 /* ...and these main program functions are called by proptable_pass() */
@@ -74,3 +72,6 @@ void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, boolean 
 int get_entry_DTM(index_t index);
 void back_propagate_index(index_t index, int target_dtm);
 void commit_entry(index_t index, int dtm, uint8_t PTM_wins_flag, int movecnt, futurevector_t futurevector);
+
+futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
+void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);

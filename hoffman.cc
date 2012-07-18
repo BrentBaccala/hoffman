@@ -263,9 +263,6 @@ int * pass_target_dtms = NULL;
 int * positions_finalized = NULL;
 uint64_t * backproped_moves = NULL;
 
-int proptable_writes = 0;
-struct timeval proptable_write_time = {0, 0};
-
 int min_tracked_dtm = -2;
 int max_tracked_dtm = 2;
 uint8_t * positive_passes_needed = NULL;
@@ -704,7 +701,6 @@ xmlNodePtr positive_passes_needed_text_node, negative_passes_needed_text_node;
 xmlNodePtr user_time, system_time, real_time;
 xmlNodePtr page_faults, page_reclaims;
 xmlNodePtr contended_locks_node, contended_indices_node;
-xmlNodePtr proptable_writes_node, proptable_write_time_node;
 
 
 /* PROPTABLE_BITS for 16 byte entries:
@@ -5199,7 +5195,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.571 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.572 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5239,11 +5235,6 @@ tablebase_t * parse_XML_control_file(char *filename)
 	contended_indices_node = create_GenStats_node("contended-indices");
     }
 #endif
-
-    if (using_proptables) {
-	proptable_writes_node = create_GenStats_node("proptable-writes");
-	proptable_write_time_node = create_GenStats_node("proptable-write-time");
-    }
 
     return tb;
 }
@@ -5622,15 +5613,6 @@ void finalize_pass_statistics()
 	xmlNodeSetContent(contended_indices_node, BAD_CAST strbuf);
     }
 #endif
-
-    if (using_proptables) {
-	snprintf(strbuf, sizeof(strbuf), "%d", proptable_writes);
-	xmlNodeSetContent(proptable_writes_node, BAD_CAST strbuf);
-
-	sprint_timeval(strbuf, &proptable_write_time);
-	xmlNodeSetContent(proptable_write_time_node, BAD_CAST strbuf);
-    }
-
 
     /* Now add a element with current pass statistics */
 
@@ -7620,7 +7602,6 @@ int propagation_pass(int target_dtm)
 
     if (using_proptables) {
 	proptable_pass(target_dtm);
-	finalize_proptable_pass();
     } else {
 #ifndef USE_THREADS
 	for (index = 0; index <= current_tb->max_index; index ++) {
@@ -11810,7 +11791,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	    pass_type[total_passes] = "futurebase backprop";
 
 	    if (! back_propagate_all_futurebases(tb)) return 0;
-	    finalize_proptable_pass();
 
 	    finalize_pass_statistics();
 	    total_passes ++;
@@ -12612,7 +12592,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.571 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.572 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

@@ -24,15 +24,6 @@ extern "C" {
 
 #include "hoffman.h"
 
-    void add_timeval(struct timeval *dest, struct timeval *src);
-    void subtract_timeval(struct timeval *dest, struct timeval *src);
-
-    int do_write_or_suspend(int fd, void *ptr, int length);
-
-    boolean index_to_global_position(tablebase_t *tb, index_t index, global_position_t *global);
-
-    futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
-    void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
 }
 
 /* When propagating a change from one position to another, we go through this table to do it.  By
@@ -88,11 +79,6 @@ void commit_proptable_entry(class proptable_entry propentry)
     commit_entry(propentry.index, propentry.dtm, propentry.PTM_wins_flag, propentry.movecnt, FUTUREVECTOR(propentry.futuremove));
 }
 
-
-void finalize_proptable_pass(void)
-{
-    delete input_proptable;
-}
 
 /* proptable_pass()
  *
@@ -189,6 +175,7 @@ void proptable_pass(int target_dtm)
 
     }
 
+    delete input_proptable;
 }
 
 void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, boolean PTM_wins_flag, int futuremove)
