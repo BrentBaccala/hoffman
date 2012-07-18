@@ -5195,7 +5195,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.572 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.573 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11639,6 +11639,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 #endif
 
+    if (using_proptables && num_threads > 1) {
+	/* This is a limitation in TPIE */
+	fatal("Can't use proptables with multiple threads (currently)\n");
+	return 0;
+    }
+
     if (!using_proptables) {
 	tb->entries = malloc(LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
 	if (tb->entries == NULL) {
@@ -12592,7 +12598,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.572 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.573 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
