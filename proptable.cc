@@ -5,7 +5,6 @@
 #include <tpie/tpie_assert.h> // for tp_assert macro
 #include <tpie/tpie.h> // for tpie_init
 
-extern "C" {
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -19,18 +18,20 @@ extern "C" {
 #include <inttypes.h>		/* C99 integer types */
 
 #include "bitlib.h"
+
+extern "C" {
+
 #include "hoffman.h"
 
-void add_timeval(struct timeval *dest, struct timeval *src);
-void subtract_timeval(struct timeval *dest, struct timeval *src);
+    void add_timeval(struct timeval *dest, struct timeval *src);
+    void subtract_timeval(struct timeval *dest, struct timeval *src);
 
-int do_write_or_suspend(int fd, void *ptr, int length);
+    int do_write_or_suspend(int fd, void *ptr, int length);
 
-boolean index_to_global_position(tablebase_t *tb, index_t index, global_position_t *global);
+    boolean index_to_global_position(tablebase_t *tb, index_t index, global_position_t *global);
 
-futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
-void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
-
+    futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
+    void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
 }
 
 typedef void proptable_entry_t;
