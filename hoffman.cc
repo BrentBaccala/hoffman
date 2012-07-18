@@ -683,8 +683,6 @@ typedef struct tablebase {
  * void.
  */
 
-void * proptable = NULL;
-
 int zeros_fd = -1;
 
 tablebase_t *current_tb = NULL;
@@ -692,10 +690,8 @@ tablebase_t *current_tb = NULL;
 tablebase_t **futurebases;
 int num_futurebases;
 
-int proptable_MBs = 0;
-int num_propentries = 0;
-
 int using_proptables = 0;
+int proptable_MBs = 0;
 
 int do_restart = 0;
 int last_dtm_before_restart;
@@ -5203,7 +5199,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.570 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.571 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11662,10 +11658,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 #endif
 
-    if (proptable_MBs > 0) {
-	num_propentries = proptable_MBs * 1024 * 1024 / PROPTABLE_FORMAT_BYTES;
-    }
-
     if (!using_proptables) {
 	tb->entries = malloc(LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
 	if (tb->entries == NULL) {
@@ -11687,21 +11679,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 
     if (using_proptables) {
-	proptable = malloc(num_propentries * PROPTABLE_FORMAT_BYTES);
-	if (proptable == NULL) {
-	    fatal("Can't malloc proptable: %s\n", strerror(errno));
-	    return 0;
-	} else {
-	    int kilobytes = (num_propentries * PROPTABLE_FORMAT_BYTES)/1024;
-	    if (kilobytes < 1024) {
-		info("Malloced %dKB for proptable\n", kilobytes);
-	    } else {
-		info("Malloced %dMB for proptable\n", kilobytes/1024);
-	    }
-	}
-
-	/* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
-	memset(proptable, 0xff, num_propentries * PROPTABLE_FORMAT_BYTES);
+	if (! initialize_proptable(proptable_MBs)) return 0;
     }
 
     if (! preload_all_futurebases(tb)) return 0;
@@ -12634,7 +12612,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.570 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.571 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

@@ -1,6 +1,10 @@
 /* -*- mode: C; fill-column: 100; c-basic-offset: 4; -*-
  */
 
+#include <tpie/priority_queue.h> // for tpie::priority_queue
+#include <tpie/tpie_assert.h> // for tp_assert macro
+#include <tpie/tpie.h> // for tpie_init
+
 extern "C" {
 
 #include <stdio.h>
@@ -98,6 +102,9 @@ boolean index_to_global_position(tablebase_t *tb, index_t index, global_position
 
 int proptable_entries = 0;
 int proptable_merges = 0;
+
+void * proptable;
+int num_propentries = 0;
 
 #define PROPTABLE_ELEM(n)  ((char *)proptable + PROPTABLE_FORMAT_BYTES * (n))
 
@@ -915,5 +922,32 @@ void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, boolean 
     pthread_mutex_unlock(&commit_lock);
 #endif
 }
+
+int initialize_proptable(int proptable_MBs)
+{
+    num_propentries = proptable_MBs * 1024 * 1024 / PROPTABLE_FORMAT_BYTES;
+
+    proptable = malloc(num_propentries * PROPTABLE_FORMAT_BYTES);
+    if (proptable == NULL) {
+	fatal("Can't malloc proptable: %s\n", strerror(errno));
+	return 0;
+    } else {
+	int kilobytes = (num_propentries * PROPTABLE_FORMAT_BYTES)/1024;
+	if (kilobytes < 1024) {
+	    info("Malloced %dKB for proptable\n", kilobytes);
+	} else {
+	    info("Malloced %dMB for proptable\n", kilobytes/1024);
+	}
+    }
+
+    /* POSIX doesn't guarantee that the memory will be zeroed (but Linux seems to zero it) */
+    memset(proptable, 0xff, num_propentries * PROPTABLE_FORMAT_BYTES);
+
+    tpie::tpie_init();
+    tpie::get_memory_manager().set_limit(1<<30);
+
+    return 1;
+}
+
 
 }

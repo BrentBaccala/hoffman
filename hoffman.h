@@ -59,11 +59,10 @@ void warning (const char * format, ...);
 
 /* Proptable interface functions - these functions are called by the main program */
 
-extern void * proptable;
-
-extern int num_propentries;
 extern int proptable_writes;
 extern struct timeval proptable_write_time;
+
+int initialize_proptable(int proptable_MBs);
 
 void proptable_pass(int target_dtm);
 void finalize_proptable_pass(void);
