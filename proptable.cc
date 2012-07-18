@@ -21,6 +21,18 @@ extern "C" {
 #include "bitlib.h"
 #include "hoffman.h"
 
+void add_timeval(struct timeval *dest, struct timeval *src);
+void subtract_timeval(struct timeval *dest, struct timeval *src);
+
+int do_write_or_suspend(int fd, void *ptr, int length);
+
+boolean index_to_global_position(tablebase_t *tb, index_t index, global_position_t *global);
+
+futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
+void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
+
+}
+
 typedef void proptable_entry_t;
 
 struct format {
@@ -61,13 +73,6 @@ extern struct format proptable_format;
 #define PROPTABLE_FORMAT_MOVECNT_OFFSET (proptable_format.movecnt_offset)
 #define PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET (proptable_format.PTM_wins_flag_offset)
 
-
-void add_timeval(struct timeval *dest, struct timeval *src);
-void subtract_timeval(struct timeval *dest, struct timeval *src);
-
-int do_write_or_suspend(int fd, void *ptr, int length);
-
-boolean index_to_global_position(tablebase_t *tb, index_t index, global_position_t *global);
 
 /* When propagating a change from one position to another, we go through this table to do it.  By
  * maintaining this table sorted, we avoid the random accesses that would be required to propagate
@@ -447,9 +452,6 @@ void fetch_next_propentry(int tablenum, proptable_entry_t *dest)
 
     set_propentry_index(dest, PROPTABLE_FORMAT_INDEX_MASK);
 }
-
-futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
-void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
 
 /* proptable_pass()
  *
@@ -923,6 +925,7 @@ void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, boolean 
 #endif
 }
 
+
 int initialize_proptable(int proptable_MBs)
 {
     num_propentries = proptable_MBs * 1024 * 1024 / PROPTABLE_FORMAT_BYTES;
@@ -947,7 +950,4 @@ int initialize_proptable(int proptable_MBs)
     tpie::get_memory_manager().set_limit(1<<30);
 
     return 1;
-}
-
-
 }
