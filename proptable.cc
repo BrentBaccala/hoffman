@@ -1,59 +1,34 @@
 /* -*- mode: C; fill-column: 100; c-basic-offset: 4; -*-
+ *
+ * HOFFMAN - a chess endgame tablebase builder
+ *
+ * PROPTABLES
+ *
+ * When propagating a change from one position to another, we go through this table to do it.  By
+ * maintaining this table sorted, we avoid the random accesses that would be required to propagate
+ * directly from one position to another.  It only makes sense to use a propagation table if the
+ * tablebase can't fit in memory.  If the tablebase does fit in memory, we bypass almost this entire
+ * section of code.
+ *
+ * Proptables are currently implemented using the TPIE priority queue.  We maintain two proptables,
+ * the input and the output, and as we make a single pass through the tablebase, we're
+ * simultaneously committing changes from the input into the current tablebase, and saving into the
+ * output any changes being generated.
+ *
+ * XXX even though we can specify a proptable format in the XML control file, that information is
+ * currently ignored.
  */
 
-#include <tpie/priority_queue.h> // for tpie::priority_queue
-#include <tpie/tpie_assert.h> // for tp_assert macro
-#include <tpie/tpie.h> // for tpie_init
+
+#include <tpie/tpie.h>			// for tpie_init
 #include <tpie/tpie_log.h>
-
-
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>		/* for write(), lseek(), gethostname() */
-#include <fcntl.h>		/* for O_RDONLY */
-#include <errno.h>		/* for errno and strerror() */
-
-#include <sys/time.h>
-
-#include <inttypes.h>		/* C99 integer types */
-
-#include "bitlib.h"
+#include <tpie/priority_queue.h>	// for tpie::priority_queue
 
 extern "C" {
 
 #include "hoffman.h"
 
 }
-
-/* When propagating a change from one position to another, we go through this table to do it.  By
- * maintaining this table sorted, we avoid the random accesses that would be required to propagate
- * directly from one position to another.  It only makes sense to use a propagation table if the
- * tablebase can't fit in memory.  If the tablebase does fit in memory, we bypass almost this entire
- * section of code.
- *
- * We insert into the propagation table using an "address calculation insertion sort".  Knuth
- * described it by analogy to shelving books.  You're sorting the books as you place them onto the
- * shelf; that makes it an "insertion sort" (as opposed to something like an exchange sort, where
- * you place them first and then sort by swapping).  You look at the author's last name to try and
- * "guess" where it should go on the shelf - "Alfors" all the way to the left; "Munkres" about in
- * the middle; "van der Waerden" towards the right.  That's the "address calculation" part.
- *
- * We do this with indices, dividing them by a scaling factor to get an offset into the propagation
- * table (in memory).  This type of sort works well if the indices are well spread out, and not so
- * well in they are clumped together.  That's why we invert indices in a finite field - to spread
- * out the mating positions that naturally clump together into groups of similar positions.  Once we
- * start having to move things around too much to do an insertion, we write the current proptable
- * out to disk, zero out the memory, and start again fresh.
- *
- * Once we've got a bunch of proptables written to disk, we then need to read them back in.  We do
- * this "semi-sequentially" - each individual table is read sequentially, even though we need to
- * jump our reads around between them.  We run the entries from each table through a sort tree to
- * produce a single stream of sorted proptable entries, which are then committed into the tablebase.
- *
- * To optimize all of this, we simultaneously read one set of proptables and write another set while
- * making a single pass through the tablebase.
- */
 
 class proptable_entry {
 
@@ -198,6 +173,8 @@ int initialize_proptable(int proptable_MBs)
 {
     tpie::tpie_init();
     tpie::get_memory_manager().set_limit(proptable_MBs * 1024 * 1024);
+
+    std::cerr << "sizeof(class proptable_entry) = " << sizeof(class proptable_entry) << " bytes" << std::endl;
 
     tpie::get_log().set_level(tpie::LOG_DEBUG);
 
