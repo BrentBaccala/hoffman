@@ -1,6 +1,6 @@
 dnl Process this file with autoconf to produce a configure script.
 
-AC_INIT(hoffman, 1.3)
+AC_INIT([hoffman],[1.3])
 
 if test x"$CFLAGS" = x; then
         CFLAGS="-O3"
@@ -15,16 +15,12 @@ else
 	AC_MSG_WARN(You don't have gcc; Hoffman uses several gcc extensions)
 fi
 
-AC_DEFUN([CHECK_INTEL_ATOMIC_OPS],
-[
+AC_DEFUN([CHECK_INTEL_ATOMIC_OPS], [
 	AC_MSG_CHECKING([whether Intel atomic operations are available])
-        AC_TRY_LINK([],
-                [
-			int x;
-			__sync_fetch_and_or(&x,1);
-                ],
-                intel_atomic_ops_ok=yes,
-                intel_atomic_ops_ok=no)
+	AC_LANG_PUSH([C])
+        AC_LINK_IFELSE([AC_LANG_PROGRAM([], [[int x; __sync_fetch_and_or(&x,1);]])],
+                [intel_atomic_ops_ok=yes],
+                [intel_atomic_ops_ok=no])
 
         if test x"$intel_atomic_ops_ok" = xyes; then
 		ifelse([$1],,AC_DEFINE(HAVE_INTEL_ATOMIC_OPS,1,[Define if you have Intel atomic operations]),[$1])
@@ -33,18 +29,16 @@ AC_DEFUN([CHECK_INTEL_ATOMIC_OPS],
 	else
 		AC_MSG_RESULT(no)
         fi
+	AC_LANG_POP
 ])
 
 AC_DEFUN([FREESOFT_CHECK_SYNC_FETCH_AND_ADD_8],
 [
 	AC_MSG_CHECKING([whether __sync_fetch_and_add works on 64-bit integers])
-        AC_TRY_LINK([],
-                [
+        AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [[
 			long long int x;
 			__sync_fetch_and_add(&x,1);
-                ],
-                ac_cv_sync_fetch_and_add_8=yes,
-                ac_cv_sync_fetch_and_add_8=no)
+                ]])],[ac_cv_sync_fetch_and_add_8=yes],[ac_cv_sync_fetch_and_add_8=no])
 
         if test x"$ac_cv_sync_fetch_and_add_8" = "xyes"
         then
@@ -62,15 +56,14 @@ AC_ARG_WITH([pthreads],
   [with_pthreads=check])
 
 AS_IF([test "x$with_pthreads" != xno],
-[ACX_PTHREAD(CHECK_INTEL_ATOMIC_OPS
+[AX_PTHREAD([CHECK_INTEL_ATOMIC_OPS
 	AS_IF([test $intel_atomic_ops_ok = yes],[
 		    AC_DEFINE(HAVE_PTHREAD,1,[Define if you have POSIX threads libraries and header files.])
 		    AC_DEFINE(USE_THREADS,1,[Define to use POSIX threads libraries and header files.])
 		    CC="$PTHREAD_CC"; CFLAGS="$CFLAGS $PTHREAD_CFLAGS"; LIBS="$PTHREAD_LIBS $LIBS"
 		    FREESOFT_CHECK_SYNC_FETCH_AND_ADD_8
 	],[AC_MSG_WARN([Intel atomic operations unavailable - disabling threading])]
-))])
-
+)])])
 
 dnl Check for the required libraries
 
@@ -145,4 +138,5 @@ else
 fi
 
 AC_CONFIG_HEADERS(config.h)
-AC_OUTPUT(Makefile)
+AC_CONFIG_FILES([Makefile])
+AC_OUTPUT
