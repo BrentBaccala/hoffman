@@ -3723,11 +3723,7 @@ int index_to_side_to_move(tablebase_t *tb, index_t index)
     }
 }
 
-/* check_1000_positions(); check_1000_indices() - used just to double check the code above.
- *
- * I don't use check_1000_positions() anymore because it barks if there are identical pieces in a
- * position that come back sorted after being run through a position->index->position conversion.
- */
+/* check_1000_positions(); check_1000_indices() - used just to double check the code above. */
 
 int check_1000_positions(tablebase_t *tb)
 {
@@ -3760,17 +3756,31 @@ int check_1000_positions(tablebase_t *tb)
 
 	normalize_position(tb, &position1);
 
+	/* index_to_local_position is expected to initialize permuted_pieces to default */
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    position1.permuted_piece[piece] = piece;
+	}
+
 	index = local_position_to_index(tb, &position1);
 
 	if (index != INVALID_INDEX) {
 
-	    /* PTM_vector wasn't set in position1, so don't check them now */
-
-	    if (!index_to_local_position(tb, index, REFLECTION_NONE, &position2)
-		|| (position2.PTM_vector = 0, position2.board_vector = position1.board_vector, position2.reflection = position1.reflection,
-		    memcmp(&position1, &position2, sizeof(position1)))) {
+	    if (!index_to_local_position(tb, index, REFLECTION_NONE, &position2)) {
 		fatal("Mismatch in check_1000_positions()\n");
 		ret = 0;
+	    } else {
+
+		/* PTM_vector wasn't set in position1, so don't check it now */
+
+		position2.PTM_vector = 0;
+		position2.board_vector = position1.board_vector;
+		position2.reflection = position1.reflection;
+
+		if (memcmp(&position1, &position2, sizeof(position1))) {
+		    fatal("Mismatch in check_1000_positions()\n");
+		    ret = 0;
+		}
 	    }
 	}
     }
@@ -5547,7 +5557,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.578 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.579 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12217,7 +12227,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     print_futuremoves();
 
     if (! check_1000_indices(tb)) return 0;
-    check_1000_positions(tb);
+    if (! check_1000_positions(tb)) return 0;
 
     /* This actually initializes the statistics arrays the first time it's called, and it
      * initializes for 100 passes, so these first few passes below here don't need any extra checks
@@ -13139,7 +13149,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.578 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.579 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
