@@ -80,11 +80,18 @@
  *              hoffman -p <tablebase> ...                              (probe mode)
  */
 
+#define TPL_LOGGING 1
+#include <tpie/tpie.h>			// for tpie_init
+#include <tpie/tpie_log.h>
+#include <tpie/priority_queue.h>	// for tpie::priority_queue
+
 extern "C" {
 
 #include "config.h"		/* GNU configure script figures out our build options and writes them here */
 
+#ifndef _LARGEFILE64_SOURCE
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
+#endif
 
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE		/* to get strsignal() and FNM_CASEFOLD */
@@ -133,8 +140,6 @@ extern "C" {
 
 #include "bitlib.h"
 
-#include "hoffman.h"
-
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
  */
@@ -150,6 +155,19 @@ extern "C" {
 #define O_LARGEFILE 0
 #endif
 
+
+typedef int_fast8_t boolean;
+
+#ifndef PRIu32
+#define PRIu32 "u"
+#define PRIx32 "x"
+#define PRIu64 "llu"
+#define PRIx64 "llx"
+#endif
+
+typedef uint32_t index_t;
+#define PRIindex PRIu32
+#define INVALID_INDEX 0xffffffff
 
 /* If we're going to run multi-threaded, we need the POSIX threads library */
 
@@ -271,6 +289,23 @@ uint8_t * negative_passes_needed = NULL;
 
 /***** DATA STRUCTURES *****/
 
+/* Futuremoves are moves like captures and promotions that lead to a different tablebase.
+ * 'futurevectors' are bit vectors used to track which futuremoves have been handled in a particular
+ * position.  They are of type futurevector_t, and the primary operations used to construct them are
+ * FUTUREVECTOR(move) to get a futurevector with a bit set in move's position, and
+ * FUTUREVECTORS(move,n) to get a futurevector with n bits set starting with move, although the
+ * actual tables are now stored in a more compact format that only uses as many bits as are needed
+ * for the particular tablebase being generated.
+ */
+
+typedef uint32_t futurevector_t;
+#define get_futurevector_t_field get_uint32_t_field
+#define set_futurevector_t_field set_uint32_t_field
+#define FUTUREVECTOR_HEX_FORMAT "0x%" PRIx32
+#define FUTUREVECTOR(move) (1ULL << (move))
+#define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
+#define NO_FUTUREMOVE -1
+
 /* These arrays hold the bit locations in the futurevector of various posible futuremoves -
  * captures, capture-promotions, promotions, and normal movements of a piece to all 64 squares.  The
  * values are either a bit location (starting at 0), or one of four negative numbers: -1 means that
@@ -366,6 +401,19 @@ typedef struct {
 } local_position_t;
 
 #define ILLEGAL_POSITION 0xff
+
+/* This is a global position, that doesn't depend on a particular tablebase.  It's slower to
+ * manipulate, but is suitable for probing tablebases.  Each char in the array is either 0 for an
+ * empty square, and one of the FEN characters for a chess piece.
+ */
+
+typedef struct {
+    unsigned char board[64];
+    short side_to_move;
+    short en_passant_square;
+    short variant;
+} global_position_t;
+
 
 /* pawn can't be on the first or last eight squares of the board */
 #define ALL_ONES_BITVECTOR   0xffffffffffffffffLL
@@ -465,6 +513,8 @@ const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 #define FORMAT_FLAG_NONE 0
 #define FORMAT_FLAG_WHITE_WINS 1
 #define FORMAT_FLAG_WHITE_DRAWS 2
+
+#define MAX_FORMAT_BYTES 16
 
 /* entries_format is the format that we use for in-memory tablebase arrays, and proptable_format is
  * the format for proptable entries.  Basically, the are C structures whose fields can be adjusted
@@ -748,6 +798,8 @@ char * completion_report_url = NULL;
     xmlChar *buf;
     int size;
 #endif
+
+    tpie::tpie_finish();
 
     if (fatal_errors > 0) {
 #ifdef USE_LIBCURL
@@ -5490,7 +5542,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.576 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.577 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7762,6 +7814,177 @@ void * back_propagate_section(void * ptr)
     return NULL;
 }
 
+/* PROPTABLES
+ *
+ * When propagating a change from one position to another, we go through this table to do it.  By
+ * maintaining this table sorted, we avoid the random accesses that would be required to propagate
+ * directly from one position to another.  It only makes sense to use a propagation table if the
+ * tablebase can't fit in memory.  If the tablebase does fit in memory, we bypass almost this entire
+ * section of code.
+ *
+ * Proptables are currently implemented using the TPIE priority queue.  We maintain two proptables,
+ * the input and the output, and as we make a single pass through the tablebase, we're
+ * simultaneously committing changes from the input into the current tablebase, and saving into the
+ * output any changes being generated.
+ *
+ * XXX even though we can specify a proptable format in the XML control file, that information is
+ * currently ignored.
+ */
+
+class proptable_entry {
+
+ public:
+    index_t index;
+    int dtm;
+    unsigned int movecnt;
+    boolean PTM_wins_flag;
+    int futuremove;
+
+    bool operator<(const proptable_entry &other) const {
+	return index < other.index;
+    }
+};
+
+typedef tpie::priority_queue<class proptable_entry> proptable;
+
+proptable * input_proptable;
+proptable * output_proptable;
+
+void commit_proptable_entry(class proptable_entry propentry)
+{
+    commit_entry(propentry.index, propentry.dtm, propentry.PTM_wins_flag, propentry.movecnt, FUTUREVECTOR(propentry.futuremove));
+}
+
+futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
+void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
+
+/* proptable_pass()
+ *
+ * Commit an old set of proptables into the entries array while writing a new set.
+ */
+
+void proptable_pass(int target_dtm)
+{
+    index_t index;
+
+    input_proptable = output_proptable;
+    output_proptable = new proptable;
+
+    /* fprintf(stderr, "proptable_pass(%d); size of proptable: %llu\n", target_dtm, input_proptable->size()); */
+
+    for (index = 0; index <= max_index(current_tb); index ++) {
+
+	futurevector_t futurevector = 0;
+	futurevector_t possible_futuremoves = 0;
+
+	if (target_dtm == 0) {
+	    possible_futuremoves = initialize_tablebase_entry(current_tb, index);
+	}
+
+	if (! input_proptable->empty()) {
+
+	    if (input_proptable->top().index < index) {
+		fatal("Out-of-order entries in proptable\n");
+	    }
+
+	    while (! input_proptable->empty() && input_proptable->top().index == index) {
+
+		class proptable_entry pt_entry = input_proptable->top();
+
+		input_proptable->pop();
+
+#ifdef DEBUG_MOVE
+		if (index == DEBUG_MOVE)
+		    fprintf(stderr, "Commiting sorting element 1: %0" PRIx64 " %0" PRIx64 " <-%d\n",
+			    *((uint64_t *) SORTING_NETWORK_ELEM(1)), *(((uint64_t *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
+#endif
+
+	    /* These futuremoves might be moves into check, in which case they were discarded back
+	     * during initialization.  So we only commit if they are possible.  Now some of the
+	     * possibles might have been merged with impossibles, and if that's the case we hope
+	     * that they all had multiplicity 1, so we can filter out the impossibles and still know
+	     * what movecnt to use (by counting the possibles).
+	     *
+	     * XXX None of this really makes sense if the futurebase is dtm, since we should have
+	     * known during backprop which of the positions were in-check and never processed them.
+	     * So maybe we should change propagate_index_from_futurebase to drop positions with
+	     * dtm=-1.  (what about dtm=1?)  Bitbases and unimplemented possibilities like Nalimov
+	     * or dtr tablebases are more problematic.
+	     */
+
+		if (target_dtm != 0) {
+
+		    commit_proptable_entry(pt_entry);
+
+		} else if (FUTUREVECTOR(pt_entry.futuremove) & possible_futuremoves) {
+
+		    commit_proptable_entry(pt_entry);
+
+		    if (FUTUREVECTOR(pt_entry.futuremove) & futurevector) {
+			global_position_t global;
+			index_to_global_position(current_tb, pt_entry.index, &global);
+			fatal("Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
+		    }
+
+		    futurevector |= FUTUREVECTOR(pt_entry.futuremove);
+
+		}
+
+	    }
+	}
+
+	/* Don't track futuremoves for illegal (DTM 1) positions */
+
+	if ((target_dtm == 0) && (get_entry_DTM(index) != 1)) {
+
+	    if ((futurevector & possible_futuremoves) != futurevector) {
+		/* Commented out because if we're not using DTM this code will run for illegal positions */
+#if 0
+		global_position_t global;
+		index_to_global_position(current_tb, index, &global);
+		fprintf(stderr, "Futuremove discrepancy: %d %s\n", index, global_position_to_FEN(&global));
+#endif
+	    } else {
+		finalize_futuremove(current_tb, index, possible_futuremoves ^ futurevector);
+	    }
+	}
+
+	if (target_dtm != 0) back_propagate_index(index, target_dtm);
+
+    }
+
+    delete input_proptable;
+}
+
+void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, boolean PTM_wins_flag, int futuremove)
+{
+    class proptable_entry pt_entry;
+
+    pt_entry.index = index;
+    pt_entry.dtm = dtm;
+    pt_entry.movecnt = movecnt;
+    pt_entry.PTM_wins_flag = PTM_wins_flag;
+    pt_entry.futuremove = futuremove;
+
+    output_proptable->push(pt_entry);
+
+    /* fprintf(stderr, "Size of proptable: %llu\n", output_proptable->size()); */
+}
+
+
+int initialize_proptable(int proptable_MBs)
+{
+    tpie::tpie_init();
+    tpie::get_memory_manager().set_limit(proptable_MBs * 1024 * 1024);
+
+    std::cerr << "sizeof(class proptable_entry) = " << sizeof(class proptable_entry) << " bytes" << std::endl;
+
+    tpie::get_log().set_level(tpie::LOG_DEBUG);
+
+    output_proptable = new proptable;
+
+    return 1;
+}
 
 /* If we're running multi-threaded, then there is a possibility that 1) two different positions will
  * try to backprop into the same position (if we're not using proptables), or that 2) two different
@@ -12894,7 +13117,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.576 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.577 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
