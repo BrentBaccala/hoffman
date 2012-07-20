@@ -2969,7 +2969,10 @@ index_t local_position_to_combinadic2_index(tablebase_t *tb, local_position_t *p
 	 * pieces before us in the piece list, if that piece is earlier than us in board order,
 	 * decrement our position by one.
 	 *
-	 * XXX doesn't handle en passant pawns correctly
+	 * It works exclusively by comparing positions, not encoded values, so it can use pawns as
+	 * overlapping pieces, but it can't encode pawns because of the ambiguity created by en
+	 * passant positions.  We deal with this (currently) by never assigning a "last overlapping
+	 * piece" to a pawn.
 	 */
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
@@ -3085,12 +3088,14 @@ boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	/* "You've got to be kidding me" We fix up the positions by going back through the earlier
-	 * overlapping pieces and incrementing our position if we're past them.  This has to be done
-	 * in order from the smallest position to the largest.  Consider unrestricted pieces; kings
-	 * on squares 12 and 33, and a queen on square 34 that got encoded as 32.  We need to
-	 * increment 32 to 33 for 12, then increment 33 to 34 for 33, and if we try to handle the
-	 * king on 33 first, we won't increment because 32<33.
+	/* "You've got to be kidding me"
+	 *
+	 * We fix up the positions by going back through the earlier overlapping pieces and
+	 * incrementing our position if we're past them.  This has to be done in order from the
+	 * smallest position to the largest.  Consider unrestricted pieces; kings on squares 12 and
+	 * 33, and a queen on square 34 that got encoded as 32.  We need to increment 32 to 33 for
+	 * 12, then increment 33 to 34 for 33, and if we try to handle the king on 33 first, we
+	 * won't increment because 32<33.
 	 */
 
 	smallest_position = ILLEGAL_POSITION;
@@ -4015,6 +4020,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     xmlChar * king_positions;
     int no_frozen_check_king_positions = 0;
     int starting_fatal_errors = fatal_errors;
+    int piece_in_set = 1;
 
     tb = (tablebase_t *) malloc(sizeof(tablebase_t));
     if (tb == NULL) {
@@ -5089,8 +5095,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	}
 	tb->max_index *= tb->total_legal_compact_king_positions;
 
-	int piece_in_set;
-
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    /* If our semilegal range completely contains the semilegal range of a earlier piece,
@@ -5105,14 +5109,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	     * d5, e5, a later piece restricted to de, and another later piece restricted to 45.
 	     *
 	     * This information is calculated and then ignored for the 'combinadic' index type.
+	     *
+	     * We never assign a "last overlapping piece" to a pawn because of the difficultly
+	     * in handling en passant positions.
 	     */
 
 	    tb->last_overlapping_piece[piece] = -1;
 
-	    for (piece2 = piece-1; piece2 >= 0; piece2 --) {
-		if ((tb->semilegal_squares[piece] & tb->semilegal_squares[piece2]) == tb->semilegal_squares[piece2]) {
-		    tb->last_overlapping_piece[piece] = piece2;
-		    break;
+	    if (tb->piece_type[piece] != PAWN) {
+		for (piece2 = piece-1; piece2 >= 0; piece2 --) {
+		    if ((tb->semilegal_squares[piece] & tb->semilegal_squares[piece2]) == tb->semilegal_squares[piece2]) {
+			tb->last_overlapping_piece[piece] = piece2;
+			break;
+		    }
 		}
 	    }
 
@@ -5481,7 +5490,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.575 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.576 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12194,7 +12203,8 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		 * another pawn.
 		 */
 
-	    } else if (EGTBProbe(global.side_to_move == WHITE, global.board, global.en_passant_square, &score) == 1) {
+	    } else if (EGTBProbe(global.side_to_move == WHITE, global.board,
+				 global.en_passant_square == ILLEGAL_POSITION ? -1 : global.en_passant_square, &score) == 1) {
 
 		if (tb->format.dtm_bits > 0) {
 
@@ -12884,7 +12894,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.575 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.576 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
