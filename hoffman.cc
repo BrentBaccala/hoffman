@@ -80,14 +80,16 @@
  *              hoffman -p <tablebase> ...                              (probe mode)
  */
 
+#include "config.h"		/* GNU configure script figures out our build options and writes them here */
+
+#ifdef HAVE_LIBTPIE
 #define TPL_LOGGING 1
 #include <tpie/tpie.h>			// for tpie_init
 #include <tpie/tpie_log.h>
 #include <tpie/priority_queue.h>	// for tpie::priority_queue
+#endif
 
 extern "C" {
-
-#include "config.h"		/* GNU configure script figures out our build options and writes them here */
 
 #ifndef _LARGEFILE64_SOURCE
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
@@ -742,6 +744,7 @@ tablebase_t **futurebases;
 int num_futurebases;
 
 int using_proptables = 0;
+int proptables_initialized = 0;
 int proptable_MBs = 0;
 
 int do_restart = 0;
@@ -799,7 +802,9 @@ char * completion_report_url = NULL;
     int size;
 #endif
 
-    tpie::tpie_finish();
+#ifdef HAVE_LIBTPIE
+    if (proptables_initialized) tpie::tpie_finish();
+#endif
 
     if (fatal_errors > 0) {
 #ifdef USE_LIBCURL
@@ -5542,7 +5547,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.577 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.578 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7831,6 +7836,8 @@ void * back_propagate_section(void * ptr)
  * currently ignored.
  */
 
+#ifdef HAVE_LIBTPIE
+
 class proptable_entry {
 
  public:
@@ -7983,8 +7990,12 @@ int initialize_proptable(int proptable_MBs)
 
     output_proptable = new proptable;
 
+    proptables_initialized = 1;
+
     return 1;
 }
+
+#endif /* HAVE_LIBTPIE */
 
 /* If we're running multi-threaded, then there is a possibility that 1) two different positions will
  * try to backprop into the same position (if we're not using proptables), or that 2) two different
@@ -7996,7 +8007,6 @@ int initialize_proptable(int proptable_MBs)
 
 void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int futuremove)
 {
-    uint8_t PTM_wins_flag;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -8084,6 +8094,9 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 	 * clear the propentry's flag.
 	 */
 
+#ifdef HAVE_LIBTPIE
+	uint8_t PTM_wins_flag;
+
 	if (dtm != 0) {
 	    PTM_wins_flag = (dtm > 0) ? 1 : 0;
 	} else {
@@ -8092,6 +8105,9 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 	}
 
 	insert_new_propentry(index, dtm, movecnt, PTM_wins_flag, futuremove);
+#else
+	fatal("Not compiled with proptable support\n");
+#endif
     }
 
 }
@@ -8119,7 +8135,11 @@ int propagation_pass(int target_dtm)
     pass_target_dtms[total_passes] = target_dtm;
 
     if (using_proptables) {
+#ifdef HAVE_LIBTPIE
 	proptable_pass(target_dtm);
+#else
+	fatal("Not compiled with proptable support\n");
+#endif
     } else {
 #ifndef USE_THREADS
 	for (index = 0; index <= current_tb->max_index; index ++) {
@@ -12183,9 +12203,11 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
     }
 
+#ifdef HAVE_LIBTPIE
     if (using_proptables) {
 	if (! initialize_proptable(proptable_MBs)) return 0;
     }
+#endif
 
     if (! preload_all_futurebases(tb)) return 0;
     assign_numbers_to_futuremoves(tb);
@@ -13117,7 +13139,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.577 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.578 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -13181,9 +13203,13 @@ int main(int argc, char *argv[])
 	    output_filename = optarg;
 	    break;
 	case 'P':
+#ifdef HAVE_LIBTPIE
 	    /* set size of proptable in megabytes */
 	    proptable_MBs = strtol(optarg, NULL, 0);
 	    using_proptables = 1;
+#else
+	    fatal("Not compiled with proptable support\n");
+#endif
 	    break;
 #ifdef USE_THREADS
 	case 't':
