@@ -1,21 +1,24 @@
 
-- handle more than two identical pieces
+- improve 'combinadic2' encoding to handle pawns
 
-With this current restriction, we can't create tablebases like kpppkr.
-This would make Hoffman fully as powerful as the Nalimov program.
-Actually, can't handle more than two identical pieces "with
-overlapping move restrictions", so we're able to process tablebases
-with a bunch of pawns in them, so long as no more than two of them
-overlap (in terms of what squares they can be one).  Nevertheless,
-I've moved this item to the top of the TODO list because it is
-currently the program's single greatest obstacle to handling the kinds
-of positions that actually come up in practice.  Currently, when
-"normalizing" a position, the program considers swapping the two
-identical pieces to get them onto legal squares.  With more than two
-pieces, it should consider all possible permutations, which is
-probably best handled by created a table of permutations during
-initialization, then running through the table when attempting
-normalization.
+En passant positions are the problem here.  Some pawns (i.e, white
+pawns on the 4th or black pawns on the 5th) have two possible
+configurations - normal or capturable en-passant.  This screws up the
+combinadic2 logic, so I don't use it at all for pawns right now.
+
+
+- allow kings and side-to-move-flag to be positioned within index
+
+Right now, side to move flag is always the low bit, and kings always
+come next.
+
+
+- on-the-fly reformating of tablebases when various fields overflow
+
+This applies to entries and proptable formats.  Should also shrink
+fields (movecnt) that decrement monotonically.  Also allow an 'offset'
+field to adjust the range of the fields, i.e, allow DTM field to range
+from -10 to 5 and still fit into 4 bits.
 
 
 - a testsuite
@@ -92,29 +95,6 @@ the Digilent Virtex-5 development board could make six piece
 tablebases practical.
 
 
-- investigate the Library Sort of Bender, et al. (2004)
-
-Get the paper (FUN04.pdf) on-line.  Looks like it might have
-comparable performance to our bucket sort without requiring finite
-field inversion, which is itself costly.  It's probably hard to make a
-direct comparison since inversion costs CPU cycles and Library Sort
-costs memory accesses, but so long as we stay disk-bound it really
-doesn't matter either way.  Getting rid of inversion, though, is
-probably the single best thing we can do to improve compressibility of
-the resulting tablebases.  Something to investigate is keeping the
-current bucket sort if inversion is enabled, and using Library Sort if
-it's not, which would at least make proptables useful without
-inversion.
-
-
-- analyze and improve on bucket sort in proptable code
-
-Right now, the proptable insertion code runs until it has to move 25
-items to make room for a new one, then trips into the code where it
-writes the proptable out to disk and starts a new one.  The exact
-condition of 25 moves was a total guess on my part.
-
-
 - trim size of proptables
 
 Because I use an integer scaling factor during proptable insertion,
@@ -126,17 +106,15 @@ it or check it for entries when writing the table out.
 - improve compressibility
 
 Hoffman tablebases are significantly larger than Nalimovs.  Probably
-not much can be done for proptable-generated files with finite field
-inversion, because they'll be hard to compress no matter what.  But
-for tablebases without inversion, probably the biggest help would be
-to clump like positions together (exactly what we're trying to avoid
-with inversion).  Right now, the index LSB is the side-to-move flag,
-we'd really like it to be elsewhere (like the MSB) when one side is
-dominant and is going to have the bulk of the mates.  A couple places
-in the code depend on the side-to-move flag being LSB; they need to be
-found, investigated, and made more flexible.  Then we can add a
-<side-to-move-flag/> element to the XML, that gets put into the pieces
-list at the position that we'd like the flag to be.
+the biggest help would be to clump like positions together (exactly
+what we're trying to avoid with inversion).  Right now, the index LSB
+is the side-to-move flag, we'd really like it to be elsewhere (like
+the MSB) when one side is dominant and is going to have the bulk of
+the mates.  A couple places in the code depend on the side-to-move
+flag being LSB; they need to be found, investigated, and made more
+flexible.  Then we can add a <side-to-move-flag/> element to the XML,
+that gets put into the pieces list at the position that we'd like the
+flag to be.
 
 Also, we could use a modified gzip library that lets us flag certain
 bytes as 'irrelevant', which instructs the library to fill these bytes
