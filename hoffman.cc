@@ -5557,7 +5557,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.579 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.580 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7388,7 +7388,7 @@ inline int get_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_int_field(fetch_entry_pointer(tb, index),
 			 tb->format.dtm_offset + ((index << tb->format.bits) % 8),
-			 tb->format.dtm_mask);
+			 tb->format.dtm_bits);
 }
 
 inline int get_entry_raw_DTM(index_t index)
@@ -7396,7 +7396,7 @@ inline int get_entry_raw_DTM(index_t index)
     if (ENTRIES_FORMAT_DTM_BITS == 0) return 0;
     return get_int_field(current_entry_pointer(index),
 			 current_entry_bitoffset(index) + ENTRIES_FORMAT_DTM_OFFSET,
-			 ENTRIES_FORMAT_DTM_MASK);
+			 ENTRIES_FORMAT_DTM_BITS);
 }
 
 inline void set_entry_raw_DTM(index_t index, int dtm)
@@ -7404,7 +7404,7 @@ inline void set_entry_raw_DTM(index_t index, int dtm)
     if (ENTRIES_FORMAT_DTM_BITS == 0) return;
     set_int_field(current_entry_pointer(index),
 		  current_entry_bitoffset(index) + ENTRIES_FORMAT_DTM_OFFSET,
-		  ENTRIES_FORMAT_DTM_MASK,
+		  ENTRIES_FORMAT_DTM_BITS,
 		  dtm);
 }
 
@@ -7412,14 +7412,14 @@ inline int get_entry_movecnt(index_t index)
 {
     return get_unsigned_int_field(current_entry_pointer(index),
 				  current_entry_bitoffset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
-				  ENTRIES_FORMAT_MOVECNT_MASK);
+				  ENTRIES_FORMAT_MOVECNT_BITS);
 }
 
 inline void set_entry_movecnt(index_t index, unsigned int movecnt)
 {
     set_unsigned_int_field(current_entry_pointer(index),
 			   current_entry_bitoffset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
-			   ENTRIES_FORMAT_MOVECNT_MASK,
+			   ENTRIES_FORMAT_MOVECNT_BITS,
 			   movecnt);
 }
 
@@ -12060,7 +12060,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	if (tb->format.dtm_bits > 0) {
 	    set_int_field(entry,
 			  tb->format.dtm_offset + ((index << tb->format.bits) % 8),
-			  tb->format.dtm_mask,
+			  tb->format.dtm_bits,
 			  get_entry_DTM(index));
 	}
 
@@ -13149,7 +13149,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.579 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.580 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

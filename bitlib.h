@@ -17,8 +17,8 @@
  *
  * #include "bitlib.h"
  *
- * TYPE get_TYPE_field(void * ptr, bitoffset offset, unsigned TYPE mask)
- * void set_TYPE_field(void * ptr, bitoffset offset, unsigned TYPE mask, TYPE val)
+ * TYPE get_TYPE_field(void * ptr, bitoffset offset, int size)
+ * void set_TYPE_field(void * ptr, bitoffset offset, int size, TYPE val)
  *
  * TYPE is currently either "unsigned_int" or "int".
  *
@@ -57,7 +57,7 @@ typedef unsigned int bitoffset;
 
 #define CREATE_UNSIGNED_FIELD_FUNCTIONS(TYPE, TYPE_WITH_UNDERSCORES)					\
 													\
-inline TYPE get_ ## TYPE_WITH_UNDERSCORES ## _field(void * ptr, bitoffset offset, TYPE mask)		\
+inline TYPE get_ ## TYPE_WITH_UNDERSCORES ## _field(void * ptr, bitoffset offset, int size)		\
 {													\
     TYPE * iptr;											\
     TYPE val;												\
@@ -92,12 +92,11 @@ inline TYPE get_ ## TYPE_WITH_UNDERSCORES ## _field(void * ptr, bitoffset offset
     }													\
     */													\
 													\
-    val &= mask;											\
-													\
-    return val;												\
+    if (size == 8*sizeof(TYPE)) return val;								\
+    else return val & (((TYPE)1 << size)-1);								\
 }													\
 													\
-inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset, TYPE mask, TYPE val)	\
+inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset, int size, TYPE val)	\
 {													\
     TYPE * iptr;											\
 													\
@@ -110,21 +109,42 @@ inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset,
      * will be locked by the current thread.								\
      */													\
 													\
-    __bitlib_sync_and(iptr, ~ (mask << offset));							\
-    __bitlib_sync_or(iptr, (val & mask) << offset);							\
+    if (size == 8*sizeof(TYPE)) {									\
+	if (offset == 0) {										\
+	    *iptr = val;										\
+	} else {											\
+	    TYPE mask = ~0; /* XXX have a better way to do this? */					\
 													\
-    if ((offset != 0) && (mask >> (8*sizeof(TYPE) - offset)) > 0) {					\
-	iptr ++;											\
-	__bitlib_sync_and(iptr, ~ (mask >> (8*sizeof(TYPE) - offset)));					\
-	__bitlib_sync_or(iptr, (val & mask) >> (8*sizeof(TYPE) - offset));				\
+	    __bitlib_sync_and(iptr, ~ (mask << offset));						\
+	    __bitlib_sync_or(iptr, val << offset);							\
+													\
+	    if ((mask >> (8*sizeof(TYPE) - offset)) > 0) {						\
+		iptr ++;										\
+		__bitlib_sync_and(iptr, ~ (mask >> (8*sizeof(TYPE) - offset))); 			\
+		__bitlib_sync_or(iptr, (val & mask) >> (8*sizeof(TYPE) - offset)); 			\
+	    }												\
+	}												\
+    } else {												\
+	TYPE mask = (((TYPE)1 << size)-1);								\
+													\
+	__bitlib_sync_and(iptr, ~ (mask << offset));							\
+	__bitlib_sync_or(iptr, (val & mask) << offset);							\
+													\
+	if ((offset != 0) && (mask >> (8*sizeof(TYPE) - offset)) > 0) {					\
+	    iptr ++;											\
+	    __bitlib_sync_and(iptr, ~ (mask >> (8*sizeof(TYPE) - offset))); 				\
+	    __bitlib_sync_or(iptr, (val & mask) >> (8*sizeof(TYPE) - offset)); 				\
+	}												\
     }													\
+													\
 }
 
 #define CREATE_SIGNED_FIELD_FUNCTIONS(TYPE, TYPE_WITH_UNDERSCORES)					\
 													\
-inline TYPE get_ ## TYPE ## _field(void * ptr, bitoffset offset, unsigned TYPE mask)			\
+inline TYPE get_ ## TYPE ## _field(void * ptr, bitoffset offset, int size)				\
 {													\
-    unsigned TYPE val = get_unsigned_ ## TYPE_WITH_UNDERSCORES ## _field(ptr, offset, mask);		\
+    unsigned TYPE val = get_unsigned_ ## TYPE_WITH_UNDERSCORES ## _field(ptr, offset, size);		\
+    unsigned TYPE mask = (size == 8*sizeof(TYPE)) ? (TYPE)(-1) : (((TYPE)1 << size)-1); 		\
 													\
     /* sign extend */											\
     if (val > (mask >> 1)) val |= (~ (mask >> 1));							\
@@ -132,9 +152,9 @@ inline TYPE get_ ## TYPE ## _field(void * ptr, bitoffset offset, unsigned TYPE m
     return (TYPE) val;											\
 }													\
 													\
-inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset, unsigned TYPE mask, TYPE val)	\
+inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset, int size, TYPE val)	\
 {													\
-    set_unsigned_ ## TYPE_WITH_UNDERSCORES ## _field(ptr, offset, mask, (unsigned TYPE) val);		\
+    set_unsigned_ ## TYPE_WITH_UNDERSCORES ## _field(ptr, offset, size, (unsigned TYPE) val);		\
 }
 
 #define CREATE_FIELD_FUNCTIONS(TYPE, TYPE_WITH_UNDERSCORES)						\
