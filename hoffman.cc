@@ -5557,7 +5557,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.582 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.583 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7937,12 +7937,16 @@ void proptable_pass(int target_dtm)
 
 		    commit_proptable_entry(pt_entry);
 
+#if 0
 		    if (FUTUREVECTOR(pt_entry.futuremove) & futurevector) {
+			/* This could happen simply if the futuremove has already been considered */
+			/* XXX In particular, I need to turn this off right now for symmetric tablebases */
 			global_position_t global;
 			index_to_global_position(current_tb, pt_entry.index, &global);
 			fatal("Futuremove %d multiply handled: % " PRIindex " %s\n",
 			      pt_entry.futuremove, pt_entry.index, global_position_to_FEN(&global));
 		    }
+#endif
 
 		    futurevector |= FUTUREVECTOR(pt_entry.futuremove);
 
@@ -13164,7 +13168,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.582 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.583 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
