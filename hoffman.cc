@@ -83,7 +83,7 @@
 #include "config.h"		/* GNU configure script figures out our build options and writes them here */
 
 #ifdef HAVE_LIBTPIE
-#define TPL_LOGGING 1
+#define TPL_LOGGING 0
 #include <tpie/tpie.h>			// for tpie_init
 #include <tpie/tpie_log.h>
 #include <tpie/priority_queue.h>	// for tpie::priority_queue
@@ -774,15 +774,14 @@ xmlNodePtr contended_locks_node, contended_indices_node;
 
 int verbose = 1;
 
-/* Set DEBUG_MOVE to an index in the current tablebase, or set DEBUG_FUTUREMOVE to an index in a
- * futurebase to print more verbose debugging information about what the program is doing to process
- * a single move.
+/* Use '-d' option to set debug_move to an index in the current tablebase, or the negative of an
+ * index in a futurebase to print more verbose debugging information about what the program is doing
+ * to process a single move.
  */
 
 index_t debug_move=-1;
-/* #define DEBUG_MOVE debug_move */
-
-/* #define DEBUG_FUTUREMOVE 4719110 */
+#define DEBUG_MOVE debug_move
+#define DEBUG_FUTUREMOVE (-debug_move)
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -5557,7 +5556,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.580 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.581 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7912,8 +7911,8 @@ void proptable_pass(int target_dtm)
 
 #ifdef DEBUG_MOVE
 		if (index == DEBUG_MOVE)
-		    fprintf(stderr, "Commiting sorting element 1: %0" PRIx64 " %0" PRIx64 " <-%d\n",
-			    *((uint64_t *) SORTING_NETWORK_ELEM(1)), *(((uint64_t *) SORTING_NETWORK_ELEM(1)) + 1), proptable_num[1]);
+		    fprintf(stderr, "Commiting proptable entry: index %" PRIindex ", dtm %d, movecnt %u, futuremove %d\n",
+			    pt_entry.index, pt_entry.dtm, pt_entry.movecnt, pt_entry.futuremove);
 #endif
 
 	    /* These futuremoves might be moves into check, in which case they were discarded back
@@ -7940,7 +7939,8 @@ void proptable_pass(int target_dtm)
 		    if (FUTUREVECTOR(pt_entry.futuremove) & futurevector) {
 			global_position_t global;
 			index_to_global_position(current_tb, pt_entry.index, &global);
-			fatal("Futuremoves multiply handled: %s\n", global_position_to_FEN(&global));
+			fatal("Futuremove %d multiply handled: % " PRIindex " %s\n",
+			      pt_entry.futuremove, pt_entry.index, global_position_to_FEN(&global));
 		    }
 
 		    futurevector |= FUTUREVECTOR(pt_entry.futuremove);
@@ -7994,9 +7994,9 @@ int initialize_proptable(int proptable_MBs)
     tpie::tpie_init();
     tpie::get_memory_manager().set_limit(proptable_MBs * 1024 * 1024);
 
-    std::cerr << "sizeof(class proptable_entry) = " << sizeof(class proptable_entry) << " bytes" << std::endl;
+    /* std::cerr << "sizeof(class proptable_entry) = " << sizeof(class proptable_entry) << " bytes" << std::endl; */
 
-    tpie::get_log().set_level(tpie::LOG_DEBUG);
+    /* tpie::get_log().set_level(tpie::LOG_DEBUG); */
 
     output_proptable = new proptable;
 
@@ -8227,7 +8227,21 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
 #ifdef DEBUG_FUTUREMOVE
     if (future_index == DEBUG_FUTUREMOVE) {
-	info("futurebase backprop; current_index=%d\n", current_index);
+	global_position_t global;
+
+	index_to_global_position(futurebase, future_index, &global);
+	info("propagate_index_from_futurebase; %" PRIindex " from %s %" PRIindex " %s\n",
+	     current_index, futurebase->filename, future_index, global_position_to_FEN(&global));
+    }
+#endif
+
+#ifdef DEBUG_MOVE
+    if (current_index == DEBUG_MOVE) {
+	global_position_t global;
+
+	index_to_global_position(futurebase, future_index, &global);
+	info("propagate_index_from_futurebase; %" PRIindex " from %s %" PRIindex " %s\n",
+	     current_index, futurebase->filename, future_index, global_position_to_FEN(&global));
     }
 #endif
 
@@ -13149,7 +13163,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.580 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.581 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
