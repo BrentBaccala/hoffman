@@ -5543,7 +5543,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.585 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.586 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7828,9 +7828,18 @@ void non_proptable_pass(int target_dtm)
  * currently ignored.
  *
  * XXX not sure if we should compress the data stream to disk or not.  Might be best to time it.
+ *
+ * XXX I used to have an option to store a PTM-wins-flag instead of DTM in the proptable entry to
+ * make it smaller.  The only time it makes sense to use a PTM-wins-flag in the proptable is if
+ * we're generating a bitbase (because otherwise we need a DTM field in the proptable).  Positive or
+ * negative DTM values translate directly through to PTM wins or to its inverse, PNTM wins.  The
+ * oddball is zero DTM, a draw, which only happens here if we're back propagating from a DTM
+ * futurebase.  In that case, we need to look at the sense of the bitbase (white-wins or
+ * white-draws), as well as which player is PTM to decide if we should set or clear the propentry's
+ * flag.  I took this code out (for now).
  */
 
-void finalize_update(index_t index, int dtm, uint8_t PTM_wins_flag, int movecnt, int futuremove)
+void finalize_update(index_t index, int dtm, int movecnt, int futuremove)
 {
     int i;
 
@@ -7857,24 +7866,12 @@ void finalize_update(index_t index, int dtm, uint8_t PTM_wins_flag, int movecnt,
 	return;
     }
 
-    if (PROPTABLE_FORMAT_DTM_BITS > 0) {
-	if (dtm > 0) {
-	    PTM_wins(current_tb, index, dtm);
-	} else if (dtm < 0) {
-	    for (i=0; i<movecnt; i++) {
-		add_one_to_PNTM_wins(current_tb, index, dtm);
-	    }
+    if (dtm > 0) {
+	PTM_wins(current_tb, index, dtm);
+    } else if (dtm < 0) {
+	for (i=0; i<movecnt; i++) {
+	    add_one_to_PNTM_wins(current_tb, index, dtm);
 	}
-    } else if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
-	if (PTM_wins_flag) {
-	    PTM_wins(current_tb, index, dtm);
-	} else {
-	    for (i=0; i<movecnt; i++) {
-		add_one_to_PNTM_wins(current_tb, index, dtm);
-	    }
-	}
-    } else {
-	fatal("Can't handle proptable formats without either a DTM field or PTM wins flag\n");
     }
 
     unlock_entry(current_tb, index);
@@ -7888,7 +7885,6 @@ class proptable_entry {
     index_t index;
     int dtm;
     unsigned int movecnt;
-    boolean PTM_wins_flag;
     int futuremove;
 
     bool operator<(const proptable_entry &other) const {
@@ -7903,7 +7899,7 @@ proptable * output_proptable;
 
 void finalize_proptable_entry(class proptable_entry propentry)
 {
-    finalize_update(propentry.index, propentry.dtm, propentry.PTM_wins_flag, propentry.movecnt, propentry.futuremove);
+    finalize_update(propentry.index, propentry.dtm, propentry.movecnt, propentry.futuremove);
 }
 
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
@@ -8012,14 +8008,13 @@ void proptable_pass(int target_dtm)
     delete input_proptable;
 }
 
-void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, boolean PTM_wins_flag, int futuremove)
+void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, int futuremove)
 {
     class proptable_entry pt_entry;
 
     pt_entry.index = index;
     pt_entry.dtm = dtm;
     pt_entry.movecnt = movecnt;
-    pt_entry.PTM_wins_flag = PTM_wins_flag;
     pt_entry.futuremove = futuremove;
 
     output_proptable->push(pt_entry);
@@ -8132,28 +8127,8 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
     } else {
 
-	/* The proptable case.
-	 *
-	 * The only time it makes sense to use a PTM-wins-flag in the proptable is if we're
-	 * generating a bitbase (because otherwise we need a DTM field in the proptable).  Positive
-	 * or negative DTM values translate directly through to PTM wins or to its inverse, PNTM
-	 * wins.  The oddball is zero DTM, a draw, which only happens here if we're back propagating
-	 * from a DTM futurebase.  In that case, we need to look at the sense of the bitbase
-	 * (white-wins or white-draws), as well as which player is PTM to decide if we should set or
-	 * clear the propentry's flag.
-	 */
-
 #ifdef HAVE_LIBTPIE
-	uint8_t PTM_wins_flag;
-
-	if (dtm != 0) {
-	    PTM_wins_flag = (dtm > 0) ? 1 : 0;
-	} else {
-	    int win_side = ((current_tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) ? WHITE : BLACK);
-	    PTM_wins_flag = (index_to_side_to_move(current_tb, index) == win_side) ? 0 : 1;
-	}
-
-	insert_new_propentry(index, dtm, movecnt, PTM_wins_flag, futuremove);
+	insert_new_propentry(index, dtm, movecnt, futuremove);
 #else
 	fatal("Not compiled with proptable support\n");
 #endif
@@ -13168,7 +13143,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.585 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.586 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
