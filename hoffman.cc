@@ -5543,7 +5543,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.586 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.587 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7839,7 +7839,7 @@ void non_proptable_pass(int target_dtm)
  * flag.  I took this code out (for now).
  */
 
-void finalize_update(index_t index, int dtm, int movecnt, int futuremove)
+void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 {
     int i;
 
@@ -7855,9 +7855,18 @@ void finalize_update(index_t index, int dtm, int movecnt, int futuremove)
 
     /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
      * non-capture move into a position where a capture was possible.  For such a position, the only
+     * bits in our futurevector correspond to capture moves, so the code just above already rejected
+     * non-capture futuremoves into such a position.  Now we check the intra-tablebase case and
+     * return if the capture-possible-flag is set.
+     */
+
+    /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
+     * non-capture move into a position where a capture was possible.  For such a position, the only
      * bits in our futurevector correspond to capture moves, so the code in proptable_pass should
      * have rejected non-capture futuremoves into such a position (XXX check this).  Now we check
      * the intra-tablebase case and return if the capture-possible-flag is set.
+     *
+     * XXX do we need to lock to check this?
      */
 
     if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
@@ -8049,7 +8058,7 @@ int initialize_proptable(int proptable_MBs)
  * lock in insert_new_propentry.
  */
 
-void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int futuremove)
+void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 {
 
 #ifdef DEBUG_MOVE
@@ -8061,8 +8070,6 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
     backproped_moves[total_passes] ++;
 
     if (!using_proptables) {
-
-	lock_entry(current_tb, index);
 
 	/* Somewhat of a special case here.  First of all, we only have futuremoves during the first
 	 * back-propagation pass, when we back prop from the futurebases.  Also, if we're not using
@@ -8084,7 +8091,6 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 		global_position_t global;
 		index_to_global_position(current_tb, index, &global);
 		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
-		unlock_entry(current_tb, index);
 		return;
 	    }
 #endif
@@ -8094,36 +8100,12 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
 	    if ((__sync_fetch_and_and(futurevectorptr, ~(1 << ((bit_offset & 7) + futuremove)))
 		 & (1 << ((bit_offset & 7) + futuremove))) == 0) {
-		unlock_entry(current_tb, index);
 		return;
 	    }
 
 	}
 
-	/* If we're doing a suicide analysis, captures are forced, so we never want to
-	 * back-propagate a non-capture move into a position where a capture was possible.  For such
-	 * a position, the only bits in our futurevector correspond to capture moves, so the code
-	 * just above already rejected non-capture futuremoves into such a position.  Now we check
-	 * the intra-tablebase case and return if the capture-possible-flag is set.
-	 */
-
-	if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
-	    && get_entry_capture_possible_flag(index)) {
-	    unlock_entry(current_tb, index);
-	    return;
-	}
-
-	if (dtm > 0) {
-	    PTM_wins(current_tb, index, dtm);
-	} else if (dtm < 0) {
-	    int i;
-
-	    for (i=0; i<movecnt; i++) {
-		add_one_to_PNTM_wins(current_tb, index, dtm);
-	    }
-	}
-	
-	unlock_entry(current_tb, index);
+	finalize_update(index, dtm, movecnt, futuremove);
 
     } else {
 
@@ -8232,11 +8214,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	int dtm = get_raw_DTM(futurebase, future_index);
 
 	if (dtm > 0) {
-	    insert_or_commit_propentry(current_index, -dtm, movecnt, futuremove);
+	    commit_update(current_index, -dtm, movecnt, futuremove);
 	} else if (dtm < 0) {
-	    insert_or_commit_propentry(current_index, -dtm+1, movecnt, futuremove);
+	    commit_update(current_index, -dtm+1, movecnt, futuremove);
 	} else {
-	    insert_or_commit_propentry(current_index, 0, movecnt, futuremove);
+	    commit_update(current_index, 0, movecnt, futuremove);
 	}
 
     } else if (futurebase->format.basic_offset != -1) {
@@ -8244,11 +8226,11 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	int basic = get_basic(futurebase, future_index);
 
 	if (basic == 1) {
-	    insert_or_commit_propentry(current_index, -2, movecnt, futuremove);
+	    commit_update(current_index, -2, movecnt, futuremove);
 	} else if (basic == 2) {
-	    insert_or_commit_propentry(current_index, 2, movecnt, futuremove);
+	    commit_update(current_index, 2, movecnt, futuremove);
 	} else {
-	    insert_or_commit_propentry(current_index, 0, movecnt, futuremove);
+	    commit_update(current_index, 0, movecnt, futuremove);
 	}
 
     } else {
@@ -8269,9 +8251,9 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 	/* I use twos here because there's a lot of stuff that gets cut out for the special case of 1 */
 
 	if ((flag && (stm == WHITE)) || (!flag && (stm == BLACK))) {
-	    insert_or_commit_propentry(current_index, -2, movecnt, futuremove);
+	    commit_update(current_index, -2, movecnt, futuremove);
 	} else {
-	    insert_or_commit_propentry(current_index, 2, movecnt, futuremove);
+	    commit_update(current_index, 2, movecnt, futuremove);
 	}
 
     }
@@ -9747,7 +9729,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	/* We insert here with DTM=2 (mate in one), movecnt=1 (XXX), and no futuremove */
 	/* XXX I bet we want to insert with position's multiplicity as movecnt */
 	/* XXX we can modify the entry directly here - no need to use a proptable */
-	insert_or_commit_propentry(index, 2, 1, NO_FUTUREMOVE);
+	commit_update(index, 2, 1, NO_FUTUREMOVE);
     }
 
     /* discard - we ignore these unhandled futuremoves by decrementing movecnt */
@@ -9759,7 +9741,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 		/* tb->entries[index].movecnt --; */
 		/* XXX this isn't handled right - a draw is different from a discard */
 		/* XXX we can modify the entry directly here - no need to use a proptable */
-		insert_or_commit_propentry(index, 0, 0, NO_FUTUREMOVE);
+		commit_update(index, 0, 0, NO_FUTUREMOVE);
 	    }
 	}
     }
@@ -10761,13 +10743,13 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
      */
 
     if (dtm > 0) {
-	insert_or_commit_propentry(current_index, -dtm, 1, NO_FUTUREMOVE);
+	commit_update(current_index, -dtm, 1, NO_FUTUREMOVE);
     } else if (dtm < 0) {
-	insert_or_commit_propentry(current_index, -dtm+1, 1, NO_FUTUREMOVE);
+	commit_update(current_index, -dtm+1, 1, NO_FUTUREMOVE);
     } else if (get_entry_movecnt(future_index) == MOVECNT_PTM_WINS_UNPROPED) {
-	insert_or_commit_propentry(current_index, -2, 1, NO_FUTUREMOVE);
+	commit_update(current_index, -2, 1, NO_FUTUREMOVE);
     } else if (get_entry_movecnt(future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
-	insert_or_commit_propentry(current_index, 2, 1, NO_FUTUREMOVE);
+	commit_update(current_index, 2, 1, NO_FUTUREMOVE);
     } else {
 	fatal("Intra-table back prop doesn't match dtm or movecnt\n");
     }
@@ -13143,7 +13125,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.586 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.587 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
