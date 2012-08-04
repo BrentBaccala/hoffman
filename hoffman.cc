@@ -5543,7 +5543,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.584 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.585 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7820,10 +7820,9 @@ void non_proptable_pass(int target_dtm)
  *
  * Or not.  We can disable proptables, which forces the program to use a random access pattern on
  * the entries array.  This is currently faster if the entries array can fit into RAM.  In code,
- * commit_update either calls finalize_commit_update immediately (no proptable; random access) or
- * enqueues the update into the output proptable, so that it will later be retrieved and finalized
- * in the next call to proptable_pass, when the output proptable will have become the input
- * proptable.
+ * commit_update either calls finalize_update immediately (no proptable; random access) or enqueues
+ * the update into the output proptable, so that it will later be retrieved and finalized in the
+ * next call to proptable_pass, when the output proptable will have become the input proptable.
  *
  * XXX even though we can specify a proptable format in the XML control file, that information is
  * currently ignored.
@@ -7831,7 +7830,7 @@ void non_proptable_pass(int target_dtm)
  * XXX not sure if we should compress the data stream to disk or not.  Might be best to time it.
  */
 
-void commit_entry(index_t index, int dtm, uint8_t PTM_wins_flag, int movecnt, futurevector_t futurevector)
+void finalize_update(index_t index, int dtm, uint8_t PTM_wins_flag, int movecnt, int futuremove)
 {
     int i;
 
@@ -7852,7 +7851,7 @@ void commit_entry(index_t index, int dtm, uint8_t PTM_wins_flag, int movecnt, fu
      * the intra-tablebase case and return if the capture-possible-flag is set.
      */
 
-    if ((current_tb->variant == VARIANT_SUICIDE) && (futurevector == 0)
+    if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
 	&& get_entry_capture_possible_flag(index)) {
 	unlock_entry(current_tb, index);
 	return;
@@ -7902,9 +7901,9 @@ typedef tpie::priority_queue<class proptable_entry> proptable;
 proptable * input_proptable;
 proptable * output_proptable;
 
-void commit_proptable_entry(class proptable_entry propentry)
+void finalize_proptable_entry(class proptable_entry propentry)
 {
-    commit_entry(propentry.index, propentry.dtm, propentry.PTM_wins_flag, propentry.movecnt, FUTUREVECTOR(propentry.futuremove));
+    finalize_update(propentry.index, propentry.dtm, propentry.PTM_wins_flag, propentry.movecnt, propentry.futuremove);
 }
 
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
@@ -7966,11 +7965,11 @@ void proptable_pass(int target_dtm)
 
 		if (target_dtm != 0) {
 
-		    commit_proptable_entry(pt_entry);
+		    finalize_proptable_entry(pt_entry);
 
 		} else if (FUTUREVECTOR(pt_entry.futuremove) & possible_futuremoves) {
 
-		    commit_proptable_entry(pt_entry);
+		    finalize_proptable_entry(pt_entry);
 
 #if 0
 		    if (FUTUREVECTOR(pt_entry.futuremove) & futurevector) {
@@ -13169,7 +13168,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.584 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.585 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
