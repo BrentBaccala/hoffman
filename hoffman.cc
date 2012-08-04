@@ -5543,7 +5543,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.588 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.589 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7948,19 +7948,6 @@ void proptable_pass(int target_dtm)
 			    pt_entry.index, pt_entry.dtm, pt_entry.movecnt, pt_entry.futuremove);
 #endif
 
-	    /* These futuremoves might be moves into check, in which case they were discarded back
-	     * during initialization.  So we only commit if they are possible.  Now some of the
-	     * possibles might have been merged with impossibles, and if that's the case we hope
-	     * that they all had multiplicity 1, so we can filter out the impossibles and still know
-	     * what movecnt to use (by counting the possibles).
-	     *
-	     * XXX None of this really makes sense if the futurebase is dtm, since we should have
-	     * known during backprop which of the positions were in-check and never processed them.
-	     * So maybe we should change propagate_index_from_futurebase to drop positions with
-	     * dtm=-1.  (what about dtm=1?)  Bitbases and unimplemented possibilities like Nalimov
-	     * or dtr tablebases are more problematic.
-	     */
-
 		if (target_dtm != 0) {
 
 		    finalize_proptable_entry(pt_entry);
@@ -7999,23 +7986,35 @@ void proptable_pass(int target_dtm)
 	    }
 	}
 
-	/* Don't track futuremoves for illegal (DTM 1) positions */
+	/* We've committed everything for this index that was in the input proptable.  Now either
+	 * check for back-propagation and maybe generate some updates for the output proptable
+	 * (intra-table case) or check to make sure that we've handled all the futuremoves that we
+	 * needed to, and check for conceded futuremoves, too, all in a subroutine.
+	 */
 
-	if ((target_dtm == 0) && (get_entry_DTM(index) != 1)) {
+	if (target_dtm != 0) {
 
-	    if ((futurevector & possible_futuremoves) != futurevector) {
-		/* Commented out because if we're not using DTM this code will run for illegal positions */
+	    back_propagate_index(index, target_dtm);
+
+	} else {
+
+	    /* Don't track futuremoves for illegal (DTM 1) positions */
+	    if (get_entry_DTM(index) != 1) {
+
+		if ((futurevector & possible_futuremoves) != futurevector) {
+		    /* Commented out because if we're not using DTM this code will run for illegal positions */
 #if 0
-		global_position_t global;
-		index_to_global_position(current_tb, index, &global);
-		fprintf(stderr, "Futuremove discrepancy: %d %s\n", index, global_position_to_FEN(&global));
+		    global_position_t global;
+		    index_to_global_position(current_tb, index, &global);
+		    fprintf(stderr, "Futuremove discrepancy: %d %s\n", index, global_position_to_FEN(&global));
 #endif
-	    } else {
-		finalize_futuremove(current_tb, index, possible_futuremoves ^ futurevector);
-	    }
-	}
+		} else {
+		    finalize_futuremove(current_tb, index, possible_futuremoves ^ futurevector);
+		}
 
-	if (target_dtm != 0) back_propagate_index(index, target_dtm);
+	    }
+
+	}
 
     }
 
@@ -13119,7 +13118,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.588 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.589 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
