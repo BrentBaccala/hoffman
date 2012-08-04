@@ -722,20 +722,6 @@ typedef struct tablebase {
     int futurevector_bits;
 } tablebase_t;
 
-/* Propagation table
- *
- * This is used to optimize back propagation for large tablebases where the entire entries array
- * can't fit in memory.  Back propagation is done by first building proptable entries and sorting
- * them into a proptable.  The sorted proptable is then merged into the entries array.
- *
- * Currently, proptable entries are 16 bytes (128 bits) - a 32 bit index, 32 more bits of
- * housekeeping, and a 64 bit futurevector.  This is significant because many Pentium architectures
- * use 64 byte cache lines.
- *
- * I'm changing this to make the propentries variable using a 'struct format'.  That's why they're
- * void.
- */
-
 int zeros_fd = -1;
 
 tablebase_t *current_tb = NULL;
@@ -743,7 +729,7 @@ tablebase_t *current_tb = NULL;
 tablebase_t **futurebases;
 int num_futurebases;
 
-int using_proptables = 0;
+    int using_proptables = 0;		/* Proptables (see below) */
 int proptables_initialized = 0;
 int proptable_MBs = 0;
 
@@ -5557,7 +5543,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.583 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.584 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7705,58 +7691,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
     }
 }
 
-
-/***** PROPAGATION TABLES *****/
-
-void commit_entry(index_t index, int dtm, uint8_t PTM_wins_flag, int movecnt, futurevector_t futurevector)
-{
-    int i;
-
-#if 0
-    /* Skip everything if the position isn't valid.  In particular, we don't track futuremove
-     * propagation for illegal positions.
-     */
-
-    if (get_entry_raw_DTM(index) == 1) return;
-#endif
-
-    lock_entry(current_tb, index);
-
-    /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
-     * non-capture move into a position where a capture was possible.  For such a position, the only
-     * bits in our futurevector correspond to capture moves, so the code in proptable_pass should
-     * have rejected non-capture futuremoves into such a position (XXX check this).  Now we check
-     * the intra-tablebase case and return if the capture-possible-flag is set.
-     */
-
-    if ((current_tb->variant == VARIANT_SUICIDE) && (futurevector == 0)
-	&& get_entry_capture_possible_flag(index)) {
-	unlock_entry(current_tb, index);
-	return;
-    }
-
-    if (PROPTABLE_FORMAT_DTM_BITS > 0) {
-	if (dtm > 0) {
-	    PTM_wins(current_tb, index, dtm);
-	} else if (dtm < 0) {
-	    for (i=0; i<movecnt; i++) {
-		add_one_to_PNTM_wins(current_tb, index, dtm);
-	    }
-	}
-    } else if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
-	if (PTM_wins_flag) {
-	    PTM_wins(current_tb, index, dtm);
-	} else {
-	    for (i=0; i<movecnt; i++) {
-		add_one_to_PNTM_wins(current_tb, index, dtm);
-	    }
-	}
-    } else {
-	fatal("Can't handle proptable formats without either a DTM field or PTM wins flag\n");
-    }
-
-    unlock_entry(current_tb, index);
-}
+/***** INTRA-TABLE BACK PROPAGATION *****/
 
 void back_propagate_index_within_table(tablebase_t *tb, index_t index, int reflection);
 
@@ -7811,6 +7746,10 @@ void back_propagate_index(index_t index, int target_dtm)
 
 }
 
+/* If we're not using proptables, then this section of code spawns off a number of threads to run
+ * through the entries table, intra-table backpropagating to a single target DTM.
+ */
+
 typedef struct {
     index_t start_index;
     index_t end_index;
@@ -7829,22 +7768,118 @@ void * back_propagate_section(void * ptr)
     return NULL;
 }
 
-/* PROPTABLES
+void non_proptable_pass(int target_dtm)
+{
+#ifndef USE_THREADS
+
+    index_t index;
+
+    for (index = 0; index <= current_tb->max_index; index ++) {
+	back_propagate_index(index, target_dtm);
+    }
+
+#else
+
+    intratable_propagation_control_t *controls;
+    pthread_t *threads;
+    int thread;
+
+    /* XXX check for malloc failure */
+    controls = (intratable_propagation_control_t *) malloc(sizeof(intratable_propagation_control_t) * num_threads);
+    threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	controls[thread].target_dtm = target_dtm;
+	controls[thread].start_index = ((current_tb->max_index+1)*thread)/num_threads;
+	if (thread != num_threads-1) {
+	    controls[thread].end_index = ((current_tb->max_index+1)*(thread+1))/num_threads - 1;
+	} else {
+	    controls[thread].end_index = current_tb->max_index;
+	}
+	pthread_create(&threads[thread], NULL, &back_propagate_section, &controls[thread]);
+    }
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	pthread_join(threads[thread], NULL);
+    }
+
+    free(threads);
+    free(controls);
+
+#endif
+}
+
+/***** PROPTABLES *****
  *
- * When propagating a change from one position to another, we go through this table to do it.  By
- * maintaining this table sorted, we avoid the random accesses that would be required to propagate
- * directly from one position to another.  It only makes sense to use a propagation table if the
- * tablebase can't fit in memory.  If the tablebase does fit in memory, we bypass almost this entire
- * section of code.
+ * Proptables are used to optimize back propagation for large tablebases that can not fit into RAM.
+ * A proptable is a TPIE priority queue that stores pending updates and then retreives them in index
+ * sorted order, allowing a batch of updates to be applied with a single linear pass through the
+ * entries array.  We maintain two proptables, the input and the output, and as we make a single
+ * pass through the tablebase, we're simultaneously committing changes from the input into the
+ * current tablebase, and saving into the output any changes being generated.
  *
- * Proptables are currently implemented using the TPIE priority queue.  We maintain two proptables,
- * the input and the output, and as we make a single pass through the tablebase, we're
- * simultaneously committing changes from the input into the current tablebase, and saving into the
- * output any changes being generated.
+ * Or not.  We can disable proptables, which forces the program to use a random access pattern on
+ * the entries array.  This is currently faster if the entries array can fit into RAM.  In code,
+ * commit_update either calls finalize_commit_update immediately (no proptable; random access) or
+ * enqueues the update into the output proptable, so that it will later be retrieved and finalized
+ * in the next call to proptable_pass, when the output proptable will have become the input
+ * proptable.
  *
  * XXX even though we can specify a proptable format in the XML control file, that information is
  * currently ignored.
+ *
+ * XXX not sure if we should compress the data stream to disk or not.  Might be best to time it.
  */
+
+void commit_entry(index_t index, int dtm, uint8_t PTM_wins_flag, int movecnt, futurevector_t futurevector)
+{
+    int i;
+
+#if 0
+    /* Skip everything if the position isn't valid.  In particular, we don't track futuremove
+     * propagation for illegal positions.
+     */
+
+    if (get_entry_raw_DTM(index) == 1) return;
+#endif
+
+    lock_entry(current_tb, index);
+
+    /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
+     * non-capture move into a position where a capture was possible.  For such a position, the only
+     * bits in our futurevector correspond to capture moves, so the code in proptable_pass should
+     * have rejected non-capture futuremoves into such a position (XXX check this).  Now we check
+     * the intra-tablebase case and return if the capture-possible-flag is set.
+     */
+
+    if ((current_tb->variant == VARIANT_SUICIDE) && (futurevector == 0)
+	&& get_entry_capture_possible_flag(index)) {
+	unlock_entry(current_tb, index);
+	return;
+    }
+
+    if (PROPTABLE_FORMAT_DTM_BITS > 0) {
+	if (dtm > 0) {
+	    PTM_wins(current_tb, index, dtm);
+	} else if (dtm < 0) {
+	    for (i=0; i<movecnt; i++) {
+		add_one_to_PNTM_wins(current_tb, index, dtm);
+	    }
+	}
+    } else if (PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET != -1) {
+	if (PTM_wins_flag) {
+	    PTM_wins(current_tb, index, dtm);
+	} else {
+	    for (i=0; i<movecnt; i++) {
+		add_one_to_PNTM_wins(current_tb, index, dtm);
+	    }
+	}
+    } else {
+	fatal("Can't handle proptable formats without either a DTM field or PTM wins flag\n");
+    }
+
+    unlock_entry(current_tb, index);
+}
 
 #ifdef HAVE_LIBTPIE
 
@@ -8134,10 +8169,6 @@ void insert_or_commit_propentry(index_t index, short dtm, short movecnt, int fut
 
 int propagation_pass(int target_dtm)
 {
-#ifndef USE_THREADS
-    index_t index;
-#endif
-
     if (ENTRIES_FORMAT_DTM_OFFSET != -1) {
 	if (((target_dtm > 0) && (target_dtm > (ENTRIES_FORMAT_DTM_MASK >> 1)))
 	    || ((target_dtm < 0) && (target_dtm < -(int)(ENTRIES_FORMAT_DTM_MASK >> 1)))) {
@@ -8156,37 +8187,7 @@ int propagation_pass(int target_dtm)
 	fatal("Not compiled with proptable support\n");
 #endif
     } else {
-#ifndef USE_THREADS
-	for (index = 0; index <= current_tb->max_index; index ++) {
-	    back_propagate_index(index, target_dtm);
-	}
-#else
-	intratable_propagation_control_t *controls;
-	pthread_t *threads;
-	int thread;
-
-	/* XXX check for malloc failure */
-	controls = (intratable_propagation_control_t *) malloc(sizeof(intratable_propagation_control_t) * num_threads);
-	threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
-
-	for (thread = 0; thread < num_threads; thread ++) {
-	    controls[thread].target_dtm = target_dtm;
-	    controls[thread].start_index = ((current_tb->max_index+1)*thread)/num_threads;
-	    if (thread != num_threads-1) {
-		controls[thread].end_index = ((current_tb->max_index+1)*(thread+1))/num_threads - 1;
-	    } else {
-		controls[thread].end_index = current_tb->max_index;
-	    }
-	    pthread_create(&threads[thread], NULL, &back_propagate_section, &controls[thread]);
-	}
-
-	for (thread = 0; thread < num_threads; thread ++) {
-	    pthread_join(threads[thread], NULL);
-	}
-
-	free(threads);
-	free(controls);
-#endif
+	non_proptable_pass(target_dtm);
     }
 
     total_backproped_moves += backproped_moves[total_passes];
@@ -13168,7 +13169,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.583 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.584 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
