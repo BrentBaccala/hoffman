@@ -20,6 +20,7 @@ fields (movecnt) that decrement monotonically.  Also allow an 'offset'
 field to adjust the range of the fields, i.e, allow DTM field to range
 from -10 to 5 and still fit into 4 bits.
 
+- fast movecnt generation with perfect hashing
 
 - a testsuite
 
