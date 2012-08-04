@@ -5543,7 +5543,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.587 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.588 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7851,29 +7851,22 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
     if (get_entry_raw_DTM(index) == 1) return;
 #endif
 
-    lock_entry(current_tb, index);
-
     /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
-     * non-capture move into a position where a capture was possible.  For such a position, the only
-     * bits in our futurevector correspond to capture moves, so the code just above already rejected
-     * non-capture futuremoves into such a position.  Now we check the intra-tablebase case and
-     * return if the capture-possible-flag is set.
-     */
-
-    /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
-     * non-capture move into a position where a capture was possible.  For such a position, the only
-     * bits in our futurevector correspond to capture moves, so the code in proptable_pass should
-     * have rejected non-capture futuremoves into such a position (XXX check this).  Now we check
-     * the intra-tablebase case and return if the capture-possible-flag is set.
-     *
-     * XXX do we need to lock to check this?
+     * non-capture move into a position where a capture was possible.  For futurebase
+     * back-propagation into such a position, the only futuremoves listed as possible correspond to
+     * capture moves, so the code that called us should have already rejected non-capture
+     * futuremoves into such a position.  Now we check the intra-tablebase case and return if the
+     * capture-possible-flag is set.
      */
 
     if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
 	&& get_entry_capture_possible_flag(index)) {
-	unlock_entry(current_tb, index);
 	return;
     }
+
+    /* The guts of committing an update into the entries table. */
+
+    lock_entry(current_tb, index);
 
     if (dtm > 0) {
 	PTM_wins(current_tb, index, dtm);
@@ -7976,10 +7969,22 @@ void proptable_pass(int target_dtm)
 
 		    finalize_proptable_entry(pt_entry);
 
+		    /* XXX This code is commented out because double consideration of a futuremove
+		     * can happen for symmetric tablebases.  In this case, two different positions
+		     * in the futurebase (or maybe just two different reflections of the same
+		     * position) can indicate a result for this entry.  Of course, in this
+		     * case the result should be the same.
+		     *
+		     * On the other hand, if we had two different tablebases indicating different
+		     * results for the same futuremove, that should trigger a warning.  We could add
+		     * that capability to the proptable code without too much trouble, but if we're
+		     * just keeping a bit vector in memory to make sure all the futuremoves have
+		     * been handled in some way, we don't have enough information to check all
+		     * of that.  Right now, we quietly ignore it.
+		     */
+
 #if 0
 		    if (FUTUREVECTOR(pt_entry.futuremove) & futurevector) {
-			/* This could happen simply if the futuremove has already been considered */
-			/* XXX In particular, I need to turn this off right now for symmetric tablebases */
 			global_position_t global;
 			index_to_global_position(current_tb, pt_entry.index, &global);
 			fatal("Futuremove %d multiply handled: % " PRIindex " %s\n",
@@ -8055,7 +8060,7 @@ int initialize_proptable(int proptable_MBs)
  * threads will try to insert into the proptable at the same time (if we're using proptables).
  *
  * The first case is handled by a lock/unlock sequence below; the second case is handled by a mutex
- * lock in insert_new_propentry.
+ * lock in insert_new_propentry (currently broken; can't multi-thread yet with TPIE).
  */
 
 void commit_update(index_t index, short dtm, short movecnt, int futuremove)
@@ -8071,32 +8076,21 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
     if (!using_proptables) {
 
-	/* Somewhat of a special case here.  First of all, we only have futuremoves during the first
-	 * back-propagation pass, when we back prop from the futurebases.  Also, if we're not using
-	 * proptables, then I use a seperate array for the futurevectors, which got filled in when
-	 * we initialized the tablebase.  In that case, we now check off the futurevectors in that
-	 * array as we back prop.  If we are using proptables, then this gets done during the
-	 * initialization pass and we don't use the seperate array.
-	 */
-
 	if (futuremove != NO_FUTUREMOVE) {
+
+	    /* Futuremove - check off bits in an array that got filled in when we initialized
+	     *
+	     * Do nothing if the bit is clear, either because we were never to process this
+	     * futuremove at all (this is how a suicide analysis rejects non-capture futuremoves
+	     * from a position where captures are possible), or because a previous pass through this
+	     * code has already processed it.  We can't tell the difference at this point, and
+	     * probably need to use proptables for more accurate checking.
+	     *
+	     * This has to be atomically, because there will be other indices in this bit vector.
+	     */
 
 	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 	    futurevector_t * futurevectorptr = ((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
-
-#if 0
-	    if (! (*futurevectorptr & (1 << ((bit_offset & 7) + futuremove)))) {
-		/* This could happen simply if the futuremove has already been considered */
-		/* XXX In particular, I need to turn this off right now for symmetric tablebases */
-		global_position_t global;
-		index_to_global_position(current_tb, index, &global);
-		fprintf(stderr, "Futuremove discrepancy: %s\n", global_position_to_FEN(&global));
-		return;
-	    }
-#endif
-
-	    /* This has to be atomically, because there will be other indices in this bit vector */
-	    /* *futurevectorptr ^= (1 << ((bit_offset & 7) + futuremove)); */
 
 	    if ((__sync_fetch_and_and(futurevectorptr, ~(1 << ((bit_offset & 7) + futuremove)))
 		 & (1 << ((bit_offset & 7) + futuremove))) == 0) {
@@ -13125,7 +13119,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.587 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.588 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
