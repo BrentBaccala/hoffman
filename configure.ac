@@ -134,7 +134,7 @@ AX_BOOST_SYSTEM
 dnl I check for 'main' here because I don't know an easy way to check
 dnl for something in a C++ namespace (like 'tpie::tpie_init')
 
-AC_CHECK_LIB(tpie, main,, AC_MSG_ERROR([You must have the TPIE library]), $BOOT_THREAD_LIB $BOOST_FILESYSTEM_LIB $BOOST_SYSTEM_LIB)
+AC_CHECK_LIB(tpie, main,,, $BOOT_THREAD_LIB $BOOST_FILESYSTEM_LIB $BOOST_SYSTEM_LIB)
 
 dnl If we don't have C++, then we want to link with CC and leave out
 dnl Nalimov support.  If we have C++, then we want to link with C++
