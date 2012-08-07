@@ -5543,7 +5543,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.589 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.590 $ $Locker:  $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8089,10 +8089,8 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 	     */
 
 	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
-	    futurevector_t * futurevectorptr = ((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
 
-	    if ((__sync_fetch_and_and(futurevectorptr, ~(1 << ((bit_offset & 7) + futuremove)))
-		 & (1 << ((bit_offset & 7) + futuremove))) == 0) {
+	    if (! test_and_set_bit_field(current_tb->futurevectors, bit_offset + futuremove, 0)) {
 		return;
 	    }
 
@@ -11792,18 +11790,9 @@ void * initialize_tablebase_section(void * ptr)
     for (index=control->start_index; index <= control->end_index; index++) {
 
 	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
-	futurevector_t * futurevectorptr = ((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
 
-	/* We do this atomically, "just in case" there's a threading conflict, although the only
-	 * places there would be conflicts would be between the start of one thread and the end of
-	 * another, so it's unlikely.
-	 */
-
-	/* *futurevectorptr &= (-1 << (current_tb->futurevector_bits + (bit_offset & 7))) | ((1 << (bit_offset & 7))-1); */
-	/* *futurevectorptr |= initialize_tablebase_entry(current_tb, index) << (bit_offset & 7); */
-
-	__sync_and(futurevectorptr, (-1 << (current_tb->futurevector_bits + (bit_offset & 7))) | ((1 << (bit_offset & 7))-1));
-	__sync_or(futurevectorptr, initialize_tablebase_entry(current_tb, index) << (bit_offset & 7));
+	set_unsigned_int_field(current_tb->futurevectors, bit_offset, current_tb->futurevector_bits,
+			       initialize_tablebase_entry(current_tb, index));
     }
 
     return NULL;
@@ -13118,7 +13107,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.589 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.590 $ $Locker:  $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
