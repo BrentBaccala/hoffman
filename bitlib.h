@@ -204,13 +204,23 @@ inline void set_bit_field(void *ptr, bitoffset offset, unsigned int val)
     iptr += offset/(sizeof(unsigned int) * 8);
     offset %= sizeof(unsigned int) * 8;
 
-    /* These operations have to be atomic, since the computer uses 32 or 64 bit words, and those
-     * words will contain other entries that other threads may be working on, even though this entry
-     * will be locked by the current thread.
-     */
-
     __bitlib_sync_and(iptr, ~ (1 << offset));
     __bitlib_sync_or(iptr, (val & 1) << offset);
+}
+
+inline unsigned int test_and_set_bit_field(void *ptr, bitoffset offset, unsigned int val)
+{
+    unsigned int * iptr;
+    unsigned int former_val;
+
+    iptr = (unsigned int *) ptr;
+    iptr += offset/(sizeof(unsigned int) * 8);
+    offset %= sizeof(unsigned int) * 8;
+
+    former_val = __bitlib_sync_and(iptr, ~ (1 << offset));
+    __bitlib_sync_or(iptr, (val & 1) << offset);
+
+    return (former_val >> offset) & 1;
 }
 
 /* spinlock on a bit and return 1 if we had to spin, 0 otherwise
