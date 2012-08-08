@@ -307,6 +307,9 @@ typedef uint32_t futurevector_t;
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 #define NO_FUTUREMOVE -1
+#define DISCARD_FUTUREMOVE -2
+#define CONCEDE_FUTUREMOVE -3
+#define RESIGN_FUTUREMOVE -4
 
 /* These arrays hold the bit locations in the futurevector of various posible futuremoves -
  * captures, capture-promotions, promotions, and normal movements of a piece to all 64 squares.  The
@@ -319,6 +322,9 @@ typedef uint32_t futurevector_t;
  * pruning statement is present, so the futuremove results in an immediate win during
  * initialization.  -4 means that no futurebase exists and a 'resign' pruning statement is present
  * (useful only for suicide analysis), resulting in an immediate lose during initialization.
+ *
+ * XXX We don't actually have a 'resign' option on a prune statement, but RESIGN_FUTUREMOVE is used
+ * implicitly if a player's last piece is captured in a suicide analysis.
  *
  * num_futuremoves[WHITE] and num_futuremoves[BLACK] are the total number of futurevector bits
  * assigned for each color, NOT the total number of possible futuremoves, since futuremoves can be
@@ -5544,7 +5550,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.591 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.592 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9963,19 +9969,19 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	    if ((tb->variant == VARIANT_SUICIDE) && (tb->num_pieces_by_color[tb->piece_color[captured_piece]] == 1)) {
 
-		futurecaptures[capturing_piece][captured_piece] = -4;
+		futurecaptures[capturing_piece][captured_piece] = RESIGN_FUTUREMOVE;
 
 		for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-		    promotion_captures[capturing_piece][captured_piece][promotion] = -4;
+		    promotion_captures[capturing_piece][captured_piece][promotion] = RESIGN_FUTUREMOVE;
 		}
 
 		continue;
 	    }
 
-	    futurecaptures[capturing_piece][captured_piece] = -1;
+	    futurecaptures[capturing_piece][captured_piece] = NO_FUTUREMOVE;
 
 	    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-		promotion_captures[capturing_piece][captured_piece][promotion] = -1;
+		promotion_captures[capturing_piece][captured_piece][promotion] = NO_FUTUREMOVE;
 	    }
 
 	    if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) continue;
@@ -10007,7 +10013,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			    : ((possible_captures[capturing_piece] & 0x0000000000ff0000LL) << 8))
 			   & tb->legal_squares[captured_piece]))) {
 
-		    int candidate_futuremove = -1;
+		    int candidate_futuremove = NO_FUTUREMOVE;
 		    char candidate_movestr[MOVESTR_CHARS];
 
 		    /* start by dishing out a non-promotion futurecapture */
@@ -10033,7 +10039,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
-			candidate_futuremove = -1;
+			candidate_futuremove = NO_FUTUREMOVE;
 
 			sprintf(candidate_movestr, "Px%c=%c",
 				piece_char[tb->piece_type[captured_piece]],
@@ -10057,7 +10063,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			for (piece = 0; piece < capturing_piece; piece ++) {
 			    if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
-			    if (promotion_captures[piece][captured_piece][promotion] != -1) {
+			    if (promotion_captures[piece][captured_piece][promotion] != NO_FUTUREMOVE) {
 				if ((! (possible_captures[capturing_piece] & possible_captures[piece]))
 				    && (! strcmp(candidate_movestr, movestr[tb->piece_color[piece]][promotion_captures[piece][captured_piece][promotion]]))) {
 				    candidate_futuremove = promotion_captures[piece][captured_piece][promotion];
@@ -10065,20 +10071,20 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			    }
 			}
 
-			if (candidate_futuremove != -1) {
+			if (candidate_futuremove != NO_FUTUREMOVE) {
 			    for (piece = 0; piece < capturing_piece; piece ++) {
 				if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
 				if (! (possible_captures[capturing_piece] & possible_captures[piece])) continue;
-				if (promotion_captures[piece][captured_piece][promotion] != -1) {
+				if (promotion_captures[piece][captured_piece][promotion] != NO_FUTUREMOVE) {
 				    if (promotion_captures[piece][captured_piece][promotion] == candidate_futuremove) {
-					candidate_futuremove = -1;
+					candidate_futuremove = NO_FUTUREMOVE;
 					break;
 				    }
 				}
 			    }
 			}
 
-			if (candidate_futuremove == -1) {
+			if (candidate_futuremove == NO_FUTUREMOVE) {
 			    candidate_futuremove = num_futuremoves[tb->piece_color[capturing_piece]] ++;
 			    strcpy(movestr[tb->piece_color[capturing_piece]][candidate_futuremove], candidate_movestr);
 			}
@@ -10103,7 +10109,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-	    promotions[piece][promotion] = -1;
+	    promotions[piece][promotion] = NO_FUTUREMOVE;
 	}
 	if (tb->piece_type[piece] == PAWN) {
 	    for (sq = (tb->piece_color[piece] == WHITE ? 48 : 8);
@@ -10137,7 +10143,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	for (sq = 0; sq < 64; sq ++) futuremoves[piece][sq] = -1;
+	for (sq = 0; sq < 64; sq ++) futuremoves[piece][sq] = NO_FUTUREMOVE;
 
 	for (sq = 0; sq < 64; sq ++) {
 
@@ -10186,7 +10192,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 				&& ( tb->semilegal_squares[piece] & ~(tb->legal_squares[piece])
 				     & ~BITVECTOR(movementptr->square) & ~BITVECTOR(sq) ))) {
 
-			    if (futuremoves[piece][movementptr->square] == -1) {
+			    if (futuremoves[piece][movementptr->square] == NO_FUTUREMOVE) {
 
 				sprintf(local_movestr, "%c%c%c", piece_char[tb->piece_type[piece]],
 					'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
@@ -10201,10 +10207,10 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 				    switch (match_pruning_statement(tb, tb->piece_color[piece],
 								    local_movestr)) {
 				    case RESTRICTION_DISCARD:
-					futuremoves[piece][movementptr->square] = -2;
+					futuremoves[piece][movementptr->square] = DISCARD_FUTUREMOVE;
 					break;
 				    case RESTRICTION_CONCEDE:
-					futuremoves[piece][movementptr->square] = -3;
+					futuremoves[piece][movementptr->square] = CONCEDE_FUTUREMOVE;
 					break;
 				    }
 				}
@@ -10245,7 +10251,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			    if (tb->blocking_piece[piece] == -1) {
 
-				if (futuremoves[piece][movementptr->square] == -1) {
+				if (futuremoves[piece][movementptr->square] == NO_FUTUREMOVE) {
 				    futuremoves[piece][movementptr->square]
 					= num_futuremoves[tb->piece_color[piece]];
 				    sprintf(movestr[tb->piece_color[piece]][num_futuremoves[tb->piece_color[piece]]],
@@ -10443,12 +10449,12 @@ boolean check_pruning(tablebase_t *tb) {
 			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
 			optimized_futuremoves[tb->piece_color[capturing_piece]]
 			    |= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
-			futurecaptures[capturing_piece][captured_piece] = -2;
+			futurecaptures[capturing_piece][captured_piece] = DISCARD_FUTUREMOVE;
 		    } else if (conceded_futuremoves[tb->piece_color[capturing_piece]]
 			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
 			optimized_futuremoves[tb->piece_color[capturing_piece]]
 			    |= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
-			futurecaptures[capturing_piece][captured_piece] = -3;
+			futurecaptures[capturing_piece][captured_piece] = CONCEDE_FUTUREMOVE;
 		    } else {
 			fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
 		    }
@@ -10535,11 +10541,11 @@ boolean check_pruning(tablebase_t *tb) {
 		} else if (discarded_futuremoves[tb->piece_color[pawn]]
 			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
 		    optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
-		    promotion_captures[pawn][captured_piece][promotion] = -2;
+		    promotion_captures[pawn][captured_piece][promotion] = DISCARD_FUTUREMOVE;
 		} else if (conceded_futuremoves[tb->piece_color[pawn]]
 			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
 		    optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
-		    promotion_captures[pawn][captured_piece][promotion] = -3;
+		    promotion_captures[pawn][captured_piece][promotion] = CONCEDE_FUTUREMOVE;
 		} else {
 		    fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
 		}
@@ -10575,10 +10581,10 @@ boolean check_pruning(tablebase_t *tb) {
 		return 0;
 	    } else if (discarded_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion])) {
 		optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotions[pawn][promotion]);
-		promotions[pawn][promotion] = -2;
+		promotions[pawn][promotion] = DISCARD_FUTUREMOVE;
 	    } else if (conceded_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion])) {
 		optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotions[pawn][promotion]);
-		promotions[pawn][promotion] = -3;
+		promotions[pawn][promotion] = CONCEDE_FUTUREMOVE;
 	    } else {
 		fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
 	    }
@@ -11332,14 +11338,14 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
 				&& (local_position_to_index(tb, &position) == INVALID_INDEX)) {
 
-				if (futuremoves[piece][movementptr->square] == -2) {
+				if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
 				    /* it's a discard - decrement movecnt so net change is zero */
 				    movecnt --;
-				} else if (futuremoves[piece][movementptr->square] == -3) {
+				} else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
 				    /* it's a concede - PTM wins */
 				    initialize_entry_with_DTM(tb, index, 2);
 				    return 0;
-				} else if (futuremoves[piece][movementptr->square] == -4) {
+				} else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
 				    /* it's a resign - PTM loses */
 				    initialize_entry_with_DTM(tb, index, -2);
 				    return 0;
@@ -11398,13 +11404,13 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 				if (! PTM_in_check(tb, &position)) {
 
-				    if (futurecaptures[piece][i] == -2) {
+				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
 					/* discard prune - do nothing */
-				    } else if (futurecaptures[piece][i] == -3) {
+				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
 					/* concede prune */
 					initialize_entry_with_DTM(tb, index, 2);
 					return 0;
-				    } else if (futurecaptures[piece][i] == -4) {
+				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
 					/* resign prune (or an actual suicide loss if capturing last piece) */
 					initialize_entry_with_DTM(tb, index, -2);
 					return 0;
@@ -11471,13 +11477,13 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
-				if (promotions[piece][promotion] == -2) {
+				if (promotions[piece][promotion] == DISCARD_FUTUREMOVE) {
 				    /* discard prune - do nothing */
-				} else if (promotions[piece][promotion] == -3) {
+				} else if (promotions[piece][promotion] == CONCEDE_FUTUREMOVE) {
 				    /* concede prune */
 				    initialize_entry_with_DTM(tb, index, 2);
 				    return 0;
-				} else if (promotions[piece][promotion] == -4) {
+				} else if (promotions[piece][promotion] == RESIGN_FUTUREMOVE) {
 				    /* resign prune */
 				    initialize_entry_with_DTM(tb, index, -2);
 				    return 0;
@@ -11508,14 +11514,14 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
 				&& (local_position_to_index(tb, &position) == INVALID_INDEX)) {
 
-				if (futuremoves[piece][movementptr->square] == -2) {
+				if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
 				    /* discard prune */
 				    movecnt --;
-				} else if (futuremoves[piece][movementptr->square] == -3) {
+				} else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
 				    /* concede prune */
 				    initialize_entry_with_DTM(tb, index, 2);
 				    return 0;
-				} else if (futuremoves[piece][movementptr->square] == -4) {
+				} else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
 				    /* resign prune */
 				    initialize_entry_with_DTM(tb, index, -2);
 				    return 0;
@@ -11576,13 +11582,13 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				position.piece_position[i] = ILLEGAL_POSITION;
 
 				if (! PTM_in_check(tb, &position)) {
-				    if (futurecaptures[piece][i] == -2) {
+				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
 					/* discard prune - do nothing */
-				    } else if (futurecaptures[piece][i] == -3) {
+				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
 					/* concede prune */
 					initialize_entry_with_DTM(tb, index, 2);
 					return 0;
-				    } else if (futurecaptures[piece][i] == -4) {
+				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
 					/* resign prune (or an actual suicide loss if capturing last piece) */
 					initialize_entry_with_DTM(tb, index, -2);
 					return 0;
@@ -11629,13 +11635,13 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			    if (! PTM_in_check(tb, &position)) {
 				if (! is_promotion_capture) {
-				    if (futurecaptures[piece][i] == -2) {
+				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
 					/* discard prune - do nothing */
-				    } else if (futurecaptures[piece][i] == -3) {
+				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
 					/* concede prune */
 					initialize_entry_with_DTM(tb, index, 2);
 					return 0;
-				    } else if (futurecaptures[piece][i] == -4) {
+				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
 					/* resign prune (or an actual suicide loss if capturing last piece) */
 					initialize_entry_with_DTM(tb, index, -2);
 					return 0;
@@ -11659,13 +11665,13 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 				    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
-					if (promotion_captures[piece][i][promotion] == -2) {
+					if (promotion_captures[piece][i][promotion] == DISCARD_FUTUREMOVE) {
 					    /* discard prune - do nothing */
-					} else if (promotion_captures[piece][i][promotion] == -3) {
+					} else if (promotion_captures[piece][i][promotion] == CONCEDE_FUTUREMOVE) {
 					    /* concede prune */
 					    initialize_entry_with_DTM(tb, index, 2);
 					    return 0;
-					} else if (promotion_captures[piece][i][promotion] == -4) {
+					} else if (promotion_captures[piece][i][promotion] == RESIGN_FUTUREMOVE) {
 					    /* resign prune (or an actual suicide loss if capturing last piece) */
 					    initialize_entry_with_DTM(tb, index, -2);
 					    return 0;
@@ -13108,7 +13114,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.591 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.592 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
