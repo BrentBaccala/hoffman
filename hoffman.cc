@@ -3275,7 +3275,7 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 	}
 
 	/* Remove positions for overlapping pieces, but we don't touch the kings, and we don't
-	 * consider anything in the current identical pieces group, because the combinadic encoding
+	 * consider anything in the current paired pieces group, because the combinadic encoding
 	 * already takes care of them.  For all other overlapping pieces before us in the piece
 	 * list, if that piece is earlier than us in board order, decrement our position by one.
 	 *
@@ -3289,21 +3289,21 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	for (piece2 = piece; tb->last_identical_piece[piece2] != -1; piece2 = tb->last_identical_piece[piece2]);
+	for (piece2 = piece; tb->last_paired_piece[piece2] != -1; piece2 = tb->last_paired_piece[piece2]);
 
 	for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
 	    if (vals[piece] > pos->piece_position[piece2]) vals[piece] --;
 	}
     }
 
-    /* Sort identical pieces so that the lowest values always come first. */
+    /* Sort paired pieces so that the lowest values always come first. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
-	while ((tb->last_identical_piece[piece2] != -1)
-	       && (vals[piece2] < vals[tb->last_identical_piece[piece2]])) {
-	    transpose_array(vals, piece2, tb->last_identical_piece[piece2]);
-	    piece2 = tb->last_identical_piece[piece2];
+	while ((tb->last_paired_piece[piece2] != -1)
+	       && (vals[piece2] < vals[tb->last_paired_piece[piece2]])) {
+	    transpose_array(vals, piece2, tb->last_paired_piece[piece2]);
+	    piece2 = tb->last_paired_piece[piece2];
 	}
     }
 
@@ -3340,9 +3340,9 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
     index -= p->side_to_move;
 
     /* Each piece will have position values assigned to it multiplied by a multiplier for the set of
-     * identical pieces.  We search for the largest value in simple_piece_indices[] that is less
+     * paired pieces.  We search for the largest value in simple_piece_indices[] that is less
      * than the index and convert the encoding numbers to square numbers on the board.  This works
-     * if identical pieces are grouped together.  This loop has to run in reverse order over the
+     * if paired pieces are grouped together.  This loop has to run in reverse order over the
      * pieces, since a combinadic encoding should be backed out from the largest piece first.
      */
 
@@ -3391,8 +3391,15 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
     p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
     p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
 
-    /* Now we have to decide the actual ordering in the piece array.  Use our recorded
-     * permutations to put pieces on legal squares, if possible.
+    /* "You've got to be kidding me"
+     *
+     * If we have overlapping pieces, some of the position numbers of the later pieces might have
+     * been reduced.  We fix up the positions by going back through the earlier overlapping pieces
+     * and incrementing our position if we're past them.  This has to be done in order from the
+     * smallest position to the largest.  Consider unrestricted pieces; kings on squares 12 and 33,
+     * and a queen on square 34 that got encoded as 32.  We need to increment 32 to 33 for 12, then
+     * increment 33 to 34 for 33, and if we try to handle the king on 33 first, we won't increment
+     * because 32 is less than 33.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -3402,26 +3409,18 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	/* En passant positions are never changed, so skip an en passant pawn */
+	/* En passant positions are never changed, since they are encoded using the first row,
+	 * which isn't part of a pawn's legal range, so skip en passant pawns.
+	 */
 
 	if (piece == en_passant_pawn) continue;
-
-	/* "You've got to be kidding me"
-	 *
-	 * We fix up the positions by going back through the earlier overlapping pieces and
-	 * incrementing our position if we're past them.  This has to be done in order from the
-	 * smallest position to the largest.  Consider unrestricted pieces; kings on squares 12 and
-	 * 33, and a queen on square 34 that got encoded as 32.  We need to increment 32 to 33 for
-	 * 12, then increment 33 to 34 for 33, and if we try to handle the king on 33 first, we
-	 * won't increment because 32<33.
-	 */
 
 	smallest_position = ILLEGAL_POSITION;
 
 	do {
 	    next_smallest_position = ILLEGAL_POSITION;
 
-	    for (piece2 = piece; tb->last_identical_piece[piece2] != -1; piece2 = tb->last_identical_piece[piece2]);
+	    for (piece2 = piece; tb->last_paired_piece[piece2] != -1; piece2 = tb->last_paired_piece[piece2]);
 
 	    for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
 		if (p->piece_position[piece2] <= p->piece_position[piece]) {
@@ -3441,14 +3440,43 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	} while (next_smallest_position != ILLEGAL_POSITION);
 
 	if (p->piece_position[piece] >= 64) return 0;
+    }
+
+    /* Now we have to decide the actual ordering in the piece array.  Encoding groups are currently
+     * sorted into ascending order, but the pieces might not all be on legal squares.  Use our
+     * recorded permutations to put pieces on legal squares, if possible.
+     *
+     * Encoding groups of plus-pawns are a special case, since they might include pawns of both
+     * colors.  The first thing to note is that since they are specified in increasing board
+     * order in the pieces array, sorting correctly placed them UNLESS one of them
+     * is an en passant pawn, which will always be the first one (because it is encoded
+     * using numbers on the first row), and positioning this pawn correctly will fix
+     * the entire encoding group.  To achieve this, all we have to do is sort the group.
+     *
+     * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
+     */
+
+    if (en_passant_pawn != -1) {
+	piece = tb->next_paired_piece[en_passant_pawn];
+	while ((piece != -1)
+	       && (p->piece_position[tb->last_paired_piece[piece]]
+		   > p->piece_position[piece])) {
+	    transpose_array(p->piece_position, piece, tb->last_paired_piece[piece]);
+	    piece = tb->next_paired_piece[piece];
+	}
+    }
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	if (tb->permutations[piece] != NULL) {
 	    int perm = 0;
 
 	    while (tb->permutations[piece][perm] != 0) {
 
+		int piece2;
+
 		/* check for legality of all pieces in this set */
-		for (piece2 = piece; piece2 != -1; piece2 = tb->next_identical_piece[piece2]) {
+		for (piece2 = piece; piece2 != -1; piece2 = tb->next_paired_piece[piece2]) {
 		    if (! (tb->legal_squares[piece2] & BITVECTOR(p->piece_position[piece2]))) {
 			break;
 		    }
@@ -3472,7 +3500,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	int square = p->piece_position[piece];
 
 	/* This can happen if we have multiple identical pieces because we counted semilegal
-	 * positions to encode them with.
+	 * positions to encode them with, not legal positions.
 	 */
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
@@ -4725,8 +4753,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     }
 
     /* Later, if we're trying to process a position with identical pieces that aren't on legal
-     * squares, we permute them and see if we can get them onto legal squares that way.  Construct
-     * the full set of possible permutations now.  We'll also use these permutations when we're
+     * squares, we permute them and see if we can get them onto legal squares that way.  Now,
+     * construct the full set of possible permutations, using an algorithm that generates a series
+     * of transpositions that walks the entire set of permutations, and store this as a list
+     * attached to the first piece in the set.  We'll also use these permutations when we're
      * translating a foreign position (from a futurebase) into a local position.
      *
      * XXX probably don't need to do this during normalization at all if the semilegal and legal
@@ -5431,6 +5461,64 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	}
 	tb->max_index *= tb->total_legal_compact_king_positions;
 
+	tb->last_paired_piece[tb->white_king] = -1;
+	tb->next_paired_piece[tb->white_king] = -1;
+	tb->last_paired_piece[tb->black_king] = -1;
+	tb->next_paired_piece[tb->black_king] = -1;
+
+	/* An important special case - handle two opposing plus-pawns by combining their identical
+	 * pieces groups into a single paired pieces group, reducing tablebase size.  This also
+	 * requires extending the semilegal range of each group.
+	 */
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    tb->last_paired_piece[piece] = tb->last_identical_piece[piece];
+	    tb->next_paired_piece[piece] = tb->next_identical_piece[piece];
+
+	    /* Note that we only set blocking_piece for plus-pawns, so if two pieces are mutually
+	     * blocking, they must be opposing plus-pawns.
+	     */
+
+	    if ((tb->index_type == COMBINADIC3_INDEX)
+		&& (tb->blocking_piece[piece] != -1)
+		&& (tb->blocking_piece[tb->blocking_piece[piece]] == piece)) {
+
+		int piece2;
+
+		if ((tb->blocking_piece[piece] > piece) && (tb->piece_color[piece] != WHITE)) {
+		    fatal("Mutually blocking pawns must currently be specified white pawn first\n");
+		    return NULL;
+		}
+
+		if (tb->blocking_piece[piece] > piece) {
+		    if (tb->next_identical_piece[piece] != -1) {
+			/* should never happen, we should be blocked by a pawn of opposite color */
+			fatal("BUG: not blocked right\n");
+		    } else {
+			tb->next_paired_piece[piece] = tb->blocking_piece[piece];
+			for (piece2 = piece; piece2 != -1; piece2 = tb->last_paired_piece[piece2]) {
+			    tb->semilegal_squares[piece2]
+				|= tb->semilegal_squares[tb->blocking_piece[piece]];
+			}
+		    }
+		} else {
+		    if (tb->last_identical_piece[piece] != -1) {
+			/* should never happen, we should be blocked by a pawn of opposite color */
+			fatal("BUG: not blocked right\n");
+		    } else {
+			tb->last_paired_piece[piece] = tb->blocking_piece[piece];
+			for (piece2 = piece; piece2 != -1; piece2 = tb->next_paired_piece[piece2]) {
+			    tb->semilegal_squares[piece2]
+				|= tb->semilegal_squares[tb->blocking_piece[piece]];
+			}
+		    }
+		}
+	    }
+	}
+
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    /* If our semilegal range completely contains the semilegal range of a earlier piece,
@@ -5464,12 +5552,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->last_identical_piece[piece] == -1) {
+	    if (tb->last_paired_piece[piece] == -1) {
 		piece_in_set = 1;
-	    } else if (tb->last_identical_piece[piece] == piece-1) {
+	    } else if (tb->last_paired_piece[piece] == piece-1) {
 		piece_in_set ++;
 	    } else {
-		fatal("Combinadic index types requires identical pieces to be adjacent in index\n");
+		fatal("Combinadic index types requires paired pieces to be adjacent in index\n");
 	    }
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
@@ -5500,19 +5588,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    /* Now back out any positions that we saved with the 'combinadic2' or 'combinadic3' indices */
 
 	    if ((tb->index_type == COMBINADIC2_INDEX) || (tb->index_type == COMBINADIC3_INDEX)) {
-		for (piece2 = piece; tb->last_identical_piece[piece2] != -1; piece2 = tb->last_identical_piece[piece2]);
+		for (piece2 = piece; tb->last_paired_piece[piece2] != -1; piece2 = tb->last_paired_piece[piece2]);
 		for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
 		    tb->total_legal_piece_positions[piece] --;
 		}
 	    }
 
-	    if ((tb->last_identical_piece[piece] != -1)
+	    if ((tb->last_paired_piece[piece] != -1)
 		&& (tb->total_legal_piece_positions[piece]
-		    != tb->total_legal_piece_positions[tb->last_identical_piece[piece]])) {
+		    != tb->total_legal_piece_positions[tb->last_paired_piece[piece]])) {
 		fatal("BUG: Identical pieces don't have the same number of total semilegal positions\n");
 	    }
 
-	    if (tb->next_identical_piece[piece] == -1) {
+	    if (tb->next_paired_piece[piece] == -1) {
 		tb->max_index *= choose(tb->total_legal_piece_positions[piece], piece_in_set);
 	    }
 
@@ -5827,7 +5915,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.593 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.594 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13391,7 +13479,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.593 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.594 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
