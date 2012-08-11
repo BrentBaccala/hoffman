@@ -5915,7 +5915,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.594 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.595 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12898,7 +12898,7 @@ void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pn
 	} else if (dtm == 1) {
 	    printf("Illegal position\n");
 	} else if (dtm > 1) {
-	    printf("%s moves and wins in %d\n", ptm, dtm-1);
+	    printf("%s wins in %d.5\n", ptm, dtm-1);
 	} else if (dtm < 0) {
 	    printf("%s wins in %d\n", pntm, pntm_offset-dtm-1);
 	}
@@ -13380,7 +13380,7 @@ void probe_tablebases(tablebase_t **tbs) {
 		&& EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
 		printf("\nNalimov score: ");
 		if (score > 0) {
-		    printf("%s moves and wins in %d\n", ptm, ((65536-4)/2)-score+1);
+		    printf("%s wins in %d.5\n", ptm, ((65536-4)/2)-score+1);
 		} else if (score < 0) {
 		    printf("%s wins in %d\n", pntm, ((65536-4)/2)+score);
 		} else {
@@ -13479,7 +13479,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.594 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.595 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
