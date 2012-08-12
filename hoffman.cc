@@ -3285,6 +3285,8 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 	 * reducing the encoding value of a pawn, we use the encoding value, with en-passant
 	 * factored in.  A consequence of this is that we never change the value of an en-passant
 	 * encoded pawn.
+	 *
+	 * XXX we move backwards constructing this... is this right?
 	 */
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
@@ -3380,6 +3382,22 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
     p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
     p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
 
+    /* Fix the en passant pawn, which must be the opposite color of PTM */
+
+    if (en_passant_pawn != -1) {
+
+	if (p->side_to_move == BLACK) {
+	    en_passant_color = WHITE;
+	    p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
+	    p->piece_position[en_passant_pawn] += 3*8;
+	} else {
+	    en_passant_color = BLACK;
+	    p->en_passant_square = p->piece_position[en_passant_pawn] + 5*8;
+	    p->piece_position[en_passant_pawn] += 4*8;
+	}
+
+    }
+
     /* "You've got to be kidding me"
      *
      * If we have overlapping pieces, some of the position numbers of the later pieces might have
@@ -3412,6 +3430,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	    for (piece2 = piece; tb->last_paired_piece[piece2] != -1; piece2 = tb->last_paired_piece[piece2]);
 
 	    for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
+		int square = p->piece_position[piece2];
 		if (p->piece_position[piece2] <= p->piece_position[piece]) {
 		    if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
 			if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
@@ -3431,51 +3450,19 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	if (p->piece_position[piece] >= 64) return 0;
     }
 
-    /* We've got all the numbers right, but maybe not in the right order, and the en passant pawn
-     * (if any) is still encoded on the first row.  Each encoding group is sorted in ascending
-     * order.
+    /* We've got all the numbers right, but maybe not in the right order, since each encoding group
+     * is sorted in ascending order.
      *
      * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
      * encoding groups of identical pieces into ascending order, then permutes until all the pieces
      * are on legal squares.  Mimic this action here.
-     *
-     * The other kind of encoding group, plus-pawns, might include pawns of both colors.  The first
-     * thing to note is that since they are specified in increasing board order in the pieces array,
-     * sorting correctly placed them UNLESS one of them is an en passant pawn, which will always be
-     * the first one (because it is encoded using numbers on the first row), and positioning this
-     * pawn correctly will fix the entire encoding group.  To achieve this, we have to figure out if
-     * it is black or white.  How?  First, note that the en passant pawn is always trailing, as it
-     * moves from its initial position.  So, all of the remaining pawns (on the same file) are on
-     * the other side of the board.  This gives us an immediate answer if there is even a single
-     * other pawn in the encoding group.  Otherwise, it is a solitary encoding group and we already
-     * know its color, because it contains only a single piece.
      *
      * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
      */
 
     if (en_passant_pawn != -1) {
 
-	if (tb->next_paired_piece[en_passant_pawn] != -1) {
-	    if (p->piece_position[tb->next_paired_piece[en_passant_pawn]] > 31) {
-		en_passant_color = WHITE;
-	    } else {
-		en_passant_color = BLACK;
-	    }
-	} else {
-	    en_passant_color = tb->piece_color[en_passant_pawn];
-	}
-
-	if (p->side_to_move == en_passant_color) return 0; /* en passant pawn has to be capturable */
-
-	if (en_passant_color == WHITE) {
-	    p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
-	    p->piece_position[en_passant_pawn] += 3*8;
-	} else {
-	    p->en_passant_square = p->piece_position[en_passant_pawn] + 5*8;
-	    p->piece_position[en_passant_pawn] += 4*8;
-	}
-
-	/* Remember that en passant pawns always trail?  So, white en passant pawns are still
+	/* Remember that en passant pawns always trail.  So, white en passant pawns are still
 	 * sorted, but black ones have to be moved to the end of their group.
 	 */
 
@@ -3485,7 +3472,10 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 		     > p->piece_position[piece]);
 	     piece = tb->next_paired_piece[piece]) {
 	    transpose_array(p->piece_position, piece, tb->last_paired_piece[piece]);
+	    en_passant_pawn = piece;
 	}
+
+	if (p->side_to_move == en_passant_color) return 0; /* en passant pawn has to be capturable */
     }
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -5941,7 +5931,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.597 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.598 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13512,7 +13502,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.597 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.598 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
