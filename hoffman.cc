@@ -3296,7 +3296,7 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 	}
     }
 
-    /* Sort paired pieces so that the lowest values always come first. */
+    /* Sort encoding groups so that the lowest values always come first. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
@@ -3332,6 +3332,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 {
     int piece;
     int en_passant_pawn = -1;
+    int en_passant_color;
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = ILLEGAL_POSITION;
@@ -3339,11 +3340,9 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
     p->side_to_move = index % 2;
     index -= p->side_to_move;
 
-    /* Each piece will have position values assigned to it multiplied by a multiplier for the set of
-     * paired pieces.  We search for the largest value in simple_piece_indices[] that is less
-     * than the index and convert the encoding numbers to square numbers on the board.  This works
-     * if paired pieces are grouped together.  This loop has to run in reverse order over the
-     * pieces, since a combinadic encoding should be backed out from the largest piece first.
+    /* Working backwards through the piece array, search for the largest value in
+     * simple_piece_indices[] that is less than the (running) index, subtract it out of the index,
+     * and store the (tenative) piece positions.
      */
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
@@ -3364,18 +3363,8 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	index -= tb->simple_piece_indices[piece][p->piece_position[piece]];
 
-	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (p->piece_position[piece] < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return 0;  /* can't have two en passant pawns */
-	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
-		p->en_passant_square = p->piece_position[piece] + 2*8;
-		p->piece_position[piece] += 3*8;
-	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
-		p->en_passant_square = p->piece_position[piece] + 5*8;
-		p->piece_position[piece] += 4*8;
-	    }
+	    if (en_passant_pawn != -1) return 0;  /* can't have two en passant pawns */
 	    en_passant_pawn = piece;
 	}
 
@@ -3442,27 +3431,60 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	if (p->piece_position[piece] >= 64) return 0;
     }
 
-    /* Now we have to decide the actual ordering in the piece array.  Encoding groups are currently
-     * sorted into ascending order, but the pieces might not all be on legal squares.  Use our
-     * recorded permutations to put pieces on legal squares, if possible.
+    /* We've got all the numbers right, but maybe not in the right order, and the en passant pawn
+     * (if any) is still encoded on the first row.  Each encoding group is sorted in ascending
+     * order.
      *
-     * Encoding groups of plus-pawns are a special case, since they might include pawns of both
-     * colors.  The first thing to note is that since they are specified in increasing board
-     * order in the pieces array, sorting correctly placed them UNLESS one of them
-     * is an en passant pawn, which will always be the first one (because it is encoded
-     * using numbers on the first row), and positioning this pawn correctly will fix
-     * the entire encoding group.  To achieve this, all we have to do is sort the group.
+     * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
+     * encoding groups of identical pieces into ascending order, then permutes until all the pieces
+     * are on legal squares.  Mimic this action here.
+     *
+     * The other kind of encoding group, plus-pawns, might include pawns of both colors.  The first
+     * thing to note is that since they are specified in increasing board order in the pieces array,
+     * sorting correctly placed them UNLESS one of them is an en passant pawn, which will always be
+     * the first one (because it is encoded using numbers on the first row), and positioning this
+     * pawn correctly will fix the entire encoding group.  To achieve this, we have to figure out if
+     * it is black or white.  How?  First, note that the en passant pawn is always trailing, as it
+     * moves from its initial position.  So, all of the remaining pawns (on the same file) are on
+     * the other side of the board.  This gives us an immediate answer if there is even a single
+     * other pawn in the encoding group.  Otherwise, it is a solitary encoding group and we already
+     * know its color, because it contains only a single piece.
      *
      * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
      */
 
     if (en_passant_pawn != -1) {
-	piece = tb->next_paired_piece[en_passant_pawn];
-	while ((piece != -1)
-	       && (p->piece_position[tb->last_paired_piece[piece]]
-		   > p->piece_position[piece])) {
+
+	if (tb->next_paired_piece[en_passant_pawn] != -1) {
+	    if (p->piece_position[tb->next_paired_piece[en_passant_pawn]] > 31) {
+		en_passant_color = WHITE;
+	    } else {
+		en_passant_color = BLACK;
+	    }
+	} else {
+	    en_passant_color = tb->piece_color[en_passant_pawn];
+	}
+
+	if (p->side_to_move == en_passant_color) return 0; /* en passant pawn has to be capturable */
+
+	if (en_passant_color == WHITE) {
+	    p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
+	    p->piece_position[en_passant_pawn] += 3*8;
+	} else {
+	    p->en_passant_square = p->piece_position[en_passant_pawn] + 5*8;
+	    p->piece_position[en_passant_pawn] += 4*8;
+	}
+
+	/* Remember that en passant pawns always trail?  So, white en passant pawns are still
+	 * sorted, but black ones have to be moved to the end of their group.
+	 */
+
+	for (piece = tb->next_paired_piece[en_passant_pawn];
+	     (piece != -1)
+		 && (p->piece_position[tb->last_paired_piece[piece]]
+		     > p->piece_position[piece]);
+	     piece = tb->next_paired_piece[piece]) {
 	    transpose_array(p->piece_position, piece, tb->last_paired_piece[piece]);
-	    piece = tb->next_paired_piece[piece];
 	}
     }
 
@@ -3494,6 +3516,10 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	    }
 	}
     }
+
+    /* Final checks for an illegally positioned piece, two pieces on the same square,
+     * setting bits in the board vectors
+     */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -5915,7 +5941,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.596 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.597 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13486,7 +13512,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.596 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.597 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
