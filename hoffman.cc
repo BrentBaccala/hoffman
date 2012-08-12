@@ -5915,7 +5915,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.595 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.596 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11086,6 +11086,13 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 	/* This can happen if we don't fully check en passant legality (but right now, we do) */
 	fprintf(stderr, "Can't lookup position in intratable propagation!\n");
 #endif
+#ifdef DEBUG_MOVE
+	if (future_index == DEBUG_MOVE) {
+	    printf("propagate_one_minimove_within_table:  current_index=INVALID"
+		   "; future_index=%" PRIindex "; dtm=%d\n",
+		   future_index, dtm);
+	}
+#endif
 	return;
     }
 
@@ -13479,7 +13486,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.595 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.596 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
