@@ -3342,6 +3342,9 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
     p->side_to_move = index % 2;
     index -= p->side_to_move;
 
+    /* If there's an en passant pawn, it must be the opposite color of PTM */
+    en_passant_color = 1 - p->side_to_move;
+
     /* Working backwards through the piece array, search for the largest value in
      * simple_piece_indices[] that is less than the (running) index, subtract it out of the index,
      * and store the (tenative) piece positions.
@@ -3382,16 +3385,14 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
     p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
     p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
 
-    /* Fix the en passant pawn, which must be the opposite color of PTM */
+    /* Fix the en passant pawn, which was encoded on the first row */
 
     if (en_passant_pawn != -1) {
 
-	if (p->side_to_move == BLACK) {
-	    en_passant_color = WHITE;
+	if (en_passant_color == WHITE) {
 	    p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
 	    p->piece_position[en_passant_pawn] += 3*8;
 	} else {
-	    en_passant_color = BLACK;
 	    p->en_passant_square = p->piece_position[en_passant_pawn] + 5*8;
 	    p->piece_position[en_passant_pawn] += 4*8;
 	}
@@ -3473,6 +3474,13 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	    transpose_array(p->piece_position, piece, tb->last_paired_piece[piece]);
 	    en_passant_pawn = piece;
 	}
+
+	/* We've figured out which pawn is the en passant pawn, now make sure that it is the right
+	 * color.  We earlier decided on en_passant_color based solely on side-to-move.  If we're
+	 * encoding a group of plus-pawns of mixed color, then this should always come out right.
+	 * Otherwise, our encoding group is of uniform color, and this check will reject
+	 * half of our en passant positions, which might be a place for improvement.
+	 */
 
  	if (tb->piece_color[en_passant_pawn] != en_passant_color) {
  	    return 0;
@@ -5932,7 +5940,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.600 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.601 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13503,7 +13511,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.600 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.601 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
