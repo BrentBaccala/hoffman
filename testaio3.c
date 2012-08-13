@@ -6,7 +6,7 @@
 #include <string.h>	/* for memset() */
 #include <unistd.h>	/* for _PC_REC_XFER_ALIGN */
 #include <fcntl.h>
-#include </usr/local/include/aio.h>
+#include <aio.h>
 #include <errno.h>
 
 /* (1<<17) * 4 = (1<<19) * 2 = (1<<20) * 16 = 16 MB * 431 tables */

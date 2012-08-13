@@ -14,6 +14,7 @@
 
 struct aiocb aiocb[NUMAIOS];
 void *buffer[NUMAIOS];
+struct timeval timings[NUMAIOS];
 
 main()
 {
@@ -22,16 +23,21 @@ main()
     int alignment;
 
     fd = open("testfile", O_RDONLY | O_DIRECT);
+    if (fd == -1) {
+	perror("opening 'testfile'");
+	exit(1);
+    }
+
     alignment = fpathconf(fd, _PC_REC_XFER_ALIGN);
 
     for (i=0; i<NUMAIOS; i++) {
 	if (posix_memalign(&buffer[i], alignment, BUFFER_BYTES) != 0) {
-	    fprintf(stderr, "Can't posix_memalign\n");
+	    perror("posix_memalign");
 	}
 #if 0
 	free(buffer[i]);
 	if (posix_memalign(&buffer[i], alignment, BUFFER_BYTES) != 0) {
-	    fprintf(stderr, "Can't posix_memalign\n");
+	    perror("posix_memalign");
 	}
 #endif
     }
@@ -52,6 +58,7 @@ main()
 	if (aio_read(& aiocb[i]) != 0) {
 	    fprintf(stderr, "Can't enqueue aio_read %d\n", i);
 	}
+	gettimeofday(&timings[i], NULL);
     }
 
     fprintf(stderr, "Enqueues complete\n");
@@ -60,7 +67,7 @@ main()
     for (i=0; i<NUMAIOS; i++) {
 	free(buffer[i]);
 	if (posix_memalign(&buffer[i], alignment, BUFFER_BYTES) != 0) {
-	    fprintf(stderr, "Can't posix_memalign\n");
+	    perror("posix_memalign");
 	}
     }
 #endif

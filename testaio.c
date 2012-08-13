@@ -7,11 +7,8 @@
 #include <unistd.h>	/* for _PC_REC_XFER_ALIGN */
 #include <asm/unistd.h>
 #include <fcntl.h>
-#include <linux/aio_abi.h>
+#include <aio.h>
 #include <errno.h>
-
-_syscall2(int, io_setup, int, maxevents, aio_context_t *, ctxp)
-_syscall3(int, io_submit, aio_context_t, ctx, long, nr, struct iocb **, iocbs)
 
 #define NUMAIOS 100
 
@@ -47,7 +44,7 @@ void add_timeval(struct timeval *dest, struct timeval *src)
 void sprint_timeval(char *strbuf, struct timeval *timevalp)
 {
     if (timevalp->tv_sec < 60) {
-	sprintf(strbuf, "%ld.%03lds", timevalp->tv_sec, timevalp->tv_usec/1000);
+	sprintf(strbuf, "%ld.%06lds", timevalp->tv_sec, timevalp->tv_usec);
     } else if (timevalp->tv_sec < 3600) {
 	sprintf(strbuf, "%ldm%02ld.%03lds", timevalp->tv_sec/60, timevalp->tv_sec%60,
 		timevalp->tv_usec/1000);
