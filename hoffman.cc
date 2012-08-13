@@ -3430,7 +3430,6 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	    for (piece2 = piece; tb->last_paired_piece[piece2] != -1; piece2 = tb->last_paired_piece[piece2]);
 
 	    for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
-		int square = p->piece_position[piece2];
 		if (p->piece_position[piece2] <= p->piece_position[piece]) {
 		    if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
 			if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
@@ -5933,7 +5932,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.599 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.600 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13504,7 +13503,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.599 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.600 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
