@@ -79,12 +79,12 @@ extern int TB_FASTCALL L_TbtProbeTable(int, color, INDEX);
 #  define PfnIndCalc PfnIndCalcFun
 #  define FRegistered FRegisteredFun
 
-int EGTBProbe(int wtm, unsigned char board[64], int *score)
+int EGTBProbe(int wtm, unsigned char board[64], int sqEnP, int *score)
 {
   int rgiCounters[10], iTb, fInvert;
   color side;
   squaret rgsqWhite[C_PIECES * 5 + 1], rgsqBlack[C_PIECES * 5 + 1];
-  squaret *psqW, *psqB, sqEnP;
+  squaret *psqW, *psqB;
   INDEX ind;
   int tbValue;
   int square;
@@ -230,11 +230,8 @@ int EGTBProbe(int wtm, unsigned char board[64], int *score)
     fprintf(stderr, "FRegistered can't find Nalimov tablebase %d %d\n", iTb, side);
     return (0);
   }
-#if 0
-  sqEnP = EnPassant(ply) ? EnPassant(ply) : XX;
-#else
-  sqEnP = XX;
-#endif
+  if (sqEnP == -1) sqEnP = XX;
+
   ind = PfnIndCalc(iTb, side) (psqW, psqB, sqEnP, fInvert);
 #if 0
   if (ind > 4) {
