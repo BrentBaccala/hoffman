@@ -1,7 +1,7 @@
 /* exported functions */
 
-void * ftp_open(char *hostname, char *filename, char *operation);
-void * ftp_openurl(char *url, char *operation);
+void * ftp_open(char *hostname, char *filename, const char *operation);
+void * ftp_openurl(char *url, const char *operation);
 
 ssize_t ftp_read(void *ptr, char *buffer, size_t size);
 #ifdef O_LARGEFILE
@@ -14,5 +14,5 @@ ssize_t ftp_write(void *ptr, const char *buffer, size_t size);
 int ftp_close (void *ptr);
 
 #ifdef __GLIBC__
-FILE * ftp_fopen(char *hostname, char *filename, char *operation);
+FILE * ftp_fopen(char *hostname, char *filename, const char *operation);
 #endif

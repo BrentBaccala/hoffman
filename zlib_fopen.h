@@ -3,9 +3,9 @@
 #if STRICT_ZLIB_OPEN_DECLARATION
 void * zlib_open(void *ptr,
 		 ssize_t (*read)(void *, char *, size_t), ssize_t (*write)(void *, const char *, size_t),
-		 off_t (*seek)(void *, off_t, int), int (*close)(void *), char *operation);
+		 off_t (*seek)(void *, off_t, int), int (*close)(void *), const char *operation);
 #else
-void * zlib_open(void *ptr, void *read, void *write, void *seek, void *close, char *operation);
+void * zlib_open(void *ptr, void *read, void *write, void *seek, void *close, const char *operation);
 #endif
 
 ssize_t zlib_read(void *ptr, char *buffer, size_t size);

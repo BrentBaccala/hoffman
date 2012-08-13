@@ -107,7 +107,7 @@ off_t ftp_seek (void *ptr, off_t position, int whence)
     else return position;
 }
 
-void * ftp_open(char *hostname, char *filename, char *operation)
+void * ftp_open(char *hostname, char *filename, const char *operation)
 {
     struct cookie *cookie;
 
@@ -151,7 +151,7 @@ void * ftp_open(char *hostname, char *filename, char *operation)
     return cookie;
 }
 
-void * ftp_openurl(char *url, char *operation) {
+void * ftp_openurl(char *url, const char *operation) {
     regex_t pattern;
     regmatch_t matches[3];
     char hostname[256];
@@ -174,7 +174,7 @@ void * ftp_openurl(char *url, char *operation) {
 static cookie_io_functions_t read_functions = {ftp_read, NULL, ftp_seekptr64, ftp_close};
 static cookie_io_functions_t write_functions = {NULL, ftp_write, NULL, ftp_close};
 
-FILE * ftp_fopen(char *hostname, char *filename, char *operation)
+FILE * ftp_fopen(char *hostname, char *filename, const char *operation)
 {
     struct cookie *cookie;
 

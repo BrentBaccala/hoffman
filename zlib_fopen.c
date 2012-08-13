@@ -242,7 +242,7 @@ off_t zlib_seek (void *ptr, off_t position, int whence)
 
 void * zlib_open(void *ptr,
 		 ssize_t (*read)(void *, char *, size_t), ssize_t (*write)(void *, const char *, size_t),
-		 off_t (*seek)(void *, off_t, int), int (*close)(void *), char *operation)
+		 off_t (*seek)(void *, off_t, int), int (*close)(void *), const char *operation)
 {
     struct cookie *cookie;
 
