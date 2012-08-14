@@ -653,8 +653,8 @@ typedef struct tablebase {
     int total_legal_piece_positions[MAX_PIECES];
     int simple_piece_positions[MAX_PIECES][64];
     index_t simple_piece_indices[MAX_PIECES][64];
-    int last_paired_piece[MAX_PIECES];
-    int next_paired_piece[MAX_PIECES];
+    int prev_piece_in_encoding_group[MAX_PIECES];
+    int next_piece_in_encoding_group[MAX_PIECES];
 
     uint8_t compact_white_king_positions[64*64];
     uint8_t compact_black_king_positions[64*64];
@@ -696,10 +696,10 @@ typedef struct tablebase {
      * identical pieces have move restrictions that don't overlap (so they can't exchange places),
      * they're not considered identical.
      *
-     * "Paired" pieces are those encoded as a pair (i.e, only their positions are encoded, not their
-     * identities, saving a bit).  They are usually identical pieces, but in the 'no-en-passant'
-     * scheme, pawns restricted to a single file using plus syntax are paired, even if they are not
-     * the same color.
+     * "Grouped" pieces are those encoded together, only their positions are encoded, not their
+     * identities within the group.  They are usually identical pieces, but in the 'no-en-passant'
+     * and 'combinadic3' schemes, pawns restricted to a single file using plus syntax are grouped,
+     * even if they are not the same color.
      */
 
     int num_pieces;
@@ -2191,17 +2191,17 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (tb->next_paired_piece[piece] != -1) {
+	if (tb->next_piece_in_encoding_group[piece] != -1) {
 
-	    if (((vals[piece] < vals[tb->next_paired_piece[piece]])
-		 && (vals[piece] + 32 < vals[tb->next_paired_piece[piece]]))
-		|| ((vals[tb->next_paired_piece[piece]] < vals[piece])
-		    && (vals[tb->next_paired_piece[piece]] + 32 >= vals[piece]))) {
+	    if (((vals[piece] < vals[tb->next_piece_in_encoding_group[piece]])
+		 && (vals[piece] + 32 < vals[tb->next_piece_in_encoding_group[piece]]))
+		|| ((vals[tb->next_piece_in_encoding_group[piece]] < vals[piece])
+		    && (vals[tb->next_piece_in_encoding_group[piece]] + 32 >= vals[piece]))) {
 
 		unsigned char val;
 		val = vals[piece];
-		vals[piece] = vals[tb->next_paired_piece[piece]];
-		vals[tb->next_paired_piece[piece]] = val;
+		vals[piece] = vals[tb->next_piece_in_encoding_group[piece]];
+		vals[tb->next_piece_in_encoding_group[piece]] = val;
 	    }
 	}
 
@@ -2217,14 +2217,14 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 	    shift_count += 2;
 	    index |= COL(vals[piece]) << shift_count;
 	    shift_count += 2;
-	} else if (tb->last_paired_piece[piece] == -1) {
+	} else if (tb->prev_piece_in_encoding_group[piece] == -1) {
 	    index |= vals[piece] << shift_count;
 	    shift_count += 6;  /* because 2^6=64 */
 	} else {
-	    if (vals[piece] > vals[tb->last_paired_piece[piece]]) {
-		index |= (vals[piece] - vals[tb->last_paired_piece[piece]] - 1) << shift_count;
+	    if (vals[piece] > vals[tb->prev_piece_in_encoding_group[piece]]) {
+		index |= (vals[piece] - vals[tb->prev_piece_in_encoding_group[piece]] - 1) << shift_count;
 	    } else {
-		index |= (64 + vals[piece] - vals[tb->last_paired_piece[piece]] - 1) << shift_count;
+		index |= (64 + vals[piece] - vals[tb->prev_piece_in_encoding_group[piece]] - 1) << shift_count;
 	    }
 	    shift_count += 5; /* the whole point of "naive2" */
 	}
@@ -2252,29 +2252,29 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 	} else if ((tb->symmetry == 4) && (piece == tb->white_king)) {
 	    vals[piece] = rowcol2square(index & 3, (index >> 2) & 3);
 	    index >>= 4;
-	} else if (tb->last_paired_piece[piece] == -1) {
+	} else if (tb->prev_piece_in_encoding_group[piece] == -1) {
 	    vals[piece] = index & 63;
 	    index >>= 6;
 	} else {
-	    vals[piece] = (vals[tb->last_paired_piece[piece]] + (index & 31) + 1) % 64;
+	    vals[piece] = (vals[tb->prev_piece_in_encoding_group[piece]] + (index & 31) + 1) % 64;
 	    index >>= 5;
 
-	    if (vals[piece] < vals[tb->last_paired_piece[piece]]) {
+	    if (vals[piece] < vals[tb->prev_piece_in_encoding_group[piece]]) {
 		unsigned char val;
 
 		/* One of the important tasks of any index_to_local_position() function is to return
 		 * false on all but one of the indices that correspond to identical positions.
-		 * Here, that can only happen when two paired pieces are exactly 32 squares apart,
+		 * Here, that can only happen when two grouped pieces are exactly 32 squares apart,
 		 * which can be encoded using either piece first.  In this case, we toss out the
 		 * index with the larger of the two squares encoded as the base value, and make sure
 		 * that the "<" and the ">=" match up just right in the previous function.
 		 */
 
-		if (vals[tb->last_paired_piece[piece]] - vals[piece] == 32) return 0;
+		if (vals[tb->prev_piece_in_encoding_group[piece]] - vals[piece] == 32) return 0;
 
 		val = vals[piece];
-		vals[piece] = vals[tb->last_paired_piece[piece]];
-		vals[tb->last_paired_piece[piece]] = val;
+		vals[piece] = vals[tb->prev_piece_in_encoding_group[piece]];
+		vals[tb->prev_piece_in_encoding_group[piece]] = val;
 	    }
 	}
 
@@ -2479,7 +2479,11 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
  * 3. Build an array in memory like we do with the kings to encode only the legal possibilities.  No
  * bogus illegal positions here, but doesn't really scale to more than two pieces.
  *
- * Right now, we use method (1) without option.
+ * 4. Use a combinadic encoding that encodes n selections from k objects, without replacement,
+ * unordered.
+ *
+ * Right now, we use method (1) in the 'compact', 'naive2', and 'no-en-passant' schemes, method (4)
+ * in the combinadic schemes, and method (2) everywhere else.
  *
  * Some additional things could be done to make an even more compact encoding:
  *
@@ -2493,7 +2497,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
  * in positions with lots of pawns.
  *
  * The 'compact' routines are also used for the 'no-en-passant' index type, which is identical to
- * compact except that opposing plus-pawns are encoded as paired pieces.  So long as we leave en
+ * compact except that opposing plus-pawns are encoded in the same group.  So long as we leave en
  * passant out of the picture, opposing plus-pawns occupy an identical range of squares and, so long
  * as we know which two squares are occupied, we can always figure out which pawn is white and which
  * is black because they can't jump over each other.  En passant would complicate this, because then
@@ -2551,32 +2555,32 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->next_paired_piece[piece] != -1) {
+	if (tb->next_piece_in_encoding_group[piece] != -1) {
 
-	    if (((vals[piece] < vals[tb->next_paired_piece[piece]])
+	    if (((vals[piece] < vals[tb->next_piece_in_encoding_group[piece]])
 		 && (vals[piece] + tb->total_legal_piece_positions[piece]/2
-		     < vals[tb->next_paired_piece[piece]]))
-		|| ((vals[tb->next_paired_piece[piece]] < vals[piece])
-		    && (vals[tb->next_paired_piece[piece]] + tb->total_legal_piece_positions[piece]/2
+		     < vals[tb->next_piece_in_encoding_group[piece]]))
+		|| ((vals[tb->next_piece_in_encoding_group[piece]] < vals[piece])
+		    && (vals[tb->next_piece_in_encoding_group[piece]] + tb->total_legal_piece_positions[piece]/2
 			>= vals[piece]))) {
 
 		unsigned char val;
 		val = vals[piece];
-		vals[piece] = vals[tb->next_paired_piece[piece]];
-		vals[tb->next_paired_piece[piece]] = val;
+		vals[piece] = vals[tb->next_piece_in_encoding_group[piece]];
+		vals[tb->next_piece_in_encoding_group[piece]] = val;
 	    }
 	}
 
-	if (tb->last_paired_piece[piece] == -1) {
+	if (tb->prev_piece_in_encoding_group[piece] == -1) {
 	    index *= tb->total_legal_piece_positions[piece];
 	    index += vals[piece];
 	} else {
 	    index *= tb->total_legal_piece_positions[piece] / 2;
 
-	    if (vals[piece] > vals[tb->last_paired_piece[piece]]) {
-		index += (vals[piece] - vals[tb->last_paired_piece[piece]] - 1);
+	    if (vals[piece] > vals[tb->prev_piece_in_encoding_group[piece]]) {
+		index += (vals[piece] - vals[tb->prev_piece_in_encoding_group[piece]] - 1);
 	    } else {
-		index += (tb->total_legal_piece_positions[piece] + vals[piece] - vals[tb->last_paired_piece[piece]] - 1);
+		index += (tb->total_legal_piece_positions[piece] + vals[piece] - vals[tb->prev_piece_in_encoding_group[piece]] - 1);
 	    }
 	}
     }
@@ -2612,7 +2616,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->last_paired_piece[piece] == -1) {
+	if (tb->prev_piece_in_encoding_group[piece] == -1) {
 	    vals[piece] = index % tb->total_legal_piece_positions[piece];
 	    index /= tb->total_legal_piece_positions[piece];
 	} else {
@@ -2631,21 +2635,21 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->last_paired_piece[piece] != -1) {
+	if (tb->prev_piece_in_encoding_group[piece] != -1) {
 
-	    vals[piece] += vals[tb->last_paired_piece[piece]] + 1;
+	    vals[piece] += vals[tb->prev_piece_in_encoding_group[piece]] + 1;
 	    vals[piece] %= tb->total_legal_piece_positions[piece];
 
 	    /* One of the important tasks of any index_to_local_position() function is to return
 	     * false on all but one of the indices that correspond to identical positions.  Here,
-	     * that can only happen when two paired pieces are exactly half their total legal piece
+	     * that can only happen when two grouped pieces are exactly half their total legal piece
 	     * positions squares apart, which can be encoded using either piece first.  In this
 	     * case, we toss out the index with the larger of the two squares encoded as the base
 	     * value, and make sure that the "<" and the ">=" match up just right in the previous
 	     * function.
 	     */
 
-	    if (vals[tb->last_paired_piece[piece]] - vals[piece]
+	    if (vals[tb->prev_piece_in_encoding_group[piece]] - vals[piece]
 		== tb->total_legal_piece_positions[piece]/2) return 0;
 	}
 
@@ -2683,21 +2687,21 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->last_paired_piece[piece] != -1) {
+	if (tb->prev_piece_in_encoding_group[piece] != -1) {
 
-	    if (vals[piece] < vals[tb->last_paired_piece[piece]]) {
+	    if (vals[piece] < vals[tb->prev_piece_in_encoding_group[piece]]) {
 		uint8_t val = vals[piece];
-		vals[piece] = vals[tb->last_paired_piece[piece]];
-		vals[tb->last_paired_piece[piece]] = val;
+		vals[piece] = vals[tb->prev_piece_in_encoding_group[piece]];
+		vals[tb->prev_piece_in_encoding_group[piece]] = val;
 	    }
 
 	    if (! (tb->legal_squares[piece] & BITVECTOR(vals[piece]))
-		|| ! (tb->legal_squares[tb->last_paired_piece[piece]]
-		      & BITVECTOR(vals[tb->last_paired_piece[piece]]))) {
+		|| ! (tb->legal_squares[tb->prev_piece_in_encoding_group[piece]]
+		      & BITVECTOR(vals[tb->prev_piece_in_encoding_group[piece]]))) {
 
 		uint8_t val = vals[piece];
-		vals[piece] = vals[tb->last_paired_piece[piece]];
-		vals[tb->last_paired_piece[piece]] = val;
+		vals[piece] = vals[tb->prev_piece_in_encoding_group[piece]];
+		vals[tb->prev_piece_in_encoding_group[piece]] = val;
 	    }
 	}
     }
@@ -3275,9 +3279,9 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 	}
 
 	/* Remove positions for overlapping pieces, but we don't touch the kings, and we don't
-	 * consider anything in the current paired pieces group, because the combinadic encoding
-	 * already takes care of them.  For all other overlapping pieces before us in the piece
-	 * list, if that piece is earlier than us in board order, decrement our position by one.
+	 * consider anything in the current encoding group, because the combinadic encoding already
+	 * takes care of them.  For all other overlapping pieces before us in the piece list, if
+	 * that piece is earlier than us in board order, decrement our position by one.
 	 *
 	 * Pawns require special consideration, as we encode en-passant capturable pawns using the
 	 * squares on the first rank.  When using a pawn to reduce the encoding value of a later
@@ -3291,7 +3295,7 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	for (piece2 = piece; tb->last_paired_piece[piece2] != -1; piece2 = tb->last_paired_piece[piece2]);
+	for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
 
 	for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
 	    if (vals[piece] > pos->piece_position[piece2]) vals[piece] --;
@@ -3302,10 +3306,10 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
-	while ((tb->last_paired_piece[piece2] != -1)
-	       && (vals[piece2] < vals[tb->last_paired_piece[piece2]])) {
-	    transpose_array(vals, piece2, tb->last_paired_piece[piece2]);
-	    piece2 = tb->last_paired_piece[piece2];
+	while ((tb->prev_piece_in_encoding_group[piece2] != -1)
+	       && (vals[piece2] < vals[tb->prev_piece_in_encoding_group[piece2]])) {
+	    transpose_array(vals, piece2, tb->prev_piece_in_encoding_group[piece2]);
+	    piece2 = tb->prev_piece_in_encoding_group[piece2];
 	}
     }
 
@@ -3428,7 +3432,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	do {
 	    next_smallest_position = ILLEGAL_POSITION;
 
-	    for (piece2 = piece; tb->last_paired_piece[piece2] != -1; piece2 = tb->last_paired_piece[piece2]);
+	    for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
 
 	    for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
 		if (p->piece_position[piece2] <= p->piece_position[piece]) {
@@ -3466,12 +3470,12 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	 * sorted, but black ones have to be moved to the end of their group.
 	 */
 
-	for (piece = tb->next_paired_piece[en_passant_pawn];
+	for (piece = tb->next_piece_in_encoding_group[en_passant_pawn];
 	     (piece != -1)
-		 && (p->piece_position[tb->last_paired_piece[piece]]
+		 && (p->piece_position[tb->prev_piece_in_encoding_group[piece]]
 		     > p->piece_position[piece]);
-	     piece = tb->next_paired_piece[piece]) {
-	    transpose_array(p->piece_position, piece, tb->last_paired_piece[piece]);
+	     piece = tb->next_piece_in_encoding_group[piece]) {
+	    transpose_array(p->piece_position, piece, tb->prev_piece_in_encoding_group[piece]);
 	    en_passant_pawn = piece;
 	}
 
@@ -3497,7 +3501,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 		int piece2;
 
 		/* check for legality of all pieces in this set */
-		for (piece2 = piece; piece2 != -1; piece2 = tb->next_paired_piece[piece2]) {
+		for (piece2 = piece; piece2 != -1; piece2 = tb->next_piece_in_encoding_group[piece2]) {
 		    if (! (tb->legal_squares[piece2] & BITVECTOR(p->piece_position[piece2]))) {
 			break;
 		    }
@@ -5322,8 +5326,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    break;
 	}
 
-	tb->last_paired_piece[tb->white_king] = -1;
-	tb->next_paired_piece[tb->white_king] = -1;
+	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
+	tb->next_piece_in_encoding_group[tb->white_king] = -1;
 
 	/* now do everything else */
 	for (piece = 1; piece < tb->num_pieces; piece ++) {
@@ -5333,10 +5337,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		return NULL;
 	    }
 
-	    tb->last_paired_piece[piece] = tb->last_identical_piece[piece];
-	    tb->next_paired_piece[piece] = tb->next_identical_piece[piece];
+	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
+	    tb->next_piece_in_encoding_group[piece] = tb->next_identical_piece[piece];
 
-	    if (tb->last_paired_piece[piece] == -1) tb->max_index <<= 6;
+	    if (tb->prev_piece_in_encoding_group[piece] == -1) tb->max_index <<= 6;
 	    else tb->max_index <<=5;
 	}
 	tb->max_index --;
@@ -5401,10 +5405,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	}
 	tb->max_index *= tb->total_legal_compact_king_positions;
 
-	tb->last_paired_piece[tb->white_king] = -1;
-	tb->next_paired_piece[tb->white_king] = -1;
-	tb->last_paired_piece[tb->black_king] = -1;
-	tb->next_paired_piece[tb->black_king] = -1;
+	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
+	tb->next_piece_in_encoding_group[tb->white_king] = -1;
+	tb->prev_piece_in_encoding_group[tb->black_king] = -1;
+	tb->next_piece_in_encoding_group[tb->black_king] = -1;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -5415,8 +5419,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		return NULL;
 	    }
 
-	    tb->last_paired_piece[piece] = tb->last_identical_piece[piece];
-	    tb->next_paired_piece[piece] = tb->next_identical_piece[piece];
+	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
+	    tb->next_piece_in_encoding_group[piece] = tb->next_identical_piece[piece];
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
 	     * identical pieces assumes that both pieces occupy the same range of squares.
@@ -5444,12 +5448,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		    tb->total_legal_piece_positions[piece] ++;
 		}
 	    }
-	    if (tb->last_paired_piece[piece] == -1) {
+	    if (tb->prev_piece_in_encoding_group[piece] == -1) {
 		tb->max_index *= tb->total_legal_piece_positions[piece];
 	    } else if (tb->total_legal_piece_positions[piece]
-		       != tb->total_legal_piece_positions[tb->last_paired_piece[piece]]) {
-		/* Semilegal positions are supposed to be the union of legal positions for paired pieces */
-		fatal("BUG: Paired pieces don't have the same number of total semilegal positions\n");
+		       != tb->total_legal_piece_positions[tb->prev_piece_in_encoding_group[piece]]) {
+		/* Semilegal positions are the union of legal positions for an entire encoding group */
+		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
 	    } else {
 		tb->max_index *= tb->total_legal_piece_positions[piece]/2;
 	    }
@@ -5486,25 +5490,24 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	}
 	tb->max_index *= tb->total_legal_compact_king_positions;
 
-	tb->last_paired_piece[tb->white_king] = -1;
-	tb->next_paired_piece[tb->white_king] = -1;
-	tb->last_paired_piece[tb->black_king] = -1;
-	tb->next_paired_piece[tb->black_king] = -1;
+	/* Assign encoding groups, usually groups of identical pieces. */
 
-	/* An important special case - handle two opposing plus-pawns by combining their identical
-	 * pieces groups into a single paired pieces group, reducing tablebase size.  This also
-	 * requires extending the semilegal range of each group.
-	 */
+	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
+	tb->next_piece_in_encoding_group[tb->white_king] = -1;
+	tb->prev_piece_in_encoding_group[tb->black_king] = -1;
+	tb->next_piece_in_encoding_group[tb->black_king] = -1;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    tb->last_paired_piece[piece] = tb->last_identical_piece[piece];
-	    tb->next_paired_piece[piece] = tb->next_identical_piece[piece];
+	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
+	    tb->next_piece_in_encoding_group[piece] = tb->next_identical_piece[piece];
 
-	    /* Note that we only set blocking_piece for plus-pawns, so if two pieces are mutually
-	     * blocking, they must be opposing plus-pawns.
+	    /* An important special case - handle two opposing plus-pawns by combining their
+	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
+	     * range of each group.  Note that we only set blocking_piece for plus-pawns, so if two
+	     * pieces are mutually blocking, they must be opposing plus-pawns.
 	     */
 
 	    if ((tb->index_type == COMBINADIC3_INDEX)
@@ -5523,8 +5526,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 			/* should never happen, we should be blocked by a pawn of opposite color */
 			fatal("BUG: not blocked right\n");
 		    } else {
-			tb->next_paired_piece[piece] = tb->blocking_piece[piece];
-			for (piece2 = piece; piece2 != -1; piece2 = tb->last_paired_piece[piece2]) {
+			tb->next_piece_in_encoding_group[piece] = tb->blocking_piece[piece];
+			for (piece2 = piece; piece2 != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]) {
 			    tb->semilegal_squares[piece2]
 				|= tb->semilegal_squares[tb->blocking_piece[piece]];
 			}
@@ -5534,8 +5537,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 			/* should never happen, we should be blocked by a pawn of opposite color */
 			fatal("BUG: not blocked right\n");
 		    } else {
-			tb->last_paired_piece[piece] = tb->blocking_piece[piece];
-			for (piece2 = piece; piece2 != -1; piece2 = tb->next_paired_piece[piece2]) {
+			tb->prev_piece_in_encoding_group[piece] = tb->blocking_piece[piece];
+			for (piece2 = piece; piece2 != -1; piece2 = tb->next_piece_in_encoding_group[piece2]) {
 			    tb->semilegal_squares[piece2]
 				|= tb->semilegal_squares[tb->blocking_piece[piece]];
 			}
@@ -5577,12 +5580,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->last_paired_piece[piece] == -1) {
+	    if (tb->prev_piece_in_encoding_group[piece] == -1) {
 		piece_in_set = 1;
-	    } else if (tb->last_paired_piece[piece] == piece-1) {
+	    } else if (tb->prev_piece_in_encoding_group[piece] == piece-1) {
 		piece_in_set ++;
 	    } else {
-		fatal("Combinadic index types requires paired pieces to be adjacent in index\n");
+		fatal("Combinadic index types requires encoding groups to be adjacent in index\n");
 	    }
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
@@ -5613,19 +5616,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    /* Now back out any positions that we saved with the 'combinadic2' or 'combinadic3' indices */
 
 	    if ((tb->index_type == COMBINADIC2_INDEX) || (tb->index_type == COMBINADIC3_INDEX)) {
-		for (piece2 = piece; tb->last_paired_piece[piece2] != -1; piece2 = tb->last_paired_piece[piece2]);
+		for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
 		for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
 		    tb->total_legal_piece_positions[piece] --;
 		}
 	    }
 
-	    if ((tb->last_paired_piece[piece] != -1)
+	    if ((tb->prev_piece_in_encoding_group[piece] != -1)
 		&& (tb->total_legal_piece_positions[piece]
-		    != tb->total_legal_piece_positions[tb->last_paired_piece[piece]])) {
+		    != tb->total_legal_piece_positions[tb->prev_piece_in_encoding_group[piece]])) {
 		fatal("BUG: Identical pieces don't have the same number of total semilegal positions\n");
 	    }
 
-	    if (tb->next_paired_piece[piece] == -1) {
+	    if (tb->next_piece_in_encoding_group[piece] == -1) {
 		tb->max_index *= choose(tb->total_legal_piece_positions[piece], piece_in_set);
 	    }
 
@@ -5660,10 +5663,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	}
 	tb->max_index *= tb->total_legal_compact_king_positions;
 
-	tb->last_paired_piece[tb->white_king] = -1;
-	tb->next_paired_piece[tb->white_king] = -1;
-	tb->last_paired_piece[tb->black_king] = -1;
-	tb->next_paired_piece[tb->black_king] = -1;
+	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
+	tb->next_piece_in_encoding_group[tb->white_king] = -1;
+	tb->prev_piece_in_encoding_group[tb->black_king] = -1;
+	tb->next_piece_in_encoding_group[tb->black_king] = -1;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -5674,8 +5677,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		return NULL;
 	    }
 
-	    tb->last_paired_piece[piece] = tb->last_identical_piece[piece];
-	    tb->next_paired_piece[piece] = tb->next_identical_piece[piece];
+	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
+	    tb->next_piece_in_encoding_group[piece] = tb->next_identical_piece[piece];
 
 	    /* Note that we only set blocking_piece for plus-pawns, so if two pieces are mutually
 	     * blocking, they must be opposing plus-pawns.
@@ -5684,7 +5687,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    if ((tb->blocking_piece[piece] != -1)
 		&& (tb->blocking_piece[tb->blocking_piece[piece]] == piece)) {
 
-		if ((tb->last_paired_piece[piece] != -1) || (tb->next_paired_piece[piece] != -1)) {
+		if ((tb->prev_piece_in_encoding_group[piece] != -1) || (tb->next_piece_in_encoding_group[piece] != -1)) {
 		    fatal("Can't have a doubled pawn opposed by enemy pawn (yet)\n");
 		    return NULL;
 		}
@@ -5693,9 +5696,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		    return NULL;
 		}
 		if (tb->blocking_piece[piece] > piece) {
-		    tb->next_paired_piece[piece] = tb->blocking_piece[piece];
+		    tb->next_piece_in_encoding_group[piece] = tb->blocking_piece[piece];
 		} else {
-		    tb->last_paired_piece[piece] = tb->blocking_piece[piece];
+		    tb->prev_piece_in_encoding_group[piece] = tb->blocking_piece[piece];
 		}
 		/* We have to extend the semilegal squares of both blocking pawns because the
 		 * pairing is based on 2 pieces on n squares using (n)(n-1)/2 numbers.
@@ -5722,17 +5725,17 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
 		/* Unlike 'compact', we don't have to consider the en-passant case here because
 		 * we've already eliminated that as a possibility.  Also unlike 'compact', we've
-		 * paired opposing pawns on the same file.  So if en-passant were allowed, we would
+		 * grouped opposing pawns on the same file.  So if en-passant were allowed, we would
 		 * now have to (like 'compact') add an extra position for it, which could cause the
-		 * total number of semilegal positions to be different for two paired pieces.
+		 * total number of semilegal positions to be different for two grouped pieces.
 		 */
 	    }
-	    if (tb->last_paired_piece[piece] == -1) {
+	    if (tb->prev_piece_in_encoding_group[piece] == -1) {
 		tb->max_index *= tb->total_legal_piece_positions[piece];
 	    } else if (tb->total_legal_piece_positions[piece]
-		       != tb->total_legal_piece_positions[tb->last_paired_piece[piece]]) {
-		/* Semilegal positions are supposed to be the union of legal positions for paired pieces */
-		fatal("BUG: Paired pieces don't have the same number of total semilegal positions\n");
+		       != tb->total_legal_piece_positions[tb->prev_piece_in_encoding_group[piece]]) {
+		/* Semilegal positions are the union of legal positions for an entire encoding group */
+		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
 	    } else {
 		tb->max_index *= tb->total_legal_piece_positions[piece]/2;
 	    }
@@ -5940,7 +5943,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.601 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.602 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13511,7 +13514,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.601 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.602 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
