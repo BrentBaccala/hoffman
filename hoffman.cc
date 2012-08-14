@@ -5943,7 +5943,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.603 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.604 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8077,16 +8077,16 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
 	    /* This call pushed movecnt to zero, but the passed-in DTM might not be the best line,
 	     * so that's why we fetch entry DTM here.
 	     */
+	    dtm = get_entry_raw_DTM(index);
 #ifdef DEBUG_PASS_DEPENDANCIES
-	    if ((get_entry_raw_DTM(index) >= min_tracked_dtm)
-		&& (negative_passes_needed[-get_entry_raw_DTM(index)] == 0)) {
+	    if ((dtm >= min_tracked_dtm) && (negative_passes_needed[-dtm] == 0)) {
 		global_position_t global;
 		index_to_global_position(current_tb, index, &global);
 		printf("%d pass needed by %" PRIindex " %s\n",
-		       get_entry_raw_DTM(index), index, global_position_to_FEN(&global));
+		       dtm, index, global_position_to_FEN(&global));
 	    }
 #endif
-	    if (get_entry_raw_DTM(index) >= min_tracked_dtm) negative_passes_needed[-get_entry_raw_DTM(index)] = 1;
+	    if (dtm >= min_tracked_dtm) negative_passes_needed[-dtm] = 1;
 	}
     }
 }
@@ -13514,7 +13514,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.603 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.604 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
