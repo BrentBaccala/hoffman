@@ -1,12 +1,4 @@
 
-- improve 'combinadic2' encoding to handle pawns
-
-En passant positions are the problem here.  Some pawns (i.e, white
-pawns on the 4th or black pawns on the 5th) have two possible
-configurations - normal or capturable en-passant.  This screws up the
-combinadic2 logic, so I don't use it at all for pawns right now.
-
-
 - allow kings and side-to-move-flag to be positioned within index
 
 Right now, side to move flag is always the low bit, and kings always
@@ -94,14 +86,6 @@ a stream of bytes) and backpropagation (where we need to back an index
 out) could both be pipelined effectively.  Moving up to something like
 the Digilent Virtex-5 development board could make six piece
 tablebases practical.
-
-
-- trim size of proptables
-
-Because I use an integer scaling factor during proptable insertion,
-the trailing part of a proptable (that would correspond to the
-truncated decimal part) is unused.  There's no need to either malloc
-it or check it for entries when writing the table out.
 
 
 - improve compressibility
@@ -323,9 +307,17 @@ it, as well as iconize it while it continues to run.
 Needs to be more sophisticated.  Needs to handle restricted pieces.
 Needs to apply pruning statements selectively in different situations
 (there's already some code in it to do this using Perl expressions).
-Needs to have a 'freeze' pruning option that lets us queen a pawn and
-then let it sit there on the queening square to ensure that the other
-side can't either capture it immediately or queen right after us.
+
+Check for conflicting prune statements, so we don't have to wait until
+we get into a hoffman run before we find out about them.
+
+Add ability to restrict piece locations.  This should let us do the
+fortress example with a single control file.
+
+Add 'freeze' pruning type for promotions - promote and freeze new
+piece on the promotion square.  This lets us queen a pawn and then let
+it sit there on the queening square to ensure that the other side
+can't either capture it immediately or queen right after us.
 
 
 - improve probe mode's move parser
@@ -335,26 +327,6 @@ Check illegal moves more aggressively; have a 'back' command; maybe a
 
 
 - warn of incompatibilities between tb and entries formats
-
-
-- improve portability
-
-There might be some little-endian dependencies in the code, but even
-more serious is the usage (in the dynamic structures code and in the
-futurevector handling) of non-word-aligned word accesses.  I doubt it
-would run on a SPARC.
-
-
-- pawngen
-
-Check for conflicting prune statements, so we don't have to wait until
-we get into a hoffman run before we find out about them.
-
-Add ability to restrict piece locations.  This should let us do the
-fortress example with a single control file.
-
-Add 'freeze' pruning type for promotions - promote and freeze new
-piece on the promotion square.
 
 
 - random access to tablebase files
