@@ -71,8 +71,11 @@
  * more useful for endgame retrograde analysis than either Nalimov or Freezer.
  *
  * For those not up on Americana, the program is named after Trevor Hoffman, an All Star baseball
- * pitcher who specializes in "closing" games.  It was written specifically for The World vs. Arno
- * Nickel game (ultimately won by the World team with no help needed from Hoffman).
+ * pitcher who specializes in "closing" games.  It was written specifically for the first
+ * chessgames.com The World vs. Arno Nickel game, which was ultimately won by the World team with no
+ * help needed from Hoffman.  I resigned from the World team at the end of the second Arno Nickel
+ * game when the team agreed to a draw rather than play into a drawish endgame in the hopes of using
+ * an early version of Hoffman as the game simplified.
  *
  *
  * Basic Usage: hoffman -g <xml-control-file>                           (generate mode)
@@ -5961,7 +5964,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.607 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.608 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13532,7 +13535,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.607 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.608 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
