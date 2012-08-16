@@ -3340,16 +3340,10 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 {
     int piece;
     int en_passant_pawn = -1;
-    int en_passant_color;
+    int en_passant_color = 0;
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = ILLEGAL_POSITION;
-
-    p->side_to_move = index % 2;
-    index -= p->side_to_move;
-
-    /* If there's an en passant pawn, it must be the opposite color of PTM */
-    en_passant_color = 1 - p->side_to_move;
 
     /* Working backwards through the piece array, search for the largest value in
      * piece_index[] that is less than the (running) index, subtract it out of the index,
@@ -3381,19 +3375,34 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 
     }
 
+    p->side_to_move = index % 2;
     index /= 2;
 
-    if (index >= tb->total_legal_king_positions) {
-	fatal("index >= total legal king positions in combinadic3_index_to_local_position!\n");
-	return 0;
-    }
+    if (tb->variant != VARIANT_SUICIDE) {
 
-    p->piece_position[tb->white_king] = tb->white_king_position[index];
-    p->piece_position[tb->black_king] = tb->black_king_position[index];
+	if (index >= tb->total_legal_king_positions) {
+	    fatal("index >= total legal king positions in combinadic3_index_to_local_position!\n");
+	    return 0;
+	}
+
+	p->piece_position[tb->white_king] = tb->white_king_position[index];
+	p->piece_position[tb->black_king] = tb->black_king_position[index];
+
+    } else {
+
+	if (index != 0) {
+	    fatal("index > 0 in combinadic3_index_to_local_position!\n");
+	    return 0;
+	}
+
+    }
 
     /* Fix the en passant pawn, which was encoded on the first row */
 
     if (en_passant_pawn != -1) {
+
+	/* If there's an en passant pawn, it must be the opposite color of PTM */
+	en_passant_color = 1 - p->side_to_move;
 
 	if (en_passant_color == WHITE) {
 	    p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
@@ -4926,8 +4935,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
      * be present if we're doing a suicide analysis.
      */
 
-    if ((tb->variant == VARIANT_SUICIDE) && (tb->index_type != NAIVE_INDEX) && (tb->index_type != SIMPLE_INDEX)) {
-	fatal("Only 'naive' and 'simple' indices are compatible with 'suicide' variant\n");
+    if ((tb->variant == VARIANT_SUICIDE) && (tb->index_type != NAIVE_INDEX)
+	&& (tb->index_type != SIMPLE_INDEX) && (tb->index_type != COMBINADIC3_INDEX)) {
+	fatal("Only 'naive', 'simple', and 'combinadic3' indices are compatible with 'suicide' variant\n");
 	return NULL;
     }
 
@@ -5471,33 +5481,35 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	/* The "2" is because side-to-play is part of the position */
 	tb->max_index = 2;
 
-	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	    if (! (tb->legal_squares[tb->white_king] & BITVECTOR(white_king_square))) continue;
-	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		if (! (tb->legal_squares[tb->black_king] & BITVECTOR(black_king_square))) continue;
-		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
-		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
-		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
-		if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
-		    && (ROW(black_king_square) > COL(black_king_square))) continue;
+	if (tb->variant != VARIANT_SUICIDE) {
+	    for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
+		if (! (tb->legal_squares[tb->white_king] & BITVECTOR(white_king_square))) continue;
+		for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
+		    if (! (tb->legal_squares[tb->black_king] & BITVECTOR(black_king_square))) continue;
+		    if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+		    if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+		    if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+		    if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+			&& (ROW(black_king_square) > COL(black_king_square))) continue;
 
-		if (tb->positions_with_adjacent_kings_are_illegal
-		    && ! check_king_legality(white_king_square, black_king_square)) continue;
+		    if (tb->positions_with_adjacent_kings_are_illegal
+			&& ! check_king_legality(white_king_square, black_king_square)) continue;
 
-		tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
-		tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
-		tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
-		tb->total_legal_king_positions ++;
+		    tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
+		    tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
+		    tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
+		    tb->total_legal_king_positions ++;
+		}
 	    }
+	    tb->max_index *= tb->total_legal_king_positions;
+
+	    tb->prev_piece_in_encoding_group[tb->white_king] = -1;
+	    tb->next_piece_in_encoding_group[tb->white_king] = -1;
+	    tb->prev_piece_in_encoding_group[tb->black_king] = -1;
+	    tb->next_piece_in_encoding_group[tb->black_king] = -1;
 	}
-	tb->max_index *= tb->total_legal_king_positions;
 
 	/* Assign encoding groups, usually groups of identical pieces. */
-
-	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
-	tb->next_piece_in_encoding_group[tb->white_king] = -1;
-	tb->prev_piece_in_encoding_group[tb->black_king] = -1;
-	tb->next_piece_in_encoding_group[tb->black_king] = -1;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -5945,7 +5957,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.605 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.606 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13516,7 +13528,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.605 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.606 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
