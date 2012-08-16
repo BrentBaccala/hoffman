@@ -645,21 +645,23 @@ typedef struct tablebase {
     index_t max_index;
     index_t max_uninverted_index;
     index_t modulus;
-    int white_king;
-    int black_king;
     int positions_with_adjacent_kings_are_illegal;
-
     int symmetry;
+
+    /* Pieces are grouped into encoding groups to form indices */
     int total_legal_piece_positions[MAX_PIECES];
-    int simple_piece_positions[MAX_PIECES][64];
-    index_t simple_piece_indices[MAX_PIECES][64];
+    int piece_position[MAX_PIECES][64];
+    index_t piece_index[MAX_PIECES][64];
     int prev_piece_in_encoding_group[MAX_PIECES];
     int next_piece_in_encoding_group[MAX_PIECES];
 
-    uint8_t compact_white_king_positions[64*64];
-    uint8_t compact_black_king_positions[64*64];
-    index_t compact_king_indices[64][64];
-    uint total_legal_compact_king_positions;
+    /* Kings are usual encoded together to take advantage of them never being adjacent */
+    int white_king;
+    int black_king;
+    uint8_t white_king_position[64*64];
+    uint8_t black_king_position[64*64];
+    index_t king_index[64][64];
+    uint total_legal_king_positions;
 
     struct format format;
 
@@ -2367,9 +2369,9 @@ index_t local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		|| ((tb->piece_color[piece] == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    index += tb->simple_piece_indices[piece][COL(pos->en_passant_square)];
+	    index += tb->piece_index[piece][COL(pos->en_passant_square)];
 	} else {
-	    index += tb->simple_piece_indices[piece][pos->piece_position[piece]];
+	    index += tb->piece_index[piece][pos->piece_position[piece]];
 	}
     }
 
@@ -2393,7 +2395,7 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
-	int square = tb->simple_piece_positions[piece][index % tb->total_legal_piece_positions[piece]];
+	int square = tb->piece_position[piece][index % tb->total_legal_piece_positions[piece]];
 	index /= tb->total_legal_piece_positions[piece];
 
 	/* En passant */
@@ -2525,9 +2527,9 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		|| ((tb->piece_color[piece] == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    vals[piece] = tb->simple_piece_indices[piece][COL(pos->en_passant_square)];
+	    vals[piece] = tb->piece_index[piece][COL(pos->en_passant_square)];
 	} else {
-	    vals[piece] = tb->simple_piece_indices[piece][pos->piece_position[piece]];
+	    vals[piece] = tb->piece_index[piece][pos->piece_position[piece]];
 	}
     }
 
@@ -2548,8 +2550,8 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	if (piece == tb->white_king) {
-	    index *= tb->total_legal_compact_king_positions;
-	    index += tb->compact_king_indices[pos->piece_position[tb->white_king]]
+	    index *= tb->total_legal_king_positions;
+	    index += tb->king_index[pos->piece_position[tb->white_king]]
 		[pos->piece_position[tb->black_king]];
 	}
 
@@ -2610,8 +2612,8 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
 	if (piece == tb->white_king) {
-	    king_index = index % tb->total_legal_compact_king_positions;
-	    index /= tb->total_legal_compact_king_positions;
+	    king_index = index % tb->total_legal_king_positions;
+	    index /= tb->total_legal_king_positions;
 	}
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
@@ -2653,7 +2655,7 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 		== tb->total_legal_piece_positions[piece]/2) return 0;
 	}
 
-	vals[piece] = tb->simple_piece_positions[piece][vals[piece]];
+	vals[piece] = tb->piece_position[piece][vals[piece]];
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (vals[piece] < 8)) {
@@ -2732,8 +2734,8 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	}
     }
 
-    p->piece_position[tb->white_king] = tb->compact_white_king_positions[king_index];
-    p->piece_position[tb->black_king] = tb->compact_black_king_positions[king_index];
+    p->piece_position[tb->white_king] = tb->white_king_position[king_index];
+    p->piece_position[tb->black_king] = tb->black_king_position[king_index];
     if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return 0;
     if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return 0;
     p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
@@ -2810,10 +2812,10 @@ index_t local_position_to_combinadic_index(tablebase_t *tb, local_position_t *po
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		|| ((tb->piece_color[piece] == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    /* vals[piece] = tb->simple_piece_indices[piece][COL(pos->en_passant_square)]; */
+	    /* vals[piece] = tb->piece_index[piece][COL(pos->en_passant_square)]; */
 	    vals[piece] = COL(pos->en_passant_square);
 	} else {
-	    /* vals[piece] = tb->simple_piece_indices[piece][pos->piece_position[piece]]; */
+	    /* vals[piece] = tb->piece_index[piece][pos->piece_position[piece]]; */
 	    vals[piece] = pos->piece_position[piece];
 	}
     }
@@ -2834,13 +2836,13 @@ index_t local_position_to_combinadic_index(tablebase_t *tb, local_position_t *po
 	/* Kings have their own encoding table */
 
 	if (piece == tb->white_king) {
-	    index += 2 * tb->compact_king_indices[pos->piece_position[tb->white_king]]
+	    index += 2 * tb->king_index[pos->piece_position[tb->white_king]]
 		[pos->piece_position[tb->black_king]];
 	}
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	index += tb->simple_piece_indices[piece][vals[piece]];
+	index += tb->piece_index[piece][vals[piece]];
     }
 
     /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
@@ -2861,7 +2863,7 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
     index -= p->side_to_move;
 
     /* Each piece will have position values assigned to it multiplied by a multiplier for the set of
-     * identical pieces.  We search for the largest value in simple_piece_indices[] that is less
+     * identical pieces.  We search for the largest value in piece_index[] that is less
      * than the index and convert the encoding numbers to square numbers on the board.  This works
      * if identical pieces are grouped together.  This loop has to run in reverse order over the
      * pieces, since a combinadic encoding should be backed out from the largest piece first.
@@ -2877,13 +2879,13 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
 	     (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
 	     (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
 
-	    if ((tb->simple_piece_indices[piece][square] != INVALID_INDEX)
-		&& (tb->simple_piece_indices[piece][square] <= index)) {
+	    if ((tb->piece_index[piece][square] != INVALID_INDEX)
+		&& (tb->piece_index[piece][square] <= index)) {
 		p->piece_position[piece] = square;
 	    }
 	}
 
-	index -= tb->simple_piece_indices[piece][p->piece_position[piece]];
+	index -= tb->piece_index[piece][p->piece_position[piece]];
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (p->piece_position[piece] < 8)) {
@@ -2903,13 +2905,13 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
 
     index /= 2;
 
-    if (index >= tb->total_legal_compact_king_positions) {
+    if (index >= tb->total_legal_king_positions) {
 	fatal("index >= total legal king positions in combinadic_index_to_local_position!\n");
 	return 0;
     }
 
-    p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
-    p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
+    p->piece_position[tb->white_king] = tb->white_king_position[index];
+    p->piece_position[tb->black_king] = tb->black_king_position[index];
 
     /* Now we have to decide the actual ordering in the piece array.  Use our recorded
      * permutations to put pieces on legal squares, if possible.
@@ -3011,10 +3013,10 @@ index_t local_position_to_combinadic2_index(tablebase_t *tb, local_position_t *p
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		|| ((tb->piece_color[piece] == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    /* vals[piece] = tb->simple_piece_indices[piece][COL(pos->en_passant_square)]; */
+	    /* vals[piece] = tb->piece_index[piece][COL(pos->en_passant_square)]; */
 	    vals[piece] = COL(pos->en_passant_square);
 	} else {
-	    /* vals[piece] = tb->simple_piece_indices[piece][pos->piece_position[piece]]; */
+	    /* vals[piece] = tb->piece_index[piece][pos->piece_position[piece]]; */
 	    vals[piece] = pos->piece_position[piece];
 	}
 
@@ -3054,13 +3056,13 @@ index_t local_position_to_combinadic2_index(tablebase_t *tb, local_position_t *p
 	/* Kings have their own encoding table */
 
 	if (piece == tb->white_king) {
-	    index += 2 * tb->compact_king_indices[pos->piece_position[tb->white_king]]
+	    index += 2 * tb->king_index[pos->piece_position[tb->white_king]]
 		[pos->piece_position[tb->black_king]];
 	}
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	index += tb->simple_piece_indices[piece][vals[piece]];
+	index += tb->piece_index[piece][vals[piece]];
     }
 
     /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
@@ -3081,7 +3083,7 @@ boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, loca
     index -= p->side_to_move;
 
     /* Each piece will have position values assigned to it multiplied by a multiplier for the set of
-     * identical pieces.  We search for the largest value in simple_piece_indices[] that is less
+     * identical pieces.  We search for the largest value in piece_index[] that is less
      * than the index and convert the encoding numbers to square numbers on the board.  This works
      * if identical pieces are grouped together.  This loop has to run in reverse order over the
      * pieces, since a combinadic encoding should be backed out from the largest piece first.
@@ -3097,13 +3099,13 @@ boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, loca
 	     (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
 	     (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
 
-	    if ((tb->simple_piece_indices[piece][square] != INVALID_INDEX)
-		&& (tb->simple_piece_indices[piece][square] <= index)) {
+	    if ((tb->piece_index[piece][square] != INVALID_INDEX)
+		&& (tb->piece_index[piece][square] <= index)) {
 		p->piece_position[piece] = square;
 	    }
 	}
 
-	index -= tb->simple_piece_indices[piece][p->piece_position[piece]];
+	index -= tb->piece_index[piece][p->piece_position[piece]];
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (p->piece_position[piece] < 8)) {
@@ -3123,13 +3125,13 @@ boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, loca
 
     index /= 2;
 
-    if (index >= tb->total_legal_compact_king_positions) {
+    if (index >= tb->total_legal_king_positions) {
 	fatal("index >= total legal king positions in combinadic2_index_to_local_position!\n");
 	return 0;
     }
 
-    p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
-    p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
+    p->piece_position[tb->white_king] = tb->white_king_position[index];
+    p->piece_position[tb->black_king] = tb->black_king_position[index];
 
     /* Now we have to decide the actual ordering in the piece array.  Use our recorded
      * permutations to put pieces on legal squares, if possible.
@@ -3318,13 +3320,13 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 	/* Kings have their own encoding table */
 
 	if (piece == tb->white_king) {
-	    index += 2 * tb->compact_king_indices[pos->piece_position[tb->white_king]]
+	    index += 2 * tb->king_index[pos->piece_position[tb->white_king]]
 		[pos->piece_position[tb->black_king]];
 	}
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	index += tb->simple_piece_indices[piece][vals[piece]];
+	index += tb->piece_index[piece][vals[piece]];
     }
 
     /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
@@ -3350,7 +3352,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
     en_passant_color = 1 - p->side_to_move;
 
     /* Working backwards through the piece array, search for the largest value in
-     * simple_piece_indices[] that is less than the (running) index, subtract it out of the index,
+     * piece_index[] that is less than the (running) index, subtract it out of the index,
      * and store the (tenative) piece positions.
      */
 
@@ -3364,13 +3366,13 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	     (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
 	     (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
 
-	    if ((tb->simple_piece_indices[piece][square] != INVALID_INDEX)
-		&& (tb->simple_piece_indices[piece][square] <= index)) {
+	    if ((tb->piece_index[piece][square] != INVALID_INDEX)
+		&& (tb->piece_index[piece][square] <= index)) {
 		p->piece_position[piece] = square;
 	    }
 	}
 
-	index -= tb->simple_piece_indices[piece][p->piece_position[piece]];
+	index -= tb->piece_index[piece][p->piece_position[piece]];
 
 	if ((tb->piece_type[piece] == PAWN) && (p->piece_position[piece] < 8)) {
 	    if (en_passant_pawn != -1) return 0;  /* can't have two en passant pawns */
@@ -3381,13 +3383,13 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 
     index /= 2;
 
-    if (index >= tb->total_legal_compact_king_positions) {
+    if (index >= tb->total_legal_king_positions) {
 	fatal("index >= total legal king positions in combinadic3_index_to_local_position!\n");
 	return 0;
     }
 
-    p->piece_position[tb->white_king] = tb->compact_white_king_positions[index];
-    p->piece_position[tb->black_king] = tb->compact_black_king_positions[index];
+    p->piece_position[tb->white_king] = tb->white_king_position[index];
+    p->piece_position[tb->black_king] = tb->black_king_position[index];
 
     /* Fix the en passant pawn, which was encoded on the first row */
 
@@ -5360,16 +5362,16 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
-		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
-		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
+		tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = square;
+		tb->piece_index[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
 		if ((tb->piece_type[piece] == PAWN)
 		    && (((tb->piece_color[piece] == WHITE) && (ROW(square) == 3))
 			|| ((tb->piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
-		    tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = COL(square);
-		    tb->simple_piece_indices[piece][COL(square)] = tb->total_legal_piece_positions[piece];
+		    tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = COL(square);
+		    tb->piece_index[piece][COL(square)] = tb->total_legal_piece_positions[piece];
 		    tb->total_legal_piece_positions[piece] ++;
 		}
 	    }
@@ -5397,13 +5399,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		if (tb->positions_with_adjacent_kings_are_illegal
 		    && ! check_king_legality(white_king_square, black_king_square)) continue;
 
-		tb->compact_white_king_positions[tb->total_legal_compact_king_positions] = white_king_square;
-		tb->compact_black_king_positions[tb->total_legal_compact_king_positions] = black_king_square;
-		tb->compact_king_indices[white_king_square][black_king_square] = tb->total_legal_compact_king_positions;
-		tb->total_legal_compact_king_positions ++;
+		tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
+		tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
+		tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
+		tb->total_legal_king_positions ++;
 	    }
 	}
-	tb->max_index *= tb->total_legal_compact_king_positions;
+	tb->max_index *= tb->total_legal_king_positions;
 
 	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
 	tb->next_piece_in_encoding_group[tb->white_king] = -1;
@@ -5435,16 +5437,16 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
-		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
-		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
+		tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = square;
+		tb->piece_index[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
 		if ((tb->piece_type[piece] == PAWN)
 		    && (((tb->piece_color[piece] == WHITE) && (ROW(square) == 3))
 			|| ((tb->piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
-		    tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = COL(square);
-		    tb->simple_piece_indices[piece][COL(square)] = tb->total_legal_piece_positions[piece];
+		    tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = COL(square);
+		    tb->piece_index[piece][COL(square)] = tb->total_legal_piece_positions[piece];
 		    tb->total_legal_piece_positions[piece] ++;
 		}
 	    }
@@ -5482,13 +5484,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		if (tb->positions_with_adjacent_kings_are_illegal
 		    && ! check_king_legality(white_king_square, black_king_square)) continue;
 
-		tb->compact_white_king_positions[tb->total_legal_compact_king_positions] = white_king_square;
-		tb->compact_black_king_positions[tb->total_legal_compact_king_positions] = black_king_square;
-		tb->compact_king_indices[white_king_square][black_king_square] = tb->total_legal_compact_king_positions;
-		tb->total_legal_compact_king_positions ++;
+		tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
+		tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
+		tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
+		tb->total_legal_king_positions ++;
 	    }
 	}
-	tb->max_index *= tb->total_legal_compact_king_positions;
+	tb->max_index *= tb->total_legal_king_positions;
 
 	/* Assign encoding groups, usually groups of identical pieces. */
 
@@ -5604,11 +5606,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 			&& (tb->semilegal_squares[piece]
 			    & BITVECTOR(rowcol2square(tb->piece_color[piece] == WHITE ? 3 : 4, square))))) {
 
-		    tb->simple_piece_indices[piece][square]
+		    tb->piece_index[piece][square]
 			= choose(tb->total_legal_piece_positions[piece], piece_in_set) * tb->max_index;
 		    tb->total_legal_piece_positions[piece] ++;
 		} else {
-		    tb->simple_piece_indices[piece][square] = INVALID_INDEX;
+		    tb->piece_index[piece][square] = INVALID_INDEX;
 		}
 
 	    }
@@ -5655,13 +5657,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		if (tb->positions_with_adjacent_kings_are_illegal
 		    && ! check_king_legality(white_king_square, black_king_square)) continue;
 
-		tb->compact_white_king_positions[tb->total_legal_compact_king_positions] = white_king_square;
-		tb->compact_black_king_positions[tb->total_legal_compact_king_positions] = black_king_square;
-		tb->compact_king_indices[white_king_square][black_king_square] = tb->total_legal_compact_king_positions;
-		tb->total_legal_compact_king_positions ++;
+		tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
+		tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
+		tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
+		tb->total_legal_king_positions ++;
 	    }
 	}
-	tb->max_index *= tb->total_legal_compact_king_positions;
+	tb->max_index *= tb->total_legal_king_positions;
 
 	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
 	tb->next_piece_in_encoding_group[tb->white_king] = -1;
@@ -5719,8 +5721,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
-		tb->simple_piece_positions[piece][tb->total_legal_piece_positions[piece]] = square;
-		tb->simple_piece_indices[piece][square] = tb->total_legal_piece_positions[piece];
+		tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = square;
+		tb->piece_index[piece][square] = tb->total_legal_piece_positions[piece];
 		tb->total_legal_piece_positions[piece] ++;
 
 		/* Unlike 'compact', we don't have to consider the en-passant case here because
@@ -5943,7 +5945,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.604 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.605 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13514,7 +13516,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.604 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.605 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
