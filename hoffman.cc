@@ -3265,6 +3265,8 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
+	int decrement = 0;
+
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	 * this is completely legit.
@@ -3300,8 +3302,10 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 	for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
 
 	for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
-	    if (vals[piece] > pos->piece_position[piece2]) vals[piece] --;
+	    if (vals[piece] > pos->piece_position[piece2]) decrement ++;
 	}
+
+	vals[piece] -= decrement;
     }
 
     /* Sort encoding groups so that the lowest values always come first. */
@@ -5957,7 +5961,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.606 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.607 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13528,7 +13532,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.606 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.607 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
