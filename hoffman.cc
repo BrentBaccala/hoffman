@@ -728,8 +728,6 @@ typedef struct tablebase {
     int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
     int stalemate_prune_color;
 
-    void * entries;
-
     char *futurevectors;
     int futurevector_bits;
 } tablebase_t;
@@ -5964,7 +5962,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.609 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.610 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7567,176 +7565,32 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     return fetch_entry_pointer_n(tb, index, 0);
 }
 
-/* Fetch an entry pointer from the current tablebase - a table that's either in memory or on disk.
- */
-
-int entries_read_fd = -1;
-int entries_write_fd = -1;
-
-void * entry_buffer = NULL;
-index_t entry_buffer_start = 0;
-int entry_buffer_size = 4096;
-
-void initialize_current_entries_file(void)
+inline int get_raw_DTM(tablebase_t *tb, index_t index)
 {
-    int ret;
-
-    /* first, malloc the entries buffer if it doesn't already exist */
-
-    if (entry_buffer == NULL) {
-	entry_buffer = malloc(entry_buffer_size * ENTRIES_FORMAT_BYTES);
-	if (entry_buffer == NULL) {
-	    fatal("Can't malloc entries buffer\n");
-	    return;
-	}
-	memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-    }
-
-    /* create entries file for writing if it isn't already open */
-
-    if (entries_write_fd == -1) {
-	entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
-	if (entries_write_fd == -1) {
-	    fatal("Can't open 'entries_out' for read-write: %s\n", strerror(errno));
-	    return;
-	}
-    }
-
-    /* if we're restarting, there should be an input entries file */
-    /* XXX not true if the restart is right after futurebase backprop */
-
-    if (do_restart) {
-	entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
-
-	if (entries_read_fd == -1) {
-	    fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
-	    return;
-	}
-
-	entry_buffer_start = 0;
-	ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-	if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
-	    fatal("initial entries read: %s\n", strerror(errno));
-	    return;
-	}
-    }
+    return get_int_field(fetch_entry_pointer(tb, index),
+			 tb->format.dtm_offset + ((index << tb->format.bits) % 8),
+			 tb->format.dtm_bits);
 }
 
-void reset_current_entries_file(void)
+inline boolean get_flag(tablebase_t *tb, index_t index)
 {
-    int ret;
-
-    /* we're reseting back to the beginning - write the current buffer out, write out everything
-     * else, close and reopen both file descriptors, and read the first buffer in
-     */
-
-    do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-
-    if (entries_read_fd != -1) {
-	while ((ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES)) != 0) {
-	    if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
-		fatal("entries read: %s\n", strerror(errno));
-		return;
-	    }
-	    do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-	}
-    }
-
-    if (entries_read_fd != -1) close(entries_read_fd);
-    close(entries_write_fd);
-
-    if (rename("entries_out", "entries_in") != 0) {
-	fatal("Can't rename entries_out as entries_in\n");
-	return;
-    }
-
-    entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
-    entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_LARGEFILE, 0666);
-
-    if (entries_read_fd == -1) {
-	fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
-	return;
-    }
-    if (entries_write_fd == -1) {
-	fatal("Can't open 'entries_out' for writing: %s\n", strerror(errno));
-	return;
-    }
-
-    entry_buffer_start = 0;
-    ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-    if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
-	fatal("initial entries read: %s\n", strerror(errno));
-	return;
-    }
-
+    return get_bit_field(fetch_entry_pointer(tb, index),
+			 tb->format.flag_offset + ((index << tb->format.bits) % 8));
 }
 
-void advance_current_entries_file(index_t index)
+inline unsigned int get_basic(tablebase_t *tb, index_t index)
 {
-    int ret;
-
-    /* if we're moving past the entry buffer, write it to disk */
-
-    /* XXX multithreading a problem here? */
-
-    while (index >= entry_buffer_start + entry_buffer_size) {
-	do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-	if (entries_read_fd != -1) {
-	    ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-	    if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
-		fatal("entries read: %s\n", strerror(errno));
-		return;
-	    }
-	} else {
-	    memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-	}
-	entry_buffer_start += entry_buffer_size;
-    }
-}
-
-inline void * current_entry_pointer(index_t index)
-{
-    if (!using_proptables) {
-
-	/* entries array exists in memory - so just return a pointer into it */
-	return current_tb->entries;
-
-    } else {
-
-	/* proptables - entries array is on disk, so make sure we've got the right buffer and then return the pointer */
-
-	if (entry_buffer_start > index) reset_current_entries_file();
-	if (index >= entry_buffer_start + entry_buffer_size) advance_current_entries_file(index);
-
-	return entry_buffer;
-    }
-}
-
-inline bitoffset current_entry_bitoffset(index_t index)
-{
-    if (!using_proptables) {
-
-	/* entries array exists in memory - so just bit index into it */
-	return index << ENTRIES_FORMAT_BITS;
-
-    } else {
-
-	/* proptables - entries array is on disk, so make sure we've got the right buffer and then return the pointer */
-
-	if (entry_buffer_start > index) reset_current_entries_file();
-	if (index >= entry_buffer_start + entry_buffer_size) advance_current_entries_file(index);
-
-	return (index - entry_buffer_start) << ENTRIES_FORMAT_BITS;
-    }
+    return get_unsigned_int_field(fetch_entry_pointer(tb, index),
+				  tb->format.basic_offset + ((index << tb->format.bits) % 8), 3);
 }
 
 
-/* MORE TABLEBASE OPERATIONS - those that probe and manipulate individual position entries
+/* THE ENTRIES TABLE - manipulate individual entries in the tablebase under construction
  *
  * "Designed to multi-thread"
  *
- * Keep atomic operations confined to single functions.  Design functions so that functions calling
- * them don't need to know the details of table format, either.
+ * Keep atomic operations confined to single functions.  Use a virtual class so that calling
+ * functions don't need to know the details of table format, either.
  *
  * These "add one" functions (atomically) add one to the count in question, subtract one from the
  * total move count, and flag the position as 'ready for propagation' (maybe this is just a move
@@ -7762,290 +7616,455 @@ inline bitoffset current_entry_bitoffset(index_t index)
 pthread_mutex_t entries_lock = PTHREAD_MUTEX_INITIALIZER;
 #endif
 
-inline void lock_entry(tablebase_t *tb, index_t index)
-{
+
+class EntriesTable {
+
+    /* Subclasses are responsible for returning pointers and bit offsets to individual indices */
+ protected:
+    virtual void * pointer(index_t index) = 0;
+    virtual bitoffset offset(index_t index) = 0;
+
+ public:
+    void lock_entry(index_t index) {
 #ifdef USE_THREADS
-    if (num_threads == 1) {
-    } else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
-	if (spinlock_bit_field(current_entry_pointer(index),
-			       current_entry_bitoffset(index) + ENTRIES_FORMAT_LOCKING_BIT_OFFSET)) {
-	    /* contended_indices ++; */
-	    (void) __sync_add(&contended_indices, 1);
-	}
-    } else {
-	pthread_mutex_lock(&entries_lock);
-    }
-#endif
-}
-
-inline void unlock_entry(tablebase_t *tb, index_t index)
-{
-#ifdef USE_THREADS
-    if (num_threads == 1) {
-    } else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
-	set_bit_field(current_entry_pointer(index),
-		      current_entry_bitoffset(index) + ENTRIES_FORMAT_LOCKING_BIT_OFFSET, 0);
-    } else {
-	pthread_mutex_unlock(&entries_lock);
-    }
-#endif
-}
-
-inline int get_raw_DTM(tablebase_t *tb, index_t index)
-{
-    return get_int_field(fetch_entry_pointer(tb, index),
-			 tb->format.dtm_offset + ((index << tb->format.bits) % 8),
-			 tb->format.dtm_bits);
-}
-
-inline int get_entry_raw_DTM(index_t index)
-{
-    if (ENTRIES_FORMAT_DTM_BITS == 0) return 0;
-    return get_int_field(current_entry_pointer(index),
-			 current_entry_bitoffset(index) + ENTRIES_FORMAT_DTM_OFFSET,
-			 ENTRIES_FORMAT_DTM_BITS);
-}
-
-inline void set_entry_raw_DTM(index_t index, int dtm)
-{
-    if (ENTRIES_FORMAT_DTM_BITS == 0) return;
-    set_int_field(current_entry_pointer(index),
-		  current_entry_bitoffset(index) + ENTRIES_FORMAT_DTM_OFFSET,
-		  ENTRIES_FORMAT_DTM_BITS,
-		  dtm);
-}
-
-inline int get_entry_movecnt(index_t index)
-{
-    return get_unsigned_int_field(current_entry_pointer(index),
-				  current_entry_bitoffset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
-				  ENTRIES_FORMAT_MOVECNT_BITS);
-}
-
-inline void set_entry_movecnt(index_t index, unsigned int movecnt)
-{
-    set_unsigned_int_field(current_entry_pointer(index),
-			   current_entry_bitoffset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
-			   ENTRIES_FORMAT_MOVECNT_BITS,
-			   movecnt);
-}
-
-inline boolean get_entry_capture_possible_flag(index_t index)
-{
-    if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return 0;
-    return get_bit_field(current_entry_pointer(index),
-			 current_entry_bitoffset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET);
-}
-
-inline void set_entry_capture_possible_flag(index_t index, boolean flag)
-{
-    if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return;
-    set_bit_field(current_entry_pointer(index),
-		  current_entry_bitoffset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET,
-		  flag);
-}
-
-inline boolean get_flag(tablebase_t *tb, index_t index)
-{
-    return get_bit_field(fetch_entry_pointer(tb, index),
-			 tb->format.flag_offset + ((index << tb->format.bits) % 8));
-}
-
-inline unsigned int get_basic(tablebase_t *tb, index_t index)
-{
-    return get_unsigned_int_field(fetch_entry_pointer(tb, index),
-				  tb->format.basic_offset + ((index << tb->format.bits) % 8), 3);
-}
-
-inline short does_PTM_win(index_t index)
-{
-    return (get_entry_movecnt(index) == MOVECNT_PTM_WINS_PROPED)
-	|| (get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED);
-}
-
-inline short does_PNTM_win(index_t index)
-{
-    return (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_PROPED)
-	|| (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
-}
-
-/* Get the result in a format suitable for a one-byte DTM tablebase
- *
- * 0 = draw
- * 1 = PNTM in check (illegal position)
- * N = mate in N-1
- * -1 = PTM checkmated
- * -N = PNTM will have a mate in N-1 after this move
- *
- * The difference between get_DTM (here) and get_raw_DTM (above) is that if the DTM value is less
- * than zero (PNTM wins), but movecnt is still greater than zero, then there are still moves that
- * might let PTM slip off the hook, so in that case we indicate draw.
- */
-
-int get_entry_DTM(index_t index)
-{
-    return (does_PTM_win(index) || does_PNTM_win(index)) ? get_entry_raw_DTM(index) : 0;
-}
-
-inline boolean is_position_valid(tablebase_t *tb, index_t index)
-{
-    return (get_raw_DTM(tb, index) != 1);
-}
-
-/* Five possible ways we can initialize a tablebase entry for a position:
- *  - it's illegal
- *  - PNTM's mated
- *  - PTM's mated
- *  - stalemate
- *  - any other position, with 'movecnt' possible moves out the position
- */
-
-void initialize_entry(tablebase_t *tb, index_t index, int movecnt, int dtm)
-{
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE) {
-	fprintf(stderr, "initialize index %d %s movecnt %d; dtm %d\n",
-		index, index_to_FEN(tb, index), movecnt, dtm);
-    }
-#endif
-
-    /* We always initialize with fairly small DTMs (never bigger than two), so we don't need to
-     * check these array bounds for overflow here.
-     */
-    if (dtm > 0) positive_passes_needed[dtm] = 1;
-    if (dtm < 0) negative_passes_needed[-dtm] = 1;
-
-    /* XXX there's a matching "XXX" down below where we malloc the entries table and then zero it
-     * with memset.  Might be more efficient to set the entire entry here, making sure that we zero
-     * out any fields other than movecnt and DTM.  Might be more efficient not to worry so much
-     * about efficiency.  ;-)
-     */
-
-    set_entry_movecnt(index, movecnt);
-    if (ENTRIES_FORMAT_DTM_BITS > 0) set_entry_raw_DTM(index, dtm);
-}
-
-void initialize_entry_as_illegal(tablebase_t *tb, index_t index)
-{
-    /* An "illegal" position is something like one with two pieces both on the same square.  An
-     * illegal position in the chess sense, of PNTM being in check, is handled below.  So this
-     * function needs to flag the position in such a way that nothing will ever get done with it; in
-     * particular, no attempt will ever be made to back propagate it.  Setting everything to zero
-     * does the trick.  The zero movecnt doesn't matter, since we'll never back propagate into this
-     * position, and the zero DTM ensures that it will always be treated like a draw during
-     * a back prop pass - i.e, no attempt will ever be made to finalize it.
-     */
-
-    initialize_entry(tb, index, 0, 0);
-}
-
-void initialize_entry_with_PTM_mated(tablebase_t *tb, index_t index)
-{
-    /* This is a classic checkmate - PTM is in check and has no semi-legal moves, let along legal
-     * ones.  The case where PTM has semi-legal but no legal moves is handled below, in
-     * add_one_to_PNTM_wins().  DTM is -1 here - PNTM wins.
-     */
-
-    initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, -1);
-
-    /* total_legal_positions ++; */
-    (void) __sync_add(&total_legal_positions, 1);
-}
-
-void initialize_entry_with_PNTM_mated(tablebase_t *tb, index_t index)
-{
-    /* In ordinary chess, this kind of position is illegal - PNTM's king can be captured.  We don't
-     * count moves into check as part of "movecnt", so we don't want to back propagate from this
-     * position.  So we just flag it as a propagated win and DTM to one here - PTM wins.
-     *
-     * On the other hand, if we're doing a suicide analysis, a PNTM-mated position is a stalemate in
-     * ordinary terms (PTM can't move and therefore wins), so we do want to back propagate.
-     */
-
-    if (tb->variant == VARIANT_NORMAL) {
-	initialize_entry(tb, index, MOVECNT_PTM_WINS_PROPED, 1);
-    } else {
-	initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, 1);
-    }
-
-    /* total_PNTM_mated_positions ++; */
-    (void) __sync_add(&total_PNTM_mated_positions, 1);
-}
-
-void initialize_entry_with_stalemate(tablebase_t *tb, index_t index)
-{
-    /* The only way this function gets called is if the number of semi-legal moves out of the
-     * position is zero and we're not in check.  A "semi-legal" move is one that might not actually
-     * be legal (because it would move into check), but will be back-propagated in the tablebase.  A
-     * stalemate that arises from a position with semi-legal moves but no legal moves will get
-     * handled in add_one_to_PNTM_wins() once all of the semi-legal moves have been eliminated.  In
-     * short, because there are no semi-legal moves out of this position, we'll never back propagate
-     * into this position, so setting movecnt = 1 is an acceptable way of flagging this as a
-     * stalemate, since this position's movecnt should never get decremented.
-     */
-
-    if (tb->stalemate_prune_type == RESTRICTION_CONCEDE) {
-	if (index_to_side_to_move(tb, index) == tb->stalemate_prune_color) {
-	    initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, 2);
+	if (num_threads == 1) {
+	} else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
+	    if (spinlock_bit_field(pointer(index),
+				   offset(index) + ENTRIES_FORMAT_LOCKING_BIT_OFFSET)) {
+		/* contended_indices ++; */
+		(void) __sync_add(&contended_indices, 1);
+	    }
 	} else {
-	    initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, -2);
+	    pthread_mutex_lock(&entries_lock);
 	}
-    } else {
-	initialize_entry(tb, index, MOVECNT_STALEMATE, 0);
-	/* total_stalemate_positions ++; */
-	(void) __sync_add(&total_stalemate_positions, 1);
+#endif
     }
 
-    /* total_legal_positions ++; */
-    (void) __sync_add(&total_legal_positions, 1);
-}
-
-void initialize_entry_with_movecnt(tablebase_t *tb, index_t index, unsigned int movecnt)
-{
-    if (movecnt > MOVECNT_MAX) {
-	fatal("Attempting to initialize position with a movecnt that won't fit in field!\n");
+    void unlock_entry(index_t index) {
+#ifdef USE_THREADS
+	if (num_threads == 1) {
+	} else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
+	    set_bit_field(pointer(index),
+			  offset(index) + ENTRIES_FORMAT_LOCKING_BIT_OFFSET, 0);
+	} else {
+	    pthread_mutex_unlock(&entries_lock);
+	}
+#endif
     }
 
-    initialize_entry(tb, index, movecnt, 0);
-
-    /* total_legal_positions ++; */
-    (void) __sync_add(&total_legal_positions, 1);
-}
-
-void initialize_entry_with_DTM(tablebase_t *tb, index_t index, int dtm)
-{
-#if 0
-    if (movecnt > MOVECNT_MAX) {
-	fatal("Attempting to initialize position with a movecnt that won't fit in field!\n");
+    int get_raw_DTM(index_t index) {
+	if (ENTRIES_FORMAT_DTM_BITS == 0) return 0;
+	return get_int_field(pointer(index),
+			     offset(index) + ENTRIES_FORMAT_DTM_OFFSET,
+			     ENTRIES_FORMAT_DTM_BITS);
     }
+
+    void set_raw_DTM(index_t index, int dtm) {
+	if (ENTRIES_FORMAT_DTM_BITS == 0) return;
+	set_int_field(pointer(index),
+		      offset(index) + ENTRIES_FORMAT_DTM_OFFSET,
+		      ENTRIES_FORMAT_DTM_BITS,
+		      dtm);
+    }
+
+    int get_movecnt(index_t index) {
+	return get_unsigned_int_field(pointer(index),
+				      offset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
+				      ENTRIES_FORMAT_MOVECNT_BITS);
+    }
+
+    void set_movecnt(index_t index, unsigned int movecnt) {
+	set_unsigned_int_field(pointer(index),
+			       offset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
+			       ENTRIES_FORMAT_MOVECNT_BITS,
+			       movecnt);
+    }
+
+    boolean get_capture_possible_flag(index_t index) {
+	if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return 0;
+	return get_bit_field(pointer(index),
+			     offset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET);
+    }
+
+    void set_capture_possible_flag(index_t index, boolean flag) {
+	if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return;
+	set_bit_field(pointer(index),
+		      offset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET,
+		      flag);
+    }
+
+    boolean does_PTM_win(index_t index) {
+	return (get_movecnt(index) == MOVECNT_PTM_WINS_PROPED)
+	    || (get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED);
+    }
+
+    boolean does_PNTM_win(index_t index) {
+	return (get_movecnt(index) == MOVECNT_PNTM_WINS_PROPED)
+	    || (get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
+    }
+
+    /* Get the result in a format suitable for a one-byte DTM tablebase
+     *
+     * 0 = draw
+     * 1 = PNTM in check (illegal position)
+     * N = mate in N-1
+     * -1 = PTM checkmated
+     * -N = PNTM will have a mate in N-1 after this move
+     *
+     * The difference between get_DTM (here) and get_raw_DTM (above) is that if the DTM value is
+     * less than zero (PNTM wins), but movecnt is still greater than zero, then there are still
+     * moves that might let PTM slip off the hook, so in that case we indicate draw.
+     */
+
+    int get_DTM(index_t index) {
+	return (does_PTM_win(index) || does_PNTM_win(index)) ? get_raw_DTM(index) : 0;
+    }
+
+    /* Five possible ways we can initialize a tablebase entry for a position:
+     *  - it's illegal
+     *  - PNTM's mated
+     *  - PTM's mated
+     *  - stalemate
+     *  - any other position, with 'movecnt' possible moves out the position
+     */
+
+    void initialize_entry(index_t index, int movecnt, int dtm) {
+#ifdef DEBUG_MOVE
+	if (index == DEBUG_MOVE) {
+	    fprintf(stderr, "initialize index %d %s movecnt %d; dtm %d\n",
+		    index, index_to_FEN(current_tb, index), movecnt, dtm);
+	}
 #endif
 
-    if (dtm > 0) {
-	initialize_entry(tb, index, MOVECNT_PTM_WINS_UNPROPED, dtm);
-    } else {
-	initialize_entry(tb, index, MOVECNT_PNTM_WINS_UNPROPED, dtm);
+	/* We always initialize with fairly small DTMs (never bigger than two), so we don't need to
+	 * check these array bounds for overflow here.
+	 */
+	if (dtm > 0) positive_passes_needed[dtm] = 1;
+	if (dtm < 0) negative_passes_needed[-dtm] = 1;
+
+	/* XXX there's a matching "XXX" down below where we malloc the entries table and then zero
+	 * it with memset.  Might be more efficient to set the entire entry here, making sure that
+	 * we zero out any fields other than movecnt and DTM.  Might be more efficient not to worry
+	 * so much about efficiency.  ;-)
+	 */
+
+	set_movecnt(index, movecnt);
+	if (ENTRIES_FORMAT_DTM_BITS > 0) set_raw_DTM(index, dtm);
     }
 
-    /* total_legal_positions ++; */
-    (void) __sync_add(&total_legal_positions, 1);
-}
+    void initialize_entry_as_illegal(index_t index) {
 
-inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
+	/* An "illegal" position is something like one with two pieces both on the same square.  An
+	 * illegal position in the chess sense, of PNTM being in check, is handled below.  So this
+	 * function needs to flag the position in such a way that nothing will ever get done with
+	 * it; in particular, no attempt will ever be made to back propagate it.  Setting everything
+	 * to zero does the trick.  The zero movecnt doesn't matter, since we'll never back
+	 * propagate into this position, and the zero DTM ensures that it will always be treated
+	 * like a draw during a back prop pass - i.e, no attempt will ever be made to finalize it.
+	 */
+
+	initialize_entry(index, 0, 0);
+    }
+
+    void initialize_entry_with_PTM_mated(index_t index) {
+
+	/* This is a classic checkmate - PTM is in check and has no semi-legal moves, let along
+	 * legal ones.  The case where PTM has semi-legal but no legal moves is handled below, in
+	 * add_one_to_PNTM_wins().  DTM is -1 here - PNTM wins.
+	 */
+
+	initialize_entry(index, MOVECNT_PNTM_WINS_UNPROPED, -1);
+
+	/* total_legal_positions ++; */
+	(void) __sync_add(&total_legal_positions, 1);
+    }
+
+    void initialize_entry_with_PNTM_mated(index_t index) {
+
+	/* In ordinary chess, this kind of position is illegal - PNTM's king can be captured.  We
+	 * don't count moves into check as part of "movecnt", so we don't want to back propagate
+	 * from this position.  So we just flag it as a propagated win and DTM to one here - PTM
+	 * wins.
+	 *
+	 * On the other hand, if we're doing a suicide analysis, a PNTM-mated position is a
+	 * stalemate in ordinary terms (PTM can't move and therefore wins), so we do want to back
+	 * propagate.
+	 */
+
+	if (current_tb->variant == VARIANT_NORMAL) {
+	    initialize_entry(index, MOVECNT_PTM_WINS_PROPED, 1);
+	} else {
+	    initialize_entry(index, MOVECNT_PTM_WINS_UNPROPED, 1);
+	}
+
+	/* total_PNTM_mated_positions ++; */
+	(void) __sync_add(&total_PNTM_mated_positions, 1);
+    }
+
+    void initialize_entry_with_stalemate(index_t index) {
+
+	/* The only way this function gets called is if the number of semi-legal moves out of the
+	 * position is zero and we're not in check.  A "semi-legal" move is one that might not
+	 * actually be legal (because it would move into check), but will be back-propagated in the
+	 * tablebase.  A stalemate that arises from a position with semi-legal moves but no legal
+	 * moves will get handled in add_one_to_PNTM_wins() once all of the semi-legal moves have
+	 * been eliminated.  In short, because there are no semi-legal moves out of this position,
+	 * we'll never back propagate into this position, so setting movecnt = 1 is an acceptable
+	 * way of flagging this as a stalemate, since this position's movecnt should never get
+	 * decremented.
+	 */
+
+	if (current_tb->stalemate_prune_type == RESTRICTION_CONCEDE) {
+	    if (index_to_side_to_move(current_tb, index) == current_tb->stalemate_prune_color) {
+		initialize_entry(index, MOVECNT_PTM_WINS_UNPROPED, 2);
+	    } else {
+		initialize_entry(index, MOVECNT_PNTM_WINS_UNPROPED, -2);
+	    }
+	} else {
+	    initialize_entry(index, MOVECNT_STALEMATE, 0);
+	    /* total_stalemate_positions ++; */
+	    (void) __sync_add(&total_stalemate_positions, 1);
+	}
+
+	/* total_legal_positions ++; */
+	(void) __sync_add(&total_legal_positions, 1);
+    }
+
+    void initialize_entry_with_movecnt(index_t index, unsigned int movecnt) {
+
+	if (movecnt > MOVECNT_MAX) {
+	    fatal("Attempting to initialize position with a movecnt that won't fit in field!\n");
+	}
+
+	initialize_entry(index, movecnt, 0);
+
+	/* total_legal_positions ++; */
+	(void) __sync_add(&total_legal_positions, 1);
+    }
+
+    void initialize_entry_with_DTM(index_t index, int dtm) {
+
+#if 0
+	if (movecnt > MOVECNT_MAX) {
+	    fatal("Attempting to initialize position with a movecnt that won't fit in field!\n");
+	}
+#endif
+
+	if (dtm > 0) {
+	    initialize_entry(index, MOVECNT_PTM_WINS_UNPROPED, dtm);
+	} else {
+	    initialize_entry(index, MOVECNT_PNTM_WINS_UNPROPED, dtm);
+	}
+
+	/* total_legal_positions ++; */
+	(void) __sync_add(&total_legal_positions, 1);
+    }
+};
+
+class MemoryEntriesTable: public EntriesTable {
+
+ private:
+    void * entries;
+
+ public:
+    MemoryEntriesTable(void) {
+	entries = malloc(LEFTSHIFT(current_tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
+	if (entries == NULL) {
+	    fatal("Can't malloc %dMB for tablebase entries: %s\n",
+		  LEFTSHIFT(current_tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/(1024*1024),
+		  strerror(errno));
+	} else {
+	    int kilobytes = LEFTSHIFT(current_tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/1024;
+	    if (kilobytes < 1024) {
+		info("Malloced %dKB for tablebase entries\n", kilobytes);
+	    } else {
+		info("Malloced %dMB for tablebase entries\n", kilobytes/1024);
+	    }
+	}
+	/* Don't really need this, since they will all get initialized anyway */
+	/* XXX actually do this need right now, because initialization isn't complete */
+	memset(entries, 0, LEFTSHIFT(current_tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
+    }
+
+    void * pointer(index_t index) {
+	/* entries array exists in memory - so just return a pointer into it */
+	return entries;
+    }
+
+    bitoffset offset(index_t index) {
+	/* entries array exists in memory - so just bit index into it */
+	return index << ENTRIES_FORMAT_BITS;
+    }
+};
+
+class DiskEntriesTable: public EntriesTable {
+
+ private:
+    int entries_read_fd;
+    int entries_write_fd;
+
+    void * entry_buffer;
+    index_t entry_buffer_start;
+    static const int entry_buffer_size = 4096;
+
+    void reset_files(void) {
+
+	int ret;
+
+	/* we're reseting back to the beginning - write the current buffer out, write out everything
+	 * else, close and reopen both file descriptors, and read the first buffer in
+	 */
+
+	do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+
+	if (entries_read_fd != -1) {
+	    while ((ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES)) != 0) {
+		if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+		    fatal("entries read: %s\n", strerror(errno));
+		    return;
+		}
+		do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	    }
+	}
+
+	if (entries_read_fd != -1) close(entries_read_fd);
+	close(entries_write_fd);
+
+	if (rename("entries_out", "entries_in") != 0) {
+	    fatal("Can't rename entries_out as entries_in\n");
+	    return;
+	}
+
+	entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
+	entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_LARGEFILE, 0666);
+
+	if (entries_read_fd == -1) {
+	    fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
+	    return;
+	}
+	if (entries_write_fd == -1) {
+	    fatal("Can't open 'entries_out' for writing: %s\n", strerror(errno));
+	    return;
+	}
+
+	entry_buffer_start = 0;
+	ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+	    fatal("initial entries read: %s\n", strerror(errno));
+	    return;
+	}
+    }
+
+    void advance_files_to_index(index_t index)
+    {
+	int ret;
+
+	/* if we're moving past the entry buffer, write it to disk */
+
+	/* XXX multithreading a problem here? */
+
+	while (index >= entry_buffer_start + entry_buffer_size) {
+	    do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	    if (entries_read_fd != -1) {
+		ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+		if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+		    fatal("entries read: %s\n", strerror(errno));
+		    return;
+		}
+	    } else {
+		memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	    }
+	    entry_buffer_start += entry_buffer_size;
+	}
+    }
+
+ public:
+    DiskEntriesTable(void) {
+
+	int ret;
+
+	/* first, malloc the entries buffer */
+
+	entry_buffer = malloc(entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	if (entry_buffer == NULL) {
+	    fatal("Can't malloc entries buffer\n");
+	    return;
+	}
+	memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+
+	/* create entries file for writing */
+
+	entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
+	if (entries_write_fd == -1) {
+	    fatal("Can't open 'entries_out' for read-write: %s\n", strerror(errno));
+	    return;
+	}
+
+	entry_buffer_start = 0;
+
+	/* if we're restarting, there should be an input entries file */
+	/* XXX not true if the restart is right after futurebase backprop */
+
+	if (do_restart) {
+
+	    entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
+
+	    if (entries_read_fd == -1) {
+		fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
+		return;
+	    }
+
+	    ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	    if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+		fatal("initial entries read: %s\n", strerror(errno));
+		return;
+	    }
+
+	} else {
+
+	    entries_read_fd = -1;
+
+	}
+    }
+
+    void * pointer(index_t index) {
+	/* entries array is on disk, so make sure we've got the right buffer and then return the pointer */
+	if (entry_buffer_start > index) reset_files();
+	if (index >= entry_buffer_start + entry_buffer_size) advance_files_to_index(index);
+
+	return entry_buffer;
+    }
+
+    bitoffset offset(index_t index) {
+	if (entry_buffer_start > index) reset_files();
+	if (index >= entry_buffer_start + entry_buffer_size) advance_files_to_index(index);
+
+	return (index - entry_buffer_start) << ENTRIES_FORMAT_BITS;
+    }
+};
+
+
+/***** INTRA-TABLE BACK PROPAGATION *****/
+
+
+EntriesTable * entriesTable;
+
+inline void PTM_wins(index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("PTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, get_entry_raw_DTM(index));
+	printf("PTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, entriesTable->get_raw_DTM(index));
 #endif
 
     if (dtm < 0) {
 
 	fatal("Negative distance to mate in PTM_wins!?\n");
 
-    } else if ((get_entry_movecnt(index) != MOVECNT_PTM_WINS_PROPED)
-	       && (get_entry_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)
-	       && (get_entry_movecnt(index) != MOVECNT_PNTM_WINS_PROPED)
-	       && (get_entry_movecnt(index) != MOVECNT_PNTM_WINS_UNPROPED)
-	       && (get_entry_movecnt(index) != MOVECNT_STALEMATE)) {
+    } else if ((entriesTable->get_movecnt(index) != MOVECNT_PTM_WINS_PROPED)
+	       && (entriesTable->get_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)
+	       && (entriesTable->get_movecnt(index) != MOVECNT_PNTM_WINS_PROPED)
+	       && (entriesTable->get_movecnt(index) != MOVECNT_PNTM_WINS_UNPROPED)
+	       && (entriesTable->get_movecnt(index) != MOVECNT_STALEMATE)) {
 
 	/* In ordinary chess, we should never get here with MOVECNT_PNTM_WINS_UNPROPED (or PROPED)
 	 * because we have to have decremented the movecnt already to zero to have gotten either of
@@ -8054,51 +8073,51 @@ inline void PTM_wins(tablebase_t *tb, index_t index, int dtm)
 	 * only runs for a "normal" movecnt field - none of the five special cases.
 	 */
 
-	set_entry_movecnt(index, MOVECNT_PTM_WINS_UNPROPED);
-	set_entry_raw_DTM(index, dtm);
+	entriesTable->set_movecnt(index, MOVECNT_PTM_WINS_UNPROPED);
+	entriesTable->set_raw_DTM(index, dtm);
 	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 1;
 
-    } else if ((dtm < get_entry_raw_DTM(index))
-	       && (get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)) {
+    } else if ((dtm < entriesTable->get_raw_DTM(index))
+	       && (entriesTable->get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)) {
 
 	/* This can happen if we get a PTM mate during futurebase back prop, then, later during
 	 * futurebase back prop or during intra-table back prop, improve upon the mate.
 	 */
 
-	set_entry_raw_DTM(index, dtm);
+	entriesTable->set_raw_DTM(index, dtm);
 	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 1;
     }
 }
 
-inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
+inline void add_one_to_PNTM_wins(index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("add_one_to_PNTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, get_entry_raw_DTM(index));
+	printf("add_one_to_PNTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, entriesTable->get_raw_DTM(index));
 #endif
 
     if (dtm > 0) {
 	fatal("Positive distance to mate in PNTM_wins!?\n");
-    } else if ((get_entry_movecnt(index) != MOVECNT_PTM_WINS_PROPED)
-	       && (get_entry_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)
-	       && (get_entry_movecnt(index) != MOVECNT_PNTM_WINS_PROPED)
-	       && (get_entry_movecnt(index) != MOVECNT_PNTM_WINS_UNPROPED)
-	       && (get_entry_movecnt(index) != MOVECNT_STALEMATE)) {
+    } else if ((entriesTable->get_movecnt(index) != MOVECNT_PTM_WINS_PROPED)
+	       && (entriesTable->get_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)
+	       && (entriesTable->get_movecnt(index) != MOVECNT_PNTM_WINS_PROPED)
+	       && (entriesTable->get_movecnt(index) != MOVECNT_PNTM_WINS_UNPROPED)
+	       && (entriesTable->get_movecnt(index) != MOVECNT_STALEMATE)) {
 
 	/* Again, this is the code for a "normal" movecnt field. */
 
-	set_entry_movecnt(index, get_entry_movecnt(index) - 1);
+	entriesTable->set_movecnt(index, entriesTable->get_movecnt(index) - 1);
 
-	if ((dtm < get_entry_raw_DTM(index)) && (get_entry_raw_DTM(index) <= 0)) {
+	if ((dtm < entriesTable->get_raw_DTM(index)) && (entriesTable->get_raw_DTM(index) <= 0)) {
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
-	    set_entry_raw_DTM(index, dtm);
+	    entriesTable->set_raw_DTM(index, dtm);
 	}
 
-	if (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED) {  /* i.e, zero */
+	if (entriesTable->get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED) {  /* i.e, zero */
 	    /* This call pushed movecnt to zero, but the passed-in DTM might not be the best line,
 	     * so that's why we fetch entry DTM here.
 	     */
-	    dtm = get_entry_raw_DTM(index);
+	    dtm = entriesTable->get_raw_DTM(index);
 #ifdef DEBUG_PASS_DEPENDANCIES
 	    if ((dtm >= min_tracked_dtm) && (negative_passes_needed[-dtm] == 0)) {
 		global_position_t global;
@@ -8112,9 +8131,7 @@ inline void add_one_to_PNTM_wins(tablebase_t *tb, index_t index, int dtm)
     }
 }
 
-/***** INTRA-TABLE BACK PROPAGATION *****/
-
-void back_propagate_index_within_table(tablebase_t *tb, index_t index, int reflection);
+void back_propagate_index_within_table(index_t index, int reflection);
 
 void back_propagate_index(index_t index, int target_dtm)
 {
@@ -8138,14 +8155,14 @@ void back_propagate_index(index_t index, int target_dtm)
     /* static FILE *outfile = NULL; */
     /* if (outfile == NULL) outfile = fopen("indices", "w"); */
 
-    if (((get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)
-	 || (get_entry_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED))
-	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (get_entry_DTM(index) == target_dtm))) {
+    if (((entriesTable->get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)
+	 || (entriesTable->get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED))
+	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (entriesTable->get_DTM(index) == target_dtm))) {
 
 	/* fprintf(outfile, "%d\n", index); */
-	back_propagate_index_within_table(current_tb, index, REFLECTION_NONE);
+	back_propagate_index_within_table(index, REFLECTION_NONE);
 	if (current_tb->symmetry == 8) {
-	    back_propagate_index_within_table(current_tb, index, REFLECTION_DIAGONAL);
+	    back_propagate_index_within_table(index, REFLECTION_DIAGONAL);
 	}
 
 	/* Track statistics.  If we're multi-threaded, we need to make sure these increments are
@@ -8155,11 +8172,11 @@ void back_propagate_index(index_t index, int target_dtm)
 
 	(void) __sync_add(&positions_finalized[total_passes], 1);
 
-	if (get_entry_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED) {
-	    set_entry_movecnt(index, MOVECNT_PTM_WINS_PROPED);
+	if (entriesTable->get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED) {
+	    entriesTable->set_movecnt(index, MOVECNT_PTM_WINS_PROPED);
 	    if (target_dtm > 1) (void) __sync_add(&player_wins[index_to_side_to_move(current_tb, index)], 1);
 	} else {
-	    set_entry_movecnt(index, MOVECNT_PNTM_WINS_PROPED);
+	    entriesTable->set_movecnt(index, MOVECNT_PNTM_WINS_PROPED);
 	    (void) __sync_add(&player_wins[1 - index_to_side_to_move(current_tb, index)], 1);
 	}
 
@@ -8281,23 +8298,23 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
      */
 
     if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
-	&& get_entry_capture_possible_flag(index)) {
+	&& entriesTable->get_capture_possible_flag(index)) {
 	return;
     }
 
     /* The guts of committing an update into the entries table. */
 
-    lock_entry(current_tb, index);
+    entriesTable->lock_entry(index);
 
     if (dtm > 0) {
-	PTM_wins(current_tb, index, dtm);
+	PTM_wins(index, dtm);
     } else if (dtm < 0) {
 	for (i=0; i<movecnt; i++) {
-	    add_one_to_PNTM_wins(current_tb, index, dtm);
+	    add_one_to_PNTM_wins(index, dtm);
 	}
     }
 
-    unlock_entry(current_tb, index);
+    entriesTable->unlock_entry(index);
 }
 
 #ifdef HAVE_LIBTPIE
@@ -8420,7 +8437,7 @@ void proptable_pass(int target_dtm)
 	} else {
 
 	    /* Don't track futuremoves for illegal (DTM 1) positions */
-	    if (get_entry_DTM(index) != 1) {
+	    if (entriesTable->get_DTM(index) != 1) {
 
 		if ((futurevector & possible_futuremoves) != futurevector) {
 		    /* Commented out because if we're not using DTM this code will run for illegal positions */
@@ -10137,7 +10154,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
     /* concede - we treat these unhandled futuremoves as forced wins for PTM */
 
     if (futurevector & conceded_futuremoves[stm]) {
-	/* PTM_wins(tb, index, 1, 1); */
+	/* PTM_wins(index, 1, 1); */
 	/* We insert here with DTM=2 (mate in one), movecnt=1 (XXX), and no futuremove */
 	/* XXX I bet we want to insert with position's multiplicity as movecnt */
 	/* XXX we can modify the entry directly here - no need to use a proptable */
@@ -10169,7 +10186,7 @@ boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
      */
 
     for (index = 0; index <= tb->max_index; index ++) {
-	if (get_entry_DTM(index) != 1) {
+	if (entriesTable->get_DTM(index) != 1) {
 	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 	    futurevector_t futurevector = *((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
 
@@ -11126,7 +11143,7 @@ void optimize_futuremoves(tablebase_t *tb)
 void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, local_position_t *current_position)
 {
     index_t current_index;
-    int dtm = get_entry_DTM(future_index);
+    int dtm = entriesTable->get_DTM(future_index);
 
     current_index = local_position_to_index(tb, current_position);
 
@@ -11165,9 +11182,9 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 	commit_update(current_index, -dtm, 1, NO_FUTUREMOVE);
     } else if (dtm < 0) {
 	commit_update(current_index, -dtm+1, 1, NO_FUTUREMOVE);
-    } else if (get_entry_movecnt(future_index) == MOVECNT_PTM_WINS_UNPROPED) {
+    } else if (entriesTable->get_movecnt(future_index) == MOVECNT_PTM_WINS_UNPROPED) {
 	commit_update(current_index, -2, 1, NO_FUTUREMOVE);
-    } else if (get_entry_movecnt(future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
+    } else if (entriesTable->get_movecnt(future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
 	commit_update(current_index, 2, 1, NO_FUTUREMOVE);
     } else {
 	fatal("Intra-table back prop doesn't match dtm or movecnt\n");
@@ -11228,7 +11245,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
  * (within the tablebase) from the corresponding position.
  */
 
-void back_propagate_index_within_table(tablebase_t *tb, index_t index, int reflection)
+void back_propagate_index_within_table(index_t index, int reflection)
 {
     local_position_t position;
     int piece;
@@ -11238,7 +11255,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 
     /* This can fail if the reflection isn't valid for this index */
 
-    if (! index_to_local_position(tb, index, reflection, &position)) return;
+    if (! index_to_local_position(current_tb, index, reflection, &position)) return;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -11256,14 +11273,14 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 
 	int en_passant_pawn = -1;
 
-	for (piece = 0; piece < tb->num_pieces; piece++) {
+	for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
-	    if (tb->piece_color[piece] != position.side_to_move) continue;
-	    if (tb->piece_type[piece] != PAWN) continue;
+	    if (current_tb->piece_color[piece] != position.side_to_move) continue;
+	    if (current_tb->piece_type[piece] != PAWN) continue;
 
-	    if (((tb->piece_color[piece] == WHITE)
+	    if (((current_tb->piece_color[piece] == WHITE)
 		 && (position.piece_position[piece] - 8 == position.en_passant_square))
-		|| ((tb->piece_color[piece] == BLACK)
+		|| ((current_tb->piece_color[piece] == BLACK)
 		    && (position.piece_position[piece] + 8 == position.en_passant_square))) {
 		if (en_passant_pawn != -1) fatal("Two en passant pawns in back prop?!\n");
 		en_passant_pawn = piece;
@@ -11281,7 +11298,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 
 	    position.board_vector &= ~BITVECTOR(position.piece_position[en_passant_pawn]);
 
-	    if (tb->piece_color[en_passant_pawn] == WHITE)
+	    if (current_tb->piece_color[en_passant_pawn] == WHITE)
 		position.piece_position[en_passant_pawn] -= 16;
 	    else
 		position.piece_position[en_passant_pawn] += 16;
@@ -11292,12 +11309,12 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 	     * is the only legal back-move from this point, well...
 	     */
 
-	    if (! (tb->semilegal_squares[en_passant_pawn]
+	    if (! (current_tb->semilegal_squares[en_passant_pawn]
 		   & BITVECTOR(position.piece_position[en_passant_pawn]))) {
 		return;
 	    }
 
-	    propagate_one_move_within_table(tb, index, &position);
+	    propagate_one_move_within_table(current_tb, index, &position);
 	}
 
 	return;
@@ -11305,22 +11322,22 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 
     /* foreach (mobile piece of player NOT TO PLAY) { */
 
-    for (piece = 0; piece < tb->num_pieces; piece++) {
+    for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
 	/* We've moving BACKWARDS in the game, so we want the pieces of the player who is NOT TO
 	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	if (tb->piece_color[piece] != position.side_to_move)
+	if (current_tb->piece_color[piece] != position.side_to_move)
 	    continue;
 
 	origin_square = position.piece_position[piece];
 
 	position.board_vector &= ~BITVECTOR(origin_square);
 
-	if (tb->piece_type[piece] != PAWN) {
+	if (current_tb->piece_type[piece] != PAWN) {
 
-	    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+	    for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[piece]]; dir++) {
 
 		/* What about captures?  Well, first of all, there are no captures here!  We're
 		 * moving BACKWARDS in the game... and pieces don't appear out of thin air.
@@ -11330,13 +11347,13 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 		 * vector, there's absolutely no need to consider anything further.
 		 */
 
-		for (movementptr = movements[tb->piece_type[piece]][origin_square][dir];
+		for (movementptr = movements[current_tb->piece_type[piece]][origin_square][dir];
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
 		    /* We never back out into a restricted position (obviously) */
 
-		    if (! (tb->semilegal_squares[piece] & movementptr->vector)) continue;
+		    if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
 
 		    /* Back stepping a half move here involves several things: flipping the
 		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
@@ -11358,7 +11375,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 
 		    position.board_vector |= BITVECTOR(movementptr->square);
 
-		    propagate_one_move_within_table(tb, index, &position);
+		    propagate_one_move_within_table(current_tb, index, &position);
 
 		    position.board_vector &= ~BITVECTOR(movementptr->square);
 		}
@@ -11368,13 +11385,13 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 
 	    /* Usual special case for pawns */
 
-	    for (movementptr = normal_pawn_movements_bkwd[origin_square][tb->piece_color[piece]];
+	    for (movementptr = normal_pawn_movements_bkwd[origin_square][current_tb->piece_color[piece]];
 		 (movementptr->vector & position.board_vector) == 0;
 		 movementptr++) {
 
 		/* We never back out into a restricted position (obviously) */
 
-		if (! (tb->semilegal_squares[piece] & movementptr->vector)) continue;
+		if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
 
 		/* Do we have a backwards pawn move here?
 		 *
@@ -11399,7 +11416,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 
 		if (((movementptr->square - origin_square) == 16)
 		    || ((movementptr->square - origin_square) == -16)) {
-		    if (tb->index_type != NO_EN_PASSANT_INDEX) continue;
+		    if (current_tb->index_type != NO_EN_PASSANT_INDEX) continue;
 		}
 
 		/* I go to the trouble to update board_vector here so we can check en passant
@@ -11410,7 +11427,7 @@ void back_propagate_index_within_table(tablebase_t *tb, index_t index, int refle
 
 		position.board_vector |= BITVECTOR(movementptr->square);
 
-		propagate_one_move_within_table(tb, index, &position);
+		propagate_one_move_within_table(current_tb, index, &position);
 
 		position.board_vector &= ~BITVECTOR(movementptr->square);
 	    }
@@ -11694,7 +11711,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
     if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 
-	initialize_entry_as_illegal(tb, index);
+	entriesTable->initialize_entry_as_illegal(index);
 	return 0;
 
     } else {
@@ -11764,11 +11781,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    movecnt --;
 				} else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
 				    /* it's a concede - PTM wins */
-				    initialize_entry_with_DTM(tb, index, 2);
+				    entriesTable->initialize_entry_with_DTM(index, 2);
 				    return 0;
 				} else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
 				    /* it's a resign - PTM loses */
-				    initialize_entry_with_DTM(tb, index, -2);
+				    entriesTable->initialize_entry_with_DTM(index, -2);
 				    return 0;
 				} else if (futuremoves[piece][movementptr->square] < 0) {
 				    global_position_t global;
@@ -11816,7 +11833,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			for (i = 0; i < tb->num_pieces; i ++) {
 			    if (movementptr->square == position.piece_position[i]) {
 				if ((i == tb->black_king) || (i == tb->white_king)) {
-				    initialize_entry_with_PNTM_mated(tb, index);
+				    entriesTable->initialize_entry_with_PNTM_mated(index);
 				    return 0;
 				}
 
@@ -11829,11 +11846,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					/* discard prune - do nothing */
 				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
 					/* concede prune */
-					initialize_entry_with_DTM(tb, index, 2);
+					entriesTable->initialize_entry_with_DTM(index, 2);
 					return 0;
 				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
 					/* resign prune (or an actual suicide loss if capturing last piece) */
-					initialize_entry_with_DTM(tb, index, -2);
+					entriesTable->initialize_entry_with_DTM(index, -2);
 					return 0;
 				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
@@ -11902,11 +11919,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    /* discard prune - do nothing */
 				} else if (promotions[piece][promotion] == CONCEDE_FUTUREMOVE) {
 				    /* concede prune */
-				    initialize_entry_with_DTM(tb, index, 2);
+				    entriesTable->initialize_entry_with_DTM(index, 2);
 				    return 0;
 				} else if (promotions[piece][promotion] == RESIGN_FUTUREMOVE) {
 				    /* resign prune */
-				    initialize_entry_with_DTM(tb, index, -2);
+				    entriesTable->initialize_entry_with_DTM(index, -2);
 				    return 0;
 				} else if (promotions[piece][promotion] < 0) {
 				    global_position_t global;
@@ -11940,11 +11957,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    movecnt --;
 				} else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
 				    /* concede prune */
-				    initialize_entry_with_DTM(tb, index, 2);
+				    entriesTable->initialize_entry_with_DTM(index, 2);
 				    return 0;
 				} else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
 				    /* resign prune */
-				    initialize_entry_with_DTM(tb, index, -2);
+				    entriesTable->initialize_entry_with_DTM(index, -2);
 				    return 0;
 				} else if (futuremoves[piece][movementptr->square] < 0) {
 				    global_position_t global;
@@ -12007,11 +12024,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					/* discard prune - do nothing */
 				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
 					/* concede prune */
-					initialize_entry_with_DTM(tb, index, 2);
+					entriesTable->initialize_entry_with_DTM(index, 2);
 					return 0;
 				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
 					/* resign prune (or an actual suicide loss if capturing last piece) */
-					initialize_entry_with_DTM(tb, index, -2);
+					entriesTable->initialize_entry_with_DTM(index, -2);
 					return 0;
 				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
@@ -12047,7 +12064,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		    for (i = 0; i < tb->num_pieces; i ++) {
 			if (movementptr->square == position.piece_position[i]) {
 			    if ((i == tb->black_king) || (i == tb->white_king)) {
-				initialize_entry_with_PNTM_mated(tb, index);
+				entriesTable->initialize_entry_with_PNTM_mated(index);
 				return 0;
 			    }
 
@@ -12060,11 +12077,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					/* discard prune - do nothing */
 				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
 					/* concede prune */
-					initialize_entry_with_DTM(tb, index, 2);
+					entriesTable->initialize_entry_with_DTM(index, 2);
 					return 0;
 				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
 					/* resign prune (or an actual suicide loss if capturing last piece) */
-					initialize_entry_with_DTM(tb, index, -2);
+					entriesTable->initialize_entry_with_DTM(index, -2);
 					return 0;
 				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
@@ -12090,11 +12107,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					    /* discard prune - do nothing */
 					} else if (promotion_captures[piece][i][promotion] == CONCEDE_FUTUREMOVE) {
 					    /* concede prune */
-					    initialize_entry_with_DTM(tb, index, 2);
+					    entriesTable->initialize_entry_with_DTM(index, 2);
 					    return 0;
 					} else if (promotion_captures[piece][i][promotion] == RESIGN_FUTUREMOVE) {
 					    /* resign prune (or an actual suicide loss if capturing last piece) */
-					    initialize_entry_with_DTM(tb, index, -2);
+					    entriesTable->initialize_entry_with_DTM(index, -2);
 					    return 0;
 					} else if (promotion_captures[piece][i][promotion] < 0) {
 					    global_position_t global;
@@ -12143,11 +12160,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	if (movecnt == 0) {
 
 	    if (tb->variant == VARIANT_SUICIDE) {
-		initialize_entry_with_PNTM_mated(tb, index);
+		entriesTable->initialize_entry_with_PNTM_mated(index);
 	    } else if (PTM_in_check(tb, &position)) {
-		initialize_entry_with_PTM_mated(tb, index);
+		entriesTable->initialize_entry_with_PTM_mated(index);
 	    } else {
-		initialize_entry_with_stalemate(tb, index);
+		entriesTable->initialize_entry_with_stalemate(index);
 	    }
 	    return 0;
 
@@ -12168,7 +12185,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		futurevector = capture_futurevector;
 	    }
 
-	    set_entry_capture_possible_flag(index, capturecnt != 0);
+	    entriesTable->set_capture_possible_flag(index, capturecnt != 0);
 
 	    /* Symmetry and multiplicity.  If we're using a symmetric index, then there might be more
 	     * than one actual board position that corresponds to a given index value.  The number
@@ -12184,7 +12201,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	     * one of them being off the diagnoal (multiplicity 2).
 	     */
 
-	    initialize_entry_with_movecnt(tb, index, movecnt * position.multiplicity);
+	    entriesTable->initialize_entry_with_movecnt(index, movecnt * position.multiplicity);
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE) {
@@ -12435,7 +12452,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE) {
 	    fprintf(stderr, "Writing %d: DTM %d; movecnt %d\n", index,
-		    get_entry_DTM(index), get_entry_movecnt(index));
+		    entriesTable->get_DTM(index), entriesTable->get_movecnt(index));
 	}
 #endif
 
@@ -12447,7 +12464,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    set_int_field(entry,
 			  tb->format.dtm_offset + ((index << tb->format.bits) % 8),
 			  tb->format.dtm_bits,
-			  get_entry_DTM(index));
+			  entriesTable->get_DTM(index));
 	}
 
 	if (tb->format.basic_offset != -1) {
@@ -12457,9 +12474,9 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	     * don't distinguish illegal positions from draws - see initialize_entry_as_illegal()
 	     */
 
-	    if (does_PTM_win(index)) {
+	    if (entriesTable->does_PTM_win(index)) {
 		basic = 1;
-	    } else if (does_PNTM_win(index)) {
+	    } else if (entriesTable->does_PNTM_win(index)) {
 		basic = 2;
 	    } else {
 		basic = 0;
@@ -12474,13 +12491,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    set_bit_field(entry,
 			  tb->format.flag_offset + ((index << tb->format.bits) % 8),
 			  (index_to_side_to_move(tb, index) == WHITE)
-			  ? does_PTM_win(index) : does_PNTM_win(index));
+			  ? entriesTable->does_PTM_win(index) : entriesTable->does_PNTM_win(index));
 	    break;
 	case FORMAT_FLAG_WHITE_DRAWS:
 	    set_bit_field(entry,
 			  tb->format.flag_offset + ((index << tb->format.bits) % 8),
 			  (index_to_side_to_move(tb, index) == WHITE)
-			  ? !does_PNTM_win(index) : !does_PTM_win(index));
+			  ? ! entriesTable->does_PNTM_win(index) : ! entriesTable->does_PTM_win(index));
 	    break;
 	}
 
@@ -12580,23 +12597,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 
     if (!using_proptables) {
-	tb->entries = malloc(LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
-	if (tb->entries == NULL) {
-	    fatal("Can't malloc %dMB for tablebase entries: %s\n",
-		  LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/(1024*1024),
-		  strerror(errno));
-	    return 0;
-	} else {
-	    int kilobytes = LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/1024;
-	    if (kilobytes < 1024) {
-		info("Malloced %dKB for tablebase entries\n", kilobytes);
-	    } else {
-		info("Malloced %dMB for tablebase entries\n", kilobytes/1024);
-	    }
-	}
-	/* Don't really need this, since they will all get initialized anyway */
-	/* XXX actually do this need right now, because initialization isn't complete */
-	memset(tb->entries, 0, LEFTSHIFT(tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
+	entriesTable = new MemoryEntriesTable;
     }
 
 #ifdef HAVE_LIBTPIE
@@ -12727,7 +12728,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * into it, checking each position move as we go to make sure its futuremoves are handled.
 	 */
 
-	initialize_current_entries_file();
+	entriesTable = new DiskEntriesTable;
 
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
@@ -13535,7 +13536,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.609 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.610 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
