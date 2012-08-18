@@ -5961,7 +5961,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.612 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.613 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7705,6 +7705,20 @@ class EntriesTable {
 	    || (get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
     }
 
+    boolean is_unpropagated(index_t index) {
+	return (get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)
+	    || (get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
+    }
+
+    void flag_as_propagated(index_t index) {
+	/* assert(is_unpropagated(index)); */
+	if (does_PTM_win(index)) {
+	    set_movecnt(index, MOVECNT_PTM_WINS_PROPED);
+	} else {
+	    set_movecnt(index, MOVECNT_PNTM_WINS_PROPED);
+	}
+    }
+
     /* Get the result in a format suitable for a one-byte DTM tablebase
      *
      * 0 = draw
@@ -8154,18 +8168,15 @@ void back_propagate_index(index_t index, int target_dtm)
      * assumed like the horizontal or vertical cases.
      */
 
-    /* static FILE *outfile = NULL; */
-    /* if (outfile == NULL) outfile = fopen("indices", "w"); */
-
-    if (((entriesTable->get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)
-	 || (entriesTable->get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED))
+    if (entriesTable->is_unpropagated(index)
 	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (entriesTable->get_DTM(index) == target_dtm))) {
 
-	/* fprintf(outfile, "%d\n", index); */
 	back_propagate_index_within_table(index, REFLECTION_NONE);
 	if (current_tb->symmetry == 8) {
 	    back_propagate_index_within_table(index, REFLECTION_DIAGONAL);
 	}
+
+	entriesTable->flag_as_propagated(index);
 
 	/* Track statistics.  If we're multi-threaded, we need to make sure these increments are
 	 * done atomically.  For the "player wins" statistics, we don't want to count illegal (PNTM
@@ -8174,11 +8185,9 @@ void back_propagate_index(index_t index, int target_dtm)
 
 	(void) __sync_add(&positions_finalized[total_passes], 1);
 
-	if (entriesTable->get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED) {
-	    entriesTable->set_movecnt(index, MOVECNT_PTM_WINS_PROPED);
+	if (entriesTable->does_PTM_win(index)) {
 	    if (target_dtm > 1) (void) __sync_add(&player_wins[index_to_side_to_move(current_tb, index)], 1);
 	} else {
-	    entriesTable->set_movecnt(index, MOVECNT_PNTM_WINS_PROPED);
 	    (void) __sync_add(&player_wins[1 - index_to_side_to_move(current_tb, index)], 1);
 	}
 
@@ -13538,7 +13547,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.612 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.613 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
