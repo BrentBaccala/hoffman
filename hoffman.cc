@@ -555,7 +555,6 @@ struct format proptable_format;
 #define ENTRIES_FORMAT_MOVECNT_MASK (entries_format.movecnt_mask)
 #define ENTRIES_FORMAT_MOVECNT_OFFSET (entries_format.movecnt_offset)
 #define ENTRIES_FORMAT_MOVECNT_BITS (entries_format.movecnt_bits)
-#define ENTRIES_FORMAT_FLAG_OFFSET (entries_format.flag_offset)
 #define ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET (entries_format.capture_possible_flag_offset)
 
 #define PROPTABLE_FORMAT_BYTES (proptable_format.bytes)
@@ -5962,7 +5961,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.611 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.612 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13539,7 +13538,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.611 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.612 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
