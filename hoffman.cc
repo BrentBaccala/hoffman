@@ -5962,7 +5962,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.610 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.611 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7406,7 +7406,7 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 }
 
 
-/***** THE ENTRIES TABLE(S) *****/
+/***** READING AN EXISTING TABLEBASE *****/
 
 #define LEFTSHIFT(val,bits) (((bits) > 0) ? ((val) << (bits)) : ((val) >> (-(bits))))
 
@@ -7427,6 +7427,9 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  * decompress the next one, or by having a special thread just to do the decompression and try to
  * keep ahead of the others, though that could probably be implemented by having a double buffer
  * approach, and the last thread out of the tail buffer decompresses a new head buffer.
+ *
+ * Probably should bury most of these functions as private within tablebase_t, promoted into a
+ * class, and just expose get_raw_DTM(), get_flag(), and get_basic() as public functions.
  */
 
 inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
@@ -13536,7 +13539,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.610 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.611 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
