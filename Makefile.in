@@ -23,7 +23,7 @@ hoffman: $(hoffman_OBJS)
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
-hoffman.o: tablebase_dtd.h formats.h config.h bitlib.h
+hoffman.o: tablebase_dtd.h config.h bitlib.h
 
 tablebase_dtd.h: tablebase.dtd formats.xml
 	echo "const char * tablebase_dtd = \"\\" > $@
@@ -32,12 +32,6 @@ tablebase_dtd.h: tablebase.dtd formats.xml
 	echo "const char * formats_xml = \"\\" >> $@
 	sed -e 's/"/\\"/g' -e 's/$$/\\/' formats.xml >> $@
 	echo "\";" >> $@
-
-formats.h:
-	echo "const struct format entries_format = {4,2, 8, 0xff,0,8, 0x7f,9,7, 0,-1,0, 0,-1,0, -1,FORMAT_FLAG_NONE, -1};" > $@
-	echo "const struct format proptable_format = {7,16, -1, 0xffff,32,16, 0xff,56,8," >> $@
-	echo "					      0xffffffff,0,32, 0xffffffffffffffffLL,64,64," >> $@
-	echo "					      -1,FORMAT_FLAG_NONE, -1};" >> $@
 
 tarball: docs
 	tar -czh -f hoffman-@PACKAGE_VERSION@.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST)
