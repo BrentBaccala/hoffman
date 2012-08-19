@@ -544,7 +544,6 @@ const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 #include "formats.h"
 #else
 struct format entries_format;
-struct format proptable_format;
 #endif
 
 #define ENTRIES_FORMAT_BITS (entries_format.bits)
@@ -557,19 +556,6 @@ struct format proptable_format;
 #define ENTRIES_FORMAT_MOVECNT_OFFSET (entries_format.movecnt_offset)
 #define ENTRIES_FORMAT_MOVECNT_BITS (entries_format.movecnt_bits)
 #define ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET (entries_format.capture_possible_flag_offset)
-
-#define PROPTABLE_FORMAT_BYTES (proptable_format.bytes)
-#define PROPTABLE_FORMAT_INDEX_MASK (proptable_format.index_mask)
-#define PROPTABLE_FORMAT_INDEX_OFFSET (proptable_format.index_offset)
-#define PROPTABLE_FORMAT_FUTUREVECTOR_BITS (proptable_format.futurevector_bits)
-#define PROPTABLE_FORMAT_FUTUREVECTOR_MASK (proptable_format.futurevector_mask)
-#define PROPTABLE_FORMAT_FUTUREVECTOR_OFFSET (proptable_format.futurevector_offset)
-#define PROPTABLE_FORMAT_DTM_BITS (proptable_format.dtm_bits)
-#define PROPTABLE_FORMAT_DTM_MASK (proptable_format.dtm_mask)
-#define PROPTABLE_FORMAT_DTM_OFFSET (proptable_format.dtm_offset)
-#define PROPTABLE_FORMAT_MOVECNT_MASK (proptable_format.movecnt_mask)
-#define PROPTABLE_FORMAT_MOVECNT_OFFSET (proptable_format.movecnt_offset)
-#define PROPTABLE_FORMAT_PTM_WINS_FLAG_OFFSET (proptable_format.PTM_wins_flag_offset)
 
 
 /* This is the "one-byte-dtm" format */
@@ -5091,7 +5077,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
     if (! is_futurebase) {
 
-	struct format specified_entries_format, specified_proptable_format;
+	struct format specified_entries_format;
 	xmlDocPtr default_formats;
 	int format_mismatch = 0;
 
@@ -5099,11 +5085,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 
 	default_formats = xmlReadMemory(formats_xml, strlen(formats_xml), NULL, NULL, 0);
 
-	/* memcpy(&specified_entries_format, &default_entries_format, sizeof(struct format)); */
-	/* memcpy(&specified_proptable_format, &default_proptable_format, sizeof(struct format)); */
-
 	bzero(&specified_entries_format, sizeof(struct format));
-	bzero(&specified_proptable_format, sizeof(struct format));
 
 	/* If a custom entries format has been specified, use it */
 
@@ -5163,60 +5145,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
 
-	/* XXX shouldn't bother with any of this proptable stuff if -P flag wasn't specified */
-
-	/* custom proptable format? use it */
-
-	context = xmlXPathNewContext(tb->xml);
-	result = xmlXPathEvalExpression(BAD_CAST "//proptable-format", context);
-	if (result->nodesetval->nodeNr == 1) {
-	    if (! parse_format(result->nodesetval->nodeTab[0], &specified_proptable_format)) return NULL;
-	    if (specified_proptable_format.index_bits == 0) {
-		fatal("Proptable format must contain an index field\n");
-		return NULL;
-	    }
-	} else {
-
-	    /* Otherwise, use the compiled-in default */
-
-	    context2 = xmlXPathNewContext(default_formats);
-	    result2 = xmlXPathEvalExpression(BAD_CAST "//default-proptable-format", context2);
-	    if (result2->nodesetval->nodeNr == 1) {
-		if (! parse_format(result2->nodesetval->nodeTab[0], &specified_proptable_format)) {
-		    fatal("Can't parse compiled-in default proptable format!\n");
-		    return NULL;
-		}
-		if (specified_proptable_format.index_bits == 0) {
-		    fatal("Compiled-in default proptable format does not contain an index field!\n");
-		    return NULL;
-		}
-	    } else {
-		fatal("No proptable-format specified in control file and can't find compiled-in default\n");
-		return NULL;
-	    }
-	    xmlXPathFreeObject(result2);
-	    xmlXPathFreeContext(context2);
-	}
-
-#if USE_CONST_FORMATS
-	if (memcmp(&default_proptable_format, &proptable_format, sizeof(struct format))) {
-	    fatal("%s proptable format incompatible with compiled-in format\n",
-		  (result->nodesetval->nodeNr == 1) ? "Specified" : "Default");
-	    format_mismatch = 1;
-	}
-#else
-	memcpy(&proptable_format, &specified_proptable_format, sizeof(struct format));
-#endif
-
-	xmlXPathFreeObject(result);
-	xmlXPathFreeContext(context);
-
 	xmlFreeDoc(default_formats);
 
 	if (format_mismatch) {
 	    fatal("Recompile using this \"formats.h\":\n");
 	    fatal(print_format("entries_format", &specified_entries_format));
-	    fatal(print_format("proptable_format", &specified_proptable_format));
 	    return NULL;
 	}
     }
@@ -5790,12 +5723,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	xmlFree(modulus);
     }
 
-    if (using_proptables && !is_futurebase) {
-	if (tb->max_index > PROPTABLE_FORMAT_INDEX_MASK) {
-	    fatal("max_index (%d) doesn't fit in proptable's %d bit index field\n", tb->max_index, proptable_format.index_bits);
-	}
-    }
-
     /* Fetch any prune enable elements */
 
     context = xmlXPathNewContext(doc);
@@ -5962,7 +5889,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.614 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.615 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -10722,18 +10649,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	terminate();
     }
 
-    if (using_proptables) {
-	if (num_futuremoves[WHITE] > PROPTABLE_FORMAT_FUTUREVECTOR_BITS) {
-	    fatal("Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
-		  num_futuremoves[WHITE], PROPTABLE_FORMAT_FUTUREVECTOR_BITS);
-	    terminate();
-	}
-	if (num_futuremoves[BLACK] > PROPTABLE_FORMAT_FUTUREVECTOR_BITS) {
-	    fatal("Too many futuremoves - %d!  (only %d futurevector bits in proptable format)\n",
-		  num_futuremoves[BLACK], PROPTABLE_FORMAT_FUTUREVECTOR_BITS);
-	    terminate();
-	}
-    }
 }
 
 void print_futuremoves(void)
@@ -13546,7 +13461,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.614 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.615 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
