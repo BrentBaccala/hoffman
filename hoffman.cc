@@ -520,23 +520,13 @@ const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 #define MAX_FORMAT_BYTES 16
 
-/* entries_format is the format that we use for in-memory tablebase arrays, and proptable_format is
- * the format for proptable entries.  Basically, the are C structures whose fields can be adjusted
- * at run-time.  If USE_CONST_FORMATS is set, then they're set at compile-time: 'const' for
- * efficiency, in a separate file for convenience, and if the program wants them changed, it will
- * let you know ;-)
+/* entries_format is the format that we use for in-memory tablebase arrays.
  *
  * If the control file doesn't specify an entry (or proptable) format, we use a compiled-in default
  * from the 'formats.xml' file that got converted to a string in the 'tablebase_dtd.h' file.
  */
 
-#define USE_CONST_FORMATS 0
-
-#if USE_CONST_FORMATS
-#include "formats.h"
-#else
 struct format entries_format;
-#endif
 
 #define ENTRIES_FORMAT_BITS (entries_format.bits)
 #define ENTRIES_FORMAT_BYTES (entries_format.bytes)
@@ -5103,15 +5093,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    xmlXPathFreeContext(context2);
 	}
 
-#if USE_CONST_FORMATS
-	if (memcmp(&specified_entries_format, &entries_format, sizeof(struct format))) {
-	    fatal("%s entries format incompatible with compiled-in format\n",
-		  (result->nodesetval->nodeNr == 1) ? "Specified" : "Default");
-	    format_mismatch = 1;
-	}
-#else
 	memcpy(&entries_format, &specified_entries_format, sizeof(struct format));
-#endif
 
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
@@ -5860,7 +5842,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.616 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.617 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13432,7 +13414,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.616 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.617 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
