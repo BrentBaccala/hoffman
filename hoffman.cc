@@ -286,6 +286,7 @@ int * pass_target_dtms = NULL;
 int * positions_finalized = NULL;
 uint64_t * backproped_moves = NULL;
 
+boolean tracking_dtm = 1;
 int min_tracked_dtm = -2;
 int max_tracked_dtm = 2;
 uint8_t * positive_passes_needed = NULL;
@@ -5961,7 +5962,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.613 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.614 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6409,7 +6410,7 @@ void finalize_pass_statistics()
     last_timings_valid = 1;
 
     if (! strcmp(pass_type[total_passes], "intratable")) {
-	if (ENTRIES_FORMAT_DTM_BITS > 0) {
+	if (tracking_dtm) {
 	    snprintf(strbuf, sizeof(strbuf), "%d", pass_target_dtms[total_passes]);
 	    xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
 	}
@@ -7655,14 +7656,14 @@ class EntriesTable {
     }
 
     int get_raw_DTM(index_t index) {
-	if (ENTRIES_FORMAT_DTM_BITS == 0) return 0;
+	if (! tracking_dtm) return 0;
 	return get_int_field(pointer(index),
 			     offset(index) + ENTRIES_FORMAT_DTM_OFFSET,
 			     ENTRIES_FORMAT_DTM_BITS);
     }
 
     void set_raw_DTM(index_t index, int dtm) {
-	if (ENTRIES_FORMAT_DTM_BITS == 0) return;
+	if (! tracking_dtm) return;
 	set_int_field(pointer(index),
 		      offset(index) + ENTRIES_FORMAT_DTM_OFFSET,
 		      ENTRIES_FORMAT_DTM_BITS,
@@ -7765,7 +7766,7 @@ class EntriesTable {
 	 */
 
 	set_movecnt(index, movecnt);
-	if (ENTRIES_FORMAT_DTM_BITS > 0) set_raw_DTM(index, dtm);
+	if (tracking_dtm) set_raw_DTM(index, dtm);
     }
 
     void initialize_entry_as_illegal(index_t index) {
@@ -8169,7 +8170,7 @@ void back_propagate_index(index_t index, int target_dtm)
      */
 
     if (entriesTable->is_unpropagated(index)
-	&& ((ENTRIES_FORMAT_DTM_BITS == 0) || (entriesTable->get_DTM(index) == target_dtm))) {
+	&& (!tracking_dtm || (entriesTable->get_DTM(index) == target_dtm))) {
 
 	back_propagate_index_within_table(index, REFLECTION_NONE);
 	if (current_tb->symmetry == 8) {
@@ -8559,9 +8560,7 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 }
 
 
-/* target_dtm == 0 is special because the initialization / futurebase back prop pass
- *
- */
+/* target_dtm 0 is the initialization / futurebase back prop pass */
 
 int propagation_pass(int target_dtm)
 {
@@ -12328,11 +12327,11 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 	positions_finalized_on_last_pass = 1;
     }
 
-    /* If we're tracking DTM (i.e, if a DTM field exists in the entries format), then run at least
-     * until we've looked at all the DTM values that came in from the futurebases.
+    /* If we're tracking DTM, then run at least until we've looked at all the DTM values that came
+     * in from the futurebases.
      */
 
-    if (ENTRIES_FORMAT_DTM_OFFSET != -1) {
+    if (tracking_dtm) {
 
 	while ((dtm <= max_tracked_dtm) || (-dtm >= min_tracked_dtm)) {
 
@@ -13547,7 +13546,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.613 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.614 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
