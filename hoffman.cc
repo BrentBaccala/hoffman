@@ -5824,7 +5824,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.618 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.619 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7573,6 +7573,15 @@ class EntriesTable {
 	    || (get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
     }
 
+    boolean is_normal_movecnt(index_t index) {
+	return (get_movecnt(index) > MOVECNT_PNTM_WINS_UNPROPED)
+	    && (get_movecnt(index) <= MOVECNT_MAX);
+    }
+
+    void set_PTM_wins_unpropagated(index_t index) {
+	set_movecnt(index, MOVECNT_PTM_WINS_UNPROPED);
+    }
+
     void flag_as_propagated(index_t index) {
 	/* assert(is_unpropagated(index)); */
 	if (does_PTM_win(index)) {
@@ -7939,11 +7948,7 @@ inline void PTM_wins(index_t index, int dtm)
 
 	fatal("Negative distance to mate in PTM_wins!?\n");
 
-    } else if ((entriesTable->get_movecnt(index) != MOVECNT_PTM_WINS_PROPED)
-	       && (entriesTable->get_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)
-	       && (entriesTable->get_movecnt(index) != MOVECNT_PNTM_WINS_PROPED)
-	       && (entriesTable->get_movecnt(index) != MOVECNT_PNTM_WINS_UNPROPED)
-	       && (entriesTable->get_movecnt(index) != MOVECNT_STALEMATE)) {
+    } else if (entriesTable->is_normal_movecnt(index)) {
 
 	/* In ordinary chess, we should never get here with MOVECNT_PNTM_WINS_UNPROPED (or PROPED)
 	 * because we have to have decremented the movecnt already to zero to have gotten either of
@@ -7952,12 +7957,13 @@ inline void PTM_wins(index_t index, int dtm)
 	 * only runs for a "normal" movecnt field - none of the five special cases.
 	 */
 
-	entriesTable->set_movecnt(index, MOVECNT_PTM_WINS_UNPROPED);
+	entriesTable->set_PTM_wins_unpropagated(index);
 	entriesTable->set_raw_DTM(index, dtm);
 	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 1;
 
     } else if ((dtm < entriesTable->get_raw_DTM(index))
-	       && (entriesTable->get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)) {
+	       && (entriesTable->does_PTM_win(index))
+	       && (entriesTable->is_unpropagated(index))) {
 
 	/* This can happen if we get a PTM mate during futurebase back prop, then, later during
 	 * futurebase back prop or during intra-table back prop, improve upon the mate.
@@ -7977,11 +7983,7 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 
     if (dtm > 0) {
 	fatal("Positive distance to mate in PNTM_wins!?\n");
-    } else if ((entriesTable->get_movecnt(index) != MOVECNT_PTM_WINS_PROPED)
-	       && (entriesTable->get_movecnt(index) != MOVECNT_PTM_WINS_UNPROPED)
-	       && (entriesTable->get_movecnt(index) != MOVECNT_PNTM_WINS_PROPED)
-	       && (entriesTable->get_movecnt(index) != MOVECNT_PNTM_WINS_UNPROPED)
-	       && (entriesTable->get_movecnt(index) != MOVECNT_STALEMATE)) {
+    } else if (entriesTable->is_normal_movecnt(index)) {
 
 	/* Again, this is the code for a "normal" movecnt field. */
 
@@ -7992,7 +7994,7 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 	    entriesTable->set_raw_DTM(index, dtm);
 	}
 
-	if (entriesTable->get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED) {  /* i.e, zero */
+	if (entriesTable->does_PNTM_win(index)) {
 	    /* This call pushed movecnt to zero, but the passed-in DTM might not be the best line,
 	     * so that's why we fetch entry DTM here.
 	     */
@@ -11042,9 +11044,9 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 	commit_update(current_index, -dtm, 1, NO_FUTUREMOVE);
     } else if (dtm < 0) {
 	commit_update(current_index, -dtm+1, 1, NO_FUTUREMOVE);
-    } else if (entriesTable->get_movecnt(future_index) == MOVECNT_PTM_WINS_UNPROPED) {
+    } else if (entriesTable->does_PTM_win(future_index)) {
 	commit_update(current_index, -2, 1, NO_FUTUREMOVE);
-    } else if (entriesTable->get_movecnt(future_index) == MOVECNT_PNTM_WINS_UNPROPED) {
+    } else if (entriesTable->does_PNTM_win(future_index)) {
 	commit_update(current_index, 2, 1, NO_FUTUREMOVE);
     } else {
 	fatal("Intra-table back prop doesn't match dtm or movecnt\n");
@@ -13396,7 +13398,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.618 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.619 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
