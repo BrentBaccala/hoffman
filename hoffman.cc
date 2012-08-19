@@ -5027,11 +5027,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	xmlXPathFreeContext(context);
     }
 
-    /* If this is a generation control file, parse any custom formats from the generation controls,
-     * and check them against the compiled-in formats.  Even if there's no formats specified in the
-     * generation controls, we still want to check to make sure that this version of the program has
-     * been compiled with the defaults.  Any mismatch results in a fatal error along with a
-     * suggested "formats.h" file to recompile the program with.
+    /* If this is a generation control file, parse any custom formats from the generation controls.
+     * If there's no formats specified in the generation controls, then use the compiled-in defaults.
      *
      * If all this seems too complicated, then just use the defaults and forget about it...
      */
@@ -5039,12 +5036,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
     if (! is_futurebase) {
 
 	struct format specified_entries_format;
-	xmlDocPtr default_formats;
-	int format_mismatch = 0;
-
-	/* XXX Will bleed memory during an error return, but this should be global anyway. */
-
-	default_formats = xmlReadMemory(formats_xml, strlen(formats_xml), NULL, NULL, 0);
 
 	bzero(&specified_entries_format, sizeof(struct format));
 
@@ -5054,17 +5045,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	result = xmlXPathEvalExpression(BAD_CAST "//entries-format", context);
 	if (result->nodesetval->nodeNr == 1) {
 	    if (! parse_format(result->nodesetval->nodeTab[0], &specified_entries_format)) return NULL;
-	    if (specified_entries_format.movecnt_bits == 0) {
-		fatal("Entries format must contain a movecnt field\n");
-		return NULL;
-	    }
-	    if ((tb->variant == VARIANT_SUICIDE) && (specified_entries_format.capture_possible_flag_offset == -1)) {
-		fatal("Entries format for a suicide analysis must contain a capture-possible-flag\n");
-		return NULL;
-	    }
 	} else {
 
 	    /* Otherwise, use the compiled-in default */
+
+	    xmlDocPtr default_formats;
+
+	    default_formats = xmlReadMemory(formats_xml, strlen(formats_xml), NULL, NULL, 0);
 
 	    context2 = xmlXPathNewContext(default_formats);
 	    if (tb->variant == VARIANT_NORMAL) {
@@ -5077,34 +5064,29 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 		    fatal("Can't parse compiled-in default entries format!\n");
 		    return NULL;
 		}
-		if (specified_entries_format.movecnt_bits == 0) {
-		    fatal("Compiled-in default entries format does not contain a movecnt field!\n");
-		    return NULL;
-		}
-		if ((tb->variant == VARIANT_SUICIDE) && (specified_entries_format.capture_possible_flag_offset == -1)) {
-		    fatal("Compiled-in suicide entries format does not contain a capture-possible-flag!\n");
-		    return NULL;
-		}
 	    } else {
 		fatal("No entries-format specified in control file and can't find compiled-in default\n");
 		return NULL;
 	    }
 	    xmlXPathFreeObject(result2);
 	    xmlXPathFreeContext(context2);
+
+	    xmlFreeDoc(default_formats);
+	}
+
+	if (specified_entries_format.movecnt_bits == 0) {
+	    fatal("Entries format must contain a movecnt field\n");
+	    return NULL;
+	}
+	if ((tb->variant == VARIANT_SUICIDE) && (specified_entries_format.capture_possible_flag_offset == -1)) {
+	    fatal("Entries format for a suicide analysis must contain a capture-possible-flag\n");
+	    return NULL;
 	}
 
 	memcpy(&entries_format, &specified_entries_format, sizeof(struct format));
 
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
-
-	xmlFreeDoc(default_formats);
-
-	if (format_mismatch) {
-	    fatal("Recompile using this \"formats.h\":\n");
-	    fatal(print_format("entries_format", &specified_entries_format));
-	    return NULL;
-	}
     }
 
     /* Extract index symmetry (if it was specified) */
@@ -5842,7 +5824,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.617 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.618 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13414,7 +13396,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.617 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.618 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
