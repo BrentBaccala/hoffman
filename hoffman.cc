@@ -487,30 +487,19 @@ int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, KING};
 struct format {
     uint8_t bits;
     uint8_t bytes;
-    int locking_bit_offset;
     uint32_t dtm_mask;
     int dtm_offset;
     uint8_t dtm_bits;
-    uint32_t movecnt_mask;
-    int movecnt_offset;
-    uint8_t movecnt_bits;
     int flag_offset;
     int flag_type;
-    int PTM_wins_flag_offset;
     int basic_offset;
-    int capture_possible_flag_offset;
 };
 
-const char * format_fields[] = {"dtm", "movecnt", "flag", "ptm-wins-flag",
-				"locking-bit", "basic", "capture-possible-flag", NULL};
+const char * format_fields[] = {"dtm", "flag", "basic", NULL};
 
 #define FORMAT_FIELD_DTM 0
-#define FORMAT_FIELD_MOVECNT 1
-#define FORMAT_FIELD_FLAG 2
-#define FORMAT_FIELD_PTM_WINS_FLAG 3
-#define FORMAT_FIELD_LOCKING_BIT 4
-#define FORMAT_FIELD_BASIC 5
-#define FORMAT_FIELD_CAPTURE_POSSIBLE_FLAG 6
+#define FORMAT_FIELD_FLAG 1
+#define FORMAT_FIELD_BASIC 2
 
 const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
@@ -522,7 +511,7 @@ const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 /* This is the "one-byte-dtm" format */
 
-struct format one_byte_dtm_format = {3,1, -1, 0xff,0,8, 0,-1,0, -1,FORMAT_FLAG_NONE, -1, -1};
+struct format one_byte_dtm_format = {3,1, 0xff,0,8, -1,FORMAT_FLAG_NONE, -1};
 
 typedef void entry_t;
 
@@ -4136,13 +4125,9 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 
     memset(format, 0, sizeof(struct format));
 
-    format->locking_bit_offset = -1;
     format->dtm_offset = -1;
-    format->movecnt_offset = -1;
     format->flag_offset = -1;
-    format->PTM_wins_flag_offset = -1;
     format->basic_offset = -1;
-    format->capture_possible_flag_offset = -1;
 
     for (child = formatNode->children; child != NULL; child = child->next) {
 	if (child->type == XML_ELEMENT_NODE) {
@@ -4161,10 +4146,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		return 0;
 	    }
 
-	    if ((format_field == FORMAT_FIELD_FLAG)
-		|| (format_field == FORMAT_FIELD_PTM_WINS_FLAG)
-		|| (format_field == FORMAT_FIELD_LOCKING_BIT)
-		|| (format_field == FORMAT_FIELD_CAPTURE_POSSIBLE_FLAG)) {
+	    if (format_field == FORMAT_FIELD_FLAG) {
 
 		if (bitstr == NULL) {
 		    bits = 1;
@@ -4236,11 +4218,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		format->dtm_offset = offset;
 		format->dtm_mask = (1 << bits) - 1;
 		break;
-	    case FORMAT_FIELD_MOVECNT:
-		format->movecnt_bits = bits;
-		format->movecnt_offset = offset;
-		format->movecnt_mask = (1 << bits) - 1;
-		break;
 	    case FORMAT_FIELD_FLAG:
 		typestr = (char *) xmlGetProp(child, BAD_CAST "type");
 		format->flag_offset = offset;
@@ -4253,15 +4230,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		break;
 	    case FORMAT_FIELD_BASIC:
 		format->basic_offset = offset;
-		break;
-	    case FORMAT_FIELD_PTM_WINS_FLAG:
-		format->PTM_wins_flag_offset = offset;
-		break;
-	    case FORMAT_FIELD_LOCKING_BIT:
-		format->locking_bit_offset = offset;
-		break;
-	    case FORMAT_FIELD_CAPTURE_POSSIBLE_FLAG:
-		format->capture_possible_flag_offset = offset;
 		break;
 	    default:
 		fatal("Unknown field in format\n");
@@ -4295,23 +4263,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     }
 
     return 1;
-}
-
-const char * print_format(const char *name, struct format *format)
-{
-    static char outstr[256];
-
-    snprintf(outstr, sizeof(outstr),
-	     "   const struct format %s = {%d,%d, %d, 0x%" PRIx32 ",%d,%d, 0x%" PRIx32 ",%d,%d, "
-	     "%d,%d, %d, %d};\n",
-
-	     name, format->bits, format->bytes, format->locking_bit_offset,
-	     format->dtm_mask, format->dtm_offset, format->dtm_bits,
-	     format->movecnt_mask, format->movecnt_offset, format->movecnt_bits,
-	     format->flag_offset, format->flag_type, format->PTM_wins_flag_offset,
-	     format->basic_offset);
-
-    return outstr;
 }
 
 /* Parses XML, creates a tablebase structure corresponding to it, and returns it.
@@ -5742,7 +5693,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.623 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.624 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13445,7 +13396,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.623 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.624 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
