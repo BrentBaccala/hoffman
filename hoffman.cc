@@ -5742,7 +5742,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.621 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.622 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6221,8 +6221,7 @@ void finalize_pass_statistics()
 	    }
 	}
 
-
-	xmlSaveFile("checkpoint.xml", current_tb->xml);
+	// xmlSaveFile("checkpoint.xml", current_tb->xml);
     }
 }
 
@@ -7908,6 +7907,11 @@ class DiskEntriesTable: public EntriesTable {
 	    entries_read_fd = -1;
 
 	}
+    }
+
+    ~DiskEntriesTable(void) {
+	unlink("entries_in");
+	unlink("entries_out");
     }
 
     void * pointer(index_t index) {
@@ -13391,7 +13395,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.621 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.622 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
