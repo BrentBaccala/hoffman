@@ -5742,7 +5742,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.620 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.621 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7403,7 +7403,6 @@ class EntriesTable {
 
     /* The individual entries are formed from bit fields.  Here we specify their sizes and offsets. */
 
- private:
     int dtm_offset;
     uint8_t dtm_bits;
     int movecnt_offset;
@@ -7420,29 +7419,37 @@ class EntriesTable {
 #define MOVECNT_MAX (MOVECNT_MASK - 4)
 #define MOVECNT_PNTM_WINS_UNPROPED (0)
 
- public:
-    EntriesTable(void) {
+    void ComputeBitfields(void) {
 	if (current_tb->variant == VARIANT_NORMAL) {
 	    capture_possible_flag_offset = -1;
-	    dtm_offset = 0;
+	    movecnt_offset = 0;
 	} else {
 	    capture_possible_flag_offset = 0;
-	    dtm_offset = 1;
+	    movecnt_offset = 1;
 	}
 
-	dtm_bits = 5;
-	movecnt_bits = 7;
-
-	movecnt_offset = dtm_offset + dtm_bits;
 	locking_bit_offset = -1;
-	bits = movecnt_offset + movecnt_bits;
 
 #ifdef USE_THREADS
 	if (num_threads > 1) {
-	    locking_bit_offset = movecnt_offset + movecnt_bits;
-	    bits = locking_bit_offset + 1;
+	    locking_bit_offset = movecnt_offset;
+	    movecnt_offset ++;
 	}
 #endif
+
+	/* The DTM field is deliberately last, so that it can be easily expanded */
+	dtm_offset = movecnt_offset + movecnt_bits;
+
+	bits = dtm_offset + dtm_bits;
+    }
+
+ public:
+    EntriesTable(void) {
+
+	dtm_bits = 4;
+	movecnt_bits = 7;
+
+	ComputeBitfields();
     }
 
     void lock_entry(index_t index) {
@@ -7469,7 +7476,9 @@ class EntriesTable {
 #endif
     }
 
-    void verify_DTM_field_size(int dtm) {
+    /* This function is virtual so that subclasses can do a better job of handling a DTM overflow */
+
+    virtual void verify_DTM_field_size(int dtm) {
 	if (! tracking_dtm) return;
 	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
 	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
@@ -7718,6 +7727,41 @@ class MemoryEntriesTable: public EntriesTable {
 	/* Don't really need this, since they will all get initialized anyway */
 	/* XXX actually do this need right now, because initialization isn't complete */
 	memset(entries, 0, bytes);
+    }
+
+    /* If our DTM field is about to overflow, resize it one bit larger */
+
+    void verify_DTM_field_size(int dtm) {
+	if (! tracking_dtm) return;
+	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
+	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
+
+	    unsigned int bytes = ((current_tb->max_index + 1) * (bits + 1) + 7) / 8;
+
+	    /* resize */
+	    entries = realloc(entries, bytes);
+	    if (entries == NULL) {
+		fatal("Can't realloc %dMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
+	    } else {
+		if (bytes < 1024*1024) {
+		    info("Realloced %dKB for tablebase entries\n", bytes/1024);
+		} else {
+		    info("Realloced %dMB for tablebase entries\n", bytes/(1024*1024));
+		}
+	    }
+
+	    /* copy */
+	    for (index_t index = current_tb->max_index; index >= 0; index --) {
+		unsigned int field = get_unsigned_int_field(entries, index * bits, bits);
+		int dtm = get_int_field(entries, index * bits + dtm_offset, dtm_bits);
+		set_unsigned_int_field(entries, index * (bits+1), bits+1, field);
+		set_int_field(entries, index * (bits+1) + dtm_offset, dtm_bits+1, dtm);
+		if (index == 0) break;
+	    }
+
+	    dtm_bits ++;
+	    bits ++;
+	}
     }
 
     void * pointer(index_t index) {
@@ -8379,7 +8423,11 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
 int propagation_pass(int target_dtm)
 {
-    entriesTable->verify_DTM_field_size(target_dtm);
+    if (target_dtm > 0) {
+	entriesTable->verify_DTM_field_size(target_dtm+1);
+    } else {
+	entriesTable->verify_DTM_field_size(target_dtm-1);
+    }
 
     if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
     pass_target_dtms[total_passes] = target_dtm;
@@ -13343,7 +13391,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.620 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.621 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
