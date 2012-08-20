@@ -5672,7 +5672,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.627 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.628 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7117,28 +7117,15 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 
 /***** READING AN EXISTING TABLEBASE *****/
 
-/* Fetch an entry pointer from a preloaded tablebase - we're reading from a compressed file
- * (possibly over the network).
+/* We're reading from a compressed tablebase, possibly over the network.  We want to make a single
+ * sequential pass over the file, even though we may have multiple threads running concurrently.
  *
- * There's a whole lot of complexity here to achieve caching and also handle variable size tablebase
- * formats.  We keep a variable sized cache of variable sized entries, and have a version of our
- * fetch routine that writes into one particular numbered cache entry, but only after searching all
- * of them for a matching entry.  Then we have a default version that writes into entry 0 (after
- * searching them all), and that's what we use, except when we're prefetching during a multi-task
- * backprop, when we prefetch into the entry number corresponding to the task that will require the
- * entry later.  That way, we insure that the entry is always there when that particular task
- * requests it later (using the default routine), and also that the actual reads occur in order.
+ * We keep a cache with eight entries in each cache line, ensuring that each cache line is
+ * byte-aligned even if the entries themselves are not.  We maintain as many cache lines as we have
+ * threads.  We can have multiple identical cache lines which allows any one thread to move ahead
+ * without affecting the others,
  *
- * I know, there's got to be a better way of doing this... maybe by exposing the buffering a little
- * more, and then either stalling the threads when they get to the end of a buffer and need to
- * decompress the next one, or by having a special thread just to do the decompression and try to
- * keep ahead of the others, though that could probably be implemented by having a double buffer
- * approach, and the last thread out of the tail buffer decompresses a new head buffer.
- *
- * Probably should bury most of these functions as private within tablebase_t, promoted into a
- * class, and just expose get_DTM(), get_flag(), and get_basic() as public functions.
- *
- * Format size is stored in bits, but allocation is done in bytes, so we end up with eight entries in each cache line.
+ * Probably should bury most of these functions as private within tablebase_t.
  */
 
 inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
@@ -7171,63 +7158,94 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
     tb->next_read_index += 8;
 }
 
-tablebase_t *cached_tb = NULL;
-void *cached_entries = NULL;
-index_t *cached_indices = NULL;
-int num_cached_entries = 0;
-
-inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
+inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 {
-    /* First, check to see if we've got the requested index in ANY cache entry */
+    static tablebase_t *cached_tb = NULL;
+    static void *cached_entries = NULL;
+    static index_t *cached_indices = NULL;
+    static int num_cached_entries = 0;
+    int n = 0;
 
-    if (cached_tb == tb) {
+#ifdef USE_THREADS
+    static pthread_t *cached_thread_ids = NULL;
+    static pthread_mutex_t cache_lock = PTHREAD_MUTEX_INITIALIZER;
 
-	int i;
+    pthread_mutex_lock(&cache_lock);
+#endif
 
-	for (i=0; i<num_cached_entries; i++) {
+    /* If we're switching tablebases, discard old cache */
 
-	    if ((index & ~7) == cached_indices[i]) {
-		return (char *)cached_entries + i*tb->format.bits;
-	    }
-
-	}
-
-    } else if (cached_entries != NULL) {
-
-	/* If we're switching tablebases, discard old cache */
-
+    if ((cached_tb != NULL) && (cached_tb != tb)) {
 	free(cached_entries);
 	free(cached_indices);
 	cached_entries = NULL;
 	cached_indices = NULL;
+#ifdef USE_THREADS
+	free(cached_thread_ids);
+	cached_thread_ids = NULL;
+#endif
 	num_cached_entries = 0;
 	cached_tb = NULL;
     }
 
-    /* If cache isn't big enough, build it or expand it
-     *
-     * XXX might have a race condition here, if two threads are trying to expand the cache simultaneously
-     */
+    /* Find current thread's cache line */
 
-    if (n >= num_cached_entries) {
-	cached_entries = realloc(cached_entries, tb->format.bits * (n+1));
-	cached_indices = (index_t *) realloc(cached_indices, sizeof(index_t) * (n+1));
-	memset(cached_indices + num_cached_entries, 0xff, sizeof(index_t) * ((n+1) - num_cached_entries));
-	num_cached_entries = n+1;
+#ifdef USE_THREADS
+    for (n = 0; n < num_cached_entries; n++) {
+	if (cached_thread_ids[n] == pthread_self()) break;
+    }
+#endif
+
+    /* If cache is non existant or isn't big enough, build it or expand it */
+
+    if (n == num_cached_entries) {
+	num_cached_entries ++;
+	cached_entries = realloc(cached_entries, tb->format.bits * num_cached_entries);
+	cached_indices = (index_t *) realloc(cached_indices, sizeof(index_t) * num_cached_entries);
+	cached_indices[n] = INVALID_INDEX;
+#ifdef USE_THREADS
+	cached_thread_ids = (pthread_t *) realloc(cached_thread_ids, sizeof(pthread_t) * num_cached_entries);
+	cached_thread_ids[n] = pthread_self();
+#endif
 	cached_tb = tb;
     }
 
-    /* It's not there, so fetch it and cache it */
+    /* Check to see if we've got the requested index in the current thread's cache line */
 
-    cached_indices[n] = index & ~7;
-    prefetch_entry_pointer(tb, cached_indices[n], (char *)cached_entries + n * tb->format.bits);
+    if ((index & ~7) == cached_indices[n]) {
+
+	/* fall through */
+
+    } else {
+
+	/* Check to see if we've got the requested index in ANY cache line.  If so, copy it to the
+	 * current thread's cache line.
+	 */
+
+	for (int i=0; i<num_cached_entries; i++) {
+
+	    if ((index & ~7) == cached_indices[i]) {
+		memcpy((char *)cached_entries + n*tb->format.bits, (char *)cached_entries + i*tb->format.bits,
+		       tb->format.bits);
+		cached_indices[n] = cached_indices[i];
+		break;
+	    }
+
+	}
+
+	/* Otherwise, fetch it and cache it */
+
+	if ((index & ~7) != cached_indices[n]) {
+	    cached_indices[n] = index & ~7;
+	    prefetch_entry_pointer(tb, cached_indices[n], (char *)cached_entries + n * tb->format.bits);
+	}
+    }
+
+#ifdef USE_THREADS
+    pthread_mutex_unlock(&cache_lock);
+#endif
 
     return (char *)cached_entries + n * tb->format.bits;
-}
-
-inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
-{
-    return fetch_entry_pointer_n(tb, index, 0);
 }
 
 int tablebase::get_DTM(index_t index)
@@ -7441,6 +7459,9 @@ class EntriesTable {
      * The difference between get_DTM (here) and get_raw_DTM (above) is that if the DTM value is
      * less than zero (PNTM wins), but movecnt is still greater than zero, then there are still
      * moves that might let PTM slip off the hook, so in that case we indicate draw.
+     *
+     * There's also a tablebase member function called get_DTM() that retrieves this value from a
+     * computed tablebase, while this function works on the tablebase under construction.
      */
 
     int get_DTM(index_t index) {
@@ -8742,7 +8763,6 @@ pthread_mutex_t next_future_index_lock = PTHREAD_MUTEX_INITIALIZER;
 
 void * propagate_moves_from_promotion_futurebase(void * ptr)
 {
-    int threadno = (size_t) ptr;
     index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
@@ -8784,9 +8804,6 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 #endif
 
 	future_index = next_future_index ++;
-	if (future_index <= futurebase->max_index) {
-	    fetch_entry_pointer_n(futurebase, future_index, threadno);
-	}
 
 #ifdef USE_THREADS
 	pthread_mutex_unlock(&next_future_index_lock);
@@ -8956,7 +8973,6 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 
 void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 {
-    int threadno = (size_t) ptr;
     index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
@@ -8999,9 +9015,6 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 #endif
 
 	future_index = next_future_index ++;
-	if (future_index <= futurebase->max_index) {
-	    fetch_entry_pointer_n(futurebase, future_index, threadno);
-	}
 
 #ifdef USE_THREADS
 	pthread_mutex_unlock(&next_future_index_lock);
@@ -9409,7 +9422,6 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 void * propagate_moves_from_capture_futurebase(void * ptr)
 {
-    int threadno = (size_t) ptr;
     index_t future_index;
     local_position_t position;
     int piece;
@@ -9424,9 +9436,6 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
 #endif
 
 	future_index = next_future_index ++;
-	if (future_index <= futurebase->max_index) {
-	    fetch_entry_pointer_n(futurebase, future_index, threadno);
-	}
 
 #ifdef USE_THREADS
 	pthread_mutex_unlock(&next_future_index_lock);
@@ -9554,7 +9563,6 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
 
 void * propagate_moves_from_normal_futurebase(void * ptr)
 {
-    int threadno = (size_t) ptr;
     index_t future_index;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
@@ -9572,9 +9580,6 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 #endif
 
 	future_index = next_future_index ++;
-	if (future_index <= futurebase->max_index) {
-	    fetch_entry_pointer_n(futurebase, future_index, threadno);
-	}
 
 #ifdef USE_THREADS
 	pthread_mutex_unlock(&next_future_index_lock);
@@ -13319,7 +13324,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.627 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.628 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
