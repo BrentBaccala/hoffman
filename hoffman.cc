@@ -5742,7 +5742,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.622 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.623 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7787,6 +7787,25 @@ class DiskEntriesTable: public EntriesTable {
     /* Since entry_buffer_size is a power of 2 greater than 8, entry buffers are always byte-aligned */
     int entry_buffer_bytes;
 
+    /* If we're resizing, this will be smaller than entry_buffer_bytes */
+    int input_entry_buffer_bytes;
+
+    boolean resize_on_next_pass;
+
+    void resize_entry_buffer_if_needed(void) {
+
+	if (entry_buffer_bytes != input_entry_buffer_bytes) {
+	    for (index_t index = entry_buffer_size - 1; index >= 0; index --) {
+		unsigned int field = get_unsigned_int_field(entry_buffer, index * (bits-1), bits-1);
+		int dtm = get_int_field(entry_buffer, index * (bits-1) + dtm_offset, dtm_bits-1);
+		set_unsigned_int_field(entry_buffer, index * bits, bits, field);
+		set_int_field(entry_buffer, index * bits + dtm_offset, dtm_bits, dtm);
+		if (index == 0) break;
+	    }
+	}
+
+    }
+
     void reset_files(void) {
 
 	int ret;
@@ -7798,11 +7817,12 @@ class DiskEntriesTable: public EntriesTable {
 	do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
 
 	if (entries_read_fd != -1) {
-	    while ((ret = read(entries_read_fd, entry_buffer, entry_buffer_bytes)) != 0) {
-		if (ret != entry_buffer_bytes) {
+	    while ((ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes)) != 0) {
+		if (ret != input_entry_buffer_bytes) {
 		    fatal("entries read: %s\n", strerror(errno));
 		    return;
 		}
+		resize_entry_buffer_if_needed();
 		do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
 	    }
 	}
@@ -7828,11 +7848,28 @@ class DiskEntriesTable: public EntriesTable {
 	}
 
 	entry_buffer_start = 0;
-	ret = read(entries_read_fd, entry_buffer, entry_buffer_bytes);
-	if (ret != entry_buffer_bytes) {
+	input_entry_buffer_bytes = entry_buffer_bytes;
+
+	if (resize_on_next_pass) {
+	    dtm_bits ++;
+	    bits ++;
+	    entry_buffer_bytes = (entry_buffer_size * bits) / 8;
+
+	    entry_buffer = realloc(entry_buffer, entry_buffer_bytes);
+	    if (entry_buffer == NULL) {
+		fatal("Can't realloc entries buffer\n");
+		return;
+	    }
+
+	    resize_on_next_pass = 0;
+	}
+
+	ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
+	if (ret != input_entry_buffer_bytes) {
 	    fatal("initial entries read: %s\n", strerror(errno));
 	    return;
 	}
+	resize_entry_buffer_if_needed();
     }
 
     void advance_files_to_index(index_t index)
@@ -7846,11 +7883,12 @@ class DiskEntriesTable: public EntriesTable {
 	while (index >= entry_buffer_start + entry_buffer_size) {
 	    do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
 	    if (entries_read_fd != -1) {
-		ret = read(entries_read_fd, entry_buffer, entry_buffer_bytes);
-		if (ret != entry_buffer_bytes) {
+		ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
+		if (ret != input_entry_buffer_bytes) {
 		    fatal("entries read: %s\n", strerror(errno));
 		    return;
 		}
+		resize_entry_buffer_if_needed();
 	    } else {
 		memset(entry_buffer, 0, entry_buffer_bytes);
 	    }
@@ -7864,6 +7902,8 @@ class DiskEntriesTable: public EntriesTable {
 	int ret;
 
 	entry_buffer_bytes = (entry_buffer_size * bits) / 8;
+	input_entry_buffer_bytes = entry_buffer_bytes;
+	resize_on_next_pass = 0;
 
 	/* first, malloc the entries buffer */
 
@@ -7912,6 +7952,16 @@ class DiskEntriesTable: public EntriesTable {
     ~DiskEntriesTable(void) {
 	unlink("entries_in");
 	unlink("entries_out");
+    }
+
+    /* If our DTM field is about to overflow, resize it one bit larger */
+
+    void verify_DTM_field_size(int dtm) {
+	if (! tracking_dtm) return;
+	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
+	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
+	    resize_on_next_pass = 1;
+	}
     }
 
     void * pointer(index_t index) {
@@ -13395,7 +13445,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.622 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.623 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
