@@ -486,7 +486,6 @@ int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, KING};
 
 struct format {
     uint8_t bits;
-    uint8_t bytes;
     uint32_t dtm_mask;
     int dtm_offset;
     uint8_t dtm_bits;
@@ -511,7 +510,7 @@ const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 /* This is the "one-byte-dtm" format */
 
-struct format one_byte_dtm_format = {3,1, 0xff,0,8, -1,FORMAT_FLAG_NONE, -1};
+struct format one_byte_dtm_format = {8, 0xff,0,8, -1,FORMAT_FLAG_NONE, -1};
 
 typedef void entry_t;
 
@@ -4118,7 +4117,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     xmlNodePtr child;
     int auto_offset = 0;
     int total_bits = 0;
-    int power_of_two;
     int bitnum;
     uint64_t bitmask1 = 0;
     uint64_t bitmask2 = 0;
@@ -4238,29 +4236,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	}
     }
 
-    /* Round up total number of bytes to a power-of-two boundary.  This should probably be a little
-     * less dependant on the assumption that MAX_FORMAT_BYTES is no more than 16.
-     */
-
-    for (power_of_two = 0; (1 << power_of_two) < total_bits; power_of_two ++);
-
-    if ((1 << power_of_two) != total_bits) {
-	fatal("Total bits in format must be a power of two\n");
-	return 0;
-    }
-
-    format->bits = power_of_two;
-
-    if (total_bits <= 8) {
-	format->bytes = 1;
-    } else {
-	format->bytes = total_bits/8;
-    }
-
-    if (format->bytes > MAX_FORMAT_BYTES) {
-	fatal("Maximum number of bytes in format exceeded\n");
-	return 0;
-    }
+    format->bits = total_bits;
 
     return 1;
 }
@@ -5693,7 +5669,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.624 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.625 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7138,8 +7114,6 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 
 /***** READING AN EXISTING TABLEBASE *****/
 
-#define LEFTSHIFT(val,bits) (((bits) > 0) ? ((val) << (bits)) : ((val) >> (-(bits))))
-
 /* Fetch an entry pointer from a preloaded tablebase - we're reading from a compressed file
  * (possibly over the network).
  *
@@ -7160,82 +7134,35 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  *
  * Probably should bury most of these functions as private within tablebase_t, promoted into a
  * class, and just expose get_raw_DTM(), get_flag(), and get_basic() as public functions.
+ *
+ * Format size is stored in bits, but allocation is done in bytes, so we end up with eight entries in each cache line.
  */
 
 inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 {
+
+    /* assert(index % 8 == 0); */
 
     if (tb->file == NULL) {
 	fatal("fetch_entry_pointer() called on a non-preloaded tablebase\n");
 	terminate();
     }
 
-    if (tb->format.bits == 3) {
-
-	/* Special case for the very common one-byte-DTM format */
-
-	if (index < tb->next_read_index) {
-	    if (zlib_seek(tb->file, tb->offset + (off_t)index, SEEK_SET) != tb->offset + (off_t)index) {
-		fatal("Seek failed in fetch_entry_pointer()\n");
-	    } else {
-		tb->next_read_index = index;
-	    }
+    if (index < tb->next_read_index) {
+	if (zlib_seek(tb->file, tb->offset + (off_t) (index * tb->format.bits / 8), SEEK_SET)
+	    != tb->offset + (off_t) (index * tb->format.bits / 8)) {
+	    fatal("Seek failed for index %d in fetch_entry_pointer()\n", index);
 	}
-
-	do {
-	    if (zlib_read(tb->file, (char *) entry, 1) != 1) {
-		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
-	    }
-	    tb->next_read_index ++;
-	} while (tb->next_read_index <= index);
-
-    } else {
-
-	if (LEFTSHIFT(index, tb->format.bits - 3)
-	    < LEFTSHIFT(tb->next_read_index, tb->format.bits - 3)) {
-	    if (zlib_seek(tb->file, tb->offset + LEFTSHIFT((off_t)index, tb->format.bits - 3), SEEK_SET)
-		!= tb->offset + LEFTSHIFT((off_t)index, tb->format.bits - 3)) {
-		fatal("Seek failed in fetch_entry_pointer()\n");
-	    } else {
-		switch (tb->format.bits) {
-		case 0:
-		    tb->next_read_index = index & ~7;
-		    break;
-		case 1:
-		    tb->next_read_index = index & ~3;
-		    break;
-		case 2:
-		    tb->next_read_index = index & ~1;
-		    break;
-		default:
-		    tb->next_read_index = index;
-		    break;
-		}
-	    }
-	}
-
-	do {
-	    if (zlib_read(tb->file, (char *) entry, tb->format.bytes) != tb->format.bytes) {
-		fatal("fetch_entry_pointer() hit EOF reading from disk\n");
-	    }
-
-	    switch (tb->format.bits) {
-	    case 0:
-		tb->next_read_index = (tb->next_read_index + 8) & ~7;
-		break;
-	    case 1:
-		tb->next_read_index = (tb->next_read_index + 4) & ~3;
-		break;
-	    case 2:
-		tb->next_read_index = (tb->next_read_index + 2) & ~1;
-		break;
-	    default:
-		tb->next_read_index = tb->next_read_index + 1;
-		break;
-	    }
-	} while (LEFTSHIFT(index, tb->format.bits - 3)
-		 >= LEFTSHIFT(tb->next_read_index, tb->format.bits - 3));
+	tb->next_read_index = index;
     }
+
+    if (zlib_read(tb->file, (char *) entry, tb->format.bits) != tb->format.bits) {
+	if (tb->next_read_index + 8 < tb->max_index) {
+	    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
+	}
+    }
+
+    tb->next_read_index += 8;
 }
 
 tablebase_t *cached_tb = NULL;
@@ -7253,11 +7180,10 @@ inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
 
 	for (i=0; i<num_cached_entries; i++) {
 
-	    if (index == cached_indices[i])
-		return (char *)cached_entries + i*tb->format.bytes;
+	    if ((index & ~7) == cached_indices[i]) {
+		return (char *)cached_entries + i*tb->format.bits;
+	    }
 
-	    if (LEFTSHIFT(index, tb->format.bits - 3) == LEFTSHIFT(cached_indices[i], tb->format.bits - 3))
-		return (char *)cached_entries + i*tb->format.bytes;
 	}
 
     } else if (cached_entries != NULL) {
@@ -7278,7 +7204,7 @@ inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
      */
 
     if (n >= num_cached_entries) {
-	cached_entries = realloc(cached_entries, tb->format.bytes * (n+1));
+	cached_entries = realloc(cached_entries, tb->format.bits * (n+1));
 	cached_indices = (index_t *) realloc(cached_indices, sizeof(index_t) * (n+1));
 	memset(cached_indices + num_cached_entries, 0xff, sizeof(index_t) * ((n+1) - num_cached_entries));
 	num_cached_entries = n+1;
@@ -7287,10 +7213,10 @@ inline entry_t * fetch_entry_pointer_n(tablebase_t *tb, index_t index, int n)
 
     /* It's not there, so fetch it and cache it */
 
-    prefetch_entry_pointer(tb, index, (char *)cached_entries + n*tb->format.bytes);
-    cached_indices[n] = index;
+    cached_indices[n] = index & ~7;
+    prefetch_entry_pointer(tb, cached_indices[n], (char *)cached_entries + n * tb->format.bits);
 
-    return (char *)cached_entries + n*tb->format.bytes;
+    return (char *)cached_entries + n * tb->format.bits;
 }
 
 inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
@@ -7301,20 +7227,20 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 inline int get_raw_DTM(tablebase_t *tb, index_t index)
 {
     return get_int_field(fetch_entry_pointer(tb, index),
-			 tb->format.dtm_offset + ((index << tb->format.bits) % 8),
+			 tb->format.dtm_offset + ((index % 8) * tb->format.bits),
 			 tb->format.dtm_bits);
 }
 
 inline boolean get_flag(tablebase_t *tb, index_t index)
 {
     return get_bit_field(fetch_entry_pointer(tb, index),
-			 tb->format.flag_offset + ((index << tb->format.bits) % 8));
+			 tb->format.flag_offset + ((index % 8 ) * tb->format.bits));
 }
 
 inline unsigned int get_basic(tablebase_t *tb, index_t index)
 {
     return get_unsigned_int_field(fetch_entry_pointer(tb, index),
-				  tb->format.basic_offset + ((index << tb->format.bits) % 8), 3);
+				  tb->format.basic_offset + ((index % 8) * tb->format.bits), 2);
 }
 
 
@@ -12322,7 +12248,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
 	if (tb->format.dtm_bits > 0) {
 	    set_int_field(entry,
-			  tb->format.dtm_offset + ((index << tb->format.bits) % 8),
+			  tb->format.dtm_offset + ((index % 8) * tb->format.bits),
 			  tb->format.dtm_bits,
 			  entriesTable->get_DTM(index));
 	}
@@ -12342,20 +12268,20 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 		basic = 0;
 	    }
 	    set_unsigned_int_field(entry,
-				   tb->format.basic_offset + ((index << tb->format.bits) % 8), 3,
+				   tb->format.basic_offset + ((index % 8) * tb->format.bits), 2,
 				   basic);
 	}
 
 	switch (tb->format.flag_type) {
 	case FORMAT_FLAG_WHITE_WINS:
 	    set_bit_field(entry,
-			  tb->format.flag_offset + ((index << tb->format.bits) % 8),
+			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
 			  (index_to_side_to_move(tb, index) == WHITE)
 			  ? entriesTable->does_PTM_win(index) : entriesTable->does_PNTM_win(index));
 	    break;
 	case FORMAT_FLAG_WHITE_DRAWS:
 	    set_bit_field(entry,
-			  tb->format.flag_offset + ((index << tb->format.bits) % 8),
+			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
 			  (index_to_side_to_move(tb, index) == WHITE)
 			  ? ! entriesTable->does_PNTM_win(index) : ! entriesTable->does_PTM_win(index));
 	    break;
@@ -12363,20 +12289,11 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
 	/* If the next index will be aligned on a byte boundary, write out what we've buffered */
 
-	if ((((index + 1) << tb->format.bits) % 8) == 0) {
-	    if (zlib_write(file, (char *) entry, tb->format.bytes) != tb->format.bytes) {
+	if ((index % 8 == 7) || (index == tb->max_index)) {
+	    if (zlib_write(file, (char *) entry, tb->format.bits) != tb->format.bits) {
 		fatal("Tablebase write failed\n");
 		terminate();
 	    }
-	}
-    }
-
-    /* If the last index plus one wasn't on a byte boundary, write out what we've buffered */
-    
-    if (((index << tb->format.bits) % 8) != 0) {
-	if (zlib_write(file, (char *) entry, tb->format.bytes) != tb->format.bytes) {
-	    fatal("Tablebase write failed\n");
-	    terminate();
 	}
     }
 
@@ -13396,7 +13313,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.624 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.625 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
