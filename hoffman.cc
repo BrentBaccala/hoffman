@@ -603,6 +603,9 @@ typedef struct tablebase {
     uint total_legal_king_positions;
 
     struct format format;
+    int get_DTM(index_t index);
+    boolean get_flag(index_t index);
+    unsigned int get_basic(index_t index);
 
     /* for futurebases only */
     void * file;
@@ -5669,7 +5672,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.626 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.627 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7227,23 +7230,23 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     return fetch_entry_pointer_n(tb, index, 0);
 }
 
-inline int get_DTM(tablebase_t *tb, index_t index)
+int tablebase::get_DTM(index_t index)
 {
-    return get_int_field(fetch_entry_pointer(tb, index),
-			 tb->format.dtm_offset + ((index % 8) * tb->format.bits),
-			 tb->format.dtm_bits);
+    return get_int_field(fetch_entry_pointer(this, index),
+			 format.dtm_offset + ((index % 8) * format.bits),
+			 format.dtm_bits);
 }
 
-inline boolean get_flag(tablebase_t *tb, index_t index)
+boolean tablebase::get_flag(index_t index)
 {
-    return get_bit_field(fetch_entry_pointer(tb, index),
-			 tb->format.flag_offset + ((index % 8 ) * tb->format.bits));
+    return get_bit_field(fetch_entry_pointer(this, index),
+			 format.flag_offset + ((index % 8 ) * format.bits));
 }
 
-inline unsigned int get_basic(tablebase_t *tb, index_t index)
+unsigned int tablebase::get_basic(index_t index)
 {
-    return get_unsigned_int_field(fetch_entry_pointer(tb, index),
-				  tb->format.basic_offset + ((index % 8) * tb->format.bits), 2);
+    return get_unsigned_int_field(fetch_entry_pointer(this, index),
+				  format.basic_offset + ((index % 8) * format.bits), 2);
 }
 
 
@@ -8441,7 +8444,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
     if (futurebase->format.dtm_bits > 0) {
 
-	int dtm = get_DTM(futurebase, future_index);
+	int dtm = futurebase->get_DTM(future_index);
 
 	if (dtm > 0) {
 	    commit_update(current_index, -dtm, movecnt, futuremove);
@@ -8453,7 +8456,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
     } else if (futurebase->format.basic_offset != -1) {
 
-	int basic = get_basic(futurebase, future_index);
+	int basic = futurebase->get_basic(future_index);
 
 	if (basic == 1) {
 	    commit_update(current_index, -2, movecnt, futuremove);
@@ -8465,7 +8468,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
     } else {
 
-	boolean flag = get_flag(futurebase, future_index);
+	boolean flag = futurebase->get_flag(future_index);
 	int stm = index_to_side_to_move(futurebase, future_index);
 
 	/* What happens if we're back propagating a flag from a color-inverted futurebase?
@@ -12630,7 +12633,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		if (tb->format.dtm_bits > 0) {
 
-		    int dtm = get_DTM(tb, index);
+		    int dtm = tb->get_DTM(index);
 
 		    if (dtm > 0) {
 			if ((dtm-1) != ((65536-4)/2)-score+1) {
@@ -12655,7 +12658,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		if (tb->format.basic_offset != -1) {
 
-		    int basic = get_basic(tb, index);
+		    int basic = tb->get_basic(index);
 		    static const char * basic_meaning[3] = {"draw", "PTM wins", "PNTM wins"};
 
 		    if (global.side_to_move == BLACK) score *= -1;
@@ -12675,7 +12678,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		if (tb->format.flag_type != FORMAT_FLAG_NONE) {
 
-		    boolean flag = get_flag(tb, index);
+		    boolean flag = tb->get_flag(index);
 
 		    if (global.side_to_move == BLACK) score *= -1;
 
@@ -12728,7 +12731,7 @@ void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pn
 {
     if (tb->format.dtm_bits > 0) {
 
-	int dtm = get_DTM(tb, index);
+	int dtm = tb->get_DTM(index);
 
 	if (dtm == 0) {
 	    printf("Draw\n");
@@ -12742,7 +12745,7 @@ void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pn
 
     } else if (tb->format.basic_offset != -1) {
 
-	int basic = get_basic(tb, index);
+	int basic = tb->get_basic(index);
 
 	if (basic == 1) {
 	    printf("%s wins\n", ptm);
@@ -12753,7 +12756,7 @@ void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pn
 	}
 
     } else if (tb->format.flag_type != FORMAT_FLAG_NONE) {
-	boolean flag = get_flag(tb, index);
+	boolean flag = tb->get_flag(index);
 
 	if (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) {
 	    if (flag) printf("White wins\n");
@@ -13316,7 +13319,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.626 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.627 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
