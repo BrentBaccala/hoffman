@@ -5669,7 +5669,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.625 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.626 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7133,7 +7133,7 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
  * approach, and the last thread out of the tail buffer decompresses a new head buffer.
  *
  * Probably should bury most of these functions as private within tablebase_t, promoted into a
- * class, and just expose get_raw_DTM(), get_flag(), and get_basic() as public functions.
+ * class, and just expose get_DTM(), get_flag(), and get_basic() as public functions.
  *
  * Format size is stored in bits, but allocation is done in bytes, so we end up with eight entries in each cache line.
  */
@@ -7157,6 +7157,9 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
     }
 
     if (zlib_read(tb->file, (char *) entry, tb->format.bits) != tb->format.bits) {
+	/* Might get a short read at the end of an older tablebase that doesn't round up to blocks
+	 * of eight entries.
+	 */
 	if (tb->next_read_index + 8 < tb->max_index) {
 	    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
 	}
@@ -7224,7 +7227,7 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     return fetch_entry_pointer_n(tb, index, 0);
 }
 
-inline int get_raw_DTM(tablebase_t *tb, index_t index)
+inline int get_DTM(tablebase_t *tb, index_t index)
 {
     return get_int_field(fetch_entry_pointer(tb, index),
 			 tb->format.dtm_offset + ((index % 8) * tb->format.bits),
@@ -7424,7 +7427,7 @@ class EntriesTable {
 	}
     }
 
-    /* Get the result in a format suitable for a one-byte DTM tablebase
+    /* Get DTM in a more suitable format
      *
      * 0 = draw
      * 1 = PNTM in check (illegal position)
@@ -8438,7 +8441,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
     if (futurebase->format.dtm_bits > 0) {
 
-	int dtm = get_raw_DTM(futurebase, future_index);
+	int dtm = get_DTM(futurebase, future_index);
 
 	if (dtm > 0) {
 	    commit_update(current_index, -dtm, movecnt, futuremove);
@@ -12627,7 +12630,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		if (tb->format.dtm_bits > 0) {
 
-		    int dtm = get_raw_DTM(tb, index);
+		    int dtm = get_DTM(tb, index);
 
 		    if (dtm > 0) {
 			if ((dtm-1) != ((65536-4)/2)-score+1) {
@@ -12725,7 +12728,7 @@ void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pn
 {
     if (tb->format.dtm_bits > 0) {
 
-	int dtm = get_raw_DTM(tb, index);
+	int dtm = get_DTM(tb, index);
 
 	if (dtm == 0) {
 	    printf("Draw\n");
@@ -13313,7 +13316,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.625 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.626 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
