@@ -520,26 +520,6 @@ const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 #define MAX_FORMAT_BYTES 16
 
-/* entries_format is the format that we use for in-memory tablebase arrays.
- *
- * If the control file doesn't specify an entry (or proptable) format, we use a compiled-in default
- * from the 'formats.xml' file that got converted to a string in the 'tablebase_dtd.h' file.
- */
-
-struct format entries_format;
-
-#define ENTRIES_FORMAT_BITS (entries_format.bits)
-#define ENTRIES_FORMAT_BYTES (entries_format.bytes)
-#define ENTRIES_FORMAT_LOCKING_BIT_OFFSET (entries_format.locking_bit_offset)
-#define ENTRIES_FORMAT_DTM_MASK (entries_format.dtm_mask)
-#define ENTRIES_FORMAT_DTM_OFFSET (entries_format.dtm_offset)
-#define ENTRIES_FORMAT_DTM_BITS (entries_format.dtm_bits)
-#define ENTRIES_FORMAT_MOVECNT_MASK (entries_format.movecnt_mask)
-#define ENTRIES_FORMAT_MOVECNT_OFFSET (entries_format.movecnt_offset)
-#define ENTRIES_FORMAT_MOVECNT_BITS (entries_format.movecnt_bits)
-#define ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET (entries_format.capture_possible_flag_offset)
-
-
 /* This is the "one-byte-dtm" format */
 
 struct format one_byte_dtm_format = {3,1, -1, 0xff,0,8, 0,-1,0, -1,FORMAT_FLAG_NONE, -1, -1};
@@ -4361,8 +4341,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 {
     tablebase_t *tb;
     int generating_version = 0;
-    xmlXPathContextPtr context, context2;
-    xmlXPathObjectPtr result, result2;
+    xmlXPathContextPtr context;
+    xmlXPathObjectPtr result;
     xmlNodePtr tablebase;
     xmlNodePtr index_node;
     xmlChar * format;
@@ -5023,68 +5003,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	    tb->format = one_byte_dtm_format;
 	    warning("Format not expressly specified; assuming ONE-BYTE-DTM\n");
 	}
-	xmlXPathFreeObject(result);
-	xmlXPathFreeContext(context);
-    }
-
-    /* If this is a generation control file, parse any custom formats from the generation controls.
-     * If there's no formats specified in the generation controls, then use the compiled-in defaults.
-     *
-     * If all this seems too complicated, then just use the defaults and forget about it...
-     */
-
-    if (! is_futurebase) {
-
-	struct format specified_entries_format;
-
-	bzero(&specified_entries_format, sizeof(struct format));
-
-	/* If a custom entries format has been specified, use it */
-
-	context = xmlXPathNewContext(tb->xml);
-	result = xmlXPathEvalExpression(BAD_CAST "//entries-format", context);
-	if (result->nodesetval->nodeNr == 1) {
-	    if (! parse_format(result->nodesetval->nodeTab[0], &specified_entries_format)) return NULL;
-	} else {
-
-	    /* Otherwise, use the compiled-in default */
-
-	    xmlDocPtr default_formats;
-
-	    default_formats = xmlReadMemory(formats_xml, strlen(formats_xml), NULL, NULL, 0);
-
-	    context2 = xmlXPathNewContext(default_formats);
-	    if (tb->variant == VARIANT_NORMAL) {
-		result2 = xmlXPathEvalExpression(BAD_CAST "//default-entries-format", context2);
-	    } else {
-		result2 = xmlXPathEvalExpression(BAD_CAST "//default-suicide-entries-format", context2);
-	    }
-	    if (result2->nodesetval->nodeNr == 1) {
-		if (! parse_format(result2->nodesetval->nodeTab[0], &specified_entries_format)) {
-		    fatal("Can't parse compiled-in default entries format!\n");
-		    return NULL;
-		}
-	    } else {
-		fatal("No entries-format specified in control file and can't find compiled-in default\n");
-		return NULL;
-	    }
-	    xmlXPathFreeObject(result2);
-	    xmlXPathFreeContext(context2);
-
-	    xmlFreeDoc(default_formats);
-	}
-
-	if (specified_entries_format.movecnt_bits == 0) {
-	    fatal("Entries format must contain a movecnt field\n");
-	    return NULL;
-	}
-	if ((tb->variant == VARIANT_SUICIDE) && (specified_entries_format.capture_possible_flag_offset == -1)) {
-	    fatal("Entries format for a suicide analysis must contain a capture-possible-flag\n");
-	    return NULL;
-	}
-
-	memcpy(&entries_format, &specified_entries_format, sizeof(struct format));
-
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
     }
@@ -5824,7 +5742,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.619 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.620 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7466,13 +7384,6 @@ inline unsigned int get_basic(tablebase_t *tb, index_t index)
  *
  */
 
-#define MOVECNT_PTM_WINS_PROPED (ENTRIES_FORMAT_MOVECNT_MASK)
-#define MOVECNT_PNTM_WINS_PROPED (ENTRIES_FORMAT_MOVECNT_MASK - 1)
-#define MOVECNT_PTM_WINS_UNPROPED (ENTRIES_FORMAT_MOVECNT_MASK - 2)
-#define MOVECNT_STALEMATE (ENTRIES_FORMAT_MOVECNT_MASK - 3)
-#define MOVECNT_MAX (ENTRIES_FORMAT_MOVECNT_MASK - 4)
-#define MOVECNT_PNTM_WINS_UNPROPED (0)
-
 /* If the entries format contains a locking bit, spinlock on it to acquire a lock on an entry;
  * otherwise, we have to lock on the entire entries table.
  */
@@ -7488,15 +7399,57 @@ class EntriesTable {
  protected:
     virtual void * pointer(index_t index) = 0;
     virtual bitoffset offset(index_t index) = 0;
+    uint8_t bits;
+
+    /* The individual entries are formed from bit fields.  Here we specify their sizes and offsets. */
+
+ private:
+    int dtm_offset;
+    uint8_t dtm_bits;
+    int movecnt_offset;
+    uint8_t movecnt_bits;
+    int locking_bit_offset;
+    int capture_possible_flag_offset;
+
+#define MOVECNT_MASK ((1 << movecnt_bits) - 1)
+
+#define MOVECNT_PTM_WINS_PROPED (MOVECNT_MASK)
+#define MOVECNT_PNTM_WINS_PROPED (MOVECNT_MASK - 1)
+#define MOVECNT_PTM_WINS_UNPROPED (MOVECNT_MASK - 2)
+#define MOVECNT_STALEMATE (MOVECNT_MASK - 3)
+#define MOVECNT_MAX (MOVECNT_MASK - 4)
+#define MOVECNT_PNTM_WINS_UNPROPED (0)
 
  public:
+    EntriesTable(void) {
+	if (current_tb->variant == VARIANT_NORMAL) {
+	    capture_possible_flag_offset = -1;
+	    dtm_offset = 0;
+	} else {
+	    capture_possible_flag_offset = 0;
+	    dtm_offset = 1;
+	}
+
+	dtm_bits = 5;
+	movecnt_bits = 7;
+
+	movecnt_offset = dtm_offset + dtm_bits;
+	locking_bit_offset = -1;
+	bits = movecnt_offset + movecnt_bits;
+
+#ifdef USE_THREADS
+	if (num_threads > 1) {
+	    locking_bit_offset = movecnt_offset + movecnt_bits;
+	    bits = locking_bit_offset + 1;
+	}
+#endif
+    }
+
     void lock_entry(index_t index) {
 #ifdef USE_THREADS
 	if (num_threads == 1) {
-	} else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
-	    if (spinlock_bit_field(pointer(index),
-				   offset(index) + ENTRIES_FORMAT_LOCKING_BIT_OFFSET)) {
-		/* contended_indices ++; */
+	} else if (locking_bit_offset >= 0) {
+	    if (spinlock_bit_field(pointer(index), offset(index) + locking_bit_offset)) {
 		(void) __sync_add(&contended_indices, 1);
 	    }
 	} else {
@@ -7508,54 +7461,49 @@ class EntriesTable {
     void unlock_entry(index_t index) {
 #ifdef USE_THREADS
 	if (num_threads == 1) {
-	} else if (ENTRIES_FORMAT_LOCKING_BIT_OFFSET >= 0) {
-	    set_bit_field(pointer(index),
-			  offset(index) + ENTRIES_FORMAT_LOCKING_BIT_OFFSET, 0);
+	} else if (locking_bit_offset >= 0) {
+	    set_bit_field(pointer(index), offset(index) + locking_bit_offset, 0);
 	} else {
 	    pthread_mutex_unlock(&entries_lock);
 	}
 #endif
     }
 
+    void verify_DTM_field_size(int dtm) {
+	if (! tracking_dtm) return;
+	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
+	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
+	    fatal("DTM entry field size exceeded\n");
+	    terminate();
+	}
+    }
+
     int get_raw_DTM(index_t index) {
 	if (! tracking_dtm) return 0;
-	return get_int_field(pointer(index),
-			     offset(index) + ENTRIES_FORMAT_DTM_OFFSET,
-			     ENTRIES_FORMAT_DTM_BITS);
+	return get_int_field(pointer(index), offset(index) + dtm_offset, dtm_bits);
     }
 
     void set_raw_DTM(index_t index, int dtm) {
 	if (! tracking_dtm) return;
-	set_int_field(pointer(index),
-		      offset(index) + ENTRIES_FORMAT_DTM_OFFSET,
-		      ENTRIES_FORMAT_DTM_BITS,
-		      dtm);
+	set_int_field(pointer(index), offset(index) + dtm_offset, dtm_bits, dtm);
     }
 
     int get_movecnt(index_t index) {
-	return get_unsigned_int_field(pointer(index),
-				      offset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
-				      ENTRIES_FORMAT_MOVECNT_BITS);
+	return get_unsigned_int_field(pointer(index), offset(index) + movecnt_offset, movecnt_bits);
     }
 
     void set_movecnt(index_t index, unsigned int movecnt) {
-	set_unsigned_int_field(pointer(index),
-			       offset(index) + ENTRIES_FORMAT_MOVECNT_OFFSET,
-			       ENTRIES_FORMAT_MOVECNT_BITS,
-			       movecnt);
+	set_unsigned_int_field(pointer(index), offset(index) + movecnt_offset, movecnt_bits, movecnt);
     }
 
     boolean get_capture_possible_flag(index_t index) {
-	if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return 0;
-	return get_bit_field(pointer(index),
-			     offset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET);
+	if (capture_possible_flag_offset == -1) return 0;
+	return get_bit_field(pointer(index), offset(index) + capture_possible_flag_offset);
     }
 
     void set_capture_possible_flag(index_t index, boolean flag) {
-	if (ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET == -1) return;
-	set_bit_field(pointer(index),
-		      offset(index) + ENTRIES_FORMAT_CAPTURE_POSSIBLE_FLAG_OFFSET,
-		      flag);
+	if (capture_possible_flag_offset == -1) return;
+	set_bit_field(pointer(index), offset(index) + capture_possible_flag_offset, flag);
     }
 
     boolean does_PTM_win(index_t index) {
@@ -7756,22 +7704,20 @@ class MemoryEntriesTable: public EntriesTable {
 
  public:
     MemoryEntriesTable(void) {
-	entries = malloc(LEFTSHIFT(current_tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
+	unsigned int bytes = ((current_tb->max_index + 1) * bits + 7) / 8;
+	entries = malloc(bytes);
 	if (entries == NULL) {
-	    fatal("Can't malloc %dMB for tablebase entries: %s\n",
-		  LEFTSHIFT(current_tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/(1024*1024),
-		  strerror(errno));
+	    fatal("Can't malloc %dMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
 	} else {
-	    int kilobytes = LEFTSHIFT(current_tb->max_index + 1, ENTRIES_FORMAT_BITS - 3)/1024;
-	    if (kilobytes < 1024) {
-		info("Malloced %dKB for tablebase entries\n", kilobytes);
+	    if (bytes < 1024*1024) {
+		info("Malloced %dKB for tablebase entries\n", bytes/1024);
 	    } else {
-		info("Malloced %dMB for tablebase entries\n", kilobytes/1024);
+		info("Malloced %dMB for tablebase entries\n", bytes/(1024*1024));
 	    }
 	}
 	/* Don't really need this, since they will all get initialized anyway */
 	/* XXX actually do this need right now, because initialization isn't complete */
-	memset(entries, 0, LEFTSHIFT(current_tb->max_index + 1, ENTRIES_FORMAT_BITS - 3));
+	memset(entries, 0, bytes);
     }
 
     void * pointer(index_t index) {
@@ -7781,7 +7727,7 @@ class MemoryEntriesTable: public EntriesTable {
 
     bitoffset offset(index_t index) {
 	/* entries array exists in memory - so just bit index into it */
-	return index << ENTRIES_FORMAT_BITS;
+	return index * bits;
     }
 };
 
@@ -7795,6 +7741,9 @@ class DiskEntriesTable: public EntriesTable {
     index_t entry_buffer_start;
     static const int entry_buffer_size = 4096;
 
+    /* Since entry_buffer_size is a power of 2 greater than 8, entry buffers are always byte-aligned */
+    int entry_buffer_bytes;
+
     void reset_files(void) {
 
 	int ret;
@@ -7803,15 +7752,15 @@ class DiskEntriesTable: public EntriesTable {
 	 * else, close and reopen both file descriptors, and read the first buffer in
 	 */
 
-	do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
 
 	if (entries_read_fd != -1) {
-	    while ((ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES)) != 0) {
-		if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+	    while ((ret = read(entries_read_fd, entry_buffer, entry_buffer_bytes)) != 0) {
+		if (ret != entry_buffer_bytes) {
 		    fatal("entries read: %s\n", strerror(errno));
 		    return;
 		}
-		do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+		do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
 	    }
 	}
 
@@ -7836,8 +7785,8 @@ class DiskEntriesTable: public EntriesTable {
 	}
 
 	entry_buffer_start = 0;
-	ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-	if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+	ret = read(entries_read_fd, entry_buffer, entry_buffer_bytes);
+	if (ret != entry_buffer_bytes) {
 	    fatal("initial entries read: %s\n", strerror(errno));
 	    return;
 	}
@@ -7852,15 +7801,15 @@ class DiskEntriesTable: public EntriesTable {
 	/* XXX multithreading a problem here? */
 
 	while (index >= entry_buffer_start + entry_buffer_size) {
-	    do_write(entries_write_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	    do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
 	    if (entries_read_fd != -1) {
-		ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-		if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+		ret = read(entries_read_fd, entry_buffer, entry_buffer_bytes);
+		if (ret != entry_buffer_bytes) {
 		    fatal("entries read: %s\n", strerror(errno));
 		    return;
 		}
 	    } else {
-		memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+		memset(entry_buffer, 0, entry_buffer_bytes);
 	    }
 	    entry_buffer_start += entry_buffer_size;
 	}
@@ -7871,14 +7820,16 @@ class DiskEntriesTable: public EntriesTable {
 
 	int ret;
 
+	entry_buffer_bytes = (entry_buffer_size * bits) / 8;
+
 	/* first, malloc the entries buffer */
 
-	entry_buffer = malloc(entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	entry_buffer = malloc(entry_buffer_bytes);
 	if (entry_buffer == NULL) {
 	    fatal("Can't malloc entries buffer\n");
 	    return;
 	}
-	memset(entry_buffer, 0, entry_buffer_size * ENTRIES_FORMAT_BYTES);
+	memset(entry_buffer, 0, entry_buffer_bytes);
 
 	/* create entries file for writing */
 
@@ -7902,8 +7853,8 @@ class DiskEntriesTable: public EntriesTable {
 		return;
 	    }
 
-	    ret = read(entries_read_fd, entry_buffer, entry_buffer_size * ENTRIES_FORMAT_BYTES);
-	    if (ret != entry_buffer_size * ENTRIES_FORMAT_BYTES) {
+	    ret = read(entries_read_fd, entry_buffer, entry_buffer_bytes);
+	    if (ret != entry_buffer_bytes) {
 		fatal("initial entries read: %s\n", strerror(errno));
 		return;
 	    }
@@ -7927,7 +7878,7 @@ class DiskEntriesTable: public EntriesTable {
 	if (entry_buffer_start > index) reset_files();
 	if (index >= entry_buffer_start + entry_buffer_size) advance_files_to_index(index);
 
-	return (index - entry_buffer_start) << ENTRIES_FORMAT_BITS;
+	return (index - entry_buffer_start) * bits;
     }
 };
 
@@ -8428,13 +8379,7 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
 int propagation_pass(int target_dtm)
 {
-    if (ENTRIES_FORMAT_DTM_OFFSET != -1) {
-	if (((target_dtm > 0) && (target_dtm > (ENTRIES_FORMAT_DTM_MASK >> 1)))
-	    || ((target_dtm < 0) && (target_dtm < -(int)(ENTRIES_FORMAT_DTM_MASK >> 1)))) {
-	    fatal("DTM entry field size exceeded\n");
-	    terminate();
-	}
-    }
+    entriesTable->verify_DTM_field_size(target_dtm);
 
     if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
     pass_target_dtms[total_passes] = target_dtm;
@@ -13398,7 +13343,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.619 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.620 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
