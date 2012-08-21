@@ -5672,7 +5672,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.630 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.631 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7359,9 +7359,40 @@ class EntriesTable {
 	    dtm_bits = 0;
 	}
 
-	movecnt_bits = 7;
+	int max_white_moves = 0;
+	int max_black_moves = 0;
+
+	for (int piece = 0; piece < current_tb->num_pieces; piece ++) {
+	    int *max_moves = (current_tb->piece_color[piece] == WHITE) ? &max_white_moves : &max_black_moves;
+	    switch (current_tb->piece_type[piece]) {
+	    case KING:
+	    case KNIGHT:
+		*max_moves += 8; break;
+	    case QUEEN:
+		*max_moves += 28; break;
+	    case ROOK:
+	    case BISHOP:
+		*max_moves += 14; break;
+	    case PAWN:
+		*max_moves += 12; break;
+	    }
+	}
+
+	if (current_tb->symmetry == 8) {
+	    max_white_moves *= 2;
+	    max_black_moves *= 2;
+	}
+
+	for (movecnt_bits = 1; (max_white_moves > MOVECNT_MAX)
+		 || (max_black_moves > MOVECNT_MAX); movecnt_bits ++);
 
 	ComputeBitfields();
+
+	info("Initial entries format: %d bits movecnt", movecnt_bits);
+	if (dtm_bits > 0) info("; %d bits dtm", dtm_bits);
+	if (capture_possible_flag_offset != -1) info("; capture possible flag");
+	if (locking_bit_offset != -1) info("; locking bit");
+	info("\n");
     }
 
     void lock_entry(index_t index) {
@@ -7593,7 +7624,7 @@ class EntriesTable {
     void initialize_entry_with_movecnt(index_t index, unsigned int movecnt) {
 
 	if (movecnt > MOVECNT_MAX) {
-	    fatal("Attempting to initialize position with a movecnt that won't fit in field!\n");
+	    fatal("Attempting to initialize position with a movecnt (%d) that won't fit in field!\n", movecnt);
 	}
 
 	initialize_entry(index, movecnt, 0);
@@ -7628,7 +7659,7 @@ class MemoryEntriesTable: public EntriesTable {
 
  public:
     MemoryEntriesTable(void) {
-	unsigned int bytes = ((current_tb->max_index + 1) * bits + 7) / 8;
+	long long bytes = (((long long) current_tb->max_index + 1) * bits + 7) / 8;
 	entries = malloc(bytes);
 	if (entries == NULL) {
 	    fatal("Can't malloc %dMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
@@ -13330,7 +13361,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.630 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.631 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
