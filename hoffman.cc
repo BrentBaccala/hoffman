@@ -286,7 +286,7 @@ int * pass_target_dtms = NULL;
 int * positions_finalized = NULL;
 uint64_t * backproped_moves = NULL;
 
-boolean tracking_dtm = 1;
+boolean tracking_dtm = 1;   // XXX should clear this variable if we're generating a bitbase
 int min_tracked_dtm = -2;
 int max_tracked_dtm = 2;
 uint8_t * positive_passes_needed = NULL;
@@ -5672,7 +5672,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.629 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.630 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7346,7 +7346,19 @@ class EntriesTable {
  public:
     EntriesTable(void) {
 
-	dtm_bits = 4;
+	/* We've already preloaded our futurebases, so min_tracked_dtm and max_tracked_dtm
+	 * tell us the minumum and maximum DTMs in the futurebases.  Make sure we've got
+	 * enough room in our DTM field to handle anything from our futurebases, then
+	 * we'll expand the field later if we need more space.
+	 */
+
+	if (tracking_dtm) {
+	    for (dtm_bits = 1; (max_tracked_dtm > (1 << (dtm_bits - 1)) - 1)
+		     || (min_tracked_dtm < -(1 << (dtm_bits - 1))); dtm_bits ++);
+	} else {
+	    dtm_bits = 0;
+	}
+
 	movecnt_bits = 7;
 
 	ComputeBitfields();
@@ -12384,16 +12396,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	return 0;
     }
 
-    if (!using_proptables) {
-	entriesTable = new MemoryEntriesTable;
-    }
-
-#ifdef HAVE_LIBTPIE
-    if (using_proptables) {
-	if (! initialize_proptable(proptable_MBs)) return 0;
-    }
-#endif
-
     if (! preload_all_futurebases(tb)) return 0;
     assign_numbers_to_futuremoves(tb);
     if (! compute_pruned_futuremoves(tb)) return 0;
@@ -12427,6 +12429,8 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	 * the futurebases (noting which futuremoves have been handled in the futurevectors array),
 	 * and run through the futurevectors array checking for unhandled futuremoves.
 	 */
+
+	entriesTable = new MemoryEntriesTable;
 
 	/* tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t)); */
         if (num_futuremoves[WHITE] > num_futuremoves[BLACK])
@@ -12518,6 +12522,10 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	entriesTable = new DiskEntriesTable;
 
+#ifdef HAVE_LIBTPIE
+	if (! initialize_proptable(proptable_MBs)) return 0;
+#endif
+
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
 
@@ -12525,11 +12533,9 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	    finalize_pass_statistics();
 	    total_passes ++;
-	}
 
-	/* XXX should be able to handle restart just after a futurebase backprop */
+	    /* XXX should be able to handle restart just after a futurebase backprop */
 
-	if (! do_restart) {
 	    info("Initializing tablebase...\n");
 	    pass_type[total_passes] = "initialization";
 	    propagation_pass(0);
@@ -13324,7 +13330,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.629 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.630 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
