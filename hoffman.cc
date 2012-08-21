@@ -5672,7 +5672,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.628 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.629 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7138,7 +7138,7 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 	terminate();
     }
 
-    if (index < tb->next_read_index) {
+    if (index != tb->next_read_index) {
 	if (zlib_seek(tb->file, tb->offset + (off_t) (index * tb->format.bits / 8), SEEK_SET)
 	    != tb->offset + (off_t) (index * tb->format.bits / 8)) {
 	    fatal("Seek failed for index %d in fetch_entry_pointer()\n", index);
@@ -13324,7 +13324,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.628 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.629 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
