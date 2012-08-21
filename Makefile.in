@@ -8,7 +8,7 @@ hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@
 
 configure_SRCS = configure configure.in Makefile.in config.h.in config.guess config.sub install-sh
 hoffman_SRCS = hoffman.cc probe.c egtb.cpp lock.h tbdecode.h url_fopen.c ftp_fopen.c zlib_fopen.c url_fopen.h ftp_fopen.h zlib_fopen.h bitlib.h
-hoffman_DTD = tablebase.dtd formats.xml
+hoffman_DTD = tablebase.dtd
 hoffman_SCRIPTS = pawngen genctlfile.pl gensuicide.pl genalltb genalltb.bat hoffman.nsi md5htb cgi-bin/*
 hoffman_DOCS = README COPYING ChangeLog TODO tutorial.pdf reference.pdf proptables.pdf
 hoffman_DOCSRC = tutorial.tex reference.tex proptables.tex proptables-fig1.fig
@@ -25,12 +25,9 @@ hoffman: $(hoffman_OBJS)
 
 hoffman.o: tablebase_dtd.h config.h bitlib.h
 
-tablebase_dtd.h: tablebase.dtd formats.xml
+tablebase_dtd.h: tablebase.dtd
 	echo "const char * tablebase_dtd = \"\\" > $@
 	sed -e 's/"/\\"/g' -e 's/$$/\\/' tablebase.dtd >> $@
-	echo "\";" >> $@
-	echo "const char * formats_xml = \"\\" >> $@
-	sed -e 's/"/\\"/g' -e 's/$$/\\/' formats.xml >> $@
 	echo "\";" >> $@
 
 tarball: docs
