@@ -18,46 +18,17 @@
 	modulus CDATA				#IMPLIED>
 
 <!ELEMENT format (dtm | flag | basic) >
-<!ELEMENT entries-format (dtm | movecnt | locking-bit | capture-possible-flag)+ >
-<!ELEMENT proptable-format (dtm | PTM-wins-flag | movecnt | index-field | futurevector)+ >
 
 <!ELEMENT dtm EMPTY>
 <!ATTLIST dtm
-	offset CDATA				#IMPLIED
-	bits CDATA				#REQUIRED>
+	bits CDATA				#IMPLIED>
 <!ELEMENT flag EMPTY>
 <!ATTLIST flag
-	offset CDATA				#IMPLIED
 	bits (1)				#IMPLIED
 	type (white-wins|white-draws)		#REQUIRED>
 <!ELEMENT basic EMPTY>
 <!ATTLIST basic
-	offset CDATA				#IMPLIED
 	bits (2)				#IMPLIED>
-<!ELEMENT movecnt EMPTY>
-<!ATTLIST movecnt
-	offset CDATA				#IMPLIED
-	bits CDATA				#REQUIRED>
-<!ELEMENT locking-bit EMPTY>
-<!ATTLIST locking-bit
-	offset CDATA				#IMPLIED
-	bits (1)				#IMPLIED>
-<!ELEMENT PTM-wins-flag EMPTY>
-<!ATTLIST PTM-wins-flag
-	offset CDATA				#IMPLIED
-	bits (1)				#IMPLIED>
-<!ELEMENT capture-possible-flag EMPTY>
-<!ATTLIST capture-possible-flag
-	offset CDATA				#IMPLIED
-	bits (1)				#IMPLIED>
-<!ELEMENT index-field EMPTY>
-<!ATTLIST index-field
-	offset CDATA				#IMPLIED
-	bits CDATA				#REQUIRED>
-<!ELEMENT futurevector EMPTY>
-<!ATTLIST futurevector
-	offset CDATA				#IMPLIED
-	bits CDATA				#REQUIRED>
 
 <!ELEMENT output EMPTY>
 <!ATTLIST output
@@ -71,7 +42,7 @@
 
 <!ELEMENT url-prefix (#PCDATA)>
 
-<!ELEMENT generation-controls (output | url-prefix | completion-report | error-report | entries-format | proptable-format)+ >
+<!ELEMENT generation-controls (output | url-prefix | completion-report | error-report)+ >
 
 <!ELEMENT tablebase-statistics (indices | PNTM-mated-positions | legal-positions | stalemate-positions | white-wins-positions | black-wins-positions | forward-moves | futuremoves | backproped-moves | max-dtm | min-dtm)+ >
 <!ELEMENT indices (#PCDATA)>
