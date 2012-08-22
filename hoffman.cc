@@ -510,6 +510,7 @@ const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 /* This is the "one-byte-dtm" format */
 
 struct format one_byte_dtm_format = {8, 0,8, -1,FORMAT_FLAG_NONE, -1};
+struct format dtm_format = {0, 0,0, -1,FORMAT_FLAG_NONE, -1};
 
 typedef void entry_t;
 
@@ -4101,27 +4102,11 @@ int check_1000_indices(tablebase_t *tb)
  *      <dtm bits="8"/>
  *   </format>
  *
- * Essentially, this specifies the layout of a C structure at run-time, and we have to jump through
- * all kinds of obscure nonsense to get dynamic structures.  Basically, we end up doing everything
- * with shifts and masks rather than normal structure operations.
- *
- * The XML format can be specified with either explicit or implicit offsets.  Explicit offsets are
- * just that: <dtm bits="8" offset="8"/> specifies an 8-bit field at an 8-bit offset into the
- * structure.  Implicit offsets assign the offset values counting up from zero (like the first
- * example above).  The two can not be mixed in the same format spec.
- *
- * The total size of a format is silently rounded up to a power-of-two byte boundary.  This is done
- * to make sure that the resulting structures can't straddle buffer boundaries.
  */
 
 boolean parse_format(xmlNodePtr formatNode, struct format *format)
 {
     xmlNodePtr child;
-    int auto_offset = 0;
-    int total_bits = 0;
-    int bitnum;
-    uint64_t bitmask1 = 0;
-    uint64_t bitmask2 = 0;
 
     memset(format, 0, sizeof(struct format));
 
@@ -4132,96 +4117,26 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
     for (child = formatNode->children; child != NULL; child = child->next) {
 	if (child->type == XML_ELEMENT_NODE) {
 	    char * bitstr = (char *) xmlGetProp(child, BAD_CAST "bits");
-	    char * offsetstr = (char *) xmlGetProp(child, BAD_CAST "offset");
 	    char * typestr;
 	    int bits = (bitstr != NULL) ? atoi(bitstr) : 0;
-	    int offset = (offsetstr != NULL) ? atoi(offsetstr) : -1;
 	    int format_field = find_name_in_array((char *) child->name, format_fields);
 
 	    if (bitstr != NULL) xmlFree(bitstr);
-	    if (offsetstr != NULL) xmlFree(offsetstr);
 
 	    if (format_field == -1) {
 		fatal("Unknown field in format: %s\n", (char *) child->name);
 		return 0;
 	    }
 
-	    if (format_field == FORMAT_FIELD_FLAG) {
-
-		if (bitstr == NULL) {
-		    bits = 1;
-		}
-		if (bits != 1) {
-		    fatal("Format field '%s' only accepts bits=\"1\"\n", (char *) child->name);
-		    return 0;
-		}
-	    }
-
-	    if (format_field == FORMAT_FIELD_BASIC) {
-		if (bitstr == NULL) {
-		    bits = 2;
-		}
-		if (bits != 2) {
-		    fatal("Format field '%s' only accepts bits=\"2\"\n", (char *) child->name);
-		    return 0;
-		}
-	    }
-
-#if 0
-	    if (bits == 0) {
-		fatal("Non-zero 'bits' value must be specified in format field '%s'\n",
-		      (char *) child->name);
-		return 0;
-	    }
-#endif
-	    if ((offset == -1) && (auto_offset == -1)) {
-		fatal("Can't mix explicit and implicit offsets in format\n");
-		return 0;
-	    }
-
-	    if (offset == -1) {
-		offset = auto_offset;
-		auto_offset += bits;
-	    } else {
-		auto_offset = -1;
-	    }
-
-	    if ((offset/32 != (offset+bits-1) / 32)) {
-		fatal("Format fields can't straddle a 32-bit boundary\n");
-		return 0;
-	    }
-
-	    if (offset >= 128) {
-		fatal("Formats can't exceed 128 bits\n");
-		return 0;
-	    }
-
-	    for (bitnum = offset; bitnum < offset + bits; bitnum ++) {
-		if (bitnum < 64) {
-		    if (bitmask1 & (1LL << bitnum)) {
-			fatal("Overlapping format fields (%s)\n", (char *) child->name);
-			return 0;
-		    }
-		    bitmask1 |= (1LL << bitnum);
-		} else {
-		    if (bitmask2 & (1LL << (bitnum - 64))) {
-			fatal("Overlapping format fields (%s)\n", (char *) child->name);
-			return 0;
-		    }
-		    bitmask2 |= (1LL << (bitnum - 64));
-		}
-	    }
-
-	    if (offset + bits > total_bits) total_bits = offset + bits;
-
 	    switch (format_field) {
 	    case FORMAT_FIELD_DTM:
+		format->dtm_offset = 0;
 		format->dtm_bits = bits;
-		format->dtm_offset = offset;
 		break;
 	    case FORMAT_FIELD_FLAG:
+		format->flag_offset = 0;
+		bits = 1;
 		typestr = (char *) xmlGetProp(child, BAD_CAST "type");
-		format->flag_offset = offset;
 		format->flag_type = find_name_in_array(typestr, format_flag_types);
 		if (typestr != NULL) xmlFree(typestr);
 		if (format->flag_type == -1) {
@@ -4230,16 +4145,17 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		}
 		break;
 	    case FORMAT_FIELD_BASIC:
-		format->basic_offset = offset;
+		format->basic_offset = 0;
+		bits = 2;
 		break;
 	    default:
 		fatal("Unknown field in format\n");
 		return 0;
 	    }
+
+	    format->bits = bits;
 	}
     }
-
-    format->bits = total_bits;
 
     return 1;
 }
@@ -4929,9 +4845,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
 	if (result->nodesetval->nodeNr == 1) {
 	    if (! parse_format(result->nodesetval->nodeTab[0], &tb->format)) return NULL;
 	} else {
-	    xmlNewProp(tablebase, BAD_CAST "format", BAD_CAST "one-byte-dtm");
-	    tb->format = one_byte_dtm_format;
-	    warning("Format not expressly specified; assuming ONE-BYTE-DTM\n");
+	    tb->format = dtm_format;
+	    warning("Format not expressly specified; assuming dtm\n");
 	}
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
@@ -5672,7 +5587,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.633 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.634 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13386,7 +13301,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.633 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.634 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
