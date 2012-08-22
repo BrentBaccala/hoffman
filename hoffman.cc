@@ -191,6 +191,8 @@ long contended_indices = 0;
  * hopefully helps make the code clearer and less error prone.  We condition on
  * HAVE_INTEL_ATOMIC_OPS instead of USE_THREADS because even if we're not using threads, the builtin
  * functions might still be defined.
+ *
+ * __sync_incr(var) is "var ++" done atomically.
  */
 
 #ifdef HAVE_INTEL_ATOMIC_OPS
@@ -200,12 +202,16 @@ long contended_indices = 0;
 #define __sync_add __sync_fetch_and_add
 #define __sync_and __sync_fetch_and_and
 
+#define __sync_incr(var) __sync_fetch_and_add(&var, 1)
+
 #else
 
 #define __sync_or(ptr, val) (*(ptr) |= (val))
 #define __sync_xor(ptr, val) (*(ptr) ^= (val))
 #define __sync_add(ptr, val) (*(ptr) += (val))
 #define __sync_and(ptr, val) (*(ptr) &= (val))
+
+#define __sync_incr(var) (var ++)
 
 #define __sync_fetch_and_and  __non_builtin_sync_fetch_and_and
 
@@ -1016,8 +1022,7 @@ inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
     if (pthread_mutex_trylock(mutex) != 0) {
 	pthread_mutex_lock(mutex);
 
-	/* contended_locks ++; */
-	(void) __sync_add(&contended_locks, 1);
+	__sync_incr(contended_locks);
     }
 }
 
@@ -5587,7 +5592,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.634 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.635 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7331,7 +7336,7 @@ class EntriesTable {
 	if (num_threads == 1) {
 	} else if (locking_bit_offset >= 0) {
 	    if (spinlock_bit_field(pointer(index), offset(index) + locking_bit_offset)) {
-		(void) __sync_add(&contended_indices, 1);
+		__sync_incr(contended_indices);
 	    }
 	} else {
 	    pthread_mutex_lock(&entries_lock);
@@ -7501,8 +7506,7 @@ class EntriesTable {
 
 	initialize_entry(index, MOVECNT_PNTM_WINS_UNPROPED, -1);
 
-	/* total_legal_positions ++; */
-	(void) __sync_add(&total_legal_positions, 1);
+	__sync_incr(total_legal_positions);
     }
 
     void initialize_entry_with_PNTM_mated(index_t index) {
@@ -7523,8 +7527,7 @@ class EntriesTable {
 	    initialize_entry(index, MOVECNT_PTM_WINS_UNPROPED, 1);
 	}
 
-	/* total_PNTM_mated_positions ++; */
-	(void) __sync_add(&total_PNTM_mated_positions, 1);
+	__sync_incr(total_PNTM_mated_positions);
     }
 
     void initialize_entry_with_stalemate(index_t index) {
@@ -7548,12 +7551,10 @@ class EntriesTable {
 	    }
 	} else {
 	    initialize_entry(index, MOVECNT_STALEMATE, 0);
-	    /* total_stalemate_positions ++; */
-	    (void) __sync_add(&total_stalemate_positions, 1);
+	    __sync_incr(total_stalemate_positions);
 	}
 
-	/* total_legal_positions ++; */
-	(void) __sync_add(&total_legal_positions, 1);
+	__sync_incr(total_legal_positions);
     }
 
     void initialize_entry_with_movecnt(index_t index, unsigned int movecnt) {
@@ -7564,8 +7565,7 @@ class EntriesTable {
 
 	initialize_entry(index, movecnt, 0);
 
-	/* total_legal_positions ++; */
-	(void) __sync_add(&total_legal_positions, 1);
+	__sync_incr(total_legal_positions);
     }
 
     void initialize_entry_with_DTM(index_t index, int dtm) {
@@ -7582,8 +7582,7 @@ class EntriesTable {
 	    initialize_entry(index, MOVECNT_PNTM_WINS_UNPROPED, dtm);
 	}
 
-	/* total_legal_positions ++; */
-	(void) __sync_add(&total_legal_positions, 1);
+	__sync_incr(total_legal_positions);
     }
 };
 
@@ -7974,17 +7973,16 @@ void back_propagate_index(index_t index, int target_dtm)
 
 	entriesTable->flag_as_propagated(index);
 
-	/* Track statistics.  If we're multi-threaded, we need to make sure these increments are
-	 * done atomically.  For the "player wins" statistics, we don't want to count illegal (PNTM
+	/* Track statistics.  For the "player wins" statistics, we don't want to count illegal (PNTM
 	 * mated) positions, so we don't increment anything if DTM is 1.
 	 */
 
-	(void) __sync_add(&positions_finalized[total_passes], 1);
+	__sync_incr(positions_finalized[total_passes]);
 
 	if (entriesTable->does_PTM_win(index)) {
-	    if (target_dtm > 1) (void) __sync_add(&player_wins[index_to_side_to_move(current_tb, index)], 1);
+	    if (target_dtm > 1) __sync_incr(player_wins[index_to_side_to_move(current_tb, index)]);
 	} else {
-	    (void) __sync_add(&player_wins[1 - index_to_side_to_move(current_tb, index)], 1);
+	    __sync_incr(player_wins[1 - index_to_side_to_move(current_tb, index)]);
 	}
 
     }
@@ -8715,10 +8713,6 @@ int invert_colors_of_futurebase;
 
 index_t next_future_index;
 
-#ifdef USE_THREADS
-pthread_mutex_t next_future_index_lock = PTHREAD_MUTEX_INITIALIZER;
-#endif
-
 /* The four futurebase back-propagation functions
  *
  * All work the same way - they are passed in the current thread number, cast as a pointer, which is
@@ -8777,15 +8771,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 
     while (1) {
 
-#ifdef USE_THREADS
-	pthread_mutex_lock_instrumented(&next_future_index_lock);
-#endif
-
-	future_index = next_future_index ++;
-
-#ifdef USE_THREADS
-	pthread_mutex_unlock(&next_future_index_lock);
-#endif
+	future_index = __sync_incr(next_future_index);
 
 	if (future_index > futurebase->max_index) break;
 
@@ -8988,15 +8974,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 
     while (1) {
 
-#ifdef USE_THREADS
-	pthread_mutex_lock_instrumented(&next_future_index_lock);
-#endif
-
-	future_index = next_future_index ++;
-
-#ifdef USE_THREADS
-	pthread_mutex_unlock(&next_future_index_lock);
-#endif
+	future_index = __sync_incr(next_future_index);
 
 	if (future_index > futurebase->max_index) break;
 
@@ -9409,15 +9387,7 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
 
     while (1) {
 
-#ifdef USE_THREADS
-	pthread_mutex_lock_instrumented(&next_future_index_lock);
-#endif
-
-	future_index = next_future_index ++;
-
-#ifdef USE_THREADS
-	pthread_mutex_unlock(&next_future_index_lock);
-#endif
+	future_index = __sync_incr(next_future_index);
 
 	if (future_index > futurebase->max_index) break;
 
@@ -9553,15 +9523,7 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 
     while (1) {
 
-#ifdef USE_THREADS
-	pthread_mutex_lock_instrumented(&next_future_index_lock);
-#endif
-
-	future_index = next_future_index ++;
-
-#ifdef USE_THREADS
-	pthread_mutex_unlock(&next_future_index_lock);
-#endif
+	future_index = __sync_incr(next_future_index);
 
 	if (future_index > futurebase->max_index) break;
 
@@ -12361,11 +12323,13 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 #endif
 
+#if 0
     if (using_proptables && num_threads > 1) {
 	/* This is a limitation in TPIE */
 	fatal("Can't use proptables with multiple threads (currently)\n");
 	return 0;
     }
+#endif
 
     if (! preload_all_futurebases(tb)) return 0;
     assign_numbers_to_futuremoves(tb);
@@ -13301,7 +13265,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.634 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.635 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
