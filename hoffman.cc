@@ -486,7 +486,6 @@ int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, KING};
 
 struct format {
     uint8_t bits;
-    uint32_t dtm_mask;
     int dtm_offset;
     uint8_t dtm_bits;
     int flag_offset;
@@ -510,7 +509,7 @@ const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
 
 /* This is the "one-byte-dtm" format */
 
-struct format one_byte_dtm_format = {8, 0xff,0,8, -1,FORMAT_FLAG_NONE, -1};
+struct format one_byte_dtm_format = {8, 0,8, -1,FORMAT_FLAG_NONE, -1};
 
 typedef void entry_t;
 
@@ -4168,11 +4167,13 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		}
 	    }
 
+#if 0
 	    if (bits == 0) {
 		fatal("Non-zero 'bits' value must be specified in format field '%s'\n",
 		      (char *) child->name);
 		return 0;
 	    }
+#endif
 	    if ((offset == -1) && (auto_offset == -1)) {
 		fatal("Can't mix explicit and implicit offsets in format\n");
 		return 0;
@@ -4217,7 +4218,6 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 	    case FORMAT_FIELD_DTM:
 		format->dtm_bits = bits;
 		format->dtm_offset = offset;
-		format->dtm_mask = (1 << bits) - 1;
 		break;
 	    case FORMAT_FIELD_FLAG:
 		typestr = (char *) xmlGetProp(child, BAD_CAST "type");
@@ -5672,7 +5672,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.632 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.633 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6171,6 +6171,20 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     tablebase = xmlDocGetRootElement(tb->xml);
 
     xmlNewProp(tablebase, BAD_CAST "offset", BAD_CAST "0x1000");
+
+    /* If no size field was specified for a DTM format, set it now */
+
+    context = xmlXPathNewContext(tb->xml);
+    result = xmlXPathEvalExpression(BAD_CAST "//format//dtm", context);
+    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+	node = result->nodesetval->nodeTab[0];
+	if (xmlGetProp(node, BAD_CAST "bits") == NULL) {
+	    char str[16];
+	    sprintf(str, "%d", tb->format.dtm_bits);
+	    xmlNewProp(node, BAD_CAST "bits", BAD_CAST str);
+	}
+    }
+
 
     /* Add a set of tablebase-statistics.  We prefer to add this before the generation-statistics,
      * because the generation-statistics are long and boring, and because this is how it's always
@@ -7419,6 +7433,10 @@ class EntriesTable {
 	    pthread_mutex_unlock(&entries_lock);
 	}
 #endif
+    }
+
+    uint8_t get_DTM_field_size(void) {
+	return dtm_bits;
     }
 
     /* This function is virtual so that subclasses can do a better job of handling a DTM overflow */
@@ -12258,6 +12276,11 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
     info("Writing '%s'\n", filename);
 
+    if (tb->format.dtm_bits == 0) {
+	tb->format.dtm_bits = entriesTable->get_DTM_field_size();
+	tb->format.bits += tb->format.dtm_bits;
+    }
+
     doc = finalize_XML_header(tb);
 
     /* We want at least one zero byte after the XML header, because that's how we figure out where
@@ -13363,7 +13386,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.632 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.633 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
