@@ -5584,7 +5584,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.638 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.639 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8124,8 +8124,12 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 
 extern "C++" {
 
+    /* A simple disk-backed que. */
+
     template <typename T>
     struct disk_que {
+	typedef T value_type;
+
 	int fd;
 	int next;
 	int size;
@@ -8144,19 +8148,20 @@ extern "C++" {
 	    unlink(filename);
 	}
 
-	void write(T *ptr, int size) {
+	void append(T *ptr, int size) {
 	    memcpy(queue, ptr, 256 * sizeof(T));
-	    ::write(fd, ptr+256, (size-256) * sizeof(T));
+	    do_write(fd, ptr+256, (size-256) * sizeof(T));
 	    lseek(fd, 0, SEEK_SET);
 	    this->size = size;
 	}
 
-	bool is_empty(void) {
+	bool empty(void) {
 	    return (next == size);
 	}
 
 	T& pop_front(void) {
 	    if ((next != 0) && (next % 256 == 0)) {
+		// XXX check return value
 		read(fd, queue, 256 * sizeof(T));
 		next = 0;
 	    }
@@ -8164,85 +8169,107 @@ extern "C++" {
 	}
     };
 
-    template <typename T>
+    /* A sorting network.
+     *
+     * We're reading from a container of subcontainers.  Each subcontainer is itself sorted, but now
+     * we impose a total sort on all of them.  We do this by maintaining a binary tree (the sorting
+     * network), with the subcontainers 'feeding' the leaves and each non-leaf being the less-than
+     * comparison of the two nodes below it.  We also track which subcontainer each entry came from
+     * originally.  Once initialized, we just read the root of the tree to get the next entry, then
+     * refill whichever leaf we got the entry from (that's why we track subcontainers for each
+     * entry), and run back up the tree from that leaf only, recomputing the comparisons.  It's laid
+     * out in memory as an array, like this (in this example, highbit is 4):
+     *
+     *                    /4
+     *                /-2--5
+     *               1
+     *                \-3--6
+     *                    \7
+     *
+     * so that we can run that last step (backing up the tree, from right to left, in the diagram),
+     * just by right shifting the index.  I got this idea from Knuth.
+     */
+
+    template <class Container>
     class sorting_network {
 
-	/* Sorting network.
-	 *
-	 * We need to read a bunch of containers.  Each one is itself sorted, but now we impose a
-	 * total sort on all of them.  We do this by maintaining a binary tree (the sorting
-	 * network), with the input proptables 'feeding' the leaves and each non-leaf the less-than
-	 * comparison of the two nodes below it.  We also track which container each entry came from
-	 * originally.  Once initialized, we just read the root of the tree to get the next entry,
-	 * then refill whichever leaf we got the entry from (that's why we track containers for each
-	 * entry), and run back up the tree from that leaf only, recomputing the comparisons.  It's
-	 * laid out in memory as an array, like this:
-	 *
-	 *                    /4
-	 *                /-2--5
-	 *               1
-	 *                \-3--6
-	 *                    \7
-	 *
-	 * so that we can run that last step (backing up the tree, from right to left, in the
-	 * diagram), just by right shifting the index.  I got this idea from Knuth.
-	 */
+	typedef typename Container::value_type Subcontainer;
+	typedef typename Subcontainer::value_type T;
 
     private:
-	T * sorting_network;
-	int * disk_queue_num;
-	int highbit;
+	Container containers;
+	T * network;
+	int * container_num;
+	unsigned int highbit;
 
-    public:
-	void initialize_sorting_network(void) {
+	/* We don't initialize until the first retrieval request, which allows 'containers' to be
+	 * modified, initially.  After we start retrieving, we expect 'containers' to be untouched.
+	 */
 
-	    for (highbit = 1; highbit < disk_ques.size(); highbit <<= 1);
+	void initialize_network(void) {
 
-	    sorting_network = new T[2 * highbit];
-	    disk_queue_num = new int[2 * highbit];
+	    for (highbit = 1; highbit < containers.size(); highbit <<= 1);
+
+	    network = new T[2 * highbit];
+	    container_num = new int[2 * highbit];
 
 	    /* Fill in the upper half of the network with either the first entry from a disk queue,
 	     * or an "infinite" entry for slots with no proptables.
 	     */
 
-	    for (int i=0; i<highbit; i++) {
-		if (i < disk_ques.size()) {
-		    sorting_network[highbit + i] = disk_ques[i].pop_front();
-		    disk_queue_num[highbit + i] = i;
+	    for (unsigned int i=0; i<highbit; i++) {
+		if (i < containers.size()) {
+		    network[highbit + i] = containers[i].pop_front();
+		    container_num[highbit + i] = i;
 		} else {
-		    disk_queue_num[highbit + i] = -1;
+		    container_num[highbit + i] = -1;
 		}
 	    }
 
 	    /* Then, sort into the lower half of the network. */
 
 	    for (int network_node = highbit-1; network_node > 0; network_node --) {
-		if ((sorting_network[2*network_node + 1] == -1)
-		    && (sorting_network[2*network_node] < sorting_network[2*network_node + 1])) {
-		    sorting_network[network_node] = sorting_network[2*network_node];
-		    disk_queue_num[network_node] = disk_queue_num[2*network_node];
+		if ((container_num[2*network_node + 1] == -1)
+		    && (network[2*network_node] < network[2*network_node + 1])) {
+		    network[network_node] = network[2*network_node];
+		    container_num[network_node] = container_num[2*network_node];
 		} else {
-		    sorting_network[network_node] = sorting_network[2*network_node + 1];
-		    disk_queue_num[network_node] = disk_queue_num[2*network_node + 1];
+		    network[network_node] = network[2*network_node + 1];
+		    container_num[network_node] = container_num[2*network_node + 1];
 		}
 	    }
 	}
 
-	T& pop_front(void) {
-	    T retval = sorting_network[1];
-	    int network_node = highbit + disk_queue_num[1];
+    public:
 
-	    sorting_network[network_node] = disk_ques[disk_queue_num[1]].pop_front();
+	sorting_network(Container containers): containers(containers), highbit(0) { }
+
+	bool empty(void) {
+	    return (highbit == 0) ? containers.empty() : (container_num[1] == -1);
+	}
+
+	T& front(void) {
+	    if (highbit == 0) initialize_network();
+	    return network[1];
+	}
+
+	T& pop_front(void) {
+	    if (highbit == 0) initialize_network();
+
+	    T& retval = network[1];
+	    int network_node = highbit + container_num[1];
+
+	    network[network_node] = containers[container_num[1]].pop_front();
 
 	    while (network_node > 1) {
 		network_node >>= 1;
-		if ((sorting_network[2*network_node + 1] == -1)
-		    && (sorting_network[2*network_node] < sorting_network[2*network_node + 1])) {
-		    sorting_network[network_node] = sorting_network[2*network_node];
-		    disk_queue_num[network_node] = disk_queue_num[2*network_node];
+		if ((container_num[2*network_node + 1] == -1)
+		    && (network[2*network_node] < network[2*network_node + 1])) {
+		    network[network_node] = network[2*network_node];
+		    container_num[network_node] = container_num[2*network_node];
 		} else {
-		    sorting_network[network_node] = sorting_network[2*network_node + 1];
-		    disk_queue_num[network_node] = disk_queue_num[2*network_node + 1];
+		    network[network_node] = network[2*network_node + 1];
+		    container_num[network_node] = container_num[2*network_node + 1];
 		}
 	    }
 
@@ -8250,8 +8277,18 @@ extern "C++" {
 	}
     };
 
+    /* Our priority queue.
+     *
+     * Initialize with number of entries to store in-memory.  If we insert less than that number, do
+     * everything in-memory.  If we insert more, then dump to disk and use a sorting network to read
+     * it back.
+     */
+
     template <typename T>
     class priority_queue {
+
+	typedef struct disk_que<T> DiskQue;
+	typedef class std::deque<DiskQue> DiskQueQue;
 
     private:
 	T * in_memory_queue;
@@ -8260,7 +8297,8 @@ extern "C++" {
 	int tail;
 	boolean sorted;
 
-	class std::deque<struct disk_que> disk_ques;
+	DiskQueQue disk_ques;
+	class sorting_network<DiskQueQue> snetwork;
 
 	void sort_in_memory_queue(void) {
 	    if (! sorted) {
@@ -8269,9 +8307,18 @@ extern "C++" {
 	    }
 	}
 
+	void dump_memory_queue_to_disk(void) {
+	    DiskQue *dq = new DiskQue;
+
+	    sort_in_memory_queue();
+	    dq->append(in_memory_queue, tail);
+	    disk_ques.push_back(*dq);
+	    tail = 0;
+	}
+
     public:
     
-	priority_queue(int limit = 64*1024*1024): limit(limit) {
+	priority_queue(int limit = 1024*1024): limit(limit), snetwork(disk_ques) {
 	    in_memory_queue = new T[limit];
 	    head = 0;
 	    tail = 0;
@@ -8285,42 +8332,39 @@ extern "C++" {
 
 	void push(const T& x) {
 	    if (tail == limit) {
-#if 1
-		struct disk_que *dq = new struct disk_que;
-
-		sort_in_memory_queue();
-		do_write(dq->fd, in_memory_queue, limit * sizeof(T));
-		disk_ques.push_back(*dq);
-
 		info("Proptable overflow\n");
-
-		tail = 0;
-#else
-		fatal("Proptable overflow\n");
-#endif
+		dump_memory_queue_to_disk();
 	    }
 	    in_memory_queue[tail ++] = x;
 	    sorted = 0;
 	}
 
 	boolean empty(void) {
-	    return (head == tail);
+	    return disk_ques.empty() ? (head == tail) : snetwork.empty();
 	}
 
 	const T& top(void) {
-	    if (! sorted) {
-		std::sort(&in_memory_queue[head], &in_memory_queue[tail]);
-		sorted = 1;
+	    if (disk_ques.empty()) {
+		sort_in_memory_queue();
+		return in_memory_queue[head];
+	    } else {
+		if (head != tail) {
+		    dump_memory_queue_to_disk();
+		}
+		return snetwork.front();
 	    }
-	    return in_memory_queue[head];
 	}
 
 	const T& pop(void) {
-	    if (! sorted) {
-		std::sort(&in_memory_queue[head], &in_memory_queue[tail]);
-		sorted = 1;
+	    if (disk_ques.empty()) {
+		sort_in_memory_queue();
+		return in_memory_queue[head ++];
+	    } else {
+		if (head != tail) {
+		    dump_memory_queue_to_disk();
+		}
+		return snetwork.pop_front();
 	    }
-	    return in_memory_queue[head ++];
 	}
     };
 
@@ -13441,7 +13485,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.638 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.639 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
