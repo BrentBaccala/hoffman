@@ -5581,7 +5581,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.641 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.642 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8044,7 +8044,7 @@ void non_proptable_pass(int target_dtm)
 /***** PROPTABLES *****
  *
  * Proptables are used to optimize back propagation for large tablebases that can not fit into RAM.
- * A proptable is a TPIE priority queue that stores pending updates and then retreives them in index
+ * A proptable is a priority queue that stores pending updates and then retreives them in index
  * sorted order, allowing a batch of updates to be applied with a single linear pass through the
  * entries array.  We maintain two proptables, the input and the output, and as we make a single
  * pass through the tablebase, we're simultaneously committing changes from the input into the
@@ -8055,9 +8055,6 @@ void non_proptable_pass(int target_dtm)
  * commit_update either calls finalize_update immediately (no proptable; random access) or enqueues
  * the update into the output proptable, so that it will later be retrieved and finalized in the
  * next call to proptable_pass, when the output proptable will have become the input proptable.
- *
- * XXX even though we can specify a proptable format in the XML control file, that information is
- * currently ignored.
  *
  * XXX not sure if we should compress the data stream to disk or not.  Might be best to time it.
  *
@@ -8116,7 +8113,7 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
  * The standard library's priority_queue holds everything in memory and thus can't deal effectively
  * with very large data sets.
  *
- * TPIE's priority_queue isn't thread safe and can't compress its disk files.
+ * TPIE's priority_queue uses the disk, but isn't thread safe and can't compress its disk files.
  */
 
 extern "C++" {
@@ -8282,7 +8279,12 @@ extern "C++" {
      * Initialize with number of entries to store in-memory.  If we insert less than that number, do
      * everything in-memory.  If we insert more, then dump to disk and use a sorting network to read
      * it back.
+     *
+     * XXX about the mutex... I'm a bit scared to use the new C11 stuff... we only use multiple
+     * threads in the initialization pass right now
      */
+
+    pthread_mutex_t priority_queue_lock = PTHREAD_MUTEX_INITIALIZER;
 
     template <typename T>
     class priority_queue {
@@ -8331,11 +8333,13 @@ extern "C++" {
 	}
 
 	void push(const T& x) {
+	    pthread_mutex_lock(&priority_queue_lock);
 	    if (tail == limit) {
 		dump_memory_queue_to_disk();
 	    }
 	    in_memory_queue[tail ++] = x;
 	    sorted = 0;
+	    pthread_mutex_unlock(&priority_queue_lock);
 	}
 
 	bool empty(void) {
@@ -13482,7 +13486,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.641 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.642 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
