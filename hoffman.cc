@@ -5584,7 +5584,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.639 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.640 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8163,7 +8163,6 @@ extern "C++" {
 	    if ((next != 0) && (next % 256 == 0)) {
 		// XXX check return value
 		read(fd, queue, 256 * sizeof(T));
-		next = 0;
 	    }
 	    return queue[(next++) % 256];
 	}
@@ -8197,7 +8196,7 @@ extern "C++" {
 	typedef typename Subcontainer::value_type T;
 
     private:
-	Container containers;
+	Container * containers;
 	T * network;
 	int * container_num;
 	unsigned int highbit;
@@ -8208,7 +8207,7 @@ extern "C++" {
 
 	void initialize_network(void) {
 
-	    for (highbit = 1; highbit < containers.size(); highbit <<= 1);
+	    for (highbit = 1; highbit < containers->size(); highbit <<= 1);
 
 	    network = new T[2 * highbit];
 	    container_num = new int[2 * highbit];
@@ -8218,8 +8217,8 @@ extern "C++" {
 	     */
 
 	    for (unsigned int i=0; i<highbit; i++) {
-		if (i < containers.size()) {
-		    network[highbit + i] = containers[i].pop_front();
+		if (i < containers->size()) {
+		    network[highbit + i] = (*containers)[i].pop_front();
 		    container_num[highbit + i] = i;
 		} else {
 		    container_num[highbit + i] = -1;
@@ -8230,7 +8229,7 @@ extern "C++" {
 
 	    for (int network_node = highbit-1; network_node > 0; network_node --) {
 		if ((container_num[2*network_node + 1] == -1)
-		    && (network[2*network_node] < network[2*network_node + 1])) {
+		    || (network[2*network_node] < network[2*network_node + 1])) {
 		    network[network_node] = network[2*network_node];
 		    container_num[network_node] = container_num[2*network_node];
 		} else {
@@ -8242,10 +8241,10 @@ extern "C++" {
 
     public:
 
-	sorting_network(Container containers): containers(containers), highbit(0) { }
+	sorting_network(Container * containers): containers(containers), highbit(0) { }
 
 	bool empty(void) {
-	    return (highbit == 0) ? containers.empty() : (container_num[1] == -1);
+	    return (highbit == 0) ? containers->empty() : (container_num[1] == -1);
 	}
 
 	T& front(void) {
@@ -8259,12 +8258,16 @@ extern "C++" {
 	    T& retval = network[1];
 	    int network_node = highbit + container_num[1];
 
-	    network[network_node] = containers[container_num[1]].pop_front();
+	    if ((*containers)[container_num[1]].empty()) {
+		container_num[network_node] = -1;
+	    } else {
+		network[network_node] = (*containers)[container_num[1]].pop_front();
+	    }
 
 	    while (network_node > 1) {
 		network_node >>= 1;
 		if ((container_num[2*network_node + 1] == -1)
-		    && (network[2*network_node] < network[2*network_node + 1])) {
+		    || (network[2*network_node] < network[2*network_node + 1])) {
 		    network[network_node] = network[2*network_node];
 		    container_num[network_node] = container_num[2*network_node];
 		} else {
@@ -8318,7 +8321,7 @@ extern "C++" {
 
     public:
     
-	priority_queue(int limit = 1024*1024): limit(limit), snetwork(disk_ques) {
+	priority_queue(int limit = 1024*1024): limit(limit), snetwork(&disk_ques) {
 	    in_memory_queue = new T[limit];
 	    head = 0;
 	    tail = 0;
@@ -8332,7 +8335,6 @@ extern "C++" {
 
 	void push(const T& x) {
 	    if (tail == limit) {
-		info("Proptable overflow\n");
 		dump_memory_queue_to_disk();
 	    }
 	    in_memory_queue[tail ++] = x;
@@ -13485,7 +13487,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.639 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.640 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
