@@ -5,11 +5,11 @@
  * by Brent Baccala
  *
  * begun coding    August, 2006
- * last modified   February, 2009
+ * last modified   August, 2012
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
- * written in C for speed (but still needs a lot of work to reach that goal)
+ * written in C++ for speed (but still needs a lot of work to reach that goal)
  *
  * This program is formated for a (minimum) 100 character wide display.
  *
@@ -156,9 +156,6 @@ extern "C" {
 #define O_LARGEFILE 0
 #endif
 
-
-typedef int_fast8_t boolean;
-
 #ifndef PRIu32
 #define PRIu32 "u"
 #define PRIx32 "x"
@@ -288,7 +285,7 @@ int * pass_target_dtms = NULL;
 int * positions_finalized = NULL;
 uint64_t * backproped_moves = NULL;
 
-boolean tracking_dtm = 1;   // XXX should clear this variable if we're generating a bitbase
+bool tracking_dtm = true;   // XXX should clear this variable if we're generating a bitbase
 int min_tracked_dtm = -2;
 int max_tracked_dtm = 2;
 uint8_t * positive_passes_needed = NULL;
@@ -606,7 +603,7 @@ typedef struct tablebase {
 
     struct format format;
     int get_DTM(index_t index);
-    boolean get_flag(index_t index);
+    bool get_flag(index_t index);
     unsigned int get_basic(index_t index);
 
     /* for futurebases only */
@@ -1645,7 +1642,7 @@ void verify_movements()
  * illegal.  The only change it makes to the position is to set the multiplicity.
  *
  * index_to_local_position(), given an index, fills in a board position.  Obviously has to correspond
- * to local_position_to_index() and it's a big bug if it doesn't.  The boolean that gets returned is
+ * to local_position_to_index() and it's a big bug if it doesn't.  The bool that gets returned is
  * TRUE if the operation succeeded and FALSE if the index was illegal.
  *
  * Several issues crop up for all index types.
@@ -1679,10 +1676,10 @@ void verify_movements()
  * structure's vector at the right places.  Might implement this some day.
  */
 
-boolean check_king_legality(int kingA, int kingB) {
-    if ((ROW(kingA) < ROW(kingB) - 1) || (ROW(kingA) > ROW(kingB) + 1)) return 1;
-    if ((COL(kingA) < COL(kingB) - 1) || (COL(kingA) > COL(kingB) + 1)) return 1;
-    return 0;
+bool check_king_legality(int kingA, int kingB) {
+    if ((ROW(kingA) < ROW(kingB) - 1) || (ROW(kingA) > ROW(kingB) + 1)) return true;
+    if ((COL(kingA) < COL(kingB) - 1) || (COL(kingA) > COL(kingB) + 1)) return true;
+    return false;
 }
 
 /* Later in the program, I'll use these indices as the keys in an address calculation insertion
@@ -1923,7 +1920,7 @@ uint32_t invert_in_finite_field(uint32_t b, uint32_t m)
  * load, some very simple algorithms suffice.
  */
 
-boolean is_prime(uint32_t test_number)
+bool is_prime(uint32_t test_number)
 {
     uint32_t divisor, sqrt_test_number;
 
@@ -1937,7 +1934,7 @@ boolean is_prime(uint32_t test_number)
     }
 
     /* OK, it's prime */
-    return 1;
+    return true;
 }
 
 uint32_t round_up_to_prime(uint32_t starting_number)
@@ -2001,7 +1998,7 @@ index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
     return index;
 }
 
-boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
 
@@ -2028,13 +2025,13 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return 0;  /* can't have two en passant pawns */
+	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
 	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = square + 2*8;
 		square += 3*8;
 	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = square + 5*8;
 		square += 4*8;
 	    }
@@ -2046,19 +2043,19 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
 	 */
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
-	    return 0;
+	    return false;
 	}
 
 	p->piece_position[piece] = square;
 	if (p->board_vector & BITVECTOR(square)) {
-	    return 0;
+	    return false;
 	}
 
 	/* Identical pieces have to appear in sorted order. */
 
 	if ((tb->last_identical_piece[piece] != -1)
 	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
-	    return 0;
+	    return false;
 	}
 
 	p->board_vector |= BITVECTOR(square);
@@ -2073,15 +2070,15 @@ boolean naive_index_to_local_position(tablebase_t *tb, index_t index, local_posi
      */
 
     if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
 	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
 	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
 	}
     }
 
-    return 1;
+    return true;
 }
 
 /* "Naive2" index.  Assigns a number from 0 to 63 to each square on the board and multiplies them
@@ -2172,7 +2169,7 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
     return index;
 }
 
-boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
     uint8_t vals[MAX_PIECES];
@@ -2209,7 +2206,7 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 		 * that the "<" and the ">=" match up just right in the previous function.
 		 */
 
-		if (vals[tb->prev_piece_in_encoding_group[piece]] - vals[piece] == 32) return 0;
+		if (vals[tb->prev_piece_in_encoding_group[piece]] - vals[piece] == 32) return false;
 
 		val = vals[piece];
 		vals[piece] = vals[tb->prev_piece_in_encoding_group[piece]];
@@ -2225,9 +2222,9 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return 0;  /* can't have two en passant pawns */
+	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
 	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = square + 2*8;
 		square += 3*8;
 	    } else {
@@ -2243,19 +2240,19 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 	 */
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
-	    return 0;
+	    return false;
 	}
 
 	p->piece_position[piece] = square;
 	if (p->board_vector & BITVECTOR(square)) {
-	    return 0;
+	    return false;
 	}
 
 	/* Identical pieces have to appear in sorted order. */
 
 	if ((tb->last_identical_piece[piece] != -1)
 	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
-	    return 0;
+	    return false;
 	}
 
 	p->board_vector |= BITVECTOR(square);
@@ -2278,7 +2275,7 @@ boolean naive2_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 	}
     }
 
-    return 1;
+    return true;
 }
 
 /* "Simple" index.  Like naive, but only assigns numbers to squares that are legal for a particular
@@ -2320,7 +2317,7 @@ index_t local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
     return index;
 }
 
-boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
 
@@ -2337,13 +2334,13 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return 0;  /* can't have two en passant pawns */
+	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
 	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = square + 2*8;
 		square += 3*8;
 	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = square + 5*8;
 		square += 4*8;
 	    }
@@ -2353,12 +2350,12 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
 	    fatal("Illegal piece position in simple_index_to_local_position!\n");
-	    return 0;
+	    return false;
 	}
 
 	p->piece_position[piece] = square;
 	if (p->board_vector & BITVECTOR(square)) {
-	    return 0;
+	    return false;
 	}
 
 	p->board_vector |= BITVECTOR(square);
@@ -2372,13 +2369,13 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if ((tb->last_identical_piece[piece] != -1)
 	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
-	    return 0;
+	    return false;
 	}
     }
 
     if (index != 0) {
 	fatal("index != 0 at end of simple_index_to_local_position!\n");
-	return 0;
+	return false;
     }
 
     /* If there is an en passant capturable pawn in this position, then there can't be anything
@@ -2387,15 +2384,15 @@ boolean simple_index_to_local_position(tablebase_t *tb, index_t index, local_pos
      */
 
     if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
 	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
 	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
 	}
     }
 
-    return 1;
+    return true;
 }
 
 /* "compact" index
@@ -2532,7 +2529,7 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
     return index;
 }
 
-boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
     uint8_t vals[MAX_PIECES];
@@ -2589,20 +2586,20 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 	     */
 
 	    if (vals[tb->prev_piece_in_encoding_group[piece]] - vals[piece]
-		== tb->total_legal_piece_positions[piece]/2) return 0;
+		== tb->total_legal_piece_positions[piece]/2) return false;
 	}
 
 	vals[piece] = tb->piece_position[piece][vals[piece]];
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (vals[piece] < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return 0;  /* can't have two en passant pawns */
+	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
 	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = vals[piece] + 2*8;
 		vals[piece] += 3*8;
 	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = vals[piece] + 5*8;
 		vals[piece] += 4*8;
 	    }
@@ -2657,12 +2654,12 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
 	    /* fprintf(stderr, "Illegal piece position in compact_index_to_local_position!\n"); */
-	    return 0;
+	    return false;
 	}
 
 	p->piece_position[piece] = square;
 	if (p->board_vector & BITVECTOR(square)) {
-	    return 0;
+	    return false;
 	}
 
 	p->board_vector |= BITVECTOR(square);
@@ -2673,8 +2670,8 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
     p->piece_position[tb->white_king] = tb->white_king_position[king_index];
     p->piece_position[tb->black_king] = tb->black_king_position[king_index];
-    if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return 0;
-    if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return 0;
+    if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return false;
+    if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return false;
     p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
     p->board_vector |= BITVECTOR(p->piece_position[tb->black_king]);
     if (p->side_to_move == WHITE)
@@ -2688,14 +2685,14 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if ((tb->last_identical_piece[piece] != -1)
 	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
-	    return 0;
+	    return false;
 	}
     }
 #endif
 
     if (index != 0) {
 	fatal("index != 0 at end of compact_index_to_local_position!\n");
-	return 0;
+	return false;
     }
 
     /* If there is an en passant capturable pawn in this position, then there can't be anything
@@ -2704,15 +2701,15 @@ boolean compact_index_to_local_position(tablebase_t *tb, index_t index, local_po
      */
 
     if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
 	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
 	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
 	}
     }
 
-    return 1;
+    return true;
 }
 
 /* "combinadic" index
@@ -2789,7 +2786,7 @@ index_t local_position_to_combinadic_index(tablebase_t *tb, local_position_t *po
     return index;
 }
 
-boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+bool combinadic_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
 
@@ -2826,13 +2823,13 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (p->piece_position[piece] < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return 0;  /* can't have two en passant pawns */
+	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
 	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = p->piece_position[piece] + 2*8;
 		p->piece_position[piece] += 3*8;
 	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = p->piece_position[piece] + 5*8;
 		p->piece_position[piece] += 4*8;
 	    }
@@ -2844,7 +2841,7 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
 
     if (index >= tb->total_legal_king_positions) {
 	fatal("index >= total legal king positions in combinadic_index_to_local_position!\n");
-	return 0;
+	return false;
     }
 
     p->piece_position[tb->white_king] = tb->white_king_position[index];
@@ -2895,11 +2892,11 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
 	    /* fprintf(stderr, "Illegal piece position in combinadic_index_to_local_position!\n"); */
-	    return 0;
+	    return false;
 	}
 
 	if (p->board_vector & BITVECTOR(square)) {
-	    return 0;
+	    return false;
 	}
 
 	p->board_vector |= BITVECTOR(square);
@@ -2914,15 +2911,15 @@ boolean combinadic_index_to_local_position(tablebase_t *tb, index_t index, local
      */
 
     if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
 	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
 	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
 	}
     }
 
-    return 1;
+    return true;
 }
 
 /* "combinadic2" index
@@ -3009,7 +3006,7 @@ index_t local_position_to_combinadic2_index(tablebase_t *tb, local_position_t *p
     return index;
 }
 
-boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+bool combinadic2_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
 
@@ -3046,13 +3043,13 @@ boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	/* En passant */
 	if ((tb->piece_type[piece] == PAWN) && (p->piece_position[piece] < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return 0;  /* can't have two en passant pawns */
+	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
 	    if (tb->piece_color[piece] == WHITE) {
-		if (p->side_to_move != BLACK) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = p->piece_position[piece] + 2*8;
 		p->piece_position[piece] += 3*8;
 	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = p->piece_position[piece] + 5*8;
 		p->piece_position[piece] += 4*8;
 	    }
@@ -3064,7 +3061,7 @@ boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, loca
 
     if (index >= tb->total_legal_king_positions) {
 	fatal("index >= total legal king positions in combinadic2_index_to_local_position!\n");
-	return 0;
+	return false;
     }
 
     p->piece_position[tb->white_king] = tb->white_king_position[index];
@@ -3115,7 +3112,7 @@ boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	} while (next_smallest_position != ILLEGAL_POSITION);
 
-	if (p->piece_position[piece] >= 64) return 0;
+	if (p->piece_position[piece] >= 64) return false;
 
 	if (tb->permutations[piece] != NULL) {
 	    int perm = 0;
@@ -3152,11 +3149,11 @@ boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
 	    /* fprintf(stderr, "Illegal piece position in combinadic2_index_to_local_position!\n"); */
-	    return 0;
+	    return false;
 	}
 
 	if (p->board_vector & BITVECTOR(square)) {
-	    return 0;
+	    return false;
 	}
 
 	p->board_vector |= BITVECTOR(square);
@@ -3171,15 +3168,15 @@ boolean combinadic2_index_to_local_position(tablebase_t *tb, index_t index, loca
      */
 
     if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
 	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
 	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
 	}
     }
 
-    return 1;
+    return true;
 }
 
 /* "combinadic3" index
@@ -3277,7 +3274,7 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
     return index;
 }
 
-boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
     int en_passant_pawn = -1;
@@ -3310,7 +3307,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	index -= tb->piece_index[piece][p->piece_position[piece]];
 
 	if ((tb->piece_type[piece] == PAWN) && (p->piece_position[piece] < 8)) {
-	    if (en_passant_pawn != -1) return 0;  /* can't have two en passant pawns */
+	    if (en_passant_pawn != -1) return false;  /* can't have two en passant pawns */
 	    en_passant_pawn = piece;
 	}
 
@@ -3323,7 +3320,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	if (index >= tb->total_legal_king_positions) {
 	    fatal("index >= total legal king positions in combinadic3_index_to_local_position!\n");
-	    return 0;
+	    return false;
 	}
 
 	p->piece_position[tb->white_king] = tb->white_king_position[index];
@@ -3333,7 +3330,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	if (index != 0) {
 	    fatal("index > 0 in combinadic3_index_to_local_position!\n");
-	    return 0;
+	    return false;
 	}
 
     }
@@ -3403,7 +3400,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	} while (next_smallest_position != ILLEGAL_POSITION);
 
-	if (p->piece_position[piece] >= 64) return 0;
+	if (p->piece_position[piece] >= 64) return false;
     }
 
     /* We've got all the numbers right, but maybe not in the right order, since each encoding group
@@ -3439,7 +3436,7 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 	 */
 
  	if (tb->piece_color[en_passant_pawn] != en_passant_color) {
- 	    return 0;
+ 	    return false;
  	}
     }
 
@@ -3486,11 +3483,11 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
 	    /* fprintf(stderr, "Illegal piece position in combinadic3_index_to_local_position!\n"); */
-	    return 0;
+	    return false;
 	}
 
 	if (p->board_vector & BITVECTOR(square)) {
-	    return 0;
+	    return false;
 	}
 
 	p->board_vector |= BITVECTOR(square);
@@ -3505,15 +3502,15 @@ boolean combinadic3_index_to_local_position(tablebase_t *tb, index_t index, loca
      */
 
     if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
 	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
 	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
 	}
     }
 
-    return 1;
+    return true;
 }
 
 /* Normalization
@@ -3809,7 +3806,7 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
     return index;
 }
 
-boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, local_position_t *position)
+bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, local_position_t *position)
 {
     int ret;
     int piece, piece2;
@@ -3818,8 +3815,8 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 	index = invert_in_finite_field(index, tb->modulus);
     }
 
-    if (index > tb->max_uninverted_index) return 0;
-    if (index < tb->index_offset) return 0;
+    if (index > tb->max_uninverted_index) return false;
+    if (index < tb->index_offset) return false;
     index -= tb->index_offset;
 
     switch (tb->index_type) {
@@ -3847,10 +3844,10 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 	break;
     default:
 	fatal("Unknown index type in index_to_local_position()\n");
-	return 0;
+	return false;
     }
 
-    if (!ret) return 0;
+    if (!ret) return false;
 
     /* Blocking pawns.  Reject any position where a pawn has "hopped" over the enemy piece blocking
      * it.
@@ -3860,11 +3857,11 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_piece[piece] != -1)) {
 	    if (tb->piece_color[piece] == WHITE) {
 		if (position->piece_position[piece] > position->piece_position[tb->blocking_piece[piece]]) {
-		    return 0;
+		    return false;
 		}
 	    } else {
 		if (position->piece_position[piece] < position->piece_position[tb->blocking_piece[piece]]) {
-		    return 0;
+		    return false;
 		}
 	    }
 	}
@@ -3877,12 +3874,12 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
 
     if (tb->positions_with_adjacent_kings_are_illegal
 	&& ! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
-	return 0;
+	return false;
 
     if ((tb->symmetry == 8)
 	&& (ROW(position->piece_position[tb->white_king]) == COL(position->piece_position[tb->white_king]))
 	&& (ROW(position->piece_position[tb->black_king]) > COL(position->piece_position[tb->black_king])))
-	return 0;
+	return false;
 
     /* Multiplicity - number of non-identical positions that this index corresponds to */
 
@@ -3895,7 +3892,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
     }
 
     if (reflection & REFLECTION_DIAGONAL) {
-	if (position->multiplicity == 1) return 0;
+	if (position->multiplicity == 1) return false;
 
 	/* diagonal reflection */
 	position->board_vector = 0;
@@ -3979,7 +3976,7 @@ boolean index_to_local_position(tablebase_t *tb, index_t index, int reflection, 
     }
 #endif
 
-    return 1;
+    return true;
 }
 
 index_t max_index(tablebase_t * tb)
@@ -4101,7 +4098,7 @@ int check_1000_indices(tablebase_t *tb)
  *
  */
 
-boolean parse_format(xmlNodePtr formatNode, struct format *format)
+bool parse_format(xmlNodePtr formatNode, struct format *format)
 {
     xmlNodePtr child;
 
@@ -4122,7 +4119,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 
 	    if (format_field == -1) {
 		fatal("Unknown field in format: %s\n", (char *) child->name);
-		return 0;
+		return false;
 	    }
 
 	    switch (format_field) {
@@ -4138,7 +4135,7 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		if (typestr != NULL) xmlFree(typestr);
 		if (format->flag_type == -1) {
 		    fatal("'type' is a required property in format field 'flag'\n");
-		    return 0;
+		    return false;
 		}
 		break;
 	    case FORMAT_FIELD_BASIC:
@@ -4147,14 +4144,14 @@ boolean parse_format(xmlNodePtr formatNode, struct format *format)
 		break;
 	    default:
 		fatal("Unknown field in format\n");
-		return 0;
+		return false;
 	    }
 
 	    format->bits = bits;
 	}
     }
 
-    return 1;
+    return true;
 }
 
 /* Parses XML, creates a tablebase structure corresponding to it, and returns it.
@@ -4180,7 +4177,7 @@ int choose(int n, int k) {
     return retval;
 }
 
-tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, boolean is_futurebase)
+tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 {
     tablebase_t *tb;
     int generating_version = 0;
@@ -5584,7 +5581,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.640 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.641 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5757,7 +5754,7 @@ void unload_futurebase(tablebase_t *tb)
  * single position within the tablebase.
  */
 
-boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, char *filename)
+bool compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, char *filename)
 {
     int piece;
     int future_piece;
@@ -5773,7 +5770,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
     for (color = 0; color < 2; color ++) {
 	if (futurebase->prune_enable[color] & ~(tb->prune_enable[futurebase->invert_colors ? 1 - color : color])) {
 	    fatal("'%s': Futurebase doesn't match prune-enables!\n", filename);
-	    return 0;
+	    return false;
 	}
     }
 
@@ -5801,7 +5798,7 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 		futurebase->extra_piece = future_piece;
 	    } else {
 		fatal("'%s': Couldn't find future piece in tablebase\n", filename);
-		return 0;
+		return false;
 	    }
 	}
     }
@@ -5824,10 +5821,10 @@ boolean compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebas
 
     if (piece_vector != 0) {
 	fatal("'%s': Too many missing pieces in futurebase\n", filename);
-	return 0;
+	return false;
     }
 
-    return 1;
+    return true;
 }
 
 int autodetect_futurebase_type(tablebase_t *futurebase)
@@ -5857,7 +5854,7 @@ int autodetect_futurebase_type(tablebase_t *futurebase)
  * min_tracked_dtm and max_tracked_dtm.
  */
 
-boolean preload_all_futurebases(tablebase_t *tb)
+bool preload_all_futurebases(tablebase_t *tb)
 {
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
@@ -5869,7 +5866,7 @@ boolean preload_all_futurebases(tablebase_t *tb)
     futurebases = (tablebase_t **) malloc(sizeof(tablebase_t *) * num_futurebases);
     if (futurebases == NULL) {
 	fatal("Can't malloc futurebases array\n");
-	return 0;
+	return false;
     }
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
@@ -6640,14 +6637,14 @@ index_t global_position_to_index(tablebase_t *tb, global_position_t *global)
  * Seems never to be used on a tablebase under construction; only on a finished one.
  */
 
-boolean index_to_global_position(tablebase_t *tb, index_t index, global_position_t *global)
+bool index_to_global_position(tablebase_t *tb, index_t index, global_position_t *global)
 {
     local_position_t local;
     int piece;
 
     memset(global, 0, sizeof(global_position_t));
 
-    if (! index_to_local_position(tb, index, REFLECTION_NONE, &local)) return 0;
+    if (! index_to_local_position(tb, index, REFLECTION_NONE, &local)) return false;
 
     global->side_to_move = local.side_to_move;
     global->en_passant_square = local.en_passant_square;
@@ -6657,37 +6654,37 @@ boolean index_to_global_position(tablebase_t *tb, index_t index, global_position
 	    = global_pieces[tb->piece_color[piece]][tb->piece_type[piece]];
     }
 
-    return 1;
+    return true;
 }
 
 
 /***** PARSING FEN TO/FROM POSITION STRUCTURES *****/
 
-boolean place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type)
+bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type)
 {
     int piece;
 
-    if (pos->board_vector & BITVECTOR(square)) return 0;
+    if (pos->board_vector & BITVECTOR(square)) return false;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if ((tb->piece_type[piece] == type) && (tb->piece_color[piece] == color)) {
 	    pos->piece_position[piece] = square;
 	    pos->board_vector |= BITVECTOR(square);
 	    if (color == pos->side_to_move) pos->PTM_vector |= BITVECTOR(square);
-	    return 1;
+	    return true;
 	}
     }
 
-    return 0;
+    return false;
 }
 
-boolean place_piece_in_global_position(global_position_t *position, int square, int color, int type)
+bool place_piece_in_global_position(global_position_t *position, int square, int color, int type)
 {
     position->board[square] = global_pieces[color][type];
-    return 1;
+    return true;
 }
 
-boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_position_t *pos)
+bool parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_position_t *pos)
 {
     int row, col;
     int piece;
@@ -6713,60 +6710,60 @@ boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_pos
 	    case '8':
 		/* subtract one here since the 'for' loop will bump col by one */
 		col += *FEN_string - '0' - 1;
-		if (col > 7) return 0;
+		if (col > 7) return false;
 		break;
 
 	    case 'k':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, KING)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, KING)) return false;
 		break;
 	    case 'K':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, KING)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, KING)) return false;
 		break;
 
 	    case 'q':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, QUEEN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, QUEEN)) return false;
 		break;
 	    case 'Q':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, QUEEN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, QUEEN)) return false;
 		break;
 
 	    case 'r':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, ROOK)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, ROOK)) return false;
 		break;
 	    case 'R':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, ROOK)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, ROOK)) return false;
 		break;
 
 	    case 'b':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, BISHOP)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, BISHOP)) return false;
 		break;
 	    case 'B':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, BISHOP)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, BISHOP)) return false;
 		break;
 
 	    case 'n':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, KNIGHT)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, KNIGHT)) return false;
 		break;
 	    case 'N':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, KNIGHT)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, KNIGHT)) return false;
 		break;
 
 	    case 'p':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, PAWN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, PAWN)) return false;
 		break;
 	    case 'P':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, PAWN)) return 0;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, PAWN)) return false;
 		break;
 	    }
 	    FEN_string++;
 	}
 	if (row > 0) {
-	  if (*FEN_string != '/') return 0;
+	  if (*FEN_string != '/') return false;
 	  else FEN_string++;
 	}
     }
 
-    if (*FEN_string != ' ') return 0;
+    if (*FEN_string != ' ') return false;
     while (*FEN_string == ' ') FEN_string ++;
 
     if (*FEN_string == 'w') {
@@ -6774,7 +6771,7 @@ boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_pos
     } else if (*FEN_string == 'b') {
       pos->side_to_move = BLACK;
     } else {
-      return 0;
+      return false;
     }
 
     while (*FEN_string == ' ') FEN_string ++;
@@ -6793,10 +6790,10 @@ boolean parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_pos
 	pos->en_passant_square = rowcol2square(FEN_string[1] - '1', FEN_string[0] - 'a');
     }
 
-    return 1;
+    return true;
 }
 
-boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
+bool parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 {
     int row, col;
     global_position_t localpos;
@@ -6817,60 +6814,60 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 	    case '8':
 		/* subtract one here since the 'for' loop will bump col by one */
 		col += *FEN_string - '0' - 1;
-		if (col > 7) return 0;
+		if (col > 7) return false;
 		break;
 
 	    case 'k':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, KING)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, KING)) return false;
 		break;
 	    case 'K':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, KING)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, KING)) return false;
 		break;
 
 	    case 'q':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, QUEEN)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, QUEEN)) return false;
 		break;
 	    case 'Q':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, QUEEN)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, QUEEN)) return false;
 		break;
 
 	    case 'r':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, ROOK)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, ROOK)) return false;
 		break;
 	    case 'R':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, ROOK)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, ROOK)) return false;
 		break;
 
 	    case 'b':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, BISHOP)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, BISHOP)) return false;
 		break;
 	    case 'B':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, BISHOP)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, BISHOP)) return false;
 		break;
 
 	    case 'n':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, KNIGHT)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, KNIGHT)) return false;
 		break;
 	    case 'N':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, KNIGHT)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, KNIGHT)) return false;
 		break;
 
 	    case 'p':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, PAWN)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, PAWN)) return false;
 		break;
 	    case 'P':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, PAWN)) return 0;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, PAWN)) return false;
 		break;
 	    }
 	    FEN_string++;
 	}
 	if (row > 0) {
-	  if (*FEN_string != '/') return 0;
+	  if (*FEN_string != '/') return false;
 	  else FEN_string++;
 	}
     }
 
-    if (*FEN_string != ' ') return 0;
+    if (*FEN_string != ' ') return false;
     while (*FEN_string == ' ') FEN_string ++;
 
     if (*FEN_string == 'w') {
@@ -6878,7 +6875,7 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
     } else if (*FEN_string == 'b') {
       localpos.side_to_move = BLACK;
     } else {
-      return 0;
+      return false;
     }
 
     FEN_string ++;
@@ -6902,7 +6899,7 @@ boolean parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
     /* the point of using 'localpos' was to only modify pos if the parse succeeded */
 
     memcpy(pos, &localpos, sizeof(global_position_t));
-    return 1;
+    return true;
 }
 
 /* Note that the buffer in this function is static... */
@@ -6967,7 +6964,7 @@ char * index_to_FEN(tablebase_t *tb, index_t index)
  * Otherwise, it leaves the global position alone and returns false.
  */
 
-boolean parse_move_in_global_position(char *movestr, global_position_t *global)
+bool parse_move_in_global_position(char *movestr, global_position_t *global)
 {
     int origin_square, destination_square;
     int is_capture = 0;
@@ -6977,7 +6974,7 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 	origin_square = movestr[0]-'a' + (movestr[1]-'1')*8;
 	movestr += 2;
     } else {
-	return 0;
+	return false;
     }
 
     if (movestr[0] == 'x') {
@@ -6989,7 +6986,7 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 	destination_square = movestr[0]-'a' + (movestr[1]-'1')*8;
 	movestr += 2;
     } else {
-	return 0;
+	return false;
     }
 
     if (movestr[0] == '=') {
@@ -6999,21 +6996,21 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 
     if (!(global->board[origin_square] >= 'A' && global->board[origin_square] <= 'Z')
 	&& global->side_to_move == WHITE)
-	return 0;
+	return false;
 
     if (!(global->board[origin_square] >= 'a' && global->board[origin_square] <= 'z')
 	&& global->side_to_move == BLACK)
-	return 0;
+	return false;
 
-    if (global->board[destination_square] >= 'A' && !is_capture) return 0;
+    if (global->board[destination_square] >= 'A' && !is_capture) return false;
 
     if (!(global->board[destination_square] >= 'A' && global->board[destination_square] <= 'Z')
 	&& is_capture && global->side_to_move == BLACK)
-	return 0;
+	return false;
 
     if (!(global->board[destination_square] >= 'a' && global->board[destination_square] <= 'z')
 	&& is_capture && global->side_to_move == WHITE)
-	return 0;
+	return false;
 
     global->board[destination_square] = promotion_piece ? promotion_piece : global->board[origin_square];
     global->board[origin_square] = 0;
@@ -7037,7 +7034,7 @@ boolean parse_move_in_global_position(char *movestr, global_position_t *global)
 	}
     }
 
-    return 1;
+    return true;
 }
 
 
@@ -7181,7 +7178,7 @@ int tablebase::get_DTM(index_t index)
 			 format.dtm_bits);
 }
 
-boolean tablebase::get_flag(index_t index)
+bool tablebase::get_flag(index_t index)
 {
     return get_bit_field(fetch_entry_pointer(this, index),
 			 format.flag_offset + ((index % 8 ) * format.bits));
@@ -7380,32 +7377,32 @@ class EntriesTable {
 	set_unsigned_int_field(pointer(index), offset(index) + movecnt_offset, movecnt_bits, movecnt);
     }
 
-    boolean get_capture_possible_flag(index_t index) {
-	if (capture_possible_flag_offset == -1) return 0;
+    bool get_capture_possible_flag(index_t index) {
+	if (capture_possible_flag_offset == -1) return false;
 	return get_bit_field(pointer(index), offset(index) + capture_possible_flag_offset);
     }
 
-    void set_capture_possible_flag(index_t index, boolean flag) {
+    void set_capture_possible_flag(index_t index, bool flag) {
 	if (capture_possible_flag_offset == -1) return;
 	set_bit_field(pointer(index), offset(index) + capture_possible_flag_offset, flag);
     }
 
-    boolean does_PTM_win(index_t index) {
+    bool does_PTM_win(index_t index) {
 	return (get_movecnt(index) == MOVECNT_PTM_WINS_PROPED)
 	    || (get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED);
     }
 
-    boolean does_PNTM_win(index_t index) {
+    bool does_PNTM_win(index_t index) {
 	return (get_movecnt(index) == MOVECNT_PNTM_WINS_PROPED)
 	    || (get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
     }
 
-    boolean is_unpropagated(index_t index) {
+    bool is_unpropagated(index_t index) {
 	return (get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)
 	    || (get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
     }
 
-    boolean is_normal_movecnt(index_t index) {
+    bool is_normal_movecnt(index_t index) {
 	return (get_movecnt(index) > MOVECNT_PNTM_WINS_UNPROPED)
 	    && (get_movecnt(index) <= MOVECNT_MAX);
     }
@@ -7663,7 +7660,7 @@ class DiskEntriesTable: public EntriesTable {
     /* If we're resizing, this will be smaller than entry_buffer_bytes */
     int input_entry_buffer_bytes;
 
-    boolean resize_on_next_pass;
+    bool resize_on_next_pass;
 
     void resize_entry_buffer_if_needed(void) {
 
@@ -8298,7 +8295,7 @@ extern "C++" {
 	int limit;
 	int head;
 	int tail;
-	boolean sorted;
+	bool sorted;
 
 	DiskQueQue disk_ques;
 	class sorting_network<DiskQueQue> snetwork;
@@ -8341,11 +8338,11 @@ extern "C++" {
 	    sorted = 0;
 	}
 
-	boolean empty(void) {
+	bool empty(void) {
 	    return disk_ques.empty() ? (head == tail) : snetwork.empty();
 	}
 
-	const T& top(void) {
+	const T& front(void) {
 	    if (disk_ques.empty()) {
 		sort_in_memory_queue();
 		return in_memory_queue[head];
@@ -8357,7 +8354,7 @@ extern "C++" {
 	    }
 	}
 
-	const T& pop(void) {
+	const T& pop_front(void) {
 	    if (disk_ques.empty()) {
 		sort_in_memory_queue();
 		return in_memory_queue[head ++];
@@ -8423,15 +8420,13 @@ void proptable_pass(int target_dtm)
 
 	if (! input_proptable->empty()) {
 
-	    if (input_proptable->top().index < index) {
+	    if (input_proptable->front().index < index) {
 		fatal("Out-of-order entries in proptable\n");
 	    }
 
-	    while (! input_proptable->empty() && input_proptable->top().index == index) {
+	    while (! input_proptable->empty() && input_proptable->front().index == index) {
 
-		class proptable_entry pt_entry = input_proptable->top();
-
-		input_proptable->pop();
+		class proptable_entry pt_entry = input_proptable->pop_front();
 
 #ifdef DEBUG_MOVE
 		if (index == DEBUG_MOVE)
@@ -8527,13 +8522,13 @@ void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, int futu
 }
 
 
-int initialize_proptable(int proptable_MBs)
+bool initialize_proptable(int proptable_MBs)
 {
     output_proptable = new proptable;
 
     proptables_initialized = 1;
 
-    return 1;
+    return true;
 }
 
 /* If we're running multi-threaded, then there is a possibility that 1) two different positions will
@@ -8697,7 +8692,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
     } else {
 
-	boolean flag = futurebase->get_flag(future_index);
+	bool flag = futurebase->get_flag(future_index);
 	int stm = index_to_side_to_move(futurebase, future_index);
 
 	/* What happens if we're back propagating a flag from a color-inverted futurebase?
@@ -9982,7 +9977,7 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
  * Returns true, or false if something went wrong
  */
 
-boolean back_propagate_all_futurebases(tablebase_t *tb) {
+bool back_propagate_all_futurebases(tablebase_t *tb) {
 
     int fbnum;
     void * (* backprop_function)(void *);
@@ -10112,7 +10107,7 @@ boolean back_propagate_all_futurebases(tablebase_t *tb) {
  * flagging in the XML header which sides can be pruned in which way (concede or discard).
  */
 
-int all_futuremoves_handled = 1;
+bool all_futuremoves_handled = true;
 
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
 
@@ -10129,7 +10124,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	    }
 	}
 	fatal("\n");
-	all_futuremoves_handled = 0;
+	all_futuremoves_handled = false;
     }
 
     /* concede - we treat these unhandled futuremoves as forced wins for PTM */
@@ -10157,7 +10152,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
     }
 }
 
-boolean have_all_futuremoves_been_handled(tablebase_t *tb) {
+bool have_all_futuremoves_been_handled(tablebase_t *tb) {
 
     index_t index;
 
@@ -10720,7 +10715,7 @@ void print_futuremoves(void)
  * sure we've used each one, and complain if any are left unused.
  */
 
-boolean compute_pruned_futuremoves(tablebase_t *tb) {
+bool compute_pruned_futuremoves(tablebase_t *tb) {
 
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
@@ -10752,7 +10747,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    if (fatal_errors != 0) return 0;
+    if (fatal_errors != 0) return false;
 
     for (color = WHITE; color <= BLACK; color ++) {
 	for (fm = 0; fm < num_futuremoves[color]; fm ++) {
@@ -10788,7 +10783,7 @@ boolean compute_pruned_futuremoves(tablebase_t *tb) {
  * problem.
  */
 
-boolean check_pruning(tablebase_t *tb) {
+bool check_pruning(tablebase_t *tb) {
 
     int fbnum;
     int piece;
@@ -10844,7 +10839,7 @@ boolean check_pruning(tablebase_t *tb) {
 			fatal("No futurebase or pruning for %s move %s\n",
 			      colors[tb->piece_color[capturing_piece]],
 			      movestr[tb->piece_color[capturing_piece]][futurecaptures[capturing_piece][captured_piece]]);
-			return 0;
+			return false;
 		    } else if (discarded_futuremoves[tb->piece_color[capturing_piece]]
 			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
 			optimized_futuremoves[tb->piece_color[capturing_piece]]
@@ -10937,7 +10932,7 @@ boolean check_pruning(tablebase_t *tb) {
 		    fatal("No futurebase or pruning for %s move %s\n",
 			  colors[tb->piece_color[pawn]],
 			  movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece][promotion]]);
-		    return 0;
+		    return false;
 		} else if (discarded_futuremoves[tb->piece_color[pawn]]
 			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
 		    optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
@@ -10978,7 +10973,7 @@ boolean check_pruning(tablebase_t *tb) {
 		fatal("No futurebase or pruning for %s move %s\n",
 		      colors[tb->piece_color[pawn]],
 		      movestr[tb->piece_color[pawn]][promotions[pawn][promotion]]);
-		return 0;
+		return false;
 	    } else if (discarded_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion])) {
 		optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotions[pawn][promotion]);
 		promotions[pawn][promotion] = DISCARD_FUTUREMOVE;
@@ -11019,14 +11014,14 @@ boolean check_pruning(tablebase_t *tb) {
 			fatal("No futurebase or pruning for %s move %s\n",
 			      colors[tb->piece_color[piece]],
 			      movestr[tb->piece_color[piece]][futuremoves[piece][sq]]);
-			return 0;
+			return false;
 		    }
 		}
 	    }
 	}
     }
 
-    return 1;
+    return true;
 }
 
 
@@ -11441,7 +11436,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
  *
  */
 
-int PTM_in_check(tablebase_t *tb, local_position_t *position)
+bool PTM_in_check(tablebase_t *tb, local_position_t *position)
 {
     int piece;
     int dir;
@@ -11449,7 +11444,7 @@ int PTM_in_check(tablebase_t *tb, local_position_t *position)
 
     /* The concept of check doesn't exist in suicide - kings are normal pieces */
 
-    if (tb->variant == VARIANT_SUICIDE) return 0;
+    if (tb->variant == VARIANT_SUICIDE) return false;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
 
@@ -11475,10 +11470,10 @@ int PTM_in_check(tablebase_t *tb, local_position_t *position)
 		 */
 
 		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[tb->white_king])) return 1;
+		    && (movementptr->square == position->piece_position[tb->white_king])) return true;
 
 		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[tb->black_king])) return 1;
+		    && (movementptr->square == position->piece_position[tb->black_king])) return true;
 
 	    }
 	} else {
@@ -11487,19 +11482,19 @@ int PTM_in_check(tablebase_t *tb, local_position_t *position)
 		 movementptr++) {
 
 		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[tb->white_king])) return 1;
+		    && (movementptr->square == position->piece_position[tb->white_king])) return true;
 
 		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[tb->black_king])) return 1;
+		    && (movementptr->square == position->piece_position[tb->black_king])) return true;
 
 	    }
 	}
     }
 
-    return 0;
+    return false;
 }
 
-int global_PTM_in_check(global_position_t *position)
+bool global_PTM_in_check(global_position_t *position)
 {
     int piece_type;
     int piece_color = 1 - position->side_to_move;
@@ -11507,7 +11502,7 @@ int global_PTM_in_check(global_position_t *position)
     int dir;
     struct movement *movementptr;
 
-    if (position->variant == VARIANT_SUICIDE) return 0;
+    if (position->variant == VARIANT_SUICIDE) return false;
 
     for (square = 0; square < 64; square ++) {
 
@@ -11532,9 +11527,9 @@ int global_PTM_in_check(global_position_t *position)
 		 */
 
 		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'K'))
-		    return 1;
+		    return true;
 		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'k'))
-		    return 1;
+		    return true;
 
 	    }
 	} else {
@@ -11543,18 +11538,18 @@ int global_PTM_in_check(global_position_t *position)
 		 movementptr++) {
 
 		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'K'))
-		    return 1;
+		    return true;
 		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'k'))
-		    return 1;
+		    return true;
 
 	    }
 	}
     }
 
-    return 0;
+    return false;
 }
 
-int global_PNTM_in_check(global_position_t *position)
+bool global_PNTM_in_check(global_position_t *position)
 {
     int piece_type;
     int piece_color = position->side_to_move;
@@ -11562,7 +11557,7 @@ int global_PNTM_in_check(global_position_t *position)
     int dir;
     struct movement *movementptr;
 
-    if (position->variant == VARIANT_SUICIDE) return 0;
+    if (position->variant == VARIANT_SUICIDE) return false;
 
     for (square = 0; square < 64; square ++) {
 
@@ -11587,9 +11582,9 @@ int global_PNTM_in_check(global_position_t *position)
 		 */
 
 		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'k'))
-		    return 1;
+		    return true;
 		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'K'))
-		    return 1;
+		    return true;
 
 	    }
 	} else {
@@ -11598,25 +11593,25 @@ int global_PNTM_in_check(global_position_t *position)
 		 movementptr++) {
 
 		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'k'))
-		    return 1;
+		    return true;
 		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'K'))
-		    return 1;
+		    return true;
 
 	    }
 	}
     }
 
-    return 0;
+    return false;
 }
 
-int PNTM_in_check(tablebase_t *tb, local_position_t *position)
+bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
 {
     int piece;
     int dir;
     int origin_square;
     struct movement *movementptr;
 
-    if (tb->variant == VARIANT_SUICIDE) return 0;
+    if (tb->variant == VARIANT_SUICIDE) return false;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
 
@@ -11640,10 +11635,10 @@ int PNTM_in_check(tablebase_t *tb, local_position_t *position)
 		 */
 
 		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[tb->black_king])) return 1;
+		    && (movementptr->square == position->piece_position[tb->black_king])) return true;
 
 		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[tb->white_king])) return 1;
+		    && (movementptr->square == position->piece_position[tb->white_king])) return true;
 
 	    }
 	} else {
@@ -11652,16 +11647,16 @@ int PNTM_in_check(tablebase_t *tb, local_position_t *position)
 		 movementptr++) {
 
 		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[tb->black_king])) return 1;
+		    && (movementptr->square == position->piece_position[tb->black_king])) return true;
 
 		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[tb->white_king])) return 1;
+		    && (movementptr->square == position->piece_position[tb->white_king])) return true;
 
 	    }
 	}
     }
 
-    return 0;
+    return false;
 }
 
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
@@ -12497,7 +12492,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
  * an error indication, which is why we just silently return in many cases.
  */
 
-boolean generate_tablebase_from_control_file(char *control_filename, char *output_filename) {
+bool generate_tablebase_from_control_file(char *control_filename, char *output_filename) {
 
     tablebase_t *tb;
     xmlXPathContextPtr context;
@@ -12510,7 +12505,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 #endif
 
     tb = parse_XML_control_file(control_filename);
-    if (tb == NULL) return 0;
+    if (tb == NULL) return false;
 
     /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
     current_tb = tb;
@@ -12521,7 +12516,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     result = xmlXPathEvalExpression(BAD_CAST "//output", context);
     if ((result->nodesetval->nodeNr == 0) && (output_filename == NULL)) {
 	fatal("Output filename must be specified either on command line or with <output> tag\n");
-	return 0;
+	return false;
     }
     if (result->nodesetval->nodeNr > 0) {
 	if (output_filename != NULL) {
@@ -12540,30 +12535,30 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     if (output_filename == NULL) {
 	fatal("No output filename or URL specified\n");
-	return 0;
+	return false;
     }
 
     if (strncmp(output_filename, "http:", 5) == 0) {
 	fatal("http URLs currently unsupported for tablebase I/O\n");
-	return 0;
+	return false;
     }
 
 #ifndef HAVE_LIBFTP
     if (strncmp(output_filename, "ftp:", 4) == 0) {
 	fatal("Compiled without ftplib - ftp URLs unavailable\n");
-	return 0;
+	return false;
     }
 #endif
 
-    if (! preload_all_futurebases(tb)) return 0;
+    if (! preload_all_futurebases(tb)) return false;
     assign_numbers_to_futuremoves(tb);
-    if (! compute_pruned_futuremoves(tb)) return 0;
-    if (! check_pruning(tb)) return 0;
+    if (! compute_pruned_futuremoves(tb)) return false;
+    if (! check_pruning(tb)) return false;
     optimize_futuremoves(tb);
     print_futuremoves();
 
-    if (! check_1000_indices(tb)) return 0;
-    if (! check_1000_positions(tb)) return 0;
+    if (! check_1000_indices(tb)) return false;
+    if (! check_1000_positions(tb)) return false;
 
     /* This actually initializes the statistics arrays the first time it's called, and it
      * initializes for 100 passes, so these first few passes below here don't need any extra checks
@@ -12579,7 +12574,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     if ((positive_passes_needed == NULL) || (negative_passes_needed == NULL)) {
 	fatal("Can't calloc positive/negative_passes_needed\n");
-	return 0;
+	return false;
     }
 
     if (!using_proptables) {
@@ -12602,7 +12597,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	if (tb->futurevectors == NULL) {
 	    fatal("Can't malloc %dMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
 		  strerror(errno));
-	    return 0;
+	    return false;
 	} else {
 	    int kilobytes = futurevector_bytes/1024;
 	    if (kilobytes < 1024) {
@@ -12635,7 +12630,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 	} else if (rlimit.rlim_cur != 0) {
 	    if ((mlockall(MCL_CURRENT) == -1) && (errno != EPERM)) {
 		fatal("Can't mlockall memory: %s\n", strerror(errno));
-		return 0;
+		return false;
 	    }
 	}
 
@@ -12654,7 +12649,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	pass_type[total_passes] = "futurebase backprop";
 
-	if (! back_propagate_all_futurebases(tb)) return 0;
+	if (! back_propagate_all_futurebases(tb)) return false;
 
 	finalize_pass_statistics();
 	total_passes ++;
@@ -12663,7 +12658,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	info("Checking futuremoves...\n");
 	/* propagation_pass(0); */
-	if (! have_all_futuremoves_been_handled(tb)) return 0;
+	if (! have_all_futuremoves_been_handled(tb)) return false;
 	info("All futuremoves handled under move restrictions\n");
 
 	finalize_pass_statistics();
@@ -12681,12 +12676,12 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	entriesTable = new DiskEntriesTable;
 
-	if (! initialize_proptable(proptable_MBs)) return 0;
+	if (! initialize_proptable(proptable_MBs)) return false;
 
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
 
-	    if (! back_propagate_all_futurebases(tb)) return 0;
+	    if (! back_propagate_all_futurebases(tb)) return false;
 
 	    finalize_pass_statistics();
 	    total_passes ++;
@@ -12712,7 +12707,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
     write_tablebase_to_file(tb, output_filename);
 
-    return 1;
+    return true;
 }
 
 /***** PROBING NALIMOV TABLEBASES *****/
@@ -12846,7 +12841,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		if (tb->format.flag_type != FORMAT_FLAG_NONE) {
 
-		    boolean flag = tb->get_flag(index);
+		    bool flag = tb->get_flag(index);
 
 		    if (global.side_to_move == BLACK) score *= -1;
 
@@ -12878,7 +12873,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 /* Search an array of tablebases for a global position.  Array should be terminated with a NULL ptr.
  */
 
-boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position_t *global_position,
+bool search_tablebases_for_global_position(tablebase_t **tbs, global_position_t *global_position,
 					      tablebase_t **tbptr, index_t *indexptr)
 {
     index_t index;
@@ -12888,11 +12883,11 @@ boolean search_tablebases_for_global_position(tablebase_t **tbs, global_position
 	if (index != INVALID_INDEX) {
 	    *tbptr = *tbs;
 	    *indexptr = index;
-	    return 1;
+	    return true;
 	}
     }
 
-    return 0;
+    return false;
 }
 
 void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pntm, int pntm_offset)
@@ -12924,7 +12919,7 @@ void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pn
 	}
 
     } else if (tb->format.flag_type != FORMAT_FLAG_NONE) {
-	boolean flag = tb->get_flag(index);
+	bool flag = tb->get_flag(index);
 
 	if (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) {
 	    if (flag) printf("White wins\n");
@@ -13284,8 +13279,8 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 
 void probe_tablebases(tablebase_t **tbs) {
     global_position_t global_position;
-    boolean global_position_valid = 0;
-    boolean probing_single_tablebase;
+    bool global_position_valid = false;
+    bool probing_single_tablebase;
     tablebase_t *tb = NULL;
     int i;
 
@@ -13354,7 +13349,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	}
 
 	global_position.variant = tbs[0]->variant;
-	global_position_valid = 1;
+	global_position_valid = true;
 
 	if (index == 0) {
 	    search_tablebases_for_global_position(tbs, &global_position, &tb, &index);
@@ -13487,7 +13482,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.640 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.641 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
