@@ -85,12 +85,8 @@
 
 #include "config.h"	/* GNU configure script figures out our build options and writes them here */
 
-#ifdef HAVE_LIBTPIE
-#define TPL_LOGGING 0
-#include <tpie/tpie.h>			// for tpie_init
-#include <tpie/tpie_log.h>
-#include <tpie/priority_queue.h>	// for tpie::priority_queue
-#endif
+#include <algorithm>		/* for std::sort */
+#include <deque>
 
 extern "C" {
 
@@ -741,10 +737,6 @@ char * completion_report_url = NULL;
     void * file;
     xmlChar *buf;
     int size;
-#endif
-
-#ifdef HAVE_LIBTPIE
-    if (proptables_initialized) tpie::tpie_finish();
 #endif
 
     if (fatal_errors > 0) {
@@ -5592,7 +5584,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.635 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.636 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8122,7 +8114,92 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
     entriesTable->unlock_entry(index);
 }
 
-#ifdef HAVE_LIBTPIE
+/* I crafted my own priority_queue because I'm not happy with any of the existing options.
+ *
+ * The standard library's priority_queue holds everything in memory and thus can't deal effectively
+ * with very large data sets.
+ *
+ * TPIE's priority_queue isn't thread safe and can't compress its disk files.
+ */
+
+extern "C++" {
+
+template <typename T>
+class priority_queue {
+
+ private:
+    T *in_memory_queue;
+    int limit;
+    int head;
+    int tail;
+    boolean sorted;
+
+    class std::deque<int> fds;
+
+    void sort_in_memory_queue(void) {
+	if (! sorted) {
+	    std::sort(&in_memory_queue[head], &in_memory_queue[tail]);
+	    sorted = 1;
+	}
+    }
+
+ public:
+    
+ priority_queue(int limit = 64*1024*1024): limit(limit) {
+	in_memory_queue = new T[limit];
+	head = 0;
+	tail = 0;
+	sorted = 1;
+    }
+
+    ~priority_queue() {
+	delete in_memory_queue;
+    }
+
+    void push(const T& x) {
+	if (tail == limit) {
+#if 0
+	    int fd;
+	    char filename[] = "proptableXXXXXX";
+
+	    sort_in_memory_queue();
+	    fd = mkstemp(filename);
+	    do_write(fd, in_memory_queue, limit * sizeof(T));
+	    fds.push_back(fd);
+
+	    info("Proptable overflow\n");
+
+	    tail = 0;
+#else
+	    fatal("Proptable overflow\n");
+#endif
+	}
+	in_memory_queue[tail ++] = x;
+	sorted = 0;
+    }
+
+    boolean empty(void) {
+	return (head == tail);
+    }
+
+    const T& top(void) {
+	if (! sorted) {
+	    std::sort(&in_memory_queue[head], &in_memory_queue[tail]);
+	    sorted = 1;
+	}
+	return in_memory_queue[head];
+    }
+
+    const T& pop(void) {
+	if (! sorted) {
+	    std::sort(&in_memory_queue[head], &in_memory_queue[tail]);
+	    sorted = 1;
+	}
+	return in_memory_queue[head ++];
+    }
+};
+
+}
 
 class proptable_entry {
 
@@ -8137,7 +8214,7 @@ class proptable_entry {
     }
 };
 
-typedef tpie::priority_queue<class proptable_entry> proptable;
+typedef priority_queue<class proptable_entry> proptable;
 
 proptable * input_proptable;
 proptable * output_proptable;
@@ -8281,21 +8358,12 @@ void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, int futu
 
 int initialize_proptable(int proptable_MBs)
 {
-    tpie::tpie_init();
-    tpie::get_memory_manager().set_limit(proptable_MBs * 1024 * 1024);
-
-    /* std::cerr << "sizeof(class proptable_entry) = " << sizeof(class proptable_entry) << " bytes" << std::endl; */
-
-    /* tpie::get_log().set_level(tpie::LOG_DEBUG); */
-
     output_proptable = new proptable;
 
     proptables_initialized = 1;
 
     return 1;
 }
-
-#endif /* HAVE_LIBTPIE */
 
 /* If we're running multi-threaded, then there is a possibility that 1) two different positions will
  * try to backprop into the same position (if we're not using proptables), or that 2) two different
@@ -8343,11 +8411,8 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
     } else {
 
-#ifdef HAVE_LIBTPIE
 	insert_new_propentry(index, dtm, movecnt, futuremove);
-#else
-	fatal("Not compiled with proptable support\n");
-#endif
+
     }
 
 }
@@ -8367,11 +8432,7 @@ int propagation_pass(int target_dtm)
     pass_target_dtms[total_passes] = target_dtm;
 
     if (using_proptables) {
-#ifdef HAVE_LIBTPIE
 	proptable_pass(target_dtm);
-#else
-	fatal("Not compiled with proptable support\n");
-#endif
     } else {
 	non_proptable_pass(target_dtm);
     }
@@ -12323,14 +12384,6 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
     }
 #endif
 
-#if 0
-    if (using_proptables && num_threads > 1) {
-	/* This is a limitation in TPIE */
-	fatal("Can't use proptables with multiple threads (currently)\n");
-	return 0;
-    }
-#endif
-
     if (! preload_all_futurebases(tb)) return 0;
     assign_numbers_to_futuremoves(tb);
     if (! compute_pruned_futuremoves(tb)) return 0;
@@ -12457,9 +12510,7 @@ boolean generate_tablebase_from_control_file(char *control_filename, char *outpu
 
 	entriesTable = new DiskEntriesTable;
 
-#ifdef HAVE_LIBTPIE
 	if (! initialize_proptable(proptable_MBs)) return 0;
-#endif
 
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
@@ -13265,7 +13316,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.635 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.636 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -13335,13 +13386,9 @@ int main(int argc, char *argv[])
 	    output_filename = optarg;
 	    break;
 	case 'P':
-#ifdef HAVE_LIBTPIE
 	    /* set size of proptable in megabytes */
 	    proptable_MBs = strtol(optarg, NULL, 0);
 	    using_proptables = 1;
-#else
-	    fatal("Not compiled with proptable support\n");
-#endif
 	    break;
 #ifdef USE_THREADS
 	case 't':
