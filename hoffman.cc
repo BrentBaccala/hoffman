@@ -677,10 +677,11 @@ tablebase_t *current_tb = NULL;
 tablebase_t **futurebases;
 int num_futurebases;
 
-int using_proptables = false;		/* Proptables (see below) */
-int proptables_initialized = false;
+bool using_proptables = false;		/* Proptables (see below) */
+bool proptables_initialized = false;
 int proptable_MBs = 0;
-int compress_proptables = true;
+bool compress_proptables = true;
+bool compress_entries_table = true;
 
 int do_restart = 0;
 int last_dtm_before_restart;
@@ -5582,7 +5583,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.644 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.645 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7651,6 +7652,9 @@ class DiskEntriesTable: public EntriesTable {
     int entries_read_fd;
     int entries_write_fd;
 
+    void * entries_read_file;
+    void * entries_write_file;
+
     void * entry_buffer;
     index_t entry_buffer_start;
     static const int entry_buffer_size = 4096;
@@ -7685,21 +7689,41 @@ class DiskEntriesTable: public EntriesTable {
 	 * else, close and reopen both file descriptors, and read the first buffer in
 	 */
 
-	do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+	if (compress_entries_table) {
+	    zlib_write(entries_write_file, (char *) entry_buffer, entry_buffer_bytes);
+	} else {
+	    do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+	}
 
 	if (entries_read_fd != -1) {
-	    while ((ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes)) != 0) {
-		if (ret != input_entry_buffer_bytes) {
-		    fatal("entries read: %s\n", strerror(errno));
-		    return;
+	    if (compress_entries_table) {
+		while ((ret = zlib_read(entries_read_file, (char *) entry_buffer, input_entry_buffer_bytes)) != 0) {
+		    if (ret != input_entry_buffer_bytes) {
+			fatal("entries read: %s\n", strerror(errno));
+			return;
+		    }
+		    resize_entry_buffer_if_needed();
+		    zlib_write(entries_write_file, (char *) entry_buffer, entry_buffer_bytes);
 		}
-		resize_entry_buffer_if_needed();
-		do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+	    } else {
+		while ((ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes)) != 0) {
+		    if (ret != input_entry_buffer_bytes) {
+			fatal("entries read: %s\n", strerror(errno));
+			return;
+		    }
+		    resize_entry_buffer_if_needed();
+		    do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+		}
 	    }
 	}
 
-	if (entries_read_fd != -1) close(entries_read_fd);
-	close(entries_write_fd);
+	if (compress_entries_table) {
+	    if (entries_read_fd != -1) zlib_close(entries_read_file);
+	    zlib_close(entries_write_file);
+	} else {
+	    if (entries_read_fd != -1) close(entries_read_fd);
+	    close(entries_write_fd);
+	}
 
 	if (rename("entries_out", "entries_in") != 0) {
 	    fatal("Can't rename entries_out as entries_in\n");
@@ -7716,6 +7740,11 @@ class DiskEntriesTable: public EntriesTable {
 	if (entries_write_fd == -1) {
 	    fatal("Can't open 'entries_out' for writing: %s\n", strerror(errno));
 	    return;
+	}
+
+	if (compress_entries_table) {
+	    entries_write_file = zlib_open((void *)((size_t) entries_write_fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
+	    entries_read_file = zlib_open((void *)((size_t) entries_read_fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	}
 
 	entry_buffer_start = 0;
@@ -7735,7 +7764,12 @@ class DiskEntriesTable: public EntriesTable {
 	    resize_on_next_pass = 0;
 	}
 
-	ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
+	if (compress_entries_table) {
+	    ret = zlib_read(entries_read_file, (char *) entry_buffer, input_entry_buffer_bytes);
+	} else {
+	    ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
+	}
+
 	if (ret != input_entry_buffer_bytes) {
 	    fatal("initial entries read: %s\n", strerror(errno));
 	    return;
@@ -7752,9 +7786,17 @@ class DiskEntriesTable: public EntriesTable {
 	/* XXX multithreading a problem here? */
 
 	while (index >= entry_buffer_start + entry_buffer_size) {
-	    do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+	    if (compress_entries_table) {
+		zlib_write(entries_write_file, (char *) entry_buffer, entry_buffer_bytes);
+	    } else {
+		do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+	    }
 	    if (entries_read_fd != -1) {
-		ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
+		if (compress_entries_table) {
+		    ret = zlib_read(entries_read_file, (char *) entry_buffer, input_entry_buffer_bytes);
+		} else {
+		    ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
+		}
 		if (ret != input_entry_buffer_bytes) {
 		    fatal("entries read: %s\n", strerror(errno));
 		    return;
@@ -7793,10 +7835,15 @@ class DiskEntriesTable: public EntriesTable {
 	    return;
 	}
 
+	if (compress_entries_table) {
+	    entries_write_file = zlib_open((void *)((size_t) entries_write_fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
+	}
+
 	entry_buffer_start = 0;
 
 	/* if we're restarting, there should be an input entries file */
 	/* XXX not true if the restart is right after futurebase backprop */
+	/* XXX doesn't currently handled compressed entries files */
 
 	if (do_restart) {
 
@@ -8130,10 +8177,14 @@ extern "C++" {
 	int size;
 	T queue[256];
 	char filename[16];
+	void *file;
 
 	disk_que() {
 	    strcpy(filename, "proptableXXXXXX");
 	    fd = mkstemp(filename);
+	    if (compress_proptables) {
+		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
+	    }
 	    size = 0;
 	    next = 0;
 	}
@@ -8145,8 +8196,15 @@ extern "C++" {
 
 	void append(T *ptr, int size) {
 	    memcpy(queue, ptr, 256 * sizeof(T));
-	    do_write(fd, ptr+256, (size-256) * sizeof(T));
-	    lseek(fd, 0, SEEK_SET);
+	    if (compress_proptables) {
+		zlib_write(file, (const char *)(ptr+256), (size-256) * sizeof(T));
+		zlib_close(file);
+		fd = open(filename, O_RDONLY, 0);
+		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
+	    } else {
+		do_write(fd, ptr+256, (size-256) * sizeof(T));
+		lseek(fd, 0, SEEK_SET);
+	    }
 	    this->size = size;
 	}
 
@@ -8157,7 +8215,11 @@ extern "C++" {
 	T pop_front(void) {
 	    if ((next != 0) && (next % 256 == 0)) {
 		// XXX check return value
-		read(fd, queue, 256 * sizeof(T));
+		if (compress_proptables) {
+		    zlib_read(file, (char *) queue, 256 * sizeof(T));
+		} else {
+		    read(fd, queue, 256 * sizeof(T));
+		}
 	    }
 	    return queue[(next++) % 256];
 	}
@@ -13487,7 +13549,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.644 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.645 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
