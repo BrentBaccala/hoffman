@@ -5581,7 +5581,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.642 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.643 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8153,7 +8153,7 @@ extern "C++" {
 	    return (next == size);
 	}
 
-	T& pop_front(void) {
+	T pop_front(void) {
 	    if ((next != 0) && (next % 256 == 0)) {
 		// XXX check return value
 		read(fd, queue, 256 * sizeof(T));
@@ -8241,15 +8241,15 @@ extern "C++" {
 	    return (highbit == 0) ? containers->empty() : (container_num[1] == -1);
 	}
 
-	T& front(void) {
+	const T& front(void) {
 	    if (highbit == 0) initialize_network();
 	    return network[1];
 	}
 
-	T& pop_front(void) {
+	T pop_front(void) {
 	    if (highbit == 0) initialize_network();
 
-	    T& retval = network[1];
+	    T retval = network[1];
 	    int network_node = highbit + container_num[1];
 
 	    if ((*containers)[container_num[1]].empty()) {
@@ -8358,7 +8358,7 @@ extern "C++" {
 	    }
 	}
 
-	const T& pop_front(void) {
+	T pop_front(void) {
 	    if (disk_ques.empty()) {
 		sort_in_memory_queue();
 		return in_memory_queue[head ++];
@@ -13486,7 +13486,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.642 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.643 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
