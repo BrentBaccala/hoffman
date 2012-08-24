@@ -5583,7 +5583,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.645 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.646 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8678,7 +8678,9 @@ int propagation_pass(int target_dtm)
     }
 
     finalize_pass_statistics();
-    info("Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized[total_passes]);
+    if (target_dtm != 0) {
+	info("Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized[total_passes]);
+    }
 
     total_passes ++;
     if (total_passes == max_passes) expand_per_pass_statistics();
@@ -13549,7 +13551,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.645 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.646 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
