@@ -5582,7 +5582,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.648 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.649 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8103,8 +8103,6 @@ void non_proptable_pass(int target_dtm)
  * the update into the output proptable, so that it will later be retrieved and finalized in the
  * next call to proptable_pass, when the output proptable will have become the input proptable.
  *
- * XXX not sure if we should compress the data stream to disk or not.  Might be best to time it.
- *
  * XXX I used to have an option to store a PTM-wins-flag instead of DTM in the proptable entry to
  * make it smaller.  The only time it makes sense to use a PTM-wins-flag in the proptable is if
  * we're generating a bitbase (because otherwise we need a DTM field in the proptable).  Positive or
@@ -8605,7 +8603,7 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 	       index, dtm, movecnt, futuremove);
 #endif
 
-    backproped_moves[total_passes] ++;
+    __sync_incr(backproped_moves[total_passes]);
 
     if (!using_proptables) {
 
@@ -13541,7 +13539,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.648 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.649 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
