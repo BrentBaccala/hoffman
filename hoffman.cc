@@ -5583,7 +5583,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.646 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.647 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8383,7 +8383,7 @@ extern "C++" {
 
     public:
     
-	priority_queue(int limit = 1024*1024): limit(limit), snetwork(&disk_ques) {
+    priority_queue(int limit = 512*1024*1024): limit(limit/sizeof(T)), snetwork(&disk_ques) {
 	    in_memory_queue = new T[limit];
 	    head = 0;
 	    tail = 0;
@@ -13551,7 +13551,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.646 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.647 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
