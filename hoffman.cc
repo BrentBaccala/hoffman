@@ -678,10 +678,9 @@ tablebase_t **futurebases;
 int num_futurebases;
 
 bool using_proptables = false;		/* Proptables (see below) */
-bool proptables_initialized = false;
-int proptable_MBs = 0;
 bool compress_proptables = true;
 bool compress_entries_table = true;
+int proptable_MBs = 0;
 
 int do_restart = 0;
 int last_dtm_before_restart;
@@ -5583,7 +5582,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.647 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.648 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8383,7 +8382,7 @@ extern "C++" {
 
     public:
     
-    priority_queue(int limit = 512*1024*1024): limit(limit/sizeof(T)), snetwork(&disk_ques) {
+    priority_queue(int limitMB = 512*1024*1024): limit(limitMB/sizeof(T)), snetwork(&disk_ques) {
 	    in_memory_queue = new T[limit];
 	    head = 0;
 	    tail = 0;
@@ -8472,7 +8471,7 @@ void proptable_pass(int target_dtm)
     index_t index;
 
     input_proptable = output_proptable;
-    output_proptable = new proptable;
+    output_proptable = new proptable(proptable_MBs << 20);
 
     /* fprintf(stderr, "proptable_pass(%d); size of proptable: %llu\n", target_dtm, input_proptable->size()); */
 
@@ -8589,21 +8588,12 @@ void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, int futu
 }
 
 
-bool initialize_proptable(int proptable_MBs)
-{
-    output_proptable = new proptable;
-
-    proptables_initialized = 1;
-
-    return true;
-}
-
 /* If we're running multi-threaded, then there is a possibility that 1) two different positions will
  * try to backprop into the same position (if we're not using proptables), or that 2) two different
  * threads will try to insert into the proptable at the same time (if we're using proptables).
  *
- * The first case is handled by a lock/unlock sequence below; the second case is handled by a mutex
- * lock in insert_new_propentry (currently broken; can't multi-thread yet with TPIE).
+ * The first case is handled by a lock/unlock sequence in finalize_update(); the second case is
+ * handled by a mutex lock in priority_queue.
  */
 
 void commit_update(index_t index, short dtm, short movecnt, int futuremove)
@@ -12745,7 +12735,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
 	entriesTable = new DiskEntriesTable;
 
-	if (! initialize_proptable(proptable_MBs)) return false;
+	output_proptable = new proptable(proptable_MBs << 20);
 
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
@@ -13551,7 +13541,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.647 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.648 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
