@@ -5582,7 +5582,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.649 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.650 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7576,6 +7576,8 @@ class EntriesTable {
     }
 };
 
+/* An EntriesTable held completely in memory */
+
 class MemoryEntriesTable: public EntriesTable {
 
  private:
@@ -7645,6 +7647,24 @@ class MemoryEntriesTable: public EntriesTable {
     }
 };
 
+/* An EntriesTable held mostly on disk.
+ *
+ * If we're multi-threaded, we work on a entry buffer, then wait until all of the threads are ready
+ * to move on.  At the end of a pass, wait until all of the threads are ready to reset, then reset.
+ *
+ * XXX Current implementation detects when a thread is 'ready' by waiting until it attempts to
+ * access outside of the entry buffer, since we provide the thread no way to signal when its done
+ * with a particular table entry.  Among other things, this requires that all of the num_threads
+ * threads are working on the entries table.  Otherwise we'll wait forever for a thread that
+ * isn't accessing the table at all!
+ */
+
+static pthread_mutex_t ready_to_advance_mutex = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t ready_to_advance_cond = PTHREAD_COND_INITIALIZER;
+static pthread_cond_t ready_to_reset_cond = PTHREAD_COND_INITIALIZER;
+static int threads_waiting_to_advance = 0;
+static int threads_waiting_to_reset = 0;
+
 class DiskEntriesTable: public EntriesTable {
 
  private:
@@ -7654,14 +7674,17 @@ class DiskEntriesTable: public EntriesTable {
     void * entries_read_file;
     void * entries_write_file;
 
+    /* This is the in-memory portion of the table.  entry_buffer_size is the size of the buffer in
+     * entries.  Since it is a multiple of 8, the entry buffer is always byte-aligned, and
+     * entry_buffer_bytes is its size in bytes.  On any given pass, we might be expanding each entry
+     * by a single bit from the previous pass.  In this case, input_entry_buffer_bytes will be
+     * smaller than entry_buffer_bytes, and we expand the buffer when we read it.
+     */
+
     void * entry_buffer;
     index_t entry_buffer_start;
     static const int entry_buffer_size = 4096;
-
-    /* Since entry_buffer_size is a power of 2 greater than 8, entry buffers are always byte-aligned */
     int entry_buffer_bytes;
-
-    /* If we're resizing, this will be smaller than entry_buffer_bytes */
     int input_entry_buffer_bytes;
 
     bool resize_on_next_pass;
@@ -7678,6 +7701,60 @@ class DiskEntriesTable: public EntriesTable {
 	    }
 	}
 
+    }
+
+    void advance_entry_buffer(void)
+    {
+	int ret;
+
+	/* write the old entry buffer to disk */
+
+	if (compress_entries_table) {
+	    zlib_write(entries_write_file, (char *) entry_buffer, entry_buffer_bytes);
+	} else {
+	    do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+	}
+
+	/* read the new entry buffer if we've got an input file, or just zero it out if we don't
+	 * (i.e, if this is the first pass)
+	 */
+
+	if (entries_read_fd != -1) {
+	    if (compress_entries_table) {
+		ret = zlib_read(entries_read_file, (char *) entry_buffer, input_entry_buffer_bytes);
+	    } else {
+		ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
+	    }
+	    if (ret != input_entry_buffer_bytes) {
+		fatal("entries read: %s\n", strerror(errno));
+		return;
+	    }
+	    resize_entry_buffer_if_needed();
+	} else {
+	    memset(entry_buffer, 0, entry_buffer_bytes);
+	}
+
+	entry_buffer_start += entry_buffer_size;
+    }
+
+    void wait_for_all_threads_ready_then_advance_entry_buffer(void) {
+	pthread_mutex_lock(&ready_to_advance_mutex);
+	threads_waiting_to_advance ++;
+	if (threads_waiting_to_advance + threads_waiting_to_reset < num_threads) {
+	    pthread_cond_wait(&ready_to_advance_cond, &ready_to_advance_mutex);
+	} else {
+	    advance_entry_buffer();
+	    pthread_cond_broadcast(&ready_to_advance_cond);
+	}
+	pthread_mutex_unlock(&ready_to_advance_mutex);
+    }
+
+    void advance_entry_buffer_to_index(index_t index)
+    {
+	if (entry_buffer_start > index) wait_for_all_threads_ready_then_reset();
+	while (index >= entry_buffer_start + entry_buffer_size) {
+	    wait_for_all_threads_ready_then_advance_entry_buffer();
+	}
     }
 
     void reset_files(void) {
@@ -7776,36 +7853,16 @@ class DiskEntriesTable: public EntriesTable {
 	resize_entry_buffer_if_needed();
     }
 
-    void advance_files_to_index(index_t index)
-    {
-	int ret;
-
-	/* if we're moving past the entry buffer, write it to disk */
-
-	/* XXX multithreading a problem here? */
-
-	while (index >= entry_buffer_start + entry_buffer_size) {
-	    if (compress_entries_table) {
-		zlib_write(entries_write_file, (char *) entry_buffer, entry_buffer_bytes);
-	    } else {
-		do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
-	    }
-	    if (entries_read_fd != -1) {
-		if (compress_entries_table) {
-		    ret = zlib_read(entries_read_file, (char *) entry_buffer, input_entry_buffer_bytes);
-		} else {
-		    ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
-		}
-		if (ret != input_entry_buffer_bytes) {
-		    fatal("entries read: %s\n", strerror(errno));
-		    return;
-		}
-		resize_entry_buffer_if_needed();
-	    } else {
-		memset(entry_buffer, 0, entry_buffer_bytes);
-	    }
-	    entry_buffer_start += entry_buffer_size;
+    void wait_for_all_threads_ready_then_reset(void) {
+	pthread_mutex_lock(&ready_to_advance_mutex);
+	threads_waiting_to_reset ++;
+	if (threads_waiting_to_reset < num_threads) {
+	    pthread_cond_wait(&ready_to_reset_cond, &ready_to_advance_mutex);
+	} else {
+	    reset_files();
+	    pthread_cond_broadcast(&ready_to_reset_cond);
 	}
+	pthread_mutex_unlock(&ready_to_advance_mutex);
     }
 
  public:
@@ -7882,16 +7939,13 @@ class DiskEntriesTable: public EntriesTable {
     }
 
     void * pointer(index_t index) {
-	/* entries array is on disk, so make sure we've got the right buffer and then return the pointer */
-	if (entry_buffer_start > index) reset_files();
-	if (index >= entry_buffer_start + entry_buffer_size) advance_files_to_index(index);
+	advance_entry_buffer_to_index(index);
 
 	return entry_buffer;
     }
 
     bitoffset offset(index_t index) {
-	if (entry_buffer_start > index) reset_files();
-	if (index >= entry_buffer_start + entry_buffer_size) advance_files_to_index(index);
+	advance_entry_buffer_to_index(index);
 
 	return (index - entry_buffer_start) * bits;
     }
@@ -13539,7 +13593,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.649 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.650 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
