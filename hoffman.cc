@@ -87,6 +87,7 @@
 
 #include <algorithm>		/* for std::sort */
 #include <deque>
+#include <vector>
 
 extern "C" {
 
@@ -5582,7 +5583,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.650 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.651 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7744,17 +7745,10 @@ class DiskEntriesTable: public EntriesTable {
 	    pthread_cond_wait(&ready_to_advance_cond, &ready_to_advance_mutex);
 	} else {
 	    advance_entry_buffer();
+	    threads_waiting_to_advance = 0;
 	    pthread_cond_broadcast(&ready_to_advance_cond);
 	}
 	pthread_mutex_unlock(&ready_to_advance_mutex);
-    }
-
-    void advance_entry_buffer_to_index(index_t index)
-    {
-	if (entry_buffer_start > index) wait_for_all_threads_ready_then_reset();
-	while (index >= entry_buffer_start + entry_buffer_size) {
-	    wait_for_all_threads_ready_then_advance_entry_buffer();
-	}
     }
 
     void reset_files(void) {
@@ -7860,9 +7854,18 @@ class DiskEntriesTable: public EntriesTable {
 	    pthread_cond_wait(&ready_to_reset_cond, &ready_to_advance_mutex);
 	} else {
 	    reset_files();
+	    threads_waiting_to_reset = 0;
 	    pthread_cond_broadcast(&ready_to_reset_cond);
 	}
 	pthread_mutex_unlock(&ready_to_advance_mutex);
+    }
+
+    void advance_entry_buffer_to_index(index_t index)
+    {
+	if (entry_buffer_start > index) wait_for_all_threads_ready_then_reset();
+	while (index >= entry_buffer_start + entry_buffer_size) {
+	    wait_for_all_threads_ready_then_advance_entry_buffer();
+	}
     }
 
  public:
@@ -8394,8 +8397,8 @@ extern "C++" {
      * everything in-memory.  If we insert more, then dump to disk and use a sorting network to read
      * it back.
      *
-     * XXX about the mutex... I'm a bit scared to use the new C11 stuff... we only use multiple
-     * threads in the initialization pass right now
+     * XXX about the mutex... I'm a bit scared to use the new C++11 stuff... we only lock when we
+     * insert... we expect the caller to already hold the lock when we retrieve
      */
 
     pthread_mutex_t priority_queue_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -8446,14 +8449,22 @@ extern "C++" {
 	    disk_ques.clear();
 	}
 
-	void push(const T& x) {
+	void lock(void) {
 	    pthread_mutex_lock(&priority_queue_lock);
+	}
+
+	void unlock(void) {
+	    pthread_mutex_unlock(&priority_queue_lock);
+	}
+	
+	void push(const T& x) {
+	    lock();
 	    if (tail == limit) {
 		dump_memory_queue_to_disk();
 	    }
 	    in_memory_queue[tail ++] = x;
 	    sorted = 0;
-	    pthread_mutex_unlock(&priority_queue_lock);
+	    unlock();
 	}
 
 	bool empty(void) {
@@ -8518,76 +8529,101 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
  * Commit an old set of proptables into the entries array while writing a new set.
  */
 
-void proptable_pass(int target_dtm)
+index_t proptable_shared_index;
+
+typedef struct {
+    int target_dtm;
+} proptable_propagation_control_t;
+
+void * proptable_pass_thread(void * ptr)
 {
+    proptable_propagation_control_t * control = (proptable_propagation_control_t *) ptr;
+    int target_dtm = control->target_dtm;
     index_t index;
 
-    input_proptable = output_proptable;
-    output_proptable = new proptable(proptable_MBs << 20);
-
-    /* fprintf(stderr, "proptable_pass(%d); size of proptable: %llu\n", target_dtm, input_proptable->size()); */
-
-    for (index = 0; index <= max_index(current_tb); index ++) {
+    while (1) {
 
 	futurevector_t futurevector = 0;
 	futurevector_t possible_futuremoves = 0;
+
+	std::vector<class proptable_entry> current_pt_entries;
+
+	/* Lock the input proptable, advance the shared index, retrieve everything
+	 * from the proptable that matches the new index, then unlock
+	 */
+
+	{
+	    input_proptable->lock();
+
+	    index = __sync_incr(proptable_shared_index);
+
+	    if (index > current_tb->max_index) {
+		input_proptable->unlock();
+		break;
+	    }
+
+	    if (! input_proptable->empty()) {
+
+		if (input_proptable->front().index < index) {
+		    fatal("Out-of-order entries in proptable\n");
+		}
+
+		while (! input_proptable->empty() && input_proptable->front().index == index) {
+		    current_pt_entries.push_back(input_proptable->pop_front());
+		}
+	    }
+
+	    input_proptable->unlock();
+	}
 
 	if (target_dtm == 0) {
 	    possible_futuremoves = initialize_tablebase_entry(current_tb, index);
 	}
 
-	if (! input_proptable->empty()) {
-
-	    if (input_proptable->front().index < index) {
-		fatal("Out-of-order entries in proptable\n");
-	    }
-
-	    while (! input_proptable->empty() && input_proptable->front().index == index) {
-
-		class proptable_entry pt_entry = input_proptable->pop_front();
+	for (std::vector<class proptable_entry>::iterator pt_entry = current_pt_entries.begin();
+	     pt_entry != current_pt_entries.end(); pt_entry ++) {
 
 #ifdef DEBUG_MOVE
-		if (index == DEBUG_MOVE)
-		    fprintf(stderr, "Commiting proptable entry: index %" PRIindex ", dtm %d, movecnt %u, futuremove %d\n",
-			    pt_entry.index, pt_entry.dtm, pt_entry.movecnt, pt_entry.futuremove);
+	    if (index == DEBUG_MOVE)
+		fprintf(stderr, "Commiting proptable entry: index %" PRIindex ", dtm %d, movecnt %u, futuremove %d\n",
+			pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
 #endif
 
-		if (target_dtm != 0) {
+	    if (target_dtm != 0) {
 
-		    finalize_proptable_entry(pt_entry);
+		finalize_proptable_entry(*pt_entry);
 
-		} else if (FUTUREVECTOR(pt_entry.futuremove) & possible_futuremoves) {
+	    } else if (FUTUREVECTOR(pt_entry->futuremove) & possible_futuremoves) {
 
-		    finalize_proptable_entry(pt_entry);
+		finalize_proptable_entry(*pt_entry);
 
-		    /* XXX This code is commented out because double consideration of a futuremove
-		     * can happen for symmetric tablebases.  In this case, two different positions
-		     * in the futurebase (or maybe just two different reflections of the same
-		     * position) can indicate a result for this entry.  Of course, in this
-		     * case the result should be the same.
-		     *
-		     * On the other hand, if we had two different tablebases indicating different
-		     * results for the same futuremove, that should trigger a warning.  We could add
-		     * that capability to the proptable code without too much trouble, but if we're
-		     * just keeping a bit vector in memory to make sure all the futuremoves have
-		     * been handled in some way, we don't have enough information to check all
-		     * of that.  Right now, we quietly ignore it.
-		     */
+		/* XXX This code is commented out because double consideration of a futuremove can
+		 * happen for symmetric tablebases.  In this case, two different positions in the
+		 * futurebase (or maybe just two different reflections of the same position) can
+		 * indicate a result for this entry.  Of course, in this case the result should be
+		 * the same.
+		 *
+		 * On the other hand, if we had two different tablebases indicating different
+		 * results for the same futuremove, that should trigger a warning.  We could add
+		 * that capability to the proptable code without too much trouble, but if we're just
+		 * keeping a bit vector in memory to make sure all the futuremoves have been handled
+		 * in some way, we don't have enough information to check all of that.  Right now,
+		 * we quietly ignore it.
+		 */
 
 #if 0
-		    if (FUTUREVECTOR(pt_entry.futuremove) & futurevector) {
-			global_position_t global;
-			index_to_global_position(current_tb, pt_entry.index, &global);
-			fatal("Futuremove %d multiply handled: % " PRIindex " %s\n",
-			      pt_entry.futuremove, pt_entry.index, global_position_to_FEN(&global));
-		    }
+		if (FUTUREVECTOR(pt_entry->futuremove) & futurevector) {
+		    global_position_t global;
+		    index_to_global_position(current_tb, pt_entry->index, &global);
+		    fatal("Futuremove %d multiply handled: % " PRIindex " %s\n",
+			  pt_entry->futuremove, pt_entry->index, global_position_to_FEN(&global));
+		}
 #endif
 
-		    futurevector |= FUTUREVECTOR(pt_entry.futuremove);
-
-		}
+		futurevector |= FUTUREVECTOR(pt_entry->futuremove);
 
 	    }
+
 	}
 
 	/* We've committed everything for this index that was in the input proptable.  Now either
@@ -8621,6 +8657,46 @@ void proptable_pass(int target_dtm)
 	}
 
     }
+
+    return NULL;
+}
+
+void proptable_pass(int target_dtm)
+{
+    input_proptable = output_proptable;
+    output_proptable = new proptable(proptable_MBs << 20);
+
+    /* fprintf(stderr, "proptable_pass(%d); size of proptable: %llu\n", target_dtm, input_proptable->size()); */
+
+    proptable_shared_index = 0;
+
+#ifndef USE_THREADS
+
+    proptable_pass_thread(target_dtm);
+
+#else
+
+    proptable_propagation_control_t *controls;
+    pthread_t *threads;
+    int thread;
+
+    /* XXX check for malloc failure */
+    controls = (proptable_propagation_control_t *) malloc(sizeof(proptable_propagation_control_t) * num_threads);
+    threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	controls[thread].target_dtm = target_dtm;
+	pthread_create(&threads[thread], NULL, &proptable_pass_thread, &controls[thread]);
+    }
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	pthread_join(threads[thread], NULL);
+    }
+
+    free(threads);
+    free(controls);
+
+#endif
 
     delete input_proptable;
 }
@@ -13593,7 +13669,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.650 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.651 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
