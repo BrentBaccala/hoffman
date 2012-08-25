@@ -123,19 +123,6 @@ AS_IF([test "x$with_libcurl" != xno],
     ])])
 
 
-dnl We need the TPIE and boost libraries to make proptables work
-
-AC_LANG([C++])
-AX_BOOST_BASE
-AX_BOOST_THREAD
-AX_BOOST_FILESYSTEM
-AX_BOOST_SYSTEM
-
-dnl I check for 'main' here because I don't know an easy way to check
-dnl for something in a C++ namespace (like 'tpie::tpie_init')
-
-AC_CHECK_LIB(tpie, main,,, $BOOT_THREAD_LIB $BOOST_FILESYSTEM_LIB $BOOST_SYSTEM_LIB)
-
 dnl If we don't have C++, then we want to link with CC and leave out
 dnl Nalimov support.  If we have C++, then we want to link with C++
 dnl and include Nalimov support.
