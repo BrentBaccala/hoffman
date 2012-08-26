@@ -234,6 +234,8 @@ inline uint64_t __sync_fetch_and_add_8(uint64_t *ptr, uint64_t val) {
 
 /***** GLOBAL CONSTANTS *****/
 
+#define PROGRESS_DOTS 100
+
 /* Maximum number of pieces; used to simplify various arrays
  *
  * Since this includes frozen as well as mobile pieces, "16" may seem absurd, but it's probably
@@ -5583,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.652 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.653 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7803,6 +7805,8 @@ class DiskEntriesTable: public EntriesTable {
 	    }
 	}
 
+	/* XXX don't want to close and rename these files.  Reuse the open FD. */
+
 	if (compress_entries_table) {
 	    if (entries_read_fd != -1) zlib_close(entries_read_file);
 	    zlib_close(entries_write_file);
@@ -8071,6 +8075,8 @@ void back_propagate_index(index_t index, int target_dtm)
      * because moves will be backproped twice from doubled positions to doubled positions, not just
      * assumed like the horizontal or vertical cases.
      */
+
+    if (index % (current_tb->max_index / PROGRESS_DOTS) == 0) info(".");
 
     if (entriesTable->is_unpropagated(index)
 	&& (!tracking_dtm || (entriesTable->get_DTM(index) == target_dtm))) {
@@ -8518,6 +8524,21 @@ extern "C++" {
 
 }
 
+/* Required field sizes for futurebase:
+ *
+ *   index - figure out from max_index
+ *   dtm - figure out from futurebase preload, unless it isn't being tracked
+ *   movecnt - 0 (XXX - discarded futuremove only), 1, or 2 for 8-way symmetry conversion
+ *   futuremove - figure out from total_futuremoves
+ *
+ * Required field sizes for intra-base
+ *
+ *   index - figure out from max_index
+ *   dtm - known from pass number, unless it isn't being tracked
+ *   movecnt - always 1
+ *   futuremove - unneeded
+ */
+
 class proptable_entry {
 
  public:
@@ -8721,6 +8742,8 @@ void proptable_pass(int target_dtm)
     entriesTable->set_threads(1);
 
 #endif
+
+    info("\n");
 
     delete input_proptable;
 }
@@ -9213,6 +9236,8 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 
 	if (future_index > futurebase->max_index) break;
 
+	if (future_index % (futurebase->max_index / PROGRESS_DOTS) == 0) info(".");
+
 	/* It's tempting to break out the loop here if the position isn't a win, but we want to
 	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
 	 * is to run this loop even for draws.
@@ -9415,6 +9440,8 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 	future_index = __sync_incr(next_future_index);
 
 	if (future_index > futurebase->max_index) break;
+
+	if (future_index % (futurebase->max_index / PROGRESS_DOTS) == 0) info(".");
 
 	/* It's tempting to break out the loop here if the position isn't a win, but we want to
 	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
@@ -9829,6 +9856,8 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
 
 	if (future_index > futurebase->max_index) break;
 
+	if (future_index % (futurebase->max_index / PROGRESS_DOTS) == 0) info(".");
+
 	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
 	 * the simplest way to do that is to run this loop even for draws.
@@ -9964,6 +9993,8 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 	future_index = __sync_incr(next_future_index);
 
 	if (future_index > futurebase->max_index) break;
+
+	if (future_index % (futurebase->max_index / PROGRESS_DOTS) == 0) info(".");
 
 	/* Translate the futurebase index into a local position.  We have exactly the same number
 	 * and type of pieces here, but exactly one of them is on a restricted square (according to
@@ -10280,6 +10311,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 #else
 	    (*backprop_function)(0);
 #endif
+	    info("\n");
 	}
 
 	close_futurebase(futurebase);
@@ -11884,6 +11916,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	fprintf(stderr, "Initializing %d\n", index);
 #endif
 
+    if (index % (current_tb->max_index / PROGRESS_DOTS) == 0) info(".");
+
     if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 
 	entriesTable->initialize_entry_as_illegal(index);
@@ -12899,7 +12933,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
 	    /* XXX should be able to handle restart just after a futurebase backprop */
 
-	    info("Initializing tablebase...\n");
+	    info("Initializing tablebase\n");
 	    pass_type[total_passes] = "initialization";
 	    propagation_pass(0);
 
@@ -13693,7 +13727,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.652 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.653 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
