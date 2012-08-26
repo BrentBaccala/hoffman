@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.655 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.656 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7211,15 +7211,6 @@ unsigned int tablebase::get_basic(index_t index)
  *
  */
 
-/* If the entries format contains a locking bit, spinlock on it to acquire a lock on an entry;
- * otherwise, we have to lock on the entire entries table.
- */
-
-#ifdef USE_THREADS
-pthread_mutex_t entries_lock = PTHREAD_MUTEX_INITIALIZER;
-#endif
-
-
 class EntriesTable {
 
     /* Subclasses are responsible for returning pointers and bit offsets to individual indices */
@@ -7259,7 +7250,12 @@ class EntriesTable {
 	locking_bit_offset = -1;
 
 #ifdef USE_THREADS
-	if (num_threads > 1) {
+	/* We include a locking bit on the entries if
+	 *    1) we're actually running with multiple threads, and
+	 *    2) we're not using proptables, because they group all operations on a single entry to
+	 *       a single thread
+	 */
+	if ((num_threads > 1) && !using_proptables) {
 	    locking_bit_offset = movecnt_offset;
 	    movecnt_offset ++;
 	}
@@ -7333,24 +7329,18 @@ class EntriesTable {
 
     void lock_entry(index_t index) {
 #ifdef USE_THREADS
-	if (num_threads == 1) {
-	} else if (locking_bit_offset >= 0) {
+	if (locking_bit_offset >= 0) {
 	    if (spinlock_bit_field(pointer(index), offset(index) + locking_bit_offset)) {
 		__sync_incr(contended_indices);
 	    }
-	} else {
-	    pthread_mutex_lock(&entries_lock);
 	}
 #endif
     }
 
     void unlock_entry(index_t index) {
 #ifdef USE_THREADS
-	if (num_threads == 1) {
-	} else if (locking_bit_offset >= 0) {
+	if (locking_bit_offset >= 0) {
 	    set_bit_field(pointer(index), offset(index) + locking_bit_offset, 0);
-	} else {
-	    pthread_mutex_unlock(&entries_lock);
 	}
 #endif
     }
@@ -13754,7 +13744,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.655 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.656 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
