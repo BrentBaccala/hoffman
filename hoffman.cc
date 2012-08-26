@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.654 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.655 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7327,6 +7327,10 @@ class EntriesTable {
 	threads = 1;
     }
 
+    /* DiskEntriesTable will want to delete some files, so this destructor has to be virtual. */
+
+    virtual ~EntriesTable() { }
+
     void lock_entry(index_t index) {
 #ifdef USE_THREADS
 	if (num_threads == 1) {
@@ -7693,6 +7697,25 @@ class DiskEntriesTable: public EntriesTable {
     void * entries_read_file;
     void * entries_write_file;
 
+    char entries_read_filename[16];
+    char entries_write_filename[16];
+
+    void open_new_entries_write_file(void) {
+
+	strcpy(entries_write_filename, "entriesXXXXXX");
+	entries_write_fd = mkostemp(entries_write_filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
+
+	if (entries_write_fd == -1) {
+	    fatal("Can't open '%s' for writing: %s\n", entries_write_filename, strerror(errno));
+	    return;
+	}
+
+	if (compress_entries_table) {
+	    entries_write_file = zlib_open((void *)((size_t) entries_write_fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
+	}
+
+    }
+
     /* This is the in-memory portion of the table.  entry_buffer_size is the size of the buffer in
      * entries.  Since it is a multiple of 8, the entry buffer is always byte-aligned, and
      * entry_buffer_bytes is its size in bytes.  On any given pass, we might be expanding each entry
@@ -7805,37 +7828,25 @@ class DiskEntriesTable: public EntriesTable {
 	    }
 	}
 
-	/* XXX don't want to close and rename these files.  Reuse the open FD. */
-
 	if (compress_entries_table) {
 	    if (entries_read_fd != -1) zlib_close(entries_read_file);
-	    zlib_close(entries_write_file);
+	    zlib_flush(entries_write_file);
+	    zlib_free(entries_write_file);
 	} else {
 	    if (entries_read_fd != -1) close(entries_read_fd);
-	    close(entries_write_fd);
 	}
 
-	if (rename("entries_out", "entries_in") != 0) {
-	    fatal("Can't rename entries_out as entries_in\n");
-	    return;
-	}
+	unlink(entries_read_filename);
 
-	entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
-	entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_LARGEFILE, 0666);
-
-	if (entries_read_fd == -1) {
-	    fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
-	    return;
-	}
-	if (entries_write_fd == -1) {
-	    fatal("Can't open 'entries_out' for writing: %s\n", strerror(errno));
-	    return;
-	}
+	entries_read_fd = entries_write_fd;
+	strcpy(entries_read_filename, entries_write_filename);
+	lseek(entries_read_fd, 0, SEEK_SET);
 
 	if (compress_entries_table) {
-	    entries_write_file = zlib_open((void *)((size_t) entries_write_fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 	    entries_read_file = zlib_open((void *)((size_t) entries_read_fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	}
+
+	open_new_entries_write_file();
 
 	entry_buffer_start = 0;
 	input_entry_buffer_bytes = entry_buffer_bytes;
@@ -7905,20 +7916,9 @@ class DiskEntriesTable: public EntriesTable {
 	    return;
 	}
 	memset(entry_buffer, 0, entry_buffer_bytes);
-
-	/* create entries file for writing */
-
-	entries_write_fd = open("entries_out", O_RDWR | O_CREAT | O_TRUNC | O_LARGEFILE, 0666);
-	if (entries_write_fd == -1) {
-	    fatal("Can't open 'entries_out' for read-write: %s\n", strerror(errno));
-	    return;
-	}
-
-	if (compress_entries_table) {
-	    entries_write_file = zlib_open((void *)((size_t) entries_write_fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-	}
-
 	entry_buffer_start = 0;
+
+	open_new_entries_write_file();
 
 	/* if we're restarting, there should be an input entries file */
 	/* XXX not true if the restart is right after futurebase backprop */
@@ -7947,8 +7947,8 @@ class DiskEntriesTable: public EntriesTable {
     }
 
     ~DiskEntriesTable(void) {
-	unlink("entries_in");
-	unlink("entries_out");
+	unlink(entries_read_filename);
+	unlink(entries_write_filename);
     }
 
     /* If our DTM field is about to overflow, resize it one bit larger */
@@ -12977,6 +12977,8 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
     write_tablebase_to_file(tb, output_filename);
 
+    delete entriesTable;
+
     return true;
 }
 
@@ -13752,7 +13754,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.654 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.655 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
