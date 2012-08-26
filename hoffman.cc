@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.658 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.659 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8382,8 +8382,13 @@ extern "C++" {
 	    /* Then, sort into the lower half of the network. */
 
 	    for (int network_node = highbit-1; network_node > 0; network_node --) {
-		if ((container_num[2*network_node + 1] == -1)
-		    || (network[2*network_node] < network[2*network_node + 1])) {
+		if (container_num[2*network_node] == -1) {
+		    network[network_node] = network[2*network_node + 1];
+		    container_num[network_node] = container_num[2*network_node + 1];
+		} else if (container_num[2*network_node + 1] == -1) {
+		    network[network_node] = network[2*network_node];
+		    container_num[network_node] = container_num[2*network_node];
+		} else if (network[2*network_node] < network[2*network_node + 1]) {
 		    network[network_node] = network[2*network_node];
 		    container_num[network_node] = container_num[2*network_node];
 		} else {
@@ -8420,8 +8425,13 @@ extern "C++" {
 
 	    while (network_node > 1) {
 		network_node >>= 1;
-		if ((container_num[2*network_node + 1] == -1)
-		    || (network[2*network_node] < network[2*network_node + 1])) {
+		if (container_num[2*network_node] == -1) {
+		    network[network_node] = network[2*network_node + 1];
+		    container_num[network_node] = container_num[2*network_node + 1];
+		} else if (container_num[2*network_node + 1] == -1) {
+		    network[network_node] = network[2*network_node];
+		    container_num[network_node] = container_num[2*network_node];
+		} else if (network[2*network_node] < network[2*network_node + 1]) {
 		    network[network_node] = network[2*network_node];
 		    container_num[network_node] = container_num[2*network_node];
 		} else {
@@ -13783,7 +13793,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.658 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.659 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
