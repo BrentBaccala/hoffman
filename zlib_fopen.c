@@ -101,7 +101,7 @@ ssize_t zlib_write(void *ptr, const char *buffer, size_t size)
     return (size - cookie->zstream.avail_in);
 }
 
-int zlib_close (void *ptr)
+int zlib_flush (void *ptr)
 {
     struct cookie *cookie = ptr;
     int ret = Z_STREAM_END;
@@ -124,14 +124,31 @@ int zlib_close (void *ptr)
 	}
     }
 
-    cookie->close(cookie->ptr);
-
-    free(cookie->buffer);
-    free(cookie);
-
     /* 0 is a good return; -1 is error */
 
     return (ret == Z_STREAM_END) ? 0 : -1;
+}
+
+void zlib_free (void *ptr)
+{
+    struct cookie *cookie = ptr;
+
+    free(cookie->buffer);
+    free(cookie);
+}
+
+int zlib_close (void *ptr)
+{
+    struct cookie *cookie = ptr;
+    int ret;
+
+    ret = zlib_flush(ptr);
+
+    cookie->close(cookie->ptr);
+
+    zlib_free(ptr);
+
+    return ret;
 }
 
 #ifdef O_LARGEFILE

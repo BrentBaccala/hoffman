@@ -17,6 +17,8 @@ off64_t zlib_seek64 (void *ptr, off64_t position, int whence);
 int zlib_seekptr (void *ptr, off_t *position, int whence);
 off_t zlib_seek (void *ptr, off_t position, int whence);
 ssize_t zlib_write(void *ptr, const char *buffer, size_t size);
+int zlib_flush (void *ptr);
+void zlib_free (void *ptr);
 int zlib_close (void *ptr);
 
 #ifdef __GLIBC__
