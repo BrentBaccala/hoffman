@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.656 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.657 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7265,6 +7265,26 @@ class EntriesTable {
 	dtm_offset = movecnt_offset + movecnt_bits;
 
 	bits = dtm_offset + dtm_bits;
+
+	/* If we're using proptables and the entries table is compressed on disk, then round up to a
+	 * byte boundary if we've only got to burn a bit or two to do it, since we'll probably
+	 * get better compression from zlib with everything on a byte boundary anyway.
+	 */
+
+	if (using_proptables && compress_entries_table && ((bits % 8) == 6 || (bits % 8) == 7)) {
+	    while ((bits % 8) != 0) {
+		dtm_bits ++;
+		bits ++;
+	    }
+	}
+    }
+
+    void print_current_format(void) {
+	info("%d bits movecnt", movecnt_bits);
+	if (dtm_bits > 0) info("; %d bits dtm", dtm_bits);
+	if (capture_possible_flag_offset != -1) info("; capture possible flag");
+	if (locking_bit_offset != -1) info("; locking bit");
+	info("\n");
     }
 
  public:
@@ -7314,11 +7334,8 @@ class EntriesTable {
 
 	ComputeBitfields();
 
-	info("Initial entries format: %d bits movecnt", movecnt_bits);
-	if (dtm_bits > 0) info("; %d bits dtm", dtm_bits);
-	if (capture_possible_flag_offset != -1) info("; capture possible flag");
-	if (locking_bit_offset != -1) info("; locking bit");
-	info("\n");
+	info("Initial entries format: ");
+	print_current_format();
 
 	threads = 1;
     }
@@ -7627,11 +7644,12 @@ class MemoryEntriesTable: public EntriesTable {
 	    entries = realloc(entries, bytes);
 	    if (entries == NULL) {
 		fatal("Can't realloc %dMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
+		return;
 	    } else {
 		if (bytes < 1024*1024) {
-		    info("Realloced %dKB for tablebase entries\n", bytes/1024);
+		    info("Realloced %dKB for tablebase entries: ", bytes/1024);
 		} else {
-		    info("Realloced %dMB for tablebase entries\n", bytes/(1024*1024));
+		    info("Realloced %dMB for tablebase entries: ", bytes/(1024*1024));
 		}
 	    }
 
@@ -7646,6 +7664,8 @@ class MemoryEntriesTable: public EntriesTable {
 
 	    dtm_bits ++;
 	    bits ++;
+
+	    print_current_format();
 	}
     }
 
@@ -7851,6 +7871,9 @@ class DiskEntriesTable: public EntriesTable {
 		fatal("Can't realloc entries buffer\n");
 		return;
 	    }
+
+	    info("Resizing entries table during next pass: ");
+	    print_current_format();
 
 	    resize_on_next_pass = 0;
 	}
@@ -13744,7 +13767,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.656 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.657 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
