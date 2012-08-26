@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.657 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.658 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8191,7 +8191,7 @@ void non_proptable_pass(int target_dtm)
 /***** PROPTABLES *****
  *
  * Proptables are used to optimize back propagation for large tablebases that can not fit into RAM.
- * A proptable is a priority queue that stores pending updates and then retreives them in index
+ * A proptable is a priority queue that stores pending updates and then retrieves them in index
  * sorted order, allowing a batch of updates to be applied with a single linear pass through the
  * entries array.  We maintain two proptables, the input and the output, and as we make a single
  * pass through the tablebase, we're simultaneously committing changes from the input into the
@@ -8488,7 +8488,7 @@ extern "C++" {
 	}
 
 	~priority_queue() {
-	    delete in_memory_queue;
+	    if (in_memory_queue != NULL) delete in_memory_queue;
 	    disk_ques.clear();
 	}
 
@@ -8502,6 +8502,7 @@ extern "C++" {
 	
 	void push(const T& x) {
 	    lock();
+	    if (in_memory_queue == NULL) throw "priority_queue: push attempted after retrieval started";
 	    if (tail == limit) {
 		dump_memory_queue_to_disk();
 	    }
@@ -8514,26 +8515,35 @@ extern "C++" {
 	    return disk_ques.empty() ? (head == tail) : snetwork.empty();
 	}
 
-	const T& front(void) {
+	void prepare_to_retrieve(void) {
 	    if (disk_ques.empty()) {
-		sort_in_memory_queue();
+		if (! sorted) sort_in_memory_queue();
+		/* XXX ideally, resize the in-memory table to (tail-head) elements */
+	    } else {
+		if (in_memory_queue != NULL) {
+		    if (head != tail) {
+			dump_memory_queue_to_disk();
+		    }
+		    delete in_memory_queue;
+		    in_memory_queue = NULL;
+		}
+	    }
+	}
+
+	const T& front(void) {
+	    prepare_to_retrieve();
+	    if (disk_ques.empty()) {
 		return in_memory_queue[head];
 	    } else {
-		if (head != tail) {
-		    dump_memory_queue_to_disk();
-		}
 		return snetwork.front();
 	    }
 	}
 
 	T pop_front(void) {
+	    prepare_to_retrieve();
 	    if (disk_ques.empty()) {
-		sort_in_memory_queue();
 		return in_memory_queue[head ++];
 	    } else {
-		if (head != tail) {
-		    dump_memory_queue_to_disk();
-		}
 		return snetwork.pop_front();
 	    }
 	}
@@ -8721,7 +8731,13 @@ void * proptable_pass_thread(void * ptr)
 
 void proptable_pass(int target_dtm)
 {
+    /* Swap proptables.  prepare_to_retrieve() frees a lot of memory, so we call it before allocing
+     * a new proptable.
+     */
+
     input_proptable = output_proptable;
+    if (input_proptable != NULL) input_proptable->prepare_to_retrieve();
+
     output_proptable = new proptable(proptable_MBs << 20);
 
     /* fprintf(stderr, "proptable_pass(%d); size of proptable: %llu\n", target_dtm, input_proptable->size()); */
@@ -13767,7 +13783,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.657 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.658 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
