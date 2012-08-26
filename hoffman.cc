@@ -234,8 +234,6 @@ inline uint64_t __sync_fetch_and_add_8(uint64_t *ptr, uint64_t val) {
 
 /***** GLOBAL CONSTANTS *****/
 
-#define PROGRESS_DOTS 100
-
 /* Maximum number of pieces; used to simplify various arrays
  *
  * Since this includes frozen as well as mobile pieces, "16" may seem absurd, but it's probably
@@ -277,6 +275,8 @@ char options_string[256];
 
 struct timeval program_start_time;
 struct timeval program_end_time;
+
+unsigned int progress_dots = 100;
 
 /* per-pass statistics */
 
@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.653 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.654 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8076,7 +8076,11 @@ void back_propagate_index(index_t index, int target_dtm)
      * assumed like the horizontal or vertical cases.
      */
 
-    if (index % (current_tb->max_index / PROGRESS_DOTS) == 0) info(".");
+    if (progress_dots > 0) {
+	if ((index + 1) % (current_tb->max_index / progress_dots) == 0) {
+	    if ((index + 1) / (current_tb->max_index / progress_dots) <= progress_dots) info(".");
+	}
+    }
 
     if (entriesTable->is_unpropagated(index)
 	&& (!tracking_dtm || (entriesTable->get_DTM(index) == target_dtm))) {
@@ -8743,8 +8747,6 @@ void proptable_pass(int target_dtm)
 
 #endif
 
-    info("\n");
-
     delete input_proptable;
 }
 
@@ -8834,6 +8836,8 @@ int propagation_pass(int target_dtm)
     } else {
 	non_proptable_pass(target_dtm);
     }
+
+    if (progress_dots > 0) info("\n");
 
     total_backproped_moves += backproped_moves[total_passes];
 
@@ -9236,7 +9240,11 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 
 	if (future_index > futurebase->max_index) break;
 
-	if (future_index % (futurebase->max_index / PROGRESS_DOTS) == 0) info(".");
+	if (progress_dots > 0) {
+	    if ((future_index + 1) % (futurebase->max_index / progress_dots) == 0) {
+		if ((future_index + 1) / (futurebase->max_index / progress_dots) <= progress_dots) info(".");
+	    }
+	}
 
 	/* It's tempting to break out the loop here if the position isn't a win, but we want to
 	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
@@ -9441,7 +9449,11 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 
 	if (future_index > futurebase->max_index) break;
 
-	if (future_index % (futurebase->max_index / PROGRESS_DOTS) == 0) info(".");
+	if (progress_dots > 0) {
+	    if ((future_index + 1) % (futurebase->max_index / progress_dots) == 0) {
+		if ((future_index + 1) / (futurebase->max_index / progress_dots) <= progress_dots) info(".");
+	    }
+	}
 
 	/* It's tempting to break out the loop here if the position isn't a win, but we want to
 	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
@@ -9856,7 +9868,11 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
 
 	if (future_index > futurebase->max_index) break;
 
-	if (future_index % (futurebase->max_index / PROGRESS_DOTS) == 0) info(".");
+	if (progress_dots > 0) {
+	    if ((future_index + 1) % (futurebase->max_index / progress_dots) == 0) {
+		if ((future_index + 1) / (futurebase->max_index / progress_dots) <= progress_dots) info(".");
+	    }
+	}
 
 	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
@@ -9994,7 +10010,11 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 
 	if (future_index > futurebase->max_index) break;
 
-	if (future_index % (futurebase->max_index / PROGRESS_DOTS) == 0) info(".");
+	if (progress_dots > 0) {
+	    if ((future_index + 1) % (futurebase->max_index / progress_dots) == 0) {
+		if ((future_index + 1) / (futurebase->max_index / progress_dots) <= progress_dots) info(".");
+	    }
+	}
 
 	/* Translate the futurebase index into a local position.  We have exactly the same number
 	 * and type of pieces here, but exactly one of them is on a restricted square (according to
@@ -10311,7 +10331,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 #else
 	    (*backprop_function)(0);
 #endif
-	    info("\n");
+	    if (progress_dots > 0) info("\n");
 	}
 
 	close_futurebase(futurebase);
@@ -11916,7 +11936,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	fprintf(stderr, "Initializing %d\n", index);
 #endif
 
-    if (index % (current_tb->max_index / PROGRESS_DOTS) == 0) info(".");
+    if (progress_dots > 0) {
+	if ((index + 1) % (current_tb->max_index / progress_dots) == 0) {
+	    if ((index + 1) / (current_tb->max_index / progress_dots) <= progress_dots) info(".");
+	}
+    }
 
     if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 
@@ -12885,6 +12909,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
 	info("Initializing tablebase\n");
 	initialize_tablebase();
+	if (progress_dots > 0) info("\n");
 
 	finalize_pass_statistics();
 	total_passes ++;
@@ -13727,7 +13752,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.653 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.654 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
