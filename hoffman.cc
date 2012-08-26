@@ -5583,7 +5583,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.651 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.652 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7225,6 +7225,7 @@ class EntriesTable {
     virtual void * pointer(index_t index) = 0;
     virtual bitoffset offset(index_t index) = 0;
     uint8_t bits;
+    uint8_t threads;
 
     /* The individual entries are formed from bit fields.  Here we specify their sizes and offsets. */
 
@@ -7320,6 +7321,8 @@ class EntriesTable {
 	if (capture_possible_flag_offset != -1) info("; capture possible flag");
 	if (locking_bit_offset != -1) info("; locking bit");
 	info("\n");
+
+	threads = 1;
     }
 
     void lock_entry(index_t index) {
@@ -7344,6 +7347,19 @@ class EntriesTable {
 	    pthread_mutex_unlock(&entries_lock);
 	}
 #endif
+    }
+
+    /* Sets the number of threads accessing the table.
+     *
+     * Used by the disk-based version of this class to figure out how many threads it has to wait
+     * for before it advances the buffer in the disk file.  If we have less than this number of
+     * threads, the code will stall indefinately waiting for the remaining, non-existant threads.
+     *
+     * XXX the very existence of this function is a kludge
+     */
+
+    void set_threads(uint8_t threads) {
+	this->threads = threads;
     }
 
     uint8_t get_DTM_field_size(void) {
@@ -7741,7 +7757,7 @@ class DiskEntriesTable: public EntriesTable {
     void wait_for_all_threads_ready_then_advance_entry_buffer(void) {
 	pthread_mutex_lock(&ready_to_advance_mutex);
 	threads_waiting_to_advance ++;
-	if (threads_waiting_to_advance + threads_waiting_to_reset < num_threads) {
+	if (threads_waiting_to_advance + threads_waiting_to_reset < threads) {
 	    pthread_cond_wait(&ready_to_advance_cond, &ready_to_advance_mutex);
 	} else {
 	    advance_entry_buffer();
@@ -7850,7 +7866,7 @@ class DiskEntriesTable: public EntriesTable {
     void wait_for_all_threads_ready_then_reset(void) {
 	pthread_mutex_lock(&ready_to_advance_mutex);
 	threads_waiting_to_reset ++;
-	if (threads_waiting_to_reset < num_threads) {
+	if (threads_waiting_to_reset < threads) {
 	    pthread_cond_wait(&ready_to_reset_cond, &ready_to_advance_mutex);
 	} else {
 	    reset_files();
@@ -8120,6 +8136,8 @@ void non_proptable_pass(int target_dtm)
     pthread_t *threads;
     int thread;
 
+    entriesTable->set_threads(num_threads);
+
     /* XXX check for malloc failure */
     controls = (intratable_propagation_control_t *) malloc(sizeof(intratable_propagation_control_t) * num_threads);
     threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
@@ -8141,6 +8159,8 @@ void non_proptable_pass(int target_dtm)
 
     free(threads);
     free(controls);
+
+    entriesTable->set_threads(1);
 
 #endif
 }
@@ -8680,6 +8700,8 @@ void proptable_pass(int target_dtm)
     pthread_t *threads;
     int thread;
 
+    entriesTable->set_threads(num_threads);
+
     /* XXX check for malloc failure */
     controls = (proptable_propagation_control_t *) malloc(sizeof(proptable_propagation_control_t) * num_threads);
     threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
@@ -8695,6 +8717,8 @@ void proptable_pass(int target_dtm)
 
     free(threads);
     free(controls);
+
+    entriesTable->set_threads(1);
 
 #endif
 
@@ -13669,7 +13693,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.651 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.652 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
