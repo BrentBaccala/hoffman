@@ -9,7 +9,7 @@
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
- * written in C++ for speed (but still needs a lot of work to reach that goal)
+ * written in C++
  *
  * This program is formated for a (minimum) 100 character wide display.
  *
@@ -77,6 +77,9 @@
  * game when the team agreed to a draw rather than play into a drawish endgame in the hopes of using
  * an early version of Hoffman as the game simplified.
  *
+ * I've tried to achieve capability (mostly done) and then speed (still needs a lot of work).
+ *
+ * Read the tutorial and reference manual, both distributed as PDFs, next.
  *
  * Basic Usage: hoffman -g <xml-control-file>                           (generate mode)
  *              hoffman -v <tablebase> ...                              (verification mode)
@@ -5585,7 +5588,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.660 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.661 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8583,12 +8586,122 @@ class proptable_entry {
     unsigned int movecnt;
     int futuremove;
 
+#if 0
+    const proptable_entry & operator=(const proptable_entry & rvalue) const {
+#if 0
+	index = rvalue.index;
+	dtm = rvalue.dtm;
+	movecnt = rvalue.movecnt;
+	futuremove = rvalue.futuremove;
+#endif
+	return *this;
+    }
+#endif
+
     bool operator<(const proptable_entry &other) const {
 	return index < other.index;
     }
 };
 
-typedef priority_queue<class proptable_entry> proptable;
+class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_entry> {
+
+    friend class new_proptable;
+
+ private:
+    int i;
+    std::vector<proptable_entry> *ptr;
+
+    proptable_iterator(std::vector<proptable_entry> *ptr, int i) : i(i), ptr(ptr) {}
+
+ public:
+    proptable_iterator() : i(0), ptr(NULL) {}
+
+#if 0
+    proptable_iterator & operator=(const proptable_iterator & rvalue) const {
+	ptr = rvalue.ptr;
+	i = rvalue.i;
+	return *this;
+    }
+#endif
+
+    proptable_entry & operator*() const {
+	return (*ptr)[i];
+    }
+
+    const proptable_iterator & operator++(int zero) {
+	proptable_iterator *retval = new proptable_iterator(ptr, i);
+	i ++;
+	return *retval;
+    }
+
+    const proptable_iterator & operator++() {
+	i ++;
+	return *this;
+    }
+
+    const proptable_iterator & operator--(int zero) {
+	proptable_iterator *retval = new proptable_iterator(ptr, i);
+	i --;
+	return *retval;
+    }
+
+    const proptable_iterator & operator--() {
+	i --;
+	return *this;
+    }
+
+    const proptable_iterator & operator+(int val) {
+	proptable_iterator *retval = new proptable_iterator(ptr, i+val);
+	//i += val;
+	//return *this;
+	return *retval;
+    }
+
+    const proptable_iterator & operator-(int val) {
+	proptable_iterator *retval = new proptable_iterator(ptr, i-val);
+	return *retval;
+	//i -= val;
+	//return *this;
+    }
+
+    int operator-(const proptable_iterator & other) {
+	return i - other.i;
+    }
+
+    bool operator==(const class proptable_iterator & other) {
+	return i == other.i;
+    }
+
+    bool operator!=(const class proptable_iterator & other) {
+	return i != other.i;
+    }
+
+    bool operator<(const class proptable_iterator & other) {
+	return i < other.i;
+    }
+};
+
+class new_proptable : public std::vector<proptable_entry> {
+
+ public:
+    typedef proptable_iterator iterator;
+    //typedef std::vector<proptable_entry>::iterator iterator;
+
+    new_proptable(int i) : std::vector<proptable_entry>(i) { }
+
+#if 1
+    class proptable_iterator begin() {
+	return proptable_iterator(this, 0);
+    }
+
+    class proptable_iterator end() {
+	return proptable_iterator(this, size());
+    }
+#endif
+};
+
+//typedef priority_queue<class proptable_entry> proptable;
+typedef priority_queue<class proptable_entry, class new_proptable> proptable;
 
 proptable * input_proptable;
 proptable * output_proptable;
@@ -13792,7 +13905,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.660 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.661 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
