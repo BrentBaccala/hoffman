@@ -37,19 +37,19 @@
  * be calculated.  The Nalimov kppkp tablebase occupies 64MB; Hoffman's current, less efficient
  * storage scheme requires 225MB for the same tablebase.
  *
- * Hoffman takes a somewhat different approach, one pioneered by Eiko Bleicher's Freezer, now a
- * commercial program. When faced with something like K+P+P vs K+P, rather than calculate all
+ * Hoffman takes a somewhat different approach, one pioneered by Althöfer and Bleicher's Freezer,
+ * now a commercial program. When faced with something like K+P+P vs K+P, rather than calculate all
  * possible resulting positions, it may ignore the possibility of more than two pawns queening at
  * the same time, thus computing nothing more complex than K+Q+P vs K+Q.  While incomplete, such a
- * tablebase is nevertheless useful.  For the player with two pawns, if the tablebase finds a
- * winning line subject to the queening restrictions, then that line is still playable for a win,
- * even though a faster winning line may exist.  From the opposing point of view, if the tablebase
- * treats any position where the third pawn queens as a loss, then the player can be confident that
- * any drawing line can not be improved upon by the superior side.  From a computational
- * perspective, we have reduced the complexity requirements to a point where the calculation can be
- * performed in a reasonable amount of time.  While still too slow for over-the-board use, we now
- * have a useful tool for the analysis of more complex endgames, useful for either static analysis,
- * or for the slow time controls of correspondence games.
+ * tablebase is nevertheless useful.  For the player with two pawns, if the tablebase discards any
+ * move that queens the third pawn and still finds a winning line, then that line is still playable
+ * for a win, even though a faster winning line may exist.  From the opposing point of view, if the
+ * tablebase treats any position where the third pawn queens as a loss, then the player can be
+ * confident that any drawing line can not be improved upon by the superior side.  From a
+ * computational perspective, we have reduced the complexity requirements to a point where the
+ * calculation can be performed in a reasonable amount of time.  While still too slow for
+ * over-the-board use, we now have a useful tool for the analysis of more complex endgames, useful
+ * for either static analysis, or for the slow time controls of correspondence games.
  *
  * Hoffman improves upon Freezer with a more sophisticated method of chaining one endgame analysis
  * into another, allowing more realistic modeling of queening combinations and exchanges.  For
@@ -82,7 +82,8 @@
  * Read the tutorial and reference manual, both distributed as PDFs, next.
  *
  * Basic Usage: hoffman -g <xml-control-file>                           (generate mode)
- *              hoffman -v <tablebase> ...                              (verification mode)
+ *              hoffman -v <tablebase> ...                              (verify mode)
+ *              hoffman -i <tablebase> ...                              (identify mode)
  *              hoffman -p <tablebase> ...                              (probe mode)
  */
 
@@ -5588,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.661 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.662 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8628,10 +8629,10 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
 	return (*ptr)[i];
     }
 
-    const proptable_iterator & operator++(int zero) {
-	proptable_iterator *retval = new proptable_iterator(ptr, i);
+    const proptable_iterator operator++(int zero) {
+	proptable_iterator retval(*this);
 	i ++;
-	return *retval;
+	return retval;
     }
 
     const proptable_iterator & operator++() {
@@ -8639,10 +8640,10 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
 	return *this;
     }
 
-    const proptable_iterator & operator--(int zero) {
-	proptable_iterator *retval = new proptable_iterator(ptr, i);
+    const proptable_iterator operator--(int zero) {
+	proptable_iterator retval(*this);
 	i --;
-	return *retval;
+	return retval;
     }
 
     const proptable_iterator & operator--() {
@@ -8650,18 +8651,16 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
 	return *this;
     }
 
-    const proptable_iterator & operator+(int val) {
-	proptable_iterator *retval = new proptable_iterator(ptr, i+val);
-	//i += val;
-	//return *this;
-	return *retval;
+    const proptable_iterator operator+(int val) {
+	proptable_iterator retval(*this);
+	retval.i += val;
+	return retval;
     }
 
-    const proptable_iterator & operator-(int val) {
-	proptable_iterator *retval = new proptable_iterator(ptr, i-val);
-	return *retval;
-	//i -= val;
-	//return *this;
+    const proptable_iterator operator-(int val) {
+	proptable_iterator retval(*this);
+	retval.i -= val;
+	return retval;
     }
 
     int operator-(const proptable_iterator & other) {
@@ -8681,15 +8680,20 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
     }
 };
 
+#define USE_CUSTOM_ITERATOR 0
+
 class new_proptable : public std::vector<proptable_entry> {
 
  public:
+#ifdef USE_CUSTOM_ITERATOR
     typedef proptable_iterator iterator;
-    //typedef std::vector<proptable_entry>::iterator iterator;
+#else
+    typedef std::vector<proptable_entry>::iterator iterator;
+#endif
 
     new_proptable(int i) : std::vector<proptable_entry>(i) { }
 
-#if 1
+#ifdef USE_CUSTOM_ITERATOR
     class proptable_iterator begin() {
 	return proptable_iterator(this, 0);
     }
@@ -8700,8 +8704,8 @@ class new_proptable : public std::vector<proptable_entry> {
 #endif
 };
 
-//typedef priority_queue<class proptable_entry> proptable;
-typedef priority_queue<class proptable_entry, class new_proptable> proptable;
+typedef priority_queue<class proptable_entry> proptable;
+//typedef priority_queue<class proptable_entry, class new_proptable> proptable;
 
 proptable * input_proptable;
 proptable * output_proptable;
@@ -13703,7 +13707,6 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 void probe_tablebases(tablebase_t **tbs) {
     global_position_t global_position;
     bool global_position_valid = false;
-    bool probing_single_tablebase;
     tablebase_t *tb = NULL;
     int i;
 
@@ -13711,9 +13714,6 @@ void probe_tablebases(tablebase_t **tbs) {
 	fatal("No valid tablebases to probe!\n");
 	terminate();
     }
-
-    probing_single_tablebase = (tbs[1] == NULL);
-    if (probing_single_tablebase) tb = tbs[0];
 
     for (i=1; tbs[i] != NULL; i ++) {
 	if (tbs[i]->variant != tbs[0]->variant) {
@@ -13737,18 +13737,8 @@ void probe_tablebases(tablebase_t **tbs) {
 	int score;
 #endif
 
-#ifdef HAVE_LIBREADLINE
-	buffer = readline(global_position_valid ? "FEN or move? " : "FEN? ");
-	if (buffer == NULL) break;
-	if (*buffer == '\0') continue;
-	add_history(buffer);
-#else
-	printf(global_position_valid ? "FEN or move? " : "FEN? ");
-	if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
-#endif
-
-	/* the single period command - prints current position */
-	if (!strcmp(buffer, ".")) {
+	/* print current position */
+	if (global_position_valid) {
 	    int i;
 	    for (i = 0; i < 64; i++) {
 		char c = global_position.board[i % 8 + 8*(7-i/8)];
@@ -13761,12 +13751,21 @@ void probe_tablebases(tablebase_t **tbs) {
 	    printf("  +----------------\n");
 	    printf("    a b c d e f g h\n");
 	    printf("%s to move\n", colors[global_position.side_to_move]);
-	    continue;
 	}
+
+#ifdef HAVE_LIBREADLINE
+	buffer = readline(global_position_valid ? "FEN or move? " : "FEN? ");
+	if (buffer == NULL) break;
+	if (*buffer == '\0') continue;
+	add_history(buffer);
+#else
+	printf(global_position_valid ? "FEN or move? " : "FEN? ");
+	if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
+#endif
 
 	if (!(global_position_valid && parse_move_in_global_position(buffer, &global_position))
 	    && !parse_FEN_to_global_position(buffer, &global_position)
-	    && (!probing_single_tablebase || (index = strtol(buffer, NULL, 10)) == 0)) {
+	    && (index = strtol(buffer, NULL, 10)) == 0) {
 	    printf(global_position_valid ? "Bad FEN or move\n\n" : "Bad FEN\n\n");
 	    continue;
 	}
@@ -13777,6 +13776,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	if (index == 0) {
 	    search_tablebases_for_global_position(tbs, &global_position, &tb, &index);
 	} else {
+	    tb = tbs[0];
 	    index_to_global_position(tb, index, &global_position);
 	}
 
@@ -13905,7 +13905,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.661 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.662 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
