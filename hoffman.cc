@@ -5589,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.662 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.663 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8273,16 +8273,18 @@ extern "C++" {
     struct disk_que {
 	typedef T value_type;
 
+	static const int queue_size = 256;	// size of in-memory queue
+
 	int fd;
 	int next;
 	int size;
-	T queue[256];
+	T queue[queue_size];
 	char filename[16];
 	void *file;
 
 	disk_que() {
 	    strcpy(filename, "proptableXXXXXX");
-	    fd = mkstemp(filename);
+	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
 	    if (compress_proptables) {
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 	    }
@@ -8295,18 +8297,23 @@ extern "C++" {
 	    unlink(filename);
 	}
 
-	void append(T *ptr, int size) {
-	    memcpy(queue, ptr, 256 * sizeof(T));
-	    if (compress_proptables) {
-		zlib_write(file, (const char *)(ptr+256), (size-256) * sizeof(T));
-		zlib_close(file);
-		fd = open(filename, O_RDONLY, 0);
-		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
+	void append(T *ptr, int len) {
+	    if (size != 0) throw "disk_que: Can't append twice to the same queue";
+	    if (len <= queue_size) {
+		memcpy(queue, ptr, len * sizeof(T));
 	    } else {
-		do_write(fd, ptr+256, (size-256) * sizeof(T));
-		lseek(fd, 0, SEEK_SET);
+		memcpy(queue, ptr, queue_size * sizeof(T));
+		if (compress_proptables) {
+		    zlib_write(file, (const char *)(ptr+queue_size), (len-queue_size) * sizeof(T));
+		    zlib_flush(file);
+		    zlib_free(file);
+		    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
+		} else {
+		    do_write(fd, ptr+queue_size, (len-queue_size) * sizeof(T));
+		    lseek(fd, 0, SEEK_SET);
+		}
 	    }
-	    this->size = size;
+	    size = len;
 	}
 
 	bool empty(void) {
@@ -8314,15 +8321,15 @@ extern "C++" {
 	}
 
 	T pop_front(void) {
-	    if ((next != 0) && (next % 256 == 0)) {
+	    if ((next != 0) && (next % queue_size == 0)) {
 		// XXX check return value
 		if (compress_proptables) {
-		    zlib_read(file, (char *) queue, 256 * sizeof(T));
+		    zlib_read(file, (char *) queue, queue_size * sizeof(T));
 		} else {
-		    read(fd, queue, 256 * sizeof(T));
+		    read(fd, queue, queue_size * sizeof(T));
 		}
 	    }
-	    return queue[(next++) % 256];
+	    return queue[(next++) % queue_size];
 	}
     };
 
@@ -13905,7 +13912,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.662 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.663 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
