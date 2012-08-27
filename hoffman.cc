@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.659 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.660 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8456,17 +8456,16 @@ extern "C++" {
 
     pthread_mutex_t priority_queue_lock = PTHREAD_MUTEX_INITIALIZER;
 
-    template <typename T>
+    template <typename T, typename MemoryArray = std::vector<T> >
     class priority_queue {
 
 	typedef struct disk_que<T> DiskQue;
 	typedef class std::deque<DiskQue> DiskQueQue;
 
     private:
-	T * in_memory_queue;
-	int limit;
-	int head;
-	int tail;
+	MemoryArray * in_memory_queue;
+	typename MemoryArray::iterator head;
+	typename MemoryArray::iterator tail;
 	bool sorted;
 
 	DiskQueQue disk_ques;
@@ -8474,7 +8473,7 @@ extern "C++" {
 
 	void sort_in_memory_queue(void) {
 	    if (! sorted) {
-		std::sort(&in_memory_queue[head], &in_memory_queue[tail]);
+		std::sort(head, tail);
 		sorted = 1;
 	    }
 	}
@@ -8483,17 +8482,17 @@ extern "C++" {
 	    DiskQue *dq = new DiskQue;
 
 	    sort_in_memory_queue();
-	    dq->append(in_memory_queue, tail);
+	    dq->append(in_memory_queue->data(), tail-head);
 	    disk_ques.push_back(*dq);
-	    tail = 0;
+	    tail = head;
 	}
 
     public:
     
-    priority_queue(int limitMB = 512*1024*1024): limit(limitMB/sizeof(T)), snetwork(&disk_ques) {
-	    in_memory_queue = new T[limit];
-	    head = 0;
-	    tail = 0;
+    priority_queue(int limitMB = 512*1024*1024): snetwork(&disk_ques) {
+	    in_memory_queue = new MemoryArray(limitMB/sizeof(T));
+	    head = in_memory_queue->begin();
+	    tail = head;
 	    sorted = 1;
 	}
 
@@ -8513,10 +8512,10 @@ extern "C++" {
 	void push(const T& x) {
 	    lock();
 	    if (in_memory_queue == NULL) throw "priority_queue: push attempted after retrieval started";
-	    if (tail == limit) {
+	    if (tail == in_memory_queue->end()) {
 		dump_memory_queue_to_disk();
 	    }
-	    in_memory_queue[tail ++] = x;
+	    *(tail ++) = x;
 	    sorted = 0;
 	    unlock();
 	}
@@ -8543,7 +8542,7 @@ extern "C++" {
 	const T& front(void) {
 	    prepare_to_retrieve();
 	    if (disk_ques.empty()) {
-		return in_memory_queue[head];
+		return *head;
 	    } else {
 		return snetwork.front();
 	    }
@@ -8552,7 +8551,7 @@ extern "C++" {
 	T pop_front(void) {
 	    prepare_to_retrieve();
 	    if (disk_ques.empty()) {
-		return in_memory_queue[head ++];
+		return *(head++);
 	    } else {
 		return snetwork.pop_front();
 	    }
@@ -13793,7 +13792,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.659 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.660 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
