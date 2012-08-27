@@ -5589,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.664 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.665 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8475,13 +8475,13 @@ extern "C++" {
 	typedef class std::deque<DiskQue> DiskQueQue;
 
     private:
+	DiskQueQue disk_ques;
+	class sorting_network<DiskQueQue> snetwork;
+
 	MemoryArray * in_memory_queue;
 	typename MemoryArray::iterator head;
 	typename MemoryArray::iterator tail;
 	bool sorted;
-
-	DiskQueQue disk_ques;
-	class sorting_network<DiskQueQue> snetwork;
 
 	void sort_in_memory_queue(void) {
 	    if (! sorted) {
@@ -8501,12 +8501,13 @@ extern "C++" {
 
     public:
     
-    priority_queue(int limitMB = 512*1024*1024): snetwork(&disk_ques) {
-	    in_memory_queue = new MemoryArray(limitMB/sizeof(T));
-	    head = in_memory_queue->begin();
-	    tail = head;
-	    sorted = 1;
-	}
+    priority_queue(int limitMB = 512*1024*1024):
+	snetwork(&disk_ques),
+	in_memory_queue(new MemoryArray(limitMB/sizeof(T))),
+	head(in_memory_queue->begin()),
+	tail(head),
+	sorted(1)
+	{}
 
 	~priority_queue() {
 	    if (in_memory_queue != NULL) delete in_memory_queue;
@@ -8595,18 +8596,6 @@ class proptable_entry {
     unsigned int movecnt;
     int futuremove;
 
-#if 0
-    const proptable_entry & operator=(const proptable_entry & rvalue) const {
-#if 0
-	index = rvalue.index;
-	dtm = rvalue.dtm;
-	movecnt = rvalue.movecnt;
-	futuremove = rvalue.futuremove;
-#endif
-	return *this;
-    }
-#endif
-
     bool operator<(const proptable_entry &other) const {
 	return index < other.index;
     }
@@ -8620,18 +8609,11 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
     int i;
     std::vector<proptable_entry> *ptr;
 
+    /* Private constructor ensures that only friends can create a proptable_iterator */
+
     proptable_iterator(std::vector<proptable_entry> *ptr, int i) : i(i), ptr(ptr) {}
 
  public:
-    proptable_iterator() : i(0), ptr(NULL) {}
-
-#if 0
-    proptable_iterator & operator=(const proptable_iterator & rvalue) const {
-	ptr = rvalue.ptr;
-	i = rvalue.i;
-	return *this;
-    }
-#endif
 
     proptable_entry & operator*() const {
 	return (*ptr)[i];
@@ -8688,7 +8670,7 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
     }
 };
 
-#define USE_CUSTOM_ITERATOR 0
+#define USE_CUSTOM_ITERATOR 1
 
 class new_proptable : public std::vector<proptable_entry> {
 
@@ -8712,8 +8694,8 @@ class new_proptable : public std::vector<proptable_entry> {
 #endif
 };
 
-typedef priority_queue<class proptable_entry> proptable;
-//typedef priority_queue<class proptable_entry, class new_proptable> proptable;
+//typedef priority_queue<class proptable_entry> proptable;
+typedef priority_queue<class proptable_entry, class new_proptable> proptable;
 
 proptable * input_proptable;
 proptable * output_proptable;
@@ -13913,7 +13895,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.664 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.665 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
