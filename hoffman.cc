@@ -5589,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.666 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.667 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8289,10 +8289,6 @@ extern "C++" {
 	void *file;
 	int count;
 
-	disk_que(const struct disk_que<Container> &junk) {
-	    fatal("Copying %d", junk.fd);
-	}
-
 	disk_que(Container * container, int len) {
 	    T *ptr = container->data();
 	    size = len;
@@ -8350,14 +8346,14 @@ extern "C++" {
 
     /* A sorting network.
      *
-     * We're reading from a container of subcontainers.  Each subcontainer is itself sorted, but now
-     * we impose a total sort on all of them.  We do this by maintaining a binary tree (the sorting
-     * network), with the subcontainers 'feeding' the leaves and each non-leaf being the less-than
-     * comparison of the two nodes below it.  We also track which subcontainer each entry came from
-     * originally.  Once initialized, we just read the root of the tree to get the next entry, then
-     * refill whichever leaf we got the entry from (that's why we track subcontainers for each
-     * entry), and run back up the tree from that leaf only, recomputing the comparisons.  It's laid
-     * out in memory as an array, like this (in this example, highbit is 4):
+     * We're reading from a container of pointers to subcontainers.  Each subcontainer is itself
+     * sorted, but now we impose a total sort on all of them.  We do this by maintaining a binary
+     * tree (the sorting network), with the subcontainers 'feeding' the leaves and each non-leaf
+     * being the less-than comparison of the two nodes below it.  We also track which subcontainer
+     * each entry came from originally.  Once initialized, we just read the root of the tree to get
+     * the next entry, then refill whichever leaf we got the entry from (that's why we track
+     * subcontainers for each entry), and run back up the tree from that leaf only, recomputing the
+     * comparisons.  It's laid out in memory as an array, like this (in this example, highbit is 4):
      *
      *                    /4
      *                /-2--5
@@ -8369,10 +8365,18 @@ extern "C++" {
      * just by right shifting the index.  I got this idea from Knuth.
      */
 
+    template<typename> struct dereference;
+
+    template <typename T>
+    struct dereference<T*> {
+	typedef T type;
+    };
+
     template <class Container>
     class sorting_network {
 
-	typedef typename Container::value_type Subcontainer;
+	typedef typename Container::value_type SubcontainerPtr;
+	typedef typename dereference<SubcontainerPtr>::type Subcontainer;
 	typedef typename Subcontainer::value_type T;
 
     private:
@@ -8398,7 +8402,7 @@ extern "C++" {
 
 	    for (unsigned int i=0; i<highbit; i++) {
 		if (i < containers->size()) {
-		    network[highbit + i] = (*containers)[i].pop_front();
+		    network[highbit + i] = (*containers)[i]->pop_front();
 		    container_num[highbit + i] = i;
 		} else {
 		    container_num[highbit + i] = -1;
@@ -8443,10 +8447,10 @@ extern "C++" {
 	    T retval = network[1];
 	    int network_node = highbit + container_num[1];
 
-	    if ((*containers)[container_num[1]].empty()) {
+	    if ((*containers)[container_num[1]]->empty()) {
 		container_num[network_node] = -1;
 	    } else {
-		network[network_node] = (*containers)[container_num[1]].pop_front();
+		network[network_node] = (*containers)[container_num[1]]->pop_front();
 	    }
 
 	    while (network_node > 1) {
@@ -8478,10 +8482,16 @@ extern "C++" {
      *
      * Our template takes three types.  The first (T) is the type to store in the priority queue,
      * the second (MemoryContainer) is a container to hold that type in memory, and the third
-     * (DiskContainer) is a container to hold that type on disk.  We expect MemoryContainer to
-     * export begin() and end() methods that return random access iterators usable for insertion,
+     * (DiskContainer) is a container to hold that type on disk.  Names notwithstanding, we don't
+     * impose any memory or disk requirements in this class.  We expect MemoryContainer to export
+     * begin() and end() methods that return random access iterators usable for insertion,
      * retrieval, and sorting (with std::sort).  We expect DiskContainer to take a MemoryContainer
-     * as a constructor and supply pop_front() for retrieval.
+     * as a constructor and supply pop_front() for retrieval.  We just push into a MemoryContainer
+     * until it's full, sort it and copy it to a DiskContainer, and keep going until we're done.
+     * Then, if we used DiskContainer at all, we sort and dump the final MemoryContainer into a
+     * DiskContainer and read back from the DiskContainers using a sorting network.  Otherwise, we
+     * read back directly from a single MemoryContainer, i.e, we don't use a DiskContainer at all
+     * unless we fill up a MemoryContainer.
      *
      * XXX about the mutex... I'm a bit scared to use the new C++11 stuff... we only lock when we
      * insert... we expect the caller to already hold the lock when we retrieve
@@ -8492,7 +8502,7 @@ extern "C++" {
     template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
     class priority_queue {
 
-	typedef class std::deque<DiskContainer> DiskQueQue;
+	typedef class std::deque<DiskContainer *> DiskQueQue;
 
     private:
 	DiskQueQue disk_ques;
@@ -8512,7 +8522,7 @@ extern "C++" {
 
 	void dump_memory_queue_to_disk(void) {
 	    sort_in_memory_queue();
-	    disk_ques.push_back(DiskContainer(in_memory_queue, tail-head));
+	    disk_ques.push_back(new DiskContainer(in_memory_queue, tail-head));
 	    tail = head;
 	}
 
@@ -8528,6 +8538,10 @@ extern "C++" {
 
 	~priority_queue() {
 	    if (in_memory_queue != NULL) delete in_memory_queue;
+	    for (typename DiskQueQue::iterator diskque = disk_ques.begin(); diskque < disk_ques.end(); diskque ++) {
+		/* XXX probably should use unique_ptr so this happens automatically */
+		delete *diskque;
+	    }
 	    disk_ques.clear();
 	}
 
@@ -13912,7 +13926,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.666 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.667 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
