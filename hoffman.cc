@@ -5589,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.668 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.669 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8703,19 +8703,30 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
     }
 };
 
-class new_proptable : public std::vector<proptable_entry> {
+class new_proptable {
+
+ private:
+    std::vector<proptable_entry> vec;
+    int size;
 
  public:
+    typedef proptable_entry value_type;
     typedef proptable_iterator iterator;
 
-    new_proptable(int i) : std::vector<proptable_entry>(i) { }
+ new_proptable(int i):
+    vec(std::vector<proptable_entry>(i)), size(i)
+	{}
 
     class proptable_iterator begin() {
-	return proptable_iterator(this, 0);
+	return proptable_iterator(&vec, 0);
     }
 
     class proptable_iterator end() {
-	return proptable_iterator(this, size());
+	return proptable_iterator(&vec, size);
+    }
+
+    value_type *data() {
+	return vec.data();
     }
 };
 
@@ -13919,7 +13930,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.668 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.669 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
