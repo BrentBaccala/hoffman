@@ -5589,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.667 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.668 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8355,11 +8355,13 @@ extern "C++" {
      * subcontainers for each entry), and run back up the tree from that leaf only, recomputing the
      * comparisons.  It's laid out in memory as an array, like this (in this example, highbit is 4):
      *
-     *                    /4
+     *                    -4
+     *                   /
      *                /-2--5
      *               1
      *                \-3--6
-     *                    \7
+     *                   \
+     *                    -7
      *
      * so that we can run that last step (backing up the tree, from right to left, in the diagram),
      * just by right shifting the index.  I got this idea from Knuth.
@@ -8701,20 +8703,13 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
     }
 };
 
-#define USE_CUSTOM_ITERATOR 1
-
 class new_proptable : public std::vector<proptable_entry> {
 
  public:
-#ifdef USE_CUSTOM_ITERATOR
     typedef proptable_iterator iterator;
-#else
-    typedef std::vector<proptable_entry>::iterator iterator;
-#endif
 
     new_proptable(int i) : std::vector<proptable_entry>(i) { }
 
-#ifdef USE_CUSTOM_ITERATOR
     class proptable_iterator begin() {
 	return proptable_iterator(this, 0);
     }
@@ -8722,10 +8717,8 @@ class new_proptable : public std::vector<proptable_entry> {
     class proptable_iterator end() {
 	return proptable_iterator(this, size());
     }
-#endif
 };
 
-//typedef priority_queue<class proptable_entry> proptable;
 typedef priority_queue<class proptable_entry, class new_proptable> proptable;
 
 proptable * input_proptable;
@@ -13926,7 +13919,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.667 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.668 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
