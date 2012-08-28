@@ -5589,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.665 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.666 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8267,10 +8267,16 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 
 extern "C++" {
 
-    /* A simple disk-backed que. */
+    /* A simple disk-backed que.  Template argument Container is the in-memory container class we're
+     * backing up, and it has to provide a data() method that returns a pointer to its value_type.
+     * Our constructor takes a pointer to the container and the number of elements in it.  Our
+     * semantics are to make a copy of the container and export a pop_front() method to walk through
+     * our data.
+     */
 
-    template <typename T>
+    template <typename Container>
     struct disk_que {
+	typedef typename Container::value_type T;
 	typedef T value_type;
 
 	static const int queue_size = 256;	// size of in-memory queue
@@ -8281,40 +8287,48 @@ extern "C++" {
 	T queue[queue_size];
 	char filename[16];
 	void *file;
+	int count;
 
-	disk_que() {
+	disk_que(const struct disk_que<Container> &junk) {
+	    fatal("Copying %d", junk.fd);
+	}
+
+	disk_que(Container * container, int len) {
+	    T *ptr = container->data();
+	    size = len;
+
 	    strcpy(filename, "proptableXXXXXX");
 	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
+
 	    if (compress_proptables) {
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 	    }
-	    size = 0;
-	    next = 0;
-	}
 
-	~disk_que() {
-	    close(fd);
-	    unlink(filename);
-	}
-
-	void append(T *ptr, int len) {
-	    if (size != 0) throw "disk_que: Can't append twice to the same queue";
-	    if (len <= queue_size) {
-		memcpy(queue, ptr, len * sizeof(T));
+	    if (size <= queue_size) {
+		memcpy(queue, ptr, size * sizeof(T));
 	    } else {
 		memcpy(queue, ptr, queue_size * sizeof(T));
 		if (compress_proptables) {
-		    zlib_write(file, (const char *)(ptr+queue_size), (len-queue_size) * sizeof(T));
+		    zlib_write(file, (const char *)(ptr+queue_size), (size-queue_size) * sizeof(T));
 		    zlib_flush(file);
 		    zlib_free(file);
 		    lseek(fd, 0, SEEK_SET);
 		    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 		} else {
-		    do_write(fd, ptr+queue_size, (len-queue_size) * sizeof(T));
+		    do_write(fd, ptr+queue_size, (size-queue_size) * sizeof(T));
 		    lseek(fd, 0, SEEK_SET);
 		}
 	    }
-	    size = len;
+	    next = 0;
+	}
+
+	~disk_que() {
+	    if (compress_proptables) {
+		zlib_close(file);
+	    } else {
+		close(fd);
+	    }
+	    unlink(filename);
 	}
 
 	bool empty(void) {
@@ -8462,25 +8476,31 @@ extern "C++" {
      * everything in-memory.  If we insert more, then dump to disk and use a sorting network to read
      * it back.
      *
+     * Our template takes three types.  The first (T) is the type to store in the priority queue,
+     * the second (MemoryContainer) is a container to hold that type in memory, and the third
+     * (DiskContainer) is a container to hold that type on disk.  We expect MemoryContainer to
+     * export begin() and end() methods that return random access iterators usable for insertion,
+     * retrieval, and sorting (with std::sort).  We expect DiskContainer to take a MemoryContainer
+     * as a constructor and supply pop_front() for retrieval.
+     *
      * XXX about the mutex... I'm a bit scared to use the new C++11 stuff... we only lock when we
      * insert... we expect the caller to already hold the lock when we retrieve
      */
 
     pthread_mutex_t priority_queue_lock = PTHREAD_MUTEX_INITIALIZER;
 
-    template <typename T, typename MemoryArray = std::vector<T> >
+    template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
     class priority_queue {
 
-	typedef struct disk_que<T> DiskQue;
-	typedef class std::deque<DiskQue> DiskQueQue;
+	typedef class std::deque<DiskContainer> DiskQueQue;
 
     private:
 	DiskQueQue disk_ques;
 	class sorting_network<DiskQueQue> snetwork;
 
-	MemoryArray * in_memory_queue;
-	typename MemoryArray::iterator head;
-	typename MemoryArray::iterator tail;
+	MemoryContainer * in_memory_queue;
+	typename MemoryContainer::iterator head;
+	typename MemoryContainer::iterator tail;
 	bool sorted;
 
 	void sort_in_memory_queue(void) {
@@ -8491,11 +8511,8 @@ extern "C++" {
 	}
 
 	void dump_memory_queue_to_disk(void) {
-	    DiskQue *dq = new DiskQue;
-
 	    sort_in_memory_queue();
-	    dq->append(in_memory_queue->data(), tail-head);
-	    disk_ques.push_back(*dq);
+	    disk_ques.push_back(DiskContainer(in_memory_queue, tail-head));
 	    tail = head;
 	}
 
@@ -8503,7 +8520,7 @@ extern "C++" {
     
     priority_queue(int limitMB = 512*1024*1024):
 	snetwork(&disk_ques),
-	in_memory_queue(new MemoryArray(limitMB/sizeof(T))),
+	in_memory_queue(new MemoryContainer(limitMB/sizeof(T))),
 	head(in_memory_queue->begin()),
 	tail(head),
 	sorted(1)
@@ -13895,7 +13912,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.665 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.666 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
