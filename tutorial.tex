@@ -54,13 +54,9 @@ the king vs. king endgame, contained in the file {\tt xml/kk.xml}.
 <!-- Created by genctlfile.pl -->
 
 <tablebase>
-   <index type="compact" symmetry="8-way"/>
-   <format><dtm bits="8"/></format>
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
-   <generation-controls>
-      <output filename ="kk.htb"/>
-   </generation-controls>
+   <output filename="kk.htb"/>
 </tablebase>
 \end{verbatim}}
 \hrule
@@ -83,42 +79,37 @@ that it starts with a slash (like {\tt tablebase}).  Complex elements
 allow you to put things between the starting and ending tags.  Follow
 my lead; it'll start to make sense soon.
 
-The {\tt index} element controls how Hoffman numbers the positions in
-the tablebase.  I'm using the ``compact'' index type, which is a
-pretty good choice right now for just about everything, and I've also
-specified a ``symmetry'' to indicate that I only want to store
-positions where the white king is in a little triangular eighth of the
-board.  Why?  Because you can rotate and reflect the board around to
-put the white king anywhere you want him.  Think about it.  Symmetry
-doesn't work with all tablebases.  If there were pawns involved, for
-example, you can't just rotate the board 90 degrees.  But since all we
-have are kings, symmetry is OK, and it makes the resulting tablebase a
-lot smaller.
+%The {\tt index} element controls how Hoffman numbers the positions in
+%the tablebase.  I'm using the ``compact'' index type, which is a
+%pretty good choice right now for just about everything, and I've also
+%specified a ``symmetry'' to indicate that I only want to store
+%positions where the white king is in a little triangular eighth of the
+%board.  Why?  Because you can rotate and reflect the board around to
+%put the white king anywhere you want him.  Think about it.  Symmetry
+%doesn't work with all tablebases.  If there were pawns involved, for
+%example, you can't just rotate the board 90 degrees.  But since all we
+%have are kings, symmetry is OK, and it makes the resulting tablebase a
+%lot smaller.
 
-Now we have a {\tt format} line, indicating that we want an output
-format with one field --- an eight bit {\it distance to mate} (DTM)
---- for each position.  In other words, the classic ``mate in N'' or
-``mated in N'', so long as N can fit into eight bits (so it has to be
-``mate in 126'' or less, since DTM is a signed field).  Eight bit DTM
-is big enough for every three, four, or five piece tablebase except
-kppkp, so just copy this line verbatim, too.
+%Now we have a {\tt format} line, indicating that we want an output
+%format with one field --- an eight bit {\it distance to mate} (DTM)
+%--- for each position.  In other words, the classic ``mate in N'' or
+%``mated in N'', so long as N can fit into eight bits (so it has to be
+%``mate in 126'' or less, since DTM is a signed field).  Eight bit DTM
+%is big enough for every three, four, or five piece tablebase except
+%kppkp, so just copy this line verbatim, too.
 
-Next up are the {\tt piece} elements, probably the most
-self-explanatory part of the entire configuration.  Notice that I
-didn't specify where on the board the kings were.  That's because
-we're going to compute results for every chess position possible with
-these two pieces.  Their movements are completely unrestricted ---
-they can be anywhere on the board.  Later we'll see more complex piece
-elements that restrict where on the board the pieces can be.
+The {\tt piece} elements are probably self-explanatory.  Notice that I
+ didn't specify where on the board the kings were.  That's because
+ we're going to compute results for every chess position possible with
+ these two pieces.  Their movements are completely unrestricted ---
+ they can be anywhere on the board.  Later we'll see more complex
+ piece elements that restrict where on the board the pieces can be.
 
-Finally, we come to {\tt generation-controls}, which contains
-parameters that really have nothing to do with the tablebase itself,
-but are settings to be used during generation.  The simplest
-generation control is {\tt output}, which tells the program where to
-put the output tablebase, in this case, into a file called {\tt
-kk.htb}.  You can rename the resulting tablebase file as you wish; the
-tablebase isn't tied to a particular filename.  It's just, well, a
-``generation control''.
+Finally, we come to {\tt output}, which tells the program where to put
+ the output tablebase, in this case, into a file called {\tt kk.htb}.
+  You can rename the resulting tablebase file as you wish; the
+ tablebase isn't tied to a particular filename.
 
 Now you put all this into a file called something like {\tt kk.xml},
 (or just copy it from the {\tt xml} directory) and run Hoffman
@@ -151,15 +142,11 @@ queen endgame whose XML configuration is shown in Figure 2.
 <!-- Created by genctlfile.pl -->
 
 <tablebase>
-   <index type="compact" symmetry="8-way"/>
-   <format><dtm bits="8"/></format>
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
    <piece color="white" type="queen"/>
    <futurebase filename="kk.htb"/>
-   <generation-controls>
-      <output filename ="kqk.htb"/>
-   </generation-controls>
+   <output filename ="kqk.htb"/>
 </tablebase>
 \end{verbatim}}
 \hrule
@@ -220,7 +207,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.9 $ $Locker: baccala $
+Hoffman $Revision: 1.10 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -245,7 +232,7 @@ Hoffman $Revision: 1.9 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.9 $ $Locker: baccala $</program>
+      <program>Hoffman $Revision: 1.10 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -259,16 +246,19 @@ Hoffman $Revision: 1.9 $ $Locker: baccala $
 </tablebase>
 \end{verbatim}}
 
-In addition to the configuration information from the input XML file,
-the program also added two new sections when it created the tablebase
---- {\tt tablebase-statistics} and {\tt generation-statistics}.  The
-first reports various interesting information the program determined
-about the tablebase, such as how many total indices there are, how
-many correspond to legal chess positions, how many white mates, or
-black mates, or stalemates there are, etc.  The second reports
-information about the actual generation of this tablebase, like when
-it occured, which version of the program was used, and which computer
-actually computed it.
+We see the configuration information from the input XML file, plus a
+ lot more information added by the program.  We see the encoding
+ scheme used to number the board positions (the {\tt index} element),
+ the type of information stored for each position (the {\tt dtm}
+ element -- Distance To Mate), as well as two entire new sections ---
+ {\tt tablebase-statistics} and {\tt generation-statistics}.  The
+ first reports various interesting information the program determined
+ about the tablebase, such as how many total indices there are, how
+ many correspond to legal chess positions, how many white mates, or
+ black mates, or stalemates there are, etc.  The second reports
+ information about the actual generation of this tablebase, like when
+ it occured, which version of the program was used, and which computer
+ actually computed it.
 
 OK, so what's next?  After {\tt kk.xml} and {\tt kqk.xml}, then you
 can easily understand {\tt krk.xml}, {\tt kbk.xml} and {\tt knk.xml}.
@@ -283,8 +273,6 @@ kpk.xml} (Figure 3).
 <!-- Created by genctlfile.pl -->
 
 <tablebase>
-   <index type="compact" symmetry="2-way"/>
-   <format><dtm bits="8"/></format>
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
    <piece color="white" type="pawn"/>
@@ -293,9 +281,7 @@ kpk.xml} (Figure 3).
    <futurebase filename="krk.htb"/>
    <futurebase filename="kbk.htb"/>
    <futurebase filename="knk.htb"/>
-   <generation-controls>
-      <output filename ="kpk.htb"/>
-   </generation-controls>
+   <output filename ="kpk.htb"/>
 </tablebase>
 \end{verbatim}}
 \hrule
@@ -305,9 +291,7 @@ kpk.xml} (Figure 3).
 Notice we've added a new type of {\tt futurebase} --- pawn promotion.
 Hoffman has to know what happens after that pawn transforms into a
 queen, rook, bishop, or knight to be able to understand what happens
-to the pawn!  Note also that we can no longer use ``8-way'' symmetry,
-although we can still use a 2-way symmetry, since pawns don't care if
-they're on the right or left hand side of the board.
+to the pawn!
 
 It's starting to get more complex, right?  So how do I know there
 isn't a bug in all of this complexity?  Well, my most important
@@ -320,7 +304,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.9 $ $Locker: baccala $
+Hoffman $Revision: 1.10 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -340,17 +324,13 @@ four piece?  Figure 4 is {\tt kqkq.xml}.
 <!-- Created by genctlfile.pl -->
 
 <tablebase>
-   <index type="compact" symmetry="8-way"/>
-   <format><dtm bits="8"/></format>
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
    <piece color="white" type="queen"/>
    <piece color="black" type="queen"/>
    <futurebase filename="kqk.htb" colors="invert"/>
    <futurebase filename="kqk.htb"/>
-   <generation-controls>
-      <output filename ="kqkq.htb"/>
-   </generation-controls>
+   <output filename ="kqkq.htb"/>
 </tablebase>
 \end{verbatim}}
 \hrule
@@ -494,9 +474,6 @@ $$\showboard$$
    <prune-enable color="white" type="concede"/>
    <prune-enable color="black" type="concede"/>
 
-   <index type="compact"/>
-   <format><dtm bits="8"/></format>
-
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
    <piece color="white" type="pawn" location="a4"/>
@@ -557,7 +534,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.9 $ $Locker: baccala $
+Hoffman $Revision: 1.10 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
@@ -612,10 +589,7 @@ Notice how {\tt futurebase} and {\tt prune} statements can be used
 together in a single configuration file (in case you were wondering).
 Notice how wildcards can be used in {\tt prune} statements.  Notice
 how a piece can be restricted to more than one square.  Notice how
-comments can be put into XML configurations.  And yes, there are some
-alternate ways to specify {\tt index} and {\tt format}; see
-the Reference Guide for more details on these and other
-Hoffman XML elements.
+comments can be put into XML configurations.
 
 Here's a final example that neither Nalimov nor Freezer can handle.
 There are too many pieces in play for Nalimov (eight), and the pawn
@@ -635,8 +609,7 @@ $$\showboard$$
 <tablebase>
    <prune-enable color="white" type="concede"/>
    <prune-enable color="black" type="concede"/>
-   <index type="compact"/>
-   <format><dtm bits="8"/></format>
+
    <piece color="white" type="king"/>
    <piece color="white" type="pawn" location="b3+"/>
    <piece color="white" type="pawn" location="c2+"/>
@@ -645,8 +618,10 @@ $$\showboard$$
    <piece color="black" type="pawn" location="b5+"/>
    <piece color="black" type="pawn" location="c7+"/>
    <piece color="black" type="pawn" location="d5+"/>
+
    <futurebase filename="kpk.htb"/>
    <futurebase filename="kpk.htb" colors="invert"/>
+
    <prune color="white" type="concede" move="P=?"/>
    <prune color="black" type="concede" move="P=?"/>
 </tablebase>
@@ -665,7 +640,7 @@ generate an error:
 
 \begin{verbatim}
 C> ./hoffman -o fine67.htb -g fine67.xml
-Hoffman $Revision: 1.9 $ $Locker: baccala $
+Hoffman $Revision: 1.10 $ $Locker: baccala $
 Malloced 40MB for tablebase entries
 'kpk.htb': Too many missing pieces in futurebase
 Futurebase preload failed: 'kpk.htb'
@@ -694,7 +669,7 @@ tablebases.  Once this is done, we use Hoffman to probe the tablebases:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.9 $ $Locker: baccala $
+Hoffman $Revision: 1.10 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
@@ -747,8 +722,7 @@ allows him to blockade the position.
 <tablebase>
    <prune-enable color="white" type="discard"/>
    <prune-enable color="black" type="concede"/>
-   <index type="compact"/>
-   <format><dtm bits="8"/></format>
+
    <piece color="white" type="king"/>
    <piece color="white" type="pawn" location="b3+"/>
    <piece color="white" type="pawn" location="c2+"/>
@@ -757,11 +731,13 @@ allows him to blockade the position.
    <piece color="black" type="pawn" location="b5+"/>
    <piece color="black" type="pawn" location="c7+"/>
    <piece color="black" type="pawn" location="d5+"/>
+
    <futurebase filename="kpk.htb"/>
    <futurebase filename="kpk.htb" colors="invert"/>
    <futurebase filename="kqk.htb"/>
    <futurebase filename="kqkp.htb"/>
    <futurebase filename="kqpk.htb"/>
+
    <prune color="white" type="discard" move="P=Q"
       pawngen-condition="grep(/Q/,@white_pieces)==1"/>
    <prune color="white" type="discard" move="P=[RNB]"/>
@@ -801,7 +777,7 @@ output tablebases can be queried for the original position:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.9 $ $Locker: baccala $
+Hoffman $Revision: 1.10 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
@@ -831,15 +807,15 @@ Again, we show a white win with {\tt b4}.  This time, however, we know
 that this is actually a white {\it win} and not just a queening
 solution.
 
-{\tt fine67b.xml} is a slight variant on this analysis that uses the
-{\tt basic} format type and an appropriate {\tt entries-format} to
-generate a {\it bitbase} --- a tablebase that records only win, lose,
-or draw information, without the distances we've seen so far in all of
-these examples.  A bitbase is more compact to store, faster to
-generate, and (thanks to the custom {\tt entries-format}) uses about
-half as much memory during generation.  Its generation is also more
-predictable, as there is no chance of overflowing its {\tt dtm} field,
-which would result in a fatal error fairly deep into its calculation.
+%{\tt fine67b.xml} is a slight variant on this analysis that uses the
+%{\tt basic} format type and an appropriate {\tt entries-format} to
+%generate a {\it bitbase} --- a tablebase that records only win, lose,
+%or draw information, without the distances we've seen so far in all of
+%these examples.  A bitbase is more compact to store, faster to
+%generate, and (thanks to the custom {\tt entries-format}) uses about
+%half as much memory during generation.  Its generation is also more
+%predictable, as there is no chance of overflowing its {\tt dtm} field,
+%which would result in a fatal error fairly deep into its calculation.
 
 Pawngen currently accepts only a subset of Hoffman's XML syntax --- no
 {\tt location} attributes are allowed on any non-pawns, and pawns must
@@ -847,5 +823,8 @@ have {\tt location} attributes specifying a specific starting square
 followed by a plus sign.  Despite these limitations, it is a key
 auxiliary tool that allows complicated pawn formations to be managed
 with a single control file.
+
+See the Hoffman Reference Guide for more details on these and other
+ Hoffman XML elements.
 
 \end{document}
