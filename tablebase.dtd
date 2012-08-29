@@ -1,4 +1,4 @@
-<!ELEMENT tablebase ((move-restriction|prune-enable)*, variant?, index?, format?, piece+, futurebase*, prune*, generation-controls?, tablebase-statistics?, generation-statistics*)>
+<!ELEMENT tablebase ((move-restriction|prune-enable)*, variant?, index?, format?, piece+, futurebase*, prune*, generation-controls?, tablebase-statistics?, generation-statistics*, output?, completion-report?, error-report?)>
 <!ELEMENT move-restriction EMPTY>
 <!ELEMENT prune-enable EMPTY>
 <!ELEMENT piece EMPTY>
@@ -40,9 +40,7 @@
 <!ELEMENT error-report EMPTY>
 <!ATTLIST error-report url CDATA #REQUIRED>
 
-<!ELEMENT url-prefix (#PCDATA)>
-
-<!ELEMENT generation-controls (output | url-prefix | completion-report | error-report)+ >
+<!ELEMENT generation-controls (output | completion-report | error-report)+ >
 
 <!ELEMENT tablebase-statistics (indices | PNTM-mated-positions | legal-positions | stalemate-positions | white-wins-positions | black-wins-positions | forward-moves | futuremoves | backproped-moves | max-dtm | min-dtm)+ >
 <!ELEMENT indices (#PCDATA)>
