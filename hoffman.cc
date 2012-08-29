@@ -5589,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.672 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.673 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8267,11 +8267,24 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 
 extern "C++" {
 
+    /* Substitution Failure Is Not An Error (SFINAE)
+     *
+     * A C++ hack to detect whether a templated class has a member function.
+     */
+
+    template<typename T>
+    struct has_bytes_method {
+	template<typename U, size_t (U::*)() const> struct SFINAE {};
+	template<typename U> static char Test(SFINAE<U, &U::bytes>*);
+	template<typename U> static int Test(...);
+	static const bool value = sizeof(Test<T>(0)) == sizeof(char);
+    };
+
     /* A simple disk-backed que.  Template argument Container is the in-memory container class we're
-     * backing up, and it has to provide a data() method that returns a pointer to its value_type.
-     * Our constructor takes a pointer to the container and the number of elements in it.  Our
-     * semantics are to make a copy of the container and export a pop_front() method to walk through
-     * our data.
+     * backing up.  It has to provide a value_type typedef, data() and bytes() methods that returns a pointer
+     * to its value_type.  Our constructor takes a pointer to the container and the number of
+     * elements in it.  Our semantics are to make a copy of the container and export a pop_front()
+     * method to walk through our data.
      */
 
     template <typename Container>
@@ -8632,6 +8645,10 @@ class proptable_entry {
     int futuremove;
 
     /* XXX maybe we should initialize all our fields during construction */
+    proptable_entry() {}
+
+    proptable_entry(index_t index, int dtm, unsigned int movecnt, int futuremove):
+	index(index), dtm(dtm), movecnt(movecnt), futuremove(futuremove) {}
 
     /* This is used when we build current_pt_entries */
 
@@ -8649,25 +8666,50 @@ class proptable_entry {
  * proptable_entry in order to hold a value, and also keep an ptr/i that points into the proptable.
  */
 
+struct proptable_format {
+    int index_offset;
+    int index_bits;
+    int dtm_offset;
+    int dtm_bits;
+    int movecnt_offset;
+    int movecnt_bits;
+    int futuremove_offset;
+    int futuremove_bits;
+    int bits;
+};
+
+// struct proptable_format default_proptable_format = {0,32, 32,8, 40,2, 42,6, 48};
+struct proptable_format default_proptable_format = {0,32, 32,32, 64,32, 96,32, 128};
+
 class proptable_ptr : public proptable_entry {
 
     friend class proptable_iterator;
 
  private:
+    proptable_format *format;
     int i;
     void *ptr;
 
     /* Private constructor: friend proptable_iterator constructs proptable_ptr when dereferencing */
 
-    proptable_ptr(void *ptr, int i): proptable_entry(((proptable_entry *)ptr)[i]),
-	i(i), ptr(ptr) {}
+    proptable_ptr(proptable_format *format, void *ptr, int i):
+	proptable_entry(get_unsigned_int_field(ptr, i*format->bits + format->index_offset, format->index_bits),
+			get_int_field(ptr, i*format->bits + format->dtm_offset, format->dtm_bits),
+			get_unsigned_int_field(ptr, i*format->bits + format->movecnt_offset, format->movecnt_bits),
+			get_unsigned_int_field(ptr, i*format->bits + format->futuremove_offset, format->futuremove_bits)),
+	format(format), i(i), ptr(ptr) {}
 
  public:
 
     proptable_ptr & operator=(proptable_entry other) {
 	/* Set both our local copy and the copy in the proptable */
 	proptable_entry::operator=(other);
-	((proptable_entry *)ptr)[i] = other;
+
+	set_unsigned_int_field(ptr, i*format->bits + format->index_offset, format->index_bits, other.index);
+	set_int_field(ptr, i*format->bits + format->dtm_offset, format->dtm_bits, other.dtm);
+	set_unsigned_int_field(ptr, i*format->bits + format->movecnt_offset, format->movecnt_bits, other.movecnt);
+	set_unsigned_int_field(ptr, i*format->bits + format->futuremove_offset, format->futuremove_bits, other.futuremove);
+
 	return *this;
     }
 
@@ -8694,7 +8736,7 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
  public:
 
     proptable_ptr operator*() const {
-	return proptable_ptr(ptr, i);
+	return proptable_ptr(&default_proptable_format, ptr, i);
     }
 
     const proptable_iterator operator++(int zero) {
@@ -13975,7 +14017,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.672 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.673 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
