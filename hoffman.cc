@@ -5589,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.671 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.672 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8623,8 +8623,6 @@ extern "C++" {
  *   futuremove - unneeded
  */
 
-class proptable_ptr;
-
 class proptable_entry {
 
  public:
@@ -8635,60 +8633,51 @@ class proptable_entry {
 
     /* XXX maybe we should initialize all our fields during construction */
 
-    proptable_entry() {}
-
-    proptable_entry(proptable_ptr ptr);
-
     /* This is used when we build current_pt_entries */
 
     bool operator<(const proptable_entry &other) const {
 	return index < other.index;
     }
-
 };
 
-class proptable_ptr {
+/* proptable_iterator (defined below) dereferences into proptable_ptr
+ *
+ * To support std::sort, proptable_iterator has to dereference into a type that is Swappable,
+ * MoveConstructable and MoveAssignable (the C++11 standard's terminology).  That means that
+ * proptable_ptr has to operate as an lvalue that both points into the proptable (Swappable) and
+ * also can hold a temporary value (MoveConstructable and Move Assignable).  So we subclass
+ * proptable_entry in order to hold a value, and also keep an ptr/i that points into the proptable.
+ */
+
+class proptable_ptr : public proptable_entry {
 
     friend class proptable_iterator;
-    friend class proptable_entry;
 
  private:
     int i;
     void *ptr;
-    proptable_entry entry;
 
     /* Private constructor: friend proptable_iterator constructs proptable_ptr when dereferencing */
 
-    proptable_ptr(void *ptr, int i): i(i), ptr(ptr) {
-	entry = ((proptable_entry *)ptr)[i];
-    }
+    proptable_ptr(void *ptr, int i): proptable_entry(((proptable_entry *)ptr)[i]),
+	i(i), ptr(ptr) {}
 
  public:
 
-    proptable_ptr & operator=(const proptable_entry entry) {
-	((proptable_entry *)ptr)[i] = entry;
+    proptable_ptr & operator=(proptable_entry other) {
+	/* Set both our local copy and the copy in the proptable */
+	proptable_entry::operator=(other);
+	((proptable_entry *)ptr)[i] = other;
 	return *this;
     }
+
+    /* We don't use the default copy operator, since that would change ptr and i. */
 
     proptable_ptr & operator=(proptable_ptr other) {
-	((proptable_entry *)(ptr))[i] = other.entry;
-	return *this;
+	return operator=((proptable_entry) other);
     }
 
-    bool operator<(const proptable_ptr &other) const {
-	return entry < other.entry;
-    }
 };
-
-proptable_entry::proptable_entry(proptable_ptr ptr) {
-    *this = ((proptable_entry *)(ptr.ptr))[ptr.i];
-}
-
-void swap(proptable_ptr a, proptable_ptr b) {
-    proptable_entry x = a;
-    a = (proptable_entry) b;
-    b = x;
-}
 
 class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_ptr> {
 
@@ -13986,7 +13975,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.671 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.672 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
