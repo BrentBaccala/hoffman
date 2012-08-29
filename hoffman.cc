@@ -568,6 +568,8 @@ const char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
 #define COMBINADIC2_INDEX 6
 #define COMBINADIC3_INDEX 7
 
+#define DEFAULT_INDEX COMBINADIC3_INDEX
+
 const char * index_types[] = {"naive", "naive2", "simple", "compact", "no-en-passant", "combinadic", "combinadic2", "combinadic3"};
 
 const char * futurebase_types[] = {"capture", "promotion", "capture-promotion", "normal"};
@@ -4678,10 +4680,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     }
 #endif
 
-    /* Fetch the index type */
+    /* Fetch the index type.  First, for backwards compatibility, we check for an index property on
+     * the tablebase element itself.  Next, check for the preferred syntax of an index element.
+     * Finally, if there is no index element, add one with the default index type.
+     */
 
     index = xmlGetProp(tablebase, BAD_CAST "index");
-    index_node = tablebase;  /* XXX here for backwards compatibility */
+    index_node = tablebase;
     if (index == NULL) {
 	context = xmlXPathNewContext(tb->xml);
 	result = xmlXPathEvalExpression(BAD_CAST "//index", context);
@@ -4697,10 +4702,15 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
     }
+
     if (index == NULL) {
-	tb->index_type = NAIVE_INDEX;
-	xmlNewProp(tablebase, BAD_CAST "index", BAD_CAST "naive");
-	warning("Index type not expressly specified; assuming NAIVE\n");
+	tb->index_type = DEFAULT_INDEX;
+
+	xmlNodeAddContent(tablebase, BAD_CAST "   ");
+	index_node = xmlNewChild(tablebase, NULL, BAD_CAST "index", NULL);
+	xmlNodeAddContent(tablebase, BAD_CAST "\n");
+
+	xmlNewProp(index_node, BAD_CAST "type", BAD_CAST index_types[DEFAULT_INDEX]);
     } else {
 	tb->index_type = find_name_in_array((char *) index, index_types);
 	if (tb->index_type == -1) {
@@ -4864,8 +4874,35 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	}
 	xmlFree(index_symmetry);
     } else {
-	tb->symmetry = 1;
+	/* If symmetry was not explicitly specified, compute it automatically */
+	char symmetry_string[8];
+
+	tb->symmetry = 8;
+	if ((tb->index_type == NAIVE_INDEX) || (tb->index_type == NAIVE2_INDEX)) {
+	    tb->symmetry = 4;
+	}
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->piece_type[piece] == PAWN) {
+		tb->symmetry = 2;
+	    }
+	    if (((tb->piece_type[piece] != PAWN) && (tb->legal_squares[piece] != ALL_ONES_BITVECTOR))
+		|| ((tb->piece_type[piece] == PAWN) && (tb->legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
+		tb->symmetry = 1;
+	    }
+	}
+	if (tb->variant == VARIANT_SUICIDE) {
+	    tb->symmetry = 1;
+	}
+
+	sprintf(symmetry_string, "%d", tb->symmetry);
+	xmlNewProp(index_node, BAD_CAST "symmetry", BAD_CAST symmetry_string);
     }
+
+    /* Symmetry is based on the location of the white king, but in a suicide analysis we might not have
+     * a white king.  Doesn't seem like a show stopper, but right now the code doesn't support it.
+     *
+     * XXX fix this and allow symmetry based on the first piece in the tablebase
+     */
 
     if ((tb->variant == VARIANT_SUICIDE) && (tb->symmetry != 1)) {
 	fatal("Can't use symmetry with 'suicide' variant (yet)\n");
@@ -4877,6 +4914,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      * XXX Some piece restrictions should be allowed for, so long as the restrictions themselves are
      * symmetric.  For example, a rook restricted to a single row is consistent with 2-way symmetry.
      */
+
 
     if ((tb->symmetry == 8) && ((tb->index_type == NAIVE_INDEX) || (tb->index_type == NAIVE2_INDEX))) {
 	fatal("8-way symmetry incompatible with naive/naive2 index types\n");
@@ -5589,7 +5627,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.673 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.674 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13270,10 +13308,10 @@ void init_nalimov_code(void)
     int nalimov_num;
 
     nalimov_num = IInitializeTb(nalimov_path);
-    printf("%d piece Nalimov tablebases found\n", nalimov_num);
+    info("%d piece Nalimov tablebases found\n", nalimov_num);
     EGTB_cache = malloc(EGTB_CACHE_DEFAULT);
     if (EGTB_cache == NULL) {
-	fprintf(stderr, "Can't malloc EGTB cache\n");
+	fatal("Can't malloc EGTB cache\n");
     } else {
 	FTbSetCacheSize(EGTB_cache, EGTB_CACHE_DEFAULT);
     }
@@ -14017,7 +14055,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.673 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.674 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
