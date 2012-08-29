@@ -1,4 +1,4 @@
-<!ELEMENT tablebase ((move-restriction|prune-enable)*, variant?, index?, format?, piece+, futurebase*, prune*, generation-controls?, tablebase-statistics?, generation-statistics*, output?, completion-report?, error-report?)>
+<!ELEMENT tablebase (move-restriction | prune-enable | variant | index | format | piece | futurebase | prune | generation-controls | tablebase-statistics | generation-statistics | output | completion-report | error-report | dtm | flag | basic)+ >
 <!ELEMENT move-restriction EMPTY>
 <!ELEMENT prune-enable EMPTY>
 <!ELEMENT piece EMPTY>

@@ -4100,15 +4100,16 @@ int check_1000_indices(tablebase_t *tb)
 /* parse_format()
  *
  * Parse an XML format specification (for a dynamic structure) into a format structure.  A simple
- * XML format looks something like:
+ * explicit XML format looks something like:
  *
  *   <format>
  *      <dtm bits="8"/>
  *   </format>
  *
+ * An implicit format is just a <dtm/> tag without an enclosing format element.
  */
 
-bool parse_format(xmlNodePtr formatNode, struct format *format)
+bool parse_format(xmlNodePtr formatNode, struct format *format, bool expl)
 {
     xmlNodePtr child;
 
@@ -4128,8 +4129,12 @@ bool parse_format(xmlNodePtr formatNode, struct format *format)
 	    if (bitstr != NULL) xmlFree(bitstr);
 
 	    if (format_field == -1) {
-		fatal("Unknown field in format: %s\n", (char *) child->name);
-		return false;
+		if (expl) {
+		    fatal("Unknown field in format: %s\n", (char *) child->name);
+		    return false;
+		} else {
+		    continue;
+		}
 	    }
 
 	    switch (format_field) {
@@ -4161,7 +4166,7 @@ bool parse_format(xmlNodePtr formatNode, struct format *format)
 	}
     }
 
-    return true;
+    return (format->dtm_offset != -1) || (format->bits != 0);
 }
 
 /* Parses XML, creates a tablebase structure corresponding to it, and returns it.
@@ -4838,7 +4843,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	}
     }
 
-    /* get the format */
+    /* Get the format.  Older method is to specify it as a property on the tablebase element.  Next
+     * look to see if we've got an explicit format element.  Then check to see if any of the format
+     * types were specified without a format element.  Finally, assume DTM format by default.
+     *
+     * XXX no reason to assume DTM format if the futurebases don't support it
+     */
 
     format = xmlGetProp(tablebase, BAD_CAST "format");
     if (format != NULL) {
@@ -4855,10 +4865,17 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	context = xmlXPathNewContext(tb->xml);
 	result = xmlXPathEvalExpression(BAD_CAST "//format", context);
 	if (result->nodesetval->nodeNr == 1) {
-	    if (! parse_format(result->nodesetval->nodeTab[0], &tb->format)) return NULL;
+	    if (! parse_format(result->nodesetval->nodeTab[0], &tb->format, true)) return NULL;
 	} else {
-	    tb->format = dtm_format;
-	    warning("Format not expressly specified; assuming dtm\n");
+	    if (! parse_format(tablebase, &tb->format, false)) {
+		tb->format = dtm_format;
+
+		xmlNodeAddContent(tablebase, BAD_CAST "   ");
+		xmlNewChild(tablebase, NULL, BAD_CAST "dtm", NULL);
+		xmlNodeAddContent(tablebase, BAD_CAST "\n");
+
+		warning("Format not expressly specified; assuming dtm\n");
+	    }
 	}
 	xmlXPathFreeObject(result);
 	xmlXPathFreeContext(context);
@@ -5627,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.674 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.675 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6130,7 +6147,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     /* If no size field was specified for a DTM format, set it now */
 
     context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//format//dtm", context);
+    result = xmlXPathEvalExpression(BAD_CAST "//dtm", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	node = result->nodesetval->nodeTab[0];
 	if (xmlGetProp(node, BAD_CAST "bits") == NULL) {
@@ -14055,7 +14072,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.674 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.675 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
