@@ -5589,7 +5589,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.669 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.670 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8517,7 +8517,9 @@ extern "C++" {
 
 	void sort_in_memory_queue(void) {
 	    if (! sorted) {
-		std::sort(head, tail);
+		//std::sort(head, tail);
+		std::make_heap(head, tail);
+		std::sort_heap(head, tail);
 		sorted = 1;
 	    }
 	}
@@ -8585,7 +8587,7 @@ extern "C++" {
 	    }
 	}
 
-	const T& front(void) {
+	const T front(void) {
 	    prepare_to_retrieve();
 	    if (disk_ques.empty()) {
 		return *head;
@@ -8621,6 +8623,44 @@ extern "C++" {
  *   futuremove - unneeded
  */
 
+class proptable_entry;
+
+class proptable_ptr {
+
+    friend class proptable_iterator;
+    friend class proptable_entry;
+
+ private:
+    int i;
+    void *ptr;
+
+    /* Private constructor: friend proptable_iterator constructs proptable_ptr when dereferencing */
+
+    proptable_ptr(void *ptr, int i): i(i), ptr(ptr) {}
+
+ public:
+
+    // forward references
+    proptable_ptr & operator=(const proptable_entry entry);
+    bool operator<(const proptable_ptr &other) const;
+
+    // next three are here to try to find sorting bug
+
+#if 0
+    proptable_ptr(const proptable_ptr &other) {
+	i = other.i;
+	ptr = other.ptr;
+    }
+
+    proptable_ptr(proptable_ptr &other) {
+	i = other.i;
+	ptr = other.ptr;
+    }
+#endif
+
+    proptable_ptr & operator=(proptable_ptr other);
+};
+
 class proptable_entry {
 
  public:
@@ -8629,27 +8669,59 @@ class proptable_entry {
     unsigned int movecnt;
     int futuremove;
 
+    /* XXX maybe we should initialize all our fields during construction */
+
+    proptable_entry() {}
+
+    proptable_entry(proptable_ptr ptr) {
+	*this = ((proptable_entry *)(ptr.ptr))[ptr.i];
+    }
+
+    /* This is used when we build current_pt_entries */
+
     bool operator<(const proptable_entry &other) const {
 	return index < other.index;
     }
+
 };
 
-class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_entry> {
+proptable_ptr & proptable_ptr::operator=(const proptable_entry entry) {
+    ((proptable_entry *)ptr)[i] = entry;
+    return *this;
+}
+
+proptable_ptr & proptable_ptr::operator=(proptable_ptr other) {
+    ((proptable_entry *)(ptr))[i] = ((proptable_entry *)(ptr))[other.i];
+    return *this;
+}
+
+bool proptable_ptr::operator<(const proptable_ptr &other) const {
+    /* XXX could compare indices directly */
+    return (proptable_entry)(*this) < (proptable_entry)other;
+}
+
+void swap(proptable_ptr a, proptable_ptr b) {
+    proptable_entry x = a;
+    a = (proptable_entry) b;
+    b = x;
+}
+
+class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_ptr> {
 
     friend class new_proptable;
 
  private:
     int i;
-    std::vector<proptable_entry> *ptr;
+    void *ptr;
 
     /* Private constructor ensures that only friends can create a proptable_iterator */
 
-    proptable_iterator(std::vector<proptable_entry> *ptr, int i) : i(i), ptr(ptr) {}
+    proptable_iterator(void *ptr, int i) : i(i), ptr(ptr) {}
 
  public:
 
-    proptable_entry & operator*() const {
-	return (*ptr)[i];
+    proptable_ptr operator*() const {
+	return proptable_ptr(ptr, i);
     }
 
     const proptable_iterator operator++(int zero) {
@@ -8718,11 +8790,11 @@ class new_proptable {
 	{}
 
     class proptable_iterator begin() {
-	return proptable_iterator(&vec, 0);
+	return proptable_iterator(data(), 0);
     }
 
     class proptable_iterator end() {
-	return proptable_iterator(&vec, size);
+	return proptable_iterator(data(), size);
     }
 
     value_type *data() {
@@ -13930,7 +14002,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.669 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.670 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
