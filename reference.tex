@@ -118,11 +118,6 @@ essentially unlimited size with no swapping and reasonable CPU
 utilization.  This mode is activated at run-time by specifying the
 size of the propagation tables (in MB) with the {\tt -P} switch.
 
-{\bf Note:} If you're using proptables, performance will be abysmal
-unless you specify a {\tt modulus} attribute to the {\tt index}
-element.
-
-
 \vfil\eject
 \section{XML Syntax}
 
@@ -153,14 +148,15 @@ elements beyond those specified for the current tablebase.
 The optional {\tt <variant>} element specifies which version
 of the rules of chess apply to this tablebase.
 
-{\bf Default:} normal
+{\bf Default:} {\tt normal}
 
 
-\subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant" \hfil\break\hbox{\qquad} symmetry="1|2|2-way|4|8|8-way" modulus="auto|{\it integer}"/>}
+\subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant|combinadic \hfil\break\hbox{\qquad} |combinadic2|combinadic3" symmetry="1|2|4|8"/>}
 
 The {\tt <index>} element specifies the algorithm that will be used to
 compute the index numbers in the tablebase; i.e, the algorithm that
 will convert board positions into tablebase offsets and vice versa.
+It typically is not specified by the user (but can be).
 
 \begin{description}
 
@@ -196,44 +192,30 @@ this and can not be handled with this scheme.
 The optional {\tt symmetry} attribute can be used to encode multiple
 positions using a single entry, but its utility depends upon the exact
 analysis being done.  A tablebase with no pawns and no movement
-restrictions can be encoded with {\tt 8-way} (alias {\tt 8}) symmetry,
+restrictions can be encoded with 8-way symmetry,
 since the board can be rotated about a horizontal, vertical, or
 diagonal axis without affecting the behavior of the pieces.  A
-tablebase with pawns can utilize at most {\tt 2-way} (alias {\tt 2})
+tablebase with pawns can utilize at most 2-way
 symmetry, since only a reflection about a vertical axis preserves
 piece behavior.  A tablebase with restrictions on the positions of the
-pieces (say, frozen pawns) can not use any symmetry at all ({\tt 1}).
+pieces (say, frozen pawns) can not use any symmetry at all.
 Not all symmetries are compatible will all index types; for example,
 8-way symmetry can not be used with {\tt naive} or {\tt naive2}
 index types.
-{\bf Default:} {\it no symmetry}
 
-The optional {\tt modulus} attribute, which if specified should be
-either {\tt auto} or a prime number (the program complains if it's
-composite), indicates that the computed index should be inverted in a
-finite field (modulo the specified number) to obtain the actual index.
-While time consuming, this step has the effect of shuffling the
-indices in a pseudo-random fashion, and should be used if proptables
-are in use in order to optimize the operation of the library sort.
-This also produces larger tablebases, since a pseudo-random
-distribution of mating positions impedes the operation of the {\tt
-gzip} compression algorithm.  {\tt auto} simply rounds the highest
-index up to the next prime number; there really is no reason anymore
-to specify a specific prime.
-{\bf Default:} {\it no inversion}
+{\bf Default:} {\tt combinadic3} with automatically selected symmetry
 
-\subsection{\tt <format> \ldots\quad </format>}
+\subsection{Tablebase format}
 
-This optional element specifies the format of the tablebase entries.
-It has no attributes, and must contain exactly one of the following
-elements:
+The next three elements specify the format of the tablebase entries.
+At most one of them can be specified.
 
-{\tt <dtm bits="8|16"/>} specifies a {\it distance to mate} metric
-occupying either one or two bytes.  Zero is used for draws, -1 is used
-for positions where the moving side is checkmated, and 1 is used for
-positions where the moving side can capture the opposing king, so a
-one byte dtm can record mate-in distances up to 126.  A two byte dtm
-has no such (practical) limitation.
+{\tt <dtm bits={\it integer}/>} specifies a {\it distance to mate}
+metric occupying either one or two bytes.  Zero is used for draws, -1
+is used for positions where the moving side is checkmated, and 1 is
+used for positions where the moving side can capture the opposing
+king, so an eight bit dtm field can record mate-in distances up to 126.
+If a field size is not specified, it is selected automatically.
 
 {\tt <basic/>} specifies a {\it bitbase} where two bits are used for
 each position, and no distance information is stored --- only an
@@ -245,10 +227,10 @@ winning lines.
 {\tt <flag type="white-wins|white-draws"/>} specifies a {\it bitbase}
 where only a single bit is used for each position.
 
-{\bf Default:} 8-bit DTM.
+{\bf Default:} DTM with automatically selected field size.
 
 
-\subsection{\tt <piece color="white|black" type="king|queen|rook|bishop|knight|pawn" \hfil\break\hbox{\qquad} location="{\it string}"/>}
+\subsection{\tt <piece color="white|black" type="king|queen|rook|bishop|knight|pawn" \hfil\break\hbox{\qquad} location="{\it string}" index-ordering="reverse"/>}
 
 Multiple {\tt piece} elements are used to specify the chess pieces
 present in the tablebase. {\tt color} and {\tt type} are required and
@@ -266,6 +248,11 @@ possible.  This can be used, for example, to locate a black pawn on
 {\tt "a7+} and a white pawn on {\tt "a2+"}, indicating that both can
 move forward, but they can not ``pass'' each other.
 
+The option {\tt index-ordering="reverse"} attribute may be specified
+to indicate that the board positions should be indexed in reverse
+order.  At some point, this may be used to optimize futurebase
+back-propagation, for example, by reverse indexing a queen so that the
+last row comes first.  Currently fairly useless.
 
 \subsection{\tt <futurebase filename="{\it string}" url="{\it string}" colors="invert"/>}
 
@@ -355,10 +342,11 @@ handle the rest by default.
 prune-enable} element.  If no {\tt prune-enable} elements were
 specified, then no {\tt prune} elements will be permitted.
 
-\subsection{\tt <generation-controls> \ldots\qquad </generation-controls>}
+\subsection{Generation Controls}
 
-This optional element has no attributes and contains one or more
-of the following sub-elements, in no particular order:
+These elements are all optional, but if {\tt output} is not specified,
+an output filename must be specified on the command line using
+the {\tt -o} switch.
 
 \subsubsection{\tt <output filename="{\it string}" url="{\it string}"/>}
 
@@ -371,137 +359,17 @@ element is {\tt ftp}.
 
 \subsubsection{\tt <completion-report url="{\it string}"/> \hfil\break <error-report url="{\it string}"/>}
 
-Optionally, the tablebase's XML prefix (without the tablebase data) can
-be written to a URL upon either a successful or error termination of
-the program.  This capability (along with the ability to be read and
-write tablebase URLs) is intended to aid the construction of Hoffman
-tablebases using a distributed cluster.
+If this is specified, the tablebase's XML prefix (without the
+tablebase data) will be written to a URL upon either a successful or
+error termination of the program.  This capability (along with the
+ability to be read and write tablebase URLs) is intended to aid the
+construction of Hoffman tablebases using a distributed cluster.
 
-{\bf Note:} In the event of an error termination, every attempt will
-be made to add {\tt <error>} elements to the XML indicating the
-cause of the problem.
+{\bf Note:} In an error termination, every attempt will be made to add
+{\tt <error>} elements to the XML indicating the cause of the problem.
 
 {\bf Note:} The only {\tt url} scheme currently supported for these
 elements is {\tt http}.
-
-\subsubsection{\tt <entries-format> \ldots\quad </entries-format>}
-
-This optional element controls the internal format used to store a
-tablebase during its construction.  It contains a number of entities,
-each corresponding to a structure field, all of which admit at least
-the attributes {\tt bits} and {\tt offset}, which specify,
-respectively, the number of bits occupied by the field and the field's
-offset relative to the beginning of a tablebase entry.  {\tt offset}
-is optional and, if not specified, will be computed using an algorithm
-to assign fields to empty slots, though if {\tt offset} is specified
-in one element, it must be specified in all of them. {\tt bits} is
-usually required, except for single-bit-only fields.  The total number
-of bits required must be a power-of-two byte boundary, i.e, 8, 16, 32,
-64.  The entities are:
-
-\begin{description}
-
-\item[{\tt dtm}] Distance-to-mate.  Required to generate a tablebase
-with a {\tt dtm} {\tt format}; otherwise useless and optional.  Can be
-used with any number of {\tt bits} (unlike the {\tt dtm} element in
-the tablebase {\tt format}, which can only have 8 or 16 {\tt bits}),
-but a fatal error will result during tablebase propagation if this
-field is too small.
-
-\item[{\tt movecnt}] Required. Used to count the number of possible
-moves from a given position.  Has four reserved values, and must be
-able to count down to zero, so an $n$-bit {\tt movecnt} allows
-positions with up to $2^n-5$ moves.  If 8-way symmetry is in use, then
-many positions require their moves to be counted twice, effectively
-halving that number.  If positions exist with too many possible moves
-to fit into {\tt movecnt}, a fatal error will result during tablebase
-initialization.
-
-\item[{\tt locking-bit}] Single-bit-only field.  Optional, but
-recommended if running multi-threaded.  Allows individual tablebase
-entries to be locked.  Without it, a global lock must be used to
-regulate access to the entries table, which can adversely affect
-performance, but probably not as much as doubling the size of the
-entries table if that is the only way to create a free bit.
-
-\end{description}
-
-\begin{tabular}{@{} l l}
-{\bf Default:} & {\tt <entries-format>} \cr
-& \qquad {\tt <dtm bits="8" offset="0"/>} \cr
-& \qquad {\tt <movecnt bits="7" offset="9"/>} \cr
-& \qquad {\tt <locking-bit offset="8"/>} \cr
-& {\tt </entries-format>} \cr
-\end{tabular}
-
-{\bf Note:} Changing {\tt entries-format} requires the program to be
-recompiled with a different {\tt formats.h} file, which the
-program will print as it terminates with a fatal error.
-
-{\bf Example:} A good example of how to use this element is found in
-the standard {\tt kppkp} tablebase, which has a maximum distance to
-mate of 128, and therefore requires a 9 bit {\tt dtm} field
-(unfortunately, there's no way to know this in advance).  This can be
-achieved within a 2-byte {\tt entries-format} by stealing a bit from
-the {\tt movecnt} field, leaving it with 6 bits for a possible $2^6 -
-5 = 59$ movements.  Since a king can have no more than 8 movements,
-and a pawn can have no more than 12 (on the seventh rank it has two
-possible captures and a forward movement, times four possible pieces
-it can promote into), a king and two pawns can have no more than 32
-movements (less, actually, since no capture-promotions are possible
-with only a pawn and a king on the opposing side), so a 6-bit {\tt
-movecnt} works fine.  On the other hand, this alternate format would
-not work on the {\tt kqqkq} tablebase, since a queen can have up to 28
-movements, so a king and two queens can have around 74 movements, which
-gets doubled to 148 since we use 8-way symmetry.
-
-
-\subsubsection{\tt <proptable-format> \ldots\quad </proptable-format>}
-
-This optional element controls the internal format used to store
-proptables, and is structured like {\tt entries-format}.
-The possible entries here are:
-
-\begin{description}
-
-\item[{\tt dtm}] Exactly as specified in the {\tt format}.
-
-\item[{\tt PTM-wins-flag}] Single-bit-only field.  Similar to the {\tt
-flag} field in {\tt entries-format}, but has a slightly different
-interpretation (indicates if {\it player to move} wins, not white).
-No {\tt type} attribute.  Should be specified instead of a {\tt dtm}
-field if a bitbase is being constructed.
-
-\item[{\tt movecnt}] Similar to the same field in {\tt
-entries-format}, but has no reserved values and doesn't have to hold a
-complete move count (only the number of moves being propagated).
-Currently has {\bf no check} for overflow!!
-
-\item[{\tt index-field}] Holds the index number being propagated.
-See the {\tt index} section for more information about how
-index numbers are computed.
-Currently has {\bf no check} for overflow!!
-
-\item[{\tt futurevector}] Only used during the first back-propagation
-pass, to track which futuremoves have been handled as futurebases are
-back-propagated.  Must be large enough to hold a single bit for each
-possible futuremove from a position.  Hoffman will die (early) with a
-fatal error if this field is not large enough.
-
-\end{description}
-
-\begin{tabular}{@{} l l}
-{\bf Default:} & {\tt <proptable-format>} \cr
-& \qquad {\tt    <index bits="32" offset="0"/>} \cr
-& \qquad {\tt    <dtm bits="16" offset="32"/>} \cr
-& \qquad {\tt    <movecnt bits="8" offset="56"/>} \cr
-& \qquad {\tt    <futurevector bits="64" offset="64"/>} \cr
-& {\tt </proptable-format>} \cr
-\end{tabular}
-
-{\bf Note:} Changing {\tt proptable-format} requires the program to be
-recompiled with a different {\tt formats.h} file, which the
-program will print as it terminates with a fatal error.
 
 \vfill\eject
 
@@ -595,16 +463,6 @@ more complex set of permutations, and the program currently doesn't do
 this.  So, unless the pieces have non-overlapping move restrictions
 (i.e, they can't be swapped), we're currently limited to two identical
 pieces, and thus can't handle something like {\tt kpppkr}.
-
-\subsection{Attempting to initialize position with a movecnt that won't fit in field!}
-
-The {\tt movecnt} field specified in {\tt generation-controls} wasn't big enough,
-and note that the default value might not be big enough!
-
-\subsection{Default/specified proptable/entries format incompatible with compiled-in format}
-
-Changing the formats in {\tt generation-controls} requires recompiling
-the program with a different {\tt "formats.h"} file.
 
 \subsection{Futurebase doesn't match prune-enables!}
 
