@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.677 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.678 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7030,7 +7030,7 @@ char * index_to_FEN(tablebase_t *tb, index_t index)
 bool parse_move_in_global_position(char *movestr, global_position_t *global)
 {
     int origin_square, destination_square;
-    int is_capture = 0;
+    bool is_capture = false;
     unsigned char promotion_piece = '\0';
 
     if (movestr[0] >= 'a' && movestr[0] <= 'h' && movestr[1] >= '1' && movestr[1] <= '8') {
@@ -7041,7 +7041,7 @@ bool parse_move_in_global_position(char *movestr, global_position_t *global)
     }
 
     if (movestr[0] == 'x') {
-	is_capture = 1;
+	is_capture = true;
 	movestr ++;
     }
 
@@ -7067,16 +7067,29 @@ bool parse_move_in_global_position(char *movestr, global_position_t *global)
 
     if (global->board[destination_square] >= 'A' && !is_capture) return false;
 
-    if (!(global->board[destination_square] >= 'A' && global->board[destination_square] <= 'Z')
-	&& is_capture && global->side_to_move == BLACK)
-	return false;
+    if (((global->board[origin_square] == 'P') || (global->board[origin_square] == 'p'))
+	&& is_capture && (destination_square == global->en_passant_square)) {
 
-    if (!(global->board[destination_square] >= 'a' && global->board[destination_square] <= 'z')
-	&& is_capture && global->side_to_move == WHITE)
-	return false;
+	if (global->side_to_move == WHITE) {
+	    global->board[global->en_passant_square - 8] = 0;
+	} else {
+	    global->board[global->en_passant_square + 8] = 0;
+	}
+
+    } else {
+
+	if (!(global->board[destination_square] >= 'A' && global->board[destination_square] <= 'Z')
+	    && is_capture && global->side_to_move == BLACK)
+	    return false;
+
+	if (!(global->board[destination_square] >= 'a' && global->board[destination_square] <= 'z')
+	    && is_capture && global->side_to_move == WHITE)
+	    return false;
+    }
 
     global->board[destination_square] = promotion_piece ? promotion_piece : global->board[origin_square];
     global->board[origin_square] = 0;
+
     if (global->side_to_move == WHITE)
 	global->side_to_move = BLACK;
     else
@@ -7085,14 +7098,14 @@ bool parse_move_in_global_position(char *movestr, global_position_t *global)
     global->en_passant_square = ILLEGAL_POSITION;
 
     if ((global->board[destination_square] == 'P') && (origin_square == destination_square - 16)) {
-	if (((destination_square % 8 != 0) && (global->board[destination_square - 8 - 1] == 'p'))
-	    || ((destination_square % 8 != 7) && (global->board[destination_square - 8 + 1] == 'p'))) {
+	if (((destination_square % 8 != 0) && (global->board[destination_square - 1] == 'p'))
+	    || ((destination_square % 8 != 7) && (global->board[destination_square + 1] == 'p'))) {
 	    global->en_passant_square = destination_square - 8;
 	}
     }
     if ((global->board[destination_square] == 'p') && (origin_square == destination_square + 16)) {
-	if (((destination_square % 8 != 0) && (global->board[destination_square + 8 - 1] == 'P'))
-	    || ((destination_square % 8 != 7) && (global->board[destination_square + 8 + 1] == 'P'))) {
+	if (((destination_square % 8 != 0) && (global->board[destination_square - 1] == 'P'))
+	    || ((destination_square % 8 != 7) && (global->board[destination_square + 1] == 'P'))) {
 	    global->en_passant_square = destination_square + 8;
 	}
     }
@@ -13544,18 +13557,17 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
     struct movement * movementptr;
     int moves_printed = 0;
 
-    global_position = *global_position_ptr;
-    saved_global_position = global_position;
-
-    piece_color = global_position.side_to_move;
+    saved_global_position = *global_position_ptr;
+    piece_color = saved_global_position.side_to_move;
 
     for (square = 0; square < 64; square ++) {
 
+	if (saved_global_position.board[square] == 0) continue;
+
 	global_position = saved_global_position;
+	global_position.en_passant_square = ILLEGAL_POSITION;
 
 	flip_side_to_move_global(&global_position);
-
-	if (global_position.board[square] == 0) continue;
 
 	/* We only want to consider pieces of the side which is to move... */
 
@@ -13568,8 +13580,6 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 	global_position.board[square] = 0;
 
 	if (piece_type != PAWN) {
-
-	    global_position.en_passant_square = ILLEGAL_POSITION;
 
 	    for (dir = 0; dir < number_of_movement_directions[piece_type]; dir++) {
 
@@ -13654,7 +13664,6 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 	    }
 
 	    global_position.board[square] = global_pieces[piece_color][piece_type];
-	    global_position.en_passant_square = saved_global_position.en_passant_square;
 
 	} else {
 
@@ -13670,6 +13679,20 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 		if ((ROW(movementptr->square) != 0) && (ROW(movementptr->square) != 7)) {
 
 		    global_position.board[movementptr->square] = global_pieces[piece_color][PAWN];
+
+		    if ((movementptr->square == square + 16)
+			&& (((square % 8 != 0) && (global_position.board[square + 16 - 1] == 'p'))
+			    || ((square % 8 != 7) && (global_position.board[square + 16 + 1] == 'p')))) {
+
+			global_position.en_passant_square = square + 8;
+		    }
+
+		    if ((movementptr->square == square - 16)
+			&& (((square % 8 != 0) && (global_position.board[square - 16 - 1] == 'P'))
+			    || ((square % 8 != 7) && (global_position.board[square - 16 + 1] == 'P')))) {
+
+			global_position.en_passant_square = square - 8;
+		    }
 
 		    if (! global_PNTM_in_check(&global_position) && print_non_captures) {
 			if (search_tablebases_for_global_position(tbs, &global_position,
@@ -13688,6 +13711,7 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 		    }
 
 		    global_position.board[movementptr->square] = 0;
+		    global_position.en_passant_square = ILLEGAL_POSITION;
 
 		} else {
 
@@ -13727,7 +13751,7 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 		 movementptr->square != -1;
 		 movementptr++) {
 
-		if (movementptr->square == global_position.en_passant_square) {
+		if (movementptr->square == saved_global_position.en_passant_square) {
 
 		    /* en passant capture */
 
@@ -13735,9 +13759,9 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 						   piece_color, PAWN);
 
 		    if (piece_color == WHITE) {
-			global_position.board[global_position.en_passant_square - 8] = 0;
+			global_position.board[saved_global_position.en_passant_square - 8] = 0;
 		    } else {
-			global_position.board[global_position.en_passant_square + 8] = 0;
+			global_position.board[saved_global_position.en_passant_square + 8] = 0;
 		    }
 
 		    if (! global_PNTM_in_check(&global_position) && print_captures) {
@@ -13763,9 +13787,9 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 		    }
 
 		    if (piece_color == WHITE) {
-			global_position.board[global_position.en_passant_square - 8] = 'p';
+			global_position.board[saved_global_position.en_passant_square - 8] = 'p';
 		    } else {
-			global_position.board[global_position.en_passant_square + 8] = 'P';
+			global_position.board[saved_global_position.en_passant_square + 8] = 'P';
 		    }
 
 		    continue;
@@ -13895,12 +13919,7 @@ void probe_tablebases(tablebase_t **tbs) {
     read_history(".hoffman_history");
 #endif
 
-    while (1) {
-#ifdef HAVE_LIBREADLINE
-	char *buffer;
-#else
-	char buffer[256];
-#endif
+    while (true) {
 	index_t index = 0;
 #ifdef USE_NALIMOV
 	int score;
@@ -13919,24 +13938,43 @@ void probe_tablebases(tablebase_t **tbs) {
 	    }
 	    printf("  +----------------\n");
 	    printf("    a b c d e f g h\n");
-	    printf("%s to move\n", colors[global_position.side_to_move]);
+	    printf("FEN %s\n", global_position_to_FEN(&global_position));
+	    //printf("%s to move\n", colors[global_position.side_to_move]);
 	}
 
+	/* Loop until we've read a valid input string */
+	while (true) {
+
 #ifdef HAVE_LIBREADLINE
-	buffer = readline(global_position_valid ? "FEN or move? " : "FEN? ");
-	if (buffer == NULL) break;
-	if (*buffer == '\0') continue;
-	add_history(buffer);
+	    char *buffer;
+
+	    buffer = readline(global_position_valid ? "Index, FEN or move? " : "Index or FEN? ");
+	    if (buffer == NULL) {
+		write_history(".hoffman_history");
+		printf("\n");
+		return;
+	    }
+	    if (*buffer == '\0') continue;
+	    add_history(buffer);
 #else
-	printf(global_position_valid ? "FEN or move? " : "FEN? ");
-	if (fgets(buffer, sizeof(buffer), stdin) == NULL) break;
+	    char buffer[256];
+
+	    printf(global_position_valid ? "Index, FEN or move? " : "FEN? ");
+	    if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
+		printf("\n");
+		return;
+	    }
 #endif
 
-	if (!(global_position_valid && parse_move_in_global_position(buffer, &global_position))
-	    && !parse_FEN_to_global_position(buffer, &global_position)
-	    && (index = strtol(buffer, NULL, 10)) == 0) {
-	    printf(global_position_valid ? "Bad FEN or move\n\n" : "Bad FEN\n\n");
-	    continue;
+	    if (global_position_valid && parse_move_in_global_position(buffer, &global_position))
+		break;
+	    if (parse_FEN_to_global_position(buffer, &global_position))
+		break;
+	    // XXX can't parse "0" as an index
+	    if ((index = strtol(buffer, NULL, 10)) != 0)
+		break;
+
+	    printf("Bad input\n\n");
 	}
 
 	global_position.variant = tbs[0]->variant;
@@ -13957,7 +13995,6 @@ void probe_tablebases(tablebase_t **tbs) {
 	     * of the various next positions that we'll consider
 	     */
 
-	    printf("FEN %s\n", global_position_to_FEN(&global_position));
 	    printf("Index %d (%s)\n", index, tb->filename);
 
 	    if (global_position.side_to_move == WHITE) {
@@ -13995,12 +14032,6 @@ void probe_tablebases(tablebase_t **tbs) {
 	    }
 	}
     }
-
-#ifdef HAVE_LIBREADLINE
-    write_history(".hoffman_history");
-#endif
-
-    printf("\n");
 }
 
 void usage(char *program_name)
@@ -14074,7 +14105,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.677 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.678 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
