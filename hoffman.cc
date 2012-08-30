@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.675 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.676 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13325,7 +13325,9 @@ void init_nalimov_code(void)
     int nalimov_num;
 
     nalimov_num = IInitializeTb(nalimov_path);
-    info("%d piece Nalimov tablebases found\n", nalimov_num);
+    if (nalimov_num > 0) {
+	info("%d piece Nalimov tablebases found\n", nalimov_num);
+    }
     EGTB_cache = malloc(EGTB_CACHE_DEFAULT);
     if (EGTB_cache == NULL) {
 	fatal("Can't malloc EGTB cache\n");
@@ -14072,7 +14074,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.675 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.676 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
