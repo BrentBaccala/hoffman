@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.680 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.681 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7267,12 +7267,10 @@ unsigned int tablebase::get_basic(index_t index)
 }
 
 
-/* THE ENTRIES TABLE - manipulate individual entries in the tablebase under construction
+/* THE ENTRIES TABLE - this is the tablebase under construction
  *
- * "Designed to multi-thread"
- *
- * Keep atomic operations confined to single functions.  Use a virtual class so that calling
- * functions don't need to know the details of table format, either.
+ * EntriesTable is a virtual class so that calling functions don't need to know the details of table
+ * format, but none of the functions called in our inner loops are virtual.
  *
  * These "add one" functions (atomically) add one to the count in question, subtract one from the
  * total move count, and flag the position as 'ready for propagation' (maybe this is just a move
@@ -7285,12 +7283,14 @@ unsigned int tablebase::get_basic(index_t index)
 
 class EntriesTable {
 
-    /* Subclasses are responsible for returning pointers and bit offsets to individual indices */
  protected:
+
+    /* Subclasses are responsible for returning pointers and bit offsets to individual indices */
     virtual void * pointer(index_t index) = 0;
     virtual bitoffset offset(index_t index) = 0;
-    uint8_t bits;
-    uint8_t threads;
+
+    uint8_t bits;				/* Bits (not bytes) per entry */
+    uint8_t threads;				/* number of threads accessing the table */
 
     /* The individual entries are formed from bit fields.  Here we specify their sizes and offsets. */
 
@@ -7310,7 +7310,66 @@ class EntriesTable {
 #define MOVECNT_MAX (MOVECNT_MASK - 4)
 #define MOVECNT_PNTM_WINS_UNPROPED (0)
 
+    /* Here we compute the sizes of the bit fields.
+     *
+     * capture possible flag - 1 bit, only if we're doing a suicide analysis
+     * locking bit - 1 bit for spinlocking if needed (see below)
+     * distance to mate - not sure, but our first pass only needs to copy dtm values
+     *    from futurebases, and we know their dtm ranges
+     * move count - the simple calculation here could be improved upon
+     */
+
     void ComputeBitfields(void) {
+
+	/* We've already preloaded our futurebases, so min_tracked_dtm and max_tracked_dtm
+	 * tell us the minumum and maximum DTMs in the futurebases.  Make sure we've got
+	 * enough room in our DTM field to handle anything from our futurebases, then
+	 * we'll expand the field later if we need more space.
+	 */
+
+	if (tracking_dtm) {
+	    for (dtm_bits = 1; (max_tracked_dtm > (1 << (dtm_bits - 1)) - 1)
+		     || (min_tracked_dtm < -(1 << (dtm_bits - 1))); dtm_bits ++);
+	} else {
+	    dtm_bits = 0;
+	}
+
+	int max_white_moves = 0;
+	int max_black_moves = 0;
+
+	/* Compute the moves available to each side and use this to size the movecnt field */
+
+	for (int piece = 0; piece < current_tb->num_pieces; piece ++) {
+	    int *max_moves = (current_tb->piece_color[piece] == WHITE) ? &max_white_moves : &max_black_moves;
+	    switch (current_tb->piece_type[piece]) {
+	    case KING:
+	    case KNIGHT:
+		*max_moves += 8; break;
+	    case QUEEN:
+		*max_moves += 28; break;
+	    case ROOK:
+	    case BISHOP:
+		*max_moves += 14; break;
+	    case PAWN:
+		*max_moves += 12; break;
+	    }
+	}
+
+	/* We double the calculated move counts if the tablebase has 8-way symmetry because then we
+	 * have to deal with multiplicity - some of the positions double up into individual indices
+	 * and some do not.  The doubled positions have twice as many moves as the others.  We don't
+	 * worry about this for 4-way or 2-way symmetry because then all of the positions double (or
+	 * quadruple).
+	 */
+
+	if (current_tb->symmetry == 8) {
+	    max_white_moves *= 2;
+	    max_black_moves *= 2;
+	}
+
+	for (movecnt_bits = 1; (max_white_moves > MOVECNT_MAX)
+		 || (max_black_moves > MOVECNT_MAX); movecnt_bits ++);
+
 	if (current_tb->variant == VARIANT_NORMAL) {
 	    capture_possible_flag_offset = -1;
 	    movecnt_offset = 0;
@@ -7362,48 +7421,6 @@ class EntriesTable {
  public:
     EntriesTable(void) {
 
-	/* We've already preloaded our futurebases, so min_tracked_dtm and max_tracked_dtm
-	 * tell us the minumum and maximum DTMs in the futurebases.  Make sure we've got
-	 * enough room in our DTM field to handle anything from our futurebases, then
-	 * we'll expand the field later if we need more space.
-	 */
-
-	if (tracking_dtm) {
-	    for (dtm_bits = 1; (max_tracked_dtm > (1 << (dtm_bits - 1)) - 1)
-		     || (min_tracked_dtm < -(1 << (dtm_bits - 1))); dtm_bits ++);
-	} else {
-	    dtm_bits = 0;
-	}
-
-	int max_white_moves = 0;
-	int max_black_moves = 0;
-
-	/* Compute the moves available to each side and use this to size the movecnt field */
-
-	for (int piece = 0; piece < current_tb->num_pieces; piece ++) {
-	    int *max_moves = (current_tb->piece_color[piece] == WHITE) ? &max_white_moves : &max_black_moves;
-	    switch (current_tb->piece_type[piece]) {
-	    case KING:
-	    case KNIGHT:
-		*max_moves += 8; break;
-	    case QUEEN:
-		*max_moves += 28; break;
-	    case ROOK:
-	    case BISHOP:
-		*max_moves += 14; break;
-	    case PAWN:
-		*max_moves += 12; break;
-	    }
-	}
-
-	if (current_tb->symmetry == 8) {
-	    max_white_moves *= 2;
-	    max_black_moves *= 2;
-	}
-
-	for (movecnt_bits = 1; (max_white_moves > MOVECNT_MAX)
-		 || (max_black_moves > MOVECNT_MAX); movecnt_bits ++);
-
 	ComputeBitfields();
 
 	info("Initial entries format: ");
@@ -7415,6 +7432,44 @@ class EntriesTable {
     /* DiskEntriesTable will want to delete some files, so this destructor has to be virtual. */
 
     virtual ~EntriesTable() { }
+
+    /* Sets the number of threads accessing the table.
+     *
+     * Used by the disk-based version of this class to figure out how many threads it has to wait
+     * for before it advances the buffer in the disk file.  If we have less than this number of
+     * threads, the code will stall indefinately waiting for the remaining, non-existant threads.
+     *
+     * XXX the very existence of this function is a kludge
+     */
+
+    void set_threads(uint8_t threads) {
+	this->threads = threads;
+    }
+
+    /* This function is virtual so that subclasses can do a better job of handling a DTM overflow.
+     * We only use it at the beginning of a pass.
+     */
+
+    virtual void verify_DTM_field_size(int dtm) {
+	if (! tracking_dtm) return;
+	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
+	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
+	    fatal("DTM entry field size exceeded\n");
+	    terminate();
+	}
+    }
+
+    /* We only retreive the DTM field size at the very end, so we know how many bits we need to
+     * write out to disk in the final result.
+     */
+
+    uint8_t get_DTM_field_size(void) {
+	return dtm_bits;
+    }
+
+    /* If we do need to lock, I use spinlocks.  They're a bit dangerous because a bug can cause them
+     * to lock forever, but bugs are dangerous anyway.  They only require a single bit.
+     */
 
     void lock_entry(index_t index) {
 #ifdef USE_THREADS
@@ -7434,33 +7489,9 @@ class EntriesTable {
 #endif
     }
 
-    /* Sets the number of threads accessing the table.
-     *
-     * Used by the disk-based version of this class to figure out how many threads it has to wait
-     * for before it advances the buffer in the disk file.  If we have less than this number of
-     * threads, the code will stall indefinately waiting for the remaining, non-existant threads.
-     *
-     * XXX the very existence of this function is a kludge
+    /* The remaining method functions in the class access an individual entry in the table and do
+     * so atomically, because we might share multiple entries in a single machine word.
      */
-
-    void set_threads(uint8_t threads) {
-	this->threads = threads;
-    }
-
-    uint8_t get_DTM_field_size(void) {
-	return dtm_bits;
-    }
-
-    /* This function is virtual so that subclasses can do a better job of handling a DTM overflow */
-
-    virtual void verify_DTM_field_size(int dtm) {
-	if (! tracking_dtm) return;
-	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
-	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
-	    fatal("DTM entry field size exceeded\n");
-	    terminate();
-	}
-    }
 
     int get_raw_DTM(index_t index) {
 	if (! tracking_dtm) return 0;
@@ -7605,8 +7636,7 @@ class EntriesTable {
 
 	/* In ordinary chess, this kind of position is illegal - PNTM's king can be captured.  We
 	 * don't count moves into check as part of "movecnt", so we don't want to back propagate
-	 * from this position.  So we just flag it as a propagated win and DTM to one here - PTM
-	 * wins.
+	 * from this position.  So we just flag it as a propagated win, DTM 1.
 	 *
 	 * On the other hand, if we're doing a suicide analysis, a PNTM-mated position is a
 	 * stalemate in ordinary terms (PTM can't move and therefore wins), so we do want to back
@@ -7678,7 +7708,7 @@ class EntriesTable {
     }
 };
 
-/* An EntriesTable held completely in memory */
+/* MemoryEntriesTable - an EntriesTable held completely in memory */
 
 class MemoryEntriesTable: public EntriesTable {
 
@@ -7703,10 +7733,10 @@ class MemoryEntriesTable: public EntriesTable {
 	memset(entries, 0, bytes);
     }
 
-    /* If our DTM field is about to overflow, resize it one bit larger */
+    /* If our DTM field is about to overflow, resize the entire table one bit per entry larger */
 
     void verify_DTM_field_size(int dtm) {
-	if (! tracking_dtm) return;
+
 	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
 	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
 
@@ -7755,13 +7785,14 @@ class MemoryEntriesTable: public EntriesTable {
 /* An EntriesTable held mostly on disk.
  *
  * If we're multi-threaded, we work on a entry buffer, then wait until all of the threads are ready
- * to move on.  At the end of a pass, wait until all of the threads are ready to reset, then reset.
+ * to move on.  At the end of a pass, wait until all of the threads are ready to reset back to the
+ * beginning, then reset back to the beginning of the disk file.
  *
  * XXX Current implementation detects when a thread is 'ready' by waiting until it attempts to
- * access outside of the entry buffer, since we provide the thread no way to signal when its done
- * with a particular table entry.  Among other things, this requires that all of the num_threads
- * threads are working on the entries table.  Otherwise we'll wait forever for a thread that
- * isn't accessing the table at all!
+ * access outside of the entry buffer, since we provide the thread no way to signal when it's done
+ * with a particular table entry.  Among other things, this requires that we know exactly how many
+ * threads are working on the entries table.  Otherwise we'll wait forever for a thread that isn't
+ * accessing the table at all!
  */
 
 static pthread_mutex_t ready_to_advance_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -8325,12 +8356,17 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
     entriesTable->unlock_entry(index);
 }
 
-/* I crafted my own priority_queue because I'm not happy with any of the existing options.
+/* THE PRIORITY QUEUE
+ *
+ * I crafted my own priority_queue because I'm not happy with any of the existing options.
  *
  * The standard library's priority_queue holds everything in memory and thus can't deal effectively
  * with very large data sets.
  *
  * TPIE's priority_queue uses the disk, but isn't thread safe and can't compress its disk files.
+ *
+ * Mine is build from several pieces: an in-memory table; disk files that back it up when it fills;
+ * a sorting network to read the files back in when we retreive.
  */
 
 extern "C++" {
@@ -8610,27 +8646,34 @@ extern "C++" {
 	}
     };
 
-    /* Our priority queue.
+    /* The priority queue template.
      *
-     * Initialize with number of entries to store in-memory.  If we insert less than that number, do
-     * everything in-memory.  If we insert more, then dump to disk and use a sorting network to read
-     * it back.
+     * Initialize with the size of the in-memory portion in megabytes.  If we insert less than that
+     * size, do everything in-memory.  If we insert more, then dump to disk and use a sorting
+     * network to read it back.
      *
      * Our template takes three types.  The first (T) is the type to store in the priority queue,
      * the second (MemoryContainer) is a container to hold that type in memory, and the third
      * (DiskContainer) is a container to hold that type on disk.  Names notwithstanding, we don't
      * impose any memory or disk requirements in this class.  We expect MemoryContainer to export
      * begin() and end() methods that return random access iterators usable for insertion,
-     * retrieval, and sorting (with std::sort).  We expect DiskContainer to take a MemoryContainer
-     * as a constructor and supply pop_front() for retrieval.  We just push into a MemoryContainer
-     * until it's full, sort it and copy it to a DiskContainer, and keep going until we're done.
-     * Then, if we used DiskContainer at all, we sort and dump the final MemoryContainer into a
-     * DiskContainer and read back from the DiskContainers using a sorting network.  Otherwise, we
-     * read back directly from a single MemoryContainer, i.e, we don't use a DiskContainer at all
-     * unless we fill up a MemoryContainer.
+     * retrieval, and sorting (with std::sort).  We expect DiskContainer to take a begin/end pair of
+     * iterators as a constructor and supply pop_front() for retrieval.  We just push into a
+     * MemoryContainer until it's full, sort it and copy it to a DiskContainer, and keep going until
+     * we're done.  Then, if we used DiskContainer at all, we sort and dump the final
+     * MemoryContainer into a DiskContainer and read back from the DiskContainers using a sorting
+     * network.  Otherwise, we read back directly from a single MemoryContainer, i.e, we don't use a
+     * DiskContainer at all unless we fill up a MemoryContainer.
+     *
+     * XXX should take advantage of multi-threading by breaking the in-memory table into equal size
+     * portions, then making each thread sort and write a single portion.  This can be done without
+     * locking just by detecting when we write into the last n elements in the table and using that
+     * as a trigger to sort and dump 1/n-th of it.  So long as the table is at least n^2 elements,
+     * we're fine.
      *
      * XXX about the mutex... I'm a bit scared to use the new C++11 stuff... we only lock when we
-     * insert... we expect the caller to already hold the lock when we retrieve
+     * insert... we expect the caller to already hold the lock when we retrieve... we do this
+     * because we want to atomically retrieve the front element along with any elements equal to it
      */
 
     pthread_mutex_t priority_queue_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -8742,14 +8785,16 @@ extern "C++" {
 
 }
 
-/* Required field sizes for futurebase:
+/* The entries in the proptable
+ *
+ * Required field sizes for futurebase back-propagation:
  *
  *   index - figure out from max_index
  *   dtm - figure out from futurebase preload, unless it isn't being tracked
  *   movecnt - 0 (XXX - discarded futuremove only), 1, or 2 for 8-way symmetry conversion
  *   futuremove - figure out from total_futuremoves
  *
- * Required field sizes for intra-base
+ * Required field sizes for intra-tablebase propagation:
  *
  *   index - figure out from max_index
  *   dtm - known from pass number, unless it isn't being tracked
@@ -8946,6 +8991,8 @@ class new_proptable {
 	return vec.data();
     }
 };
+
+/* Finally, the actual priority queue(s) */
 
 typedef priority_queue<class proptable_entry, class new_proptable> proptable;
 
@@ -9164,10 +9211,10 @@ void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, int futu
 
 /* If we're running multi-threaded, then there is a possibility that 1) two different positions will
  * try to backprop into the same position (if we're not using proptables), or that 2) two different
- * threads will try to insert into the proptable at the same time (if we're using proptables).
+ * threads will try to retrieve from the proptable at the same time (if we're using proptables).
  *
- * The first case is handled by a lock/unlock sequence in finalize_update(); the second case is
- * handled by a mutex lock in priority_queue.
+ * The first case is handled by a locking sequence on individual entries in finalize_update(); the
+ * second case is handled by a locking sequence on the priority_queue in proptable_pass_thread().
  */
 
 void commit_update(index_t index, short dtm, short movecnt, int futuremove)
@@ -9219,10 +9266,12 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
 int propagation_pass(int target_dtm)
 {
-    if (target_dtm > 0) {
-	entriesTable->verify_DTM_field_size(target_dtm+1);
-    } else {
-	entriesTable->verify_DTM_field_size(target_dtm-1);
+    if (tracking_dtm) {
+	if (target_dtm > 0) {
+	    entriesTable->verify_DTM_field_size(target_dtm+1);
+	} else {
+	    entriesTable->verify_DTM_field_size(target_dtm-1);
+	}
     }
 
     if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
@@ -14169,7 +14218,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.680 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.681 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
