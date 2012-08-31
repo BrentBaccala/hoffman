@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.679 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.680 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8335,6 +8335,7 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 
 extern "C++" {
 
+#if 0
     /* Substitution Failure Is Not An Error (SFINAE)
      *
      * A C++ hack to detect whether a templated class has a member function.
@@ -8347,6 +8348,23 @@ extern "C++" {
 	template<typename U> static int Test(...);
 	static const bool value = sizeof(Test<T>(0)) == sizeof(char);
     };
+
+    template<typename Container>
+    class stuff : public Container {
+
+	stuff(void *data, size_t bytes) {
+	}
+
+	typename Container::value_type operator[](int i) {
+	}
+
+	void * data() {
+	}
+
+	size_t bytes() {
+	}
+    };
+#endif
 
     /* A simple disk-backed que.  Template argument Container is the in-memory container class we're
      * backing up.  It has to provide a value_type typedef, data() and bytes() methods that returns a pointer
@@ -8396,6 +8414,41 @@ extern "C++" {
 		    lseek(fd, 0, SEEK_SET);
 		}
 	    }
+	    next = 0;
+	}
+
+	disk_que(typename Container::iterator head, typename Container::iterator tail) {
+
+	    typename Container::iterator iter = head;
+
+	    strcpy(filename, "proptableXXXXXX");
+	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
+
+	    if (compress_proptables) {
+		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
+	    }
+
+	    for (size = 0, iter = head; (size <= queue_size) && (iter != tail); iter++, size++) {
+		queue[size] = *iter;
+	    }
+
+	    for (; iter != tail; iter++, size++) {
+		if (compress_proptables) {
+		    zlib_write(file, (const char *) (void *) *iter, sizeof(T));
+		} else {
+		    do_write(fd, (void *) *iter, sizeof(T));
+		}
+	    }
+
+	    if (compress_proptables) {
+		zlib_flush(file);
+		zlib_free(file);
+		lseek(fd, 0, SEEK_SET);
+		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
+	    } else {
+		lseek(fd, 0, SEEK_SET);
+	    }
+
 	    next = 0;
 	}
 
@@ -8607,7 +8660,7 @@ extern "C++" {
 
 	void dump_memory_queue_to_disk(void) {
 	    sort_in_memory_queue();
-	    disk_ques.push_back(new DiskContainer(in_memory_queue, tail-head));
+	    disk_ques.push_back(new DiskContainer(head, tail));
 	    tail = head;
 	}
 
@@ -8785,6 +8838,15 @@ class proptable_ptr : public proptable_entry {
 
     proptable_ptr & operator=(proptable_ptr other) {
 	return operator=((proptable_entry) other);
+    }
+
+    /* This is here to allow disk_que's constructor to cast us to a (void *) and write us to disk
+     *
+     * XXX fix this to use streams; we need a zlib I/O stream
+     */
+
+    operator void *() {
+	return this;
     }
 
 };
@@ -14107,7 +14169,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.679 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.680 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
