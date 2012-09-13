@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.682 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.683 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8401,14 +8401,14 @@ extern "C++" {
 	}
     };
 #endif
-
     /* A simple disk-backed que.  Template argument Container is the in-memory container class we're
      * backing up.  It has to provide a value_type typedef, data() and bytes() methods that returns a pointer
      * to its value_type.  Our constructor takes a pointer to the container and the number of
      * elements in it.  Our semantics are to make a copy of the container and export a pop_front()
      * method to walk through our data.
      *
-     * We pass a begin/end pair of iterators to our constructor.
+     * We pass a begin/end pair of iterators to our constructor.  We assume that these iterators can
+     * be cast to a (void *) and that the value_type implements a sizeof_bits() function.
      *
      * Caveat: Instances of this class can not be copied, because then both copies would have the same
      * file descriptor and the first one destroyed would close it.
@@ -8431,7 +8431,8 @@ extern "C++" {
 
 	disk_que(Iterator head, Iterator tail) {
 
-	    Iterator iter = head;
+	    size_t bits = (tail - head) * value_type::sizeof_bits();
+	    size_t bytes = (bits + 7)/8;
 
 	    strcpy(filename, "proptableXXXXXX");
 	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
@@ -8440,16 +8441,10 @@ extern "C++" {
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 	    }
 
-	    for (size = 0, iter = head; (size <= queue_size) && (iter != tail); iter++, size++) {
-		queue[size] = *iter;
-	    }
-
-	    for (; iter != tail; iter++, size++) {
-		if (compress_proptables) {
-		    zlib_write(file, (const char *) (void *) *iter, sizeof(T));
-		} else {
-		    do_write(fd, (void *) *iter, sizeof(T));
-		}
+	    if (compress_proptables) {
+		zlib_write(file, (const char *) (void *) *head, bytes);
+	    } else {
+		do_write(fd, (void *) *head, bytes);
 	    }
 
 	    if (compress_proptables) {
@@ -8478,7 +8473,7 @@ extern "C++" {
 	}
 
 	T pop_front(void) {
-	    if ((next != 0) && (next % queue_size == 0)) {
+	    if (next % queue_size == 0) {
 		// XXX check return value
 		if (compress_proptables) {
 		    zlib_read(file, (char *) queue, queue_size * sizeof(T));
@@ -8797,6 +8792,10 @@ class proptable_entry {
     bool operator<(const proptable_entry &other) const {
 	return index < other.index;
     }
+
+    static size_t sizeof_bits(void) {
+	return 8 * sizeof(proptable_entry);
+    }
 };
 
 /* proptable_iterator (defined below) dereferences into proptable_ptr, which is a pointer into the
@@ -8942,6 +8941,11 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
 
     bool operator<(const class proptable_iterator & other) {
 	return i < other.i;
+    }
+
+    // this is for the loop comparision in disk_que
+    bool operator<=(const class proptable_iterator & other) const {
+	return i <= other.i;
     }
 };
 
@@ -14198,7 +14202,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.682 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.683 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
