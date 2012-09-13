@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.681 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.682 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8407,11 +8407,16 @@ extern "C++" {
      * to its value_type.  Our constructor takes a pointer to the container and the number of
      * elements in it.  Our semantics are to make a copy of the container and export a pop_front()
      * method to walk through our data.
+     *
+     * We pass a begin/end pair of iterators to our constructor.
+     *
+     * Caveat: Instances of this class can not be copied, because then both copies would have the same
+     * file descriptor and the first one destroyed would close it.
      */
 
-    template <typename Container>
+    template <typename Iterator, typename T = typename Iterator::value_type>
     struct disk_que {
-	typedef typename Container::value_type T;
+
 	typedef T value_type;
 
 	static const int queue_size = 256;	// size of in-memory queue
@@ -8424,38 +8429,9 @@ extern "C++" {
 	void *file;
 	int count;
 
-	disk_que(Container * container, int len) {
-	    T *ptr = container->data();
-	    size = len;
+	disk_que(Iterator head, Iterator tail) {
 
-	    strcpy(filename, "proptableXXXXXX");
-	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
-
-	    if (compress_proptables) {
-		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-	    }
-
-	    if (size <= queue_size) {
-		memcpy(queue, ptr, size * sizeof(T));
-	    } else {
-		memcpy(queue, ptr, queue_size * sizeof(T));
-		if (compress_proptables) {
-		    zlib_write(file, (const char *)(ptr+queue_size), (size-queue_size) * sizeof(T));
-		    zlib_flush(file);
-		    zlib_free(file);
-		    lseek(fd, 0, SEEK_SET);
-		    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
-		} else {
-		    do_write(fd, ptr+queue_size, (size-queue_size) * sizeof(T));
-		    lseek(fd, 0, SEEK_SET);
-		}
-	    }
-	    next = 0;
-	}
-
-	disk_que(typename Container::iterator head, typename Container::iterator tail) {
-
-	    typename Container::iterator iter = head;
+	    Iterator iter = head;
 
 	    strcpy(filename, "proptableXXXXXX");
 	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
@@ -8678,7 +8654,7 @@ extern "C++" {
 
     pthread_mutex_t priority_queue_lock = PTHREAD_MUTEX_INITIALIZER;
 
-    template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
+    template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<typename MemoryContainer::iterator> >
     class priority_queue {
 
 	typedef class std::deque<DiskContainer *> DiskQueQue;
@@ -8823,13 +8799,17 @@ class proptable_entry {
     }
 };
 
-/* proptable_iterator (defined below) dereferences into proptable_ptr
+/* proptable_iterator (defined below) dereferences into proptable_ptr, which is a pointer into the
+ * in-memory table.  It's not a normal pointer because the in-memory table is bit-aligned, not
+ * byte-aligned.  It contains a pointer to the table format structure, a pointer to the base of the
+ * in-memory table, and an offset into the table, measured in entries, the exact size of which is
+ * contained in the format structure.
  *
  * To support std::sort, proptable_iterator has to dereference into a type that is Swappable,
  * MoveConstructable and MoveAssignable (the C++11 standard's terminology).  That means that
  * proptable_ptr has to operate as an lvalue that both points into the proptable (Swappable) and
  * also can hold a temporary value (MoveConstructable and Move Assignable).  So we subclass
- * proptable_entry in order to hold a value, and also keep an ptr/i that points into the proptable.
+ * proptable_entry in order to hold a value, and also keep a base/i that points into the proptable.
  */
 
 struct proptable_format {
@@ -8854,16 +8834,16 @@ class proptable_ptr : public proptable_entry {
  private:
     proptable_format *format;
     int i;
-    void *ptr;
+    void *base;
 
     /* Private constructor: friend proptable_iterator constructs proptable_ptr when dereferencing */
 
-    proptable_ptr(proptable_format *format, void *ptr, int i):
-	proptable_entry(get_unsigned_int_field(ptr, i*format->bits + format->index_offset, format->index_bits),
-			get_int_field(ptr, i*format->bits + format->dtm_offset, format->dtm_bits),
-			get_unsigned_int_field(ptr, i*format->bits + format->movecnt_offset, format->movecnt_bits),
-			get_unsigned_int_field(ptr, i*format->bits + format->futuremove_offset, format->futuremove_bits)),
-	format(format), i(i), ptr(ptr) {}
+    proptable_ptr(proptable_format *format, void *base, int i):
+	proptable_entry(get_unsigned_int_field(base, i*format->bits + format->index_offset, format->index_bits),
+			get_int_field(base, i*format->bits + format->dtm_offset, format->dtm_bits),
+			get_unsigned_int_field(base, i*format->bits + format->movecnt_offset, format->movecnt_bits),
+			get_unsigned_int_field(base, i*format->bits + format->futuremove_offset, format->futuremove_bits)),
+	format(format), i(i), base(base) {}
 
  public:
 
@@ -8871,15 +8851,15 @@ class proptable_ptr : public proptable_entry {
 	/* Set both our local copy and the copy in the proptable */
 	proptable_entry::operator=(other);
 
-	set_unsigned_int_field(ptr, i*format->bits + format->index_offset, format->index_bits, other.index);
-	set_int_field(ptr, i*format->bits + format->dtm_offset, format->dtm_bits, other.dtm);
-	set_unsigned_int_field(ptr, i*format->bits + format->movecnt_offset, format->movecnt_bits, other.movecnt);
-	set_unsigned_int_field(ptr, i*format->bits + format->futuremove_offset, format->futuremove_bits, other.futuremove);
+	set_unsigned_int_field(base, i*format->bits + format->index_offset, format->index_bits, other.index);
+	set_int_field(base, i*format->bits + format->dtm_offset, format->dtm_bits, other.dtm);
+	set_unsigned_int_field(base, i*format->bits + format->movecnt_offset, format->movecnt_bits, other.movecnt);
+	set_unsigned_int_field(base, i*format->bits + format->futuremove_offset, format->futuremove_bits, other.futuremove);
 
 	return *this;
     }
 
-    /* We don't use the default copy operator, since that would change ptr and i. */
+    /* We don't use the default copy operator, since that would change base and i. */
 
     proptable_ptr & operator=(proptable_ptr other) {
 	return operator=((proptable_entry) other);
@@ -8994,7 +8974,7 @@ class new_proptable {
 
 /* Finally, the actual priority queue(s) */
 
-typedef priority_queue<class proptable_entry, class new_proptable> proptable;
+typedef priority_queue<class proptable_entry, class new_proptable, disk_que<proptable_iterator, proptable_entry> > proptable;
 
 proptable * input_proptable;
 proptable * output_proptable;
@@ -14218,7 +14198,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.681 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.682 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
