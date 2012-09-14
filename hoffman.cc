@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.683 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.684 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8369,6 +8369,21 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
  * a sorting network to read the files back in when we retreive.
  */
 
+struct proptable_format {
+    int index_offset;
+    int index_bits;
+    int dtm_offset;
+    int dtm_bits;
+    int movecnt_offset;
+    int movecnt_bits;
+    int futuremove_offset;
+    int futuremove_bits;
+    int bits;
+};
+
+// struct proptable_format default_proptable_format = {0,32, 32,8, 40,2, 42,6, 48};
+struct proptable_format default_proptable_format = {0,32, 32,32, 64,32, 96,32, 128};
+
 extern "C++" {
 
 #if 0
@@ -8414,24 +8429,28 @@ extern "C++" {
      * file descriptor and the first one destroyed would close it.
      */
 
+    class proptable_ptr;
+
     template <typename Iterator, typename T = typename Iterator::value_type>
     struct disk_que {
 
 	typedef T value_type;
 
-	static const int queue_size = 256;	// size of in-memory queue
+	static const int queue_size = 256;	// size of in-memory queue; must be a multiple of 8
+
+	int size;
+	int next;
+	void *buffer;
+	proptable_format *format;
 
 	int fd;
-	int next;
-	int size;
-	T queue[queue_size];
 	char filename[16];
 	void *file;
 	int count;
 
-	disk_que(Iterator head, Iterator tail) {
+	disk_que(Iterator head, Iterator tail): size(tail - head), next(0), format(head.format) {
 
-	    size_t bits = (tail - head) * value_type::sizeof_bits();
+	    size_t bits = size * value_type::sizeof_bits();
 	    size_t bytes = (bits + 7)/8;
 
 	    strcpy(filename, "proptableXXXXXX");
@@ -8439,24 +8458,18 @@ extern "C++" {
 
 	    if (compress_proptables) {
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-	    }
-
-	    if (compress_proptables) {
 		zlib_write(file, (const char *) (void *) *head, bytes);
-	    } else {
-		do_write(fd, (void *) *head, bytes);
-	    }
-
-	    if (compress_proptables) {
 		zlib_flush(file);
 		zlib_free(file);
 		lseek(fd, 0, SEEK_SET);
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	    } else {
+		do_write(fd, (void *) *head, bytes);
 		lseek(fd, 0, SEEK_SET);
 	    }
 
-	    next = 0;
+	    // this will create a buffer with room for queue_size values
+	    buffer = new char[queue_size * value_type::sizeof_bits() / 8];
 	}
 
 	~disk_que() {
@@ -8476,12 +8489,15 @@ extern "C++" {
 	    if (next % queue_size == 0) {
 		// XXX check return value
 		if (compress_proptables) {
-		    zlib_read(file, (char *) queue, queue_size * sizeof(T));
+		    zlib_read(file, (char *) buffer, queue_size * value_type::sizeof_bits() / 8);
 		} else {
-		    read(fd, queue, queue_size * sizeof(T));
+		    read(fd, buffer, queue_size * value_type::sizeof_bits() / 8);
 		}
 	    }
-	    return queue[(next++) % queue_size];
+	    proptable_ptr retval(format, buffer, next % queue_size);
+	    next ++;
+
+	    return (T) retval;
 	}
     };
 
@@ -8811,24 +8827,12 @@ class proptable_entry {
  * proptable_entry in order to hold a value, and also keep a base/i that points into the proptable.
  */
 
-struct proptable_format {
-    int index_offset;
-    int index_bits;
-    int dtm_offset;
-    int dtm_bits;
-    int movecnt_offset;
-    int movecnt_bits;
-    int futuremove_offset;
-    int futuremove_bits;
-    int bits;
-};
-
-// struct proptable_format default_proptable_format = {0,32, 32,8, 40,2, 42,6, 48};
-struct proptable_format default_proptable_format = {0,32, 32,32, 64,32, 96,32, 128};
+class proptable_iterator;
 
 class proptable_ptr : public proptable_entry {
 
     friend class proptable_iterator;
+    friend class disk_que<proptable_iterator, proptable_entry>;
 
  private:
     proptable_format *format;
@@ -8870,7 +8874,7 @@ class proptable_ptr : public proptable_entry {
      */
 
     operator void *() {
-	return this;
+	return base;
     }
 
 };
@@ -8878,19 +8882,21 @@ class proptable_ptr : public proptable_entry {
 class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_ptr> {
 
     friend class new_proptable;
+    friend class disk_que<proptable_iterator, proptable_entry>;
 
  private:
+    proptable_format *format;
     int i;
     void *ptr;
 
     /* Private constructor ensures that only friends can create a proptable_iterator */
 
-    proptable_iterator(void *ptr, int i) : i(i), ptr(ptr) {}
+    proptable_iterator(proptable_format *format, void *ptr, int i) : format(format), i(i), ptr(ptr) {}
 
  public:
 
     proptable_ptr operator*() const {
-	return proptable_ptr(&default_proptable_format, ptr, i);
+	return proptable_ptr(format, ptr, i);
     }
 
     const proptable_iterator operator++(int zero) {
@@ -8964,11 +8970,11 @@ class new_proptable {
 	{}
 
     class proptable_iterator begin() {
-	return proptable_iterator(data(), 0);
+	return proptable_iterator(&default_proptable_format, data(), 0);
     }
 
     class proptable_iterator end() {
-	return proptable_iterator(data(), size);
+	return proptable_iterator(&default_proptable_format, data(), size);
     }
 
     value_type *data() {
@@ -14202,7 +14208,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.683 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.684 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
