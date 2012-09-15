@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.689 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.690 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8806,7 +8806,7 @@ class proptable_ptr : public proptable_entry {
     proptable_ptr(proptable_format *format, void *base, int i):
 	proptable_entry(get_unsigned_int_field(base, i*format->bits + format->index_offset, format->index_bits),
 			get_int_field(base, i*format->bits + format->dtm_offset, format->dtm_bits),
-			get_unsigned_int_field(base, i*format->bits + format->movecnt_offset, format->movecnt_bits),
+			get_unsigned_int_field(base, i*format->bits + format->movecnt_offset, format->movecnt_bits) + 1,
 			get_unsigned_int_field(base, i*format->bits + format->futuremove_offset, format->futuremove_bits)),
 	format(format), i(i), base(base) {}
 
@@ -8818,7 +8818,7 @@ class proptable_ptr : public proptable_entry {
 
 	set_unsigned_int_field(base, i*format->bits + format->index_offset, format->index_bits, other.index);
 	set_int_field(base, i*format->bits + format->dtm_offset, format->dtm_bits, other.dtm);
-	set_unsigned_int_field(base, i*format->bits + format->movecnt_offset, format->movecnt_bits, other.movecnt);
+	set_unsigned_int_field(base, i*format->bits + format->movecnt_offset, format->movecnt_bits, other.movecnt - 1);
 	set_unsigned_int_field(base, i*format->bits + format->futuremove_offset, format->futuremove_bits, other.futuremove);
 
 	return *this;
@@ -8952,11 +8952,6 @@ typedef priority_queue<class proptable_entry, class new_proptable, disk_que<prop
 proptable * input_proptable;
 proptable * output_proptable;
 
-void finalize_proptable_entry(class proptable_entry propentry)
-{
-    finalize_update(propentry.index, propentry.dtm, propentry.movecnt, propentry.futuremove);
-}
-
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index);
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector);
 
@@ -9027,11 +9022,11 @@ void * proptable_pass_thread(void * ptr)
 
 	    if (target_dtm != 0) {
 
-		finalize_proptable_entry(*pt_entry);
+		finalize_update(pt_entry->index, target_dtm, 1, 0);
 
 	    } else if (FUTUREVECTOR(pt_entry->futuremove) & possible_futuremoves) {
 
-		finalize_proptable_entry(*pt_entry);
+		finalize_update(pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
 
 		/* XXX This code is commented out because double consideration of a futuremove can
 		 * happen for symmetric tablebases.  In this case, two different positions in the
@@ -9103,8 +9098,17 @@ void proptable_pass(int target_dtm)
      * a new proptable.
      */
 
-    //proptable_format format = {0,32, 32,32, 64,32, 96,32, 128};
-    proptable_format format = {0,32, 32,16, 48,16, 0,0, 64};
+    proptable_format format;
+
+    format.index_offset = 0;
+    for (format.index_bits = 1; 1ULL << (format.index_bits-1) < current_tb->max_index; format.index_bits ++);
+    format.dtm_offset = 0;
+    format.dtm_bits = 0;
+    format.movecnt_offset = 0;
+    format.movecnt_bits = 0;
+    format.futuremove_offset = 0;
+    format.futuremove_bits = 0;
+    format.bits = format.index_bits;
 
     input_proptable = output_proptable;
     if (input_proptable != NULL) input_proptable->prepare_to_retrieve();
@@ -13346,7 +13350,22 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	 * into it, checking each position move as we go to make sure its futuremoves are handled.
 	 */
 
-	proptable_format format = {0,32, 32,32, 64,32, 96,32, 128};
+	proptable_format format;
+
+	format.index_offset = 0;
+	for (format.index_bits = 1; 1ULL << (format.index_bits-1) < tb->max_index; format.index_bits ++);
+	format.dtm_offset = format.index_bits;
+	for (format.dtm_bits = 1; (max_tracked_dtm > (1 << (format.dtm_bits - 1)) - 1)
+		     || (min_tracked_dtm < -(1 << (format.dtm_bits - 1))); format.dtm_bits ++);
+	format.movecnt_offset = format.dtm_offset + format.dtm_bits;
+	format.movecnt_bits = 1;
+	format.futuremove_offset = format.movecnt_offset + format.movecnt_bits;
+	for (format.futuremove_bits = 1; 1U << (format.futuremove_bits-1) < num_futuremoves[WHITE] - 1
+		 || 1U << (format.futuremove_bits-1) < num_futuremoves[BLACK] - 1; format.futuremove_bits ++);
+	format.bits = format.futuremove_offset + format.futuremove_bits;
+
+	info("Initial proptable format: %d bits index; %d bits dtm; %d bit movecnt; %d bits futuremove; %d bits total\n",
+	     format.index_bits, format.dtm_bits, format.movecnt_bits, format.futuremove_bits, format.bits);
 
 	entriesTable = new DiskEntriesTable;
 
@@ -14176,7 +14195,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.689 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.690 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
