@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.684 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.685 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8386,36 +8386,6 @@ struct proptable_format default_proptable_format = {0,32, 32,32, 64,32, 96,32, 1
 
 extern "C++" {
 
-#if 0
-    /* Substitution Failure Is Not An Error (SFINAE)
-     *
-     * A C++ hack to detect whether a templated class has a member function.
-     */
-
-    template<typename T>
-    struct has_bytes_method {
-	template<typename U, size_t (U::*)() const> struct SFINAE {};
-	template<typename U> static char Test(SFINAE<U, &U::bytes>*);
-	template<typename U> static int Test(...);
-	static const bool value = sizeof(Test<T>(0)) == sizeof(char);
-    };
-
-    template<typename Container>
-    class stuff : public Container {
-
-	stuff(void *data, size_t bytes) {
-	}
-
-	typename Container::value_type operator[](int i) {
-	}
-
-	void * data() {
-	}
-
-	size_t bytes() {
-	}
-    };
-#endif
     /* A simple disk-backed que.  Template argument Container is the in-memory container class we're
      * backing up.  It has to provide a value_type typedef, data() and bytes() methods that returns a pointer
      * to its value_type.  Our constructor takes a pointer to the container and the number of
@@ -14208,7 +14178,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.684 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.685 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
