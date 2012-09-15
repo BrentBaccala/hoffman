@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.685 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.686 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8420,7 +8420,7 @@ extern "C++" {
 
 	disk_que(Iterator head, Iterator tail): size(tail - head), next(0), format(head.format) {
 
-	    size_t bits = size * value_type::sizeof_bits();
+	    size_t bits = size * format->bits;
 	    size_t bytes = (bits + 7)/8;
 
 	    strcpy(filename, "proptableXXXXXX");
@@ -8439,7 +8439,7 @@ extern "C++" {
 	    }
 
 	    // this will create a buffer with room for queue_size values
-	    buffer = new char[queue_size * value_type::sizeof_bits() / 8];
+	    buffer = new char[queue_size * format->bits / 8];
 	}
 
 	~disk_que() {
@@ -8459,9 +8459,9 @@ extern "C++" {
 	    if (next % queue_size == 0) {
 		// XXX check return value
 		if (compress_proptables) {
-		    zlib_read(file, (char *) buffer, queue_size * value_type::sizeof_bits() / 8);
+		    zlib_read(file, (char *) buffer, queue_size * format->bits / 8);
 		} else {
-		    read(fd, buffer, queue_size * value_type::sizeof_bits() / 8);
+		    read(fd, buffer, queue_size * format->bits / 8);
 		}
 	    }
 	    proptable_ptr retval(format, buffer, next % queue_size);
@@ -8767,7 +8767,9 @@ class proptable_entry {
     unsigned int movecnt;
     int futuremove;
 
-    /* XXX maybe we should initialize all our fields during construction */
+    /* Can't initialize all our fields during construction since sorting_network creates an
+     * uninitialized array of proptable_entry's.
+     */
     proptable_entry() {}
 
     proptable_entry(index_t index, int dtm, unsigned int movecnt, int futuremove):
@@ -8777,10 +8779,6 @@ class proptable_entry {
 
     bool operator<(const proptable_entry &other) const {
 	return index < other.index;
-    }
-
-    static size_t sizeof_bits(void) {
-	return 8 * sizeof(proptable_entry);
     }
 };
 
@@ -14178,7 +14176,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.685 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.686 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
