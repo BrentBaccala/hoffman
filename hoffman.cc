@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.686 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.687 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8666,9 +8666,10 @@ extern "C++" {
 
     public:
     
-    priority_queue(int limitMB = 512*1024*1024):
+	template <typename... Args>
+    priority_queue(Args... args):
 	snetwork(&disk_ques),
-	in_memory_queue(new MemoryContainer(limitMB/sizeof(T))),
+	in_memory_queue(new MemoryContainer(args...)),
 	head(in_memory_queue->begin()),
 	tail(head),
 	sorted(1)
@@ -8928,21 +8929,22 @@ class new_proptable {
  private:
     std::vector<proptable_entry> vec;
     int size;
+    proptable_format *format;
 
  public:
     typedef proptable_entry value_type;
     typedef proptable_iterator iterator;
 
- new_proptable(int i):
-    vec(std::vector<proptable_entry>(i)), size(i)
+ new_proptable(int size, proptable_format *format):
+    vec(std::vector<proptable_entry>(size)), size(size), format(format)
 	{}
 
     class proptable_iterator begin() {
-	return proptable_iterator(&default_proptable_format, data(), 0);
+	return proptable_iterator(format, data(), 0);
     }
 
     class proptable_iterator end() {
-	return proptable_iterator(&default_proptable_format, data(), size);
+	return proptable_iterator(format, data(), size);
     }
 
     value_type *data() {
@@ -9111,7 +9113,7 @@ void proptable_pass(int target_dtm)
     input_proptable = output_proptable;
     if (input_proptable != NULL) input_proptable->prepare_to_retrieve();
 
-    output_proptable = new proptable(proptable_MBs << 20);
+    output_proptable = new proptable(proptable_MBs << 20, &default_proptable_format);
 
     /* fprintf(stderr, "proptable_pass(%d); size of proptable: %llu\n", target_dtm, input_proptable->size()); */
 
@@ -13350,7 +13352,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
 	entriesTable = new DiskEntriesTable;
 
-	output_proptable = new proptable(proptable_MBs << 20);
+	output_proptable = new proptable(proptable_MBs << 20, &default_proptable_format);
 
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
@@ -14176,7 +14178,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.686 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.687 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
