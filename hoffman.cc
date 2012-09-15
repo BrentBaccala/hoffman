@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.687 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.688 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8386,11 +8386,7 @@ struct proptable_format default_proptable_format = {0,32, 32,32, 64,32, 96,32, 1
 
 extern "C++" {
 
-    /* A simple disk-backed que.  Template argument Container is the in-memory container class we're
-     * backing up.  It has to provide a value_type typedef, data() and bytes() methods that returns a pointer
-     * to its value_type.  Our constructor takes a pointer to the container and the number of
-     * elements in it.  Our semantics are to make a copy of the container and export a pop_front()
-     * method to walk through our data.
+    /* A simple disk-backed que.
      *
      * We pass a begin/end pair of iterators to our constructor.  We assume that these iterators can
      * be cast to a (void *) and that the value_type implements a sizeof_bits() function.
@@ -8654,7 +8650,7 @@ extern "C++" {
 		//std::sort(head, tail);
 		std::make_heap(head, tail);
 		std::sort_heap(head, tail);
-		sorted = 1;
+		sorted = true;
 	    }
 	}
 
@@ -8672,7 +8668,7 @@ extern "C++" {
 	in_memory_queue(new MemoryContainer(args...)),
 	head(in_memory_queue->begin()),
 	tail(head),
-	sorted(1)
+	sorted(true)
 	{}
 
 	~priority_queue() {
@@ -8699,7 +8695,7 @@ extern "C++" {
 		dump_memory_queue_to_disk();
 	    }
 	    *(tail ++) = x;
-	    sorted = 0;
+	    sorted = false;
 	    unlock();
 	}
 
@@ -8940,15 +8936,11 @@ class new_proptable {
 	{}
 
     class proptable_iterator begin() {
-	return proptable_iterator(format, data(), 0);
+	return proptable_iterator(format, vec.data(), 0);
     }
 
     class proptable_iterator end() {
-	return proptable_iterator(format, data(), size);
-    }
-
-    value_type *data() {
-	return vec.data();
+	return proptable_iterator(format, vec.data(), size);
     }
 };
 
@@ -14178,7 +14170,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.687 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.688 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
