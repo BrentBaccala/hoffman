@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.690 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.691 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8644,9 +8644,9 @@ extern "C++" {
 
 	void sort_in_memory_queue(void) {
 	    if (! sorted) {
-		//std::sort(head, tail);
-		std::make_heap(head, tail);
-		std::sort_heap(head, tail);
+		std::sort(head, tail);
+		//std::make_heap(head, tail);
+		//std::sort_heap(head, tail);
 		sorted = true;
 	    }
 	}
@@ -8795,6 +8795,7 @@ class proptable_ptr : public proptable_entry {
 
     friend class proptable_iterator;
     friend class disk_que<proptable_iterator, proptable_entry>;
+    friend void swap(proptable_ptr a, proptable_ptr b);
 
  private:
     proptable_format *format;
@@ -8840,6 +8841,13 @@ class proptable_ptr : public proptable_entry {
     }
 
 };
+
+void swap(proptable_ptr a, proptable_ptr b) {
+    unsigned int x = get_unsigned_int_field(a.base, a.i * a.format->bits, a.format->bits);
+    set_unsigned_int_field(a.base, a.i * a.format->bits, a.format->bits,
+			   get_unsigned_int_field(b.base, b.i * b.format->bits, b.format->bits));
+    set_unsigned_int_field(b.base, b.i * b.format->bits, b.format->bits, x);
+}
 
 class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_ptr> {
 
@@ -13364,8 +13372,8 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 		 || 1U << (format.futuremove_bits-1) < num_futuremoves[BLACK] - 1; format.futuremove_bits ++);
 	format.bits = format.futuremove_offset + format.futuremove_bits;
 
-	info("Initial proptable format: %d bits index; %d bits dtm; %d bit movecnt; %d bits futuremove; %d bits total\n",
-	     format.index_bits, format.dtm_bits, format.movecnt_bits, format.futuremove_bits, format.bits);
+	info("Initial proptable format: %d bits index; %d bits dtm; %d bit movecnt; %d bits futuremove\n",
+	     format.index_bits, format.dtm_bits, format.movecnt_bits, format.futuremove_bits);
 
 	entriesTable = new DiskEntriesTable;
 
@@ -14195,7 +14203,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.690 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.691 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
