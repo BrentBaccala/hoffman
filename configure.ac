@@ -15,6 +15,10 @@ else
 	AC_MSG_WARN(You don't have gcc; Hoffman uses several gcc extensions)
 fi
 
+dnl AC_LANG_PUSH([C++])
+AX_CHECK_COMPILE_FLAG([-std=c++0x], [CFLAGS="$CFLAGS -std=c++0x"])
+dnl AC_LANG_POP
+
 AC_DEFUN([CHECK_INTEL_ATOMIC_OPS], [
 	AC_MSG_CHECKING([whether Intel atomic operations are available])
 	AC_LANG_PUSH([C])
