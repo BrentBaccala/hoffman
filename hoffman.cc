@@ -9,7 +9,7 @@
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
- * written in C++
+ * written in a mismash of C, C++, and C++11
  *
  * This program is formated for a (minimum) 100 character wide display.
  *
@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.691 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.692 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8365,8 +8365,8 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
  *
  * TPIE's priority_queue uses the disk, but isn't thread safe and can't compress its disk files.
  *
- * Mine is build from several pieces: an in-memory table; disk files that back it up when it fills;
- * a sorting network to read the files back in when we retreive.
+ * Mine is build from several pieces: an in-memory table; a templated class that dumps a container
+ * to disk, then reads it back; a sorting network to read the files back in when we retreive.
  */
 
 struct proptable_format {
@@ -8385,54 +8385,69 @@ extern "C++" {
 
     /* A simple disk-backed que.
      *
-     * We pass a begin/end pair of iterators to our constructor.  We assume that these iterators can
-     * be cast to a (void *) and that the value_type implements a sizeof_bits() function.
+     * Template argument Container is the in-memory container class we're backing up.  It has to
+     * provide a value_type typedef and an iterator typedef.  Our constructor takes a pair of
+     * iterators.  They have to dereference into something that can be cast to a void * and accessed
+     * as a memory structure of size sizeof(value_type).  Our semantics are to make a copy of the
+     * container and export a pop_front() method to walk through our data.
      *
      * Caveat: Instances of this class can not be copied, because then both copies would have the same
      * file descriptor and the first one destroyed would close it.
+     *
+     * Caveat: We don't actually use this class, but specialize it later.
+     *
+     * XXX we'd like to use operator<< to write an object in the container.  Instead we just dump
+     * its memory block to disk.
      */
 
-    class proptable_ptr;
-
-    template <typename Iterator, typename T = typename Iterator::value_type>
+    template <typename Container>
     struct disk_que {
-
+	typedef typename Container::value_type T;
 	typedef T value_type;
 
-	static const int queue_size = 256;	// size of in-memory queue; must be a multiple of 8
-
-	int size;
-	int next;
-	void *buffer;
-	proptable_format *format;
+	static const int queue_size = 256;	// size of in-memory queue
 
 	int fd;
+	int next;
+	int size;
+	T queue[queue_size];
 	char filename[16];
 	void *file;
 	int count;
 
-	disk_que(Iterator head, Iterator tail): size(tail - head), next(0), format(head.format) {
+	disk_que(typename Container::iterator head, typename Container::iterator tail) {
 
-	    size_t bits = size * format->bits;
-	    size_t bytes = (bits + 7)/8;
+	    typename Container::iterator iter = head;
 
 	    strcpy(filename, "proptableXXXXXX");
 	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
 
 	    if (compress_proptables) {
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-		zlib_write(file, (const char *) (void *) *head, bytes);
+	    }
+
+	    for (size = 0, iter = head; (size <= queue_size) && (iter != tail); iter++, size++) {
+		queue[size] = *iter;
+	    }
+
+	    for (; iter != tail; iter++, size++) {
+		if (compress_proptables) {
+		    zlib_write(file, (const char *) (void *) *iter, sizeof(T));
+		} else {
+		    do_write(fd, (void *) *iter, sizeof(T));
+		}
+	    }
+
+	    if (compress_proptables) {
 		zlib_flush(file);
 		zlib_free(file);
 		lseek(fd, 0, SEEK_SET);
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	    } else {
-		do_write(fd, (void *) *head, bytes);
 		lseek(fd, 0, SEEK_SET);
 	    }
 
-	    // this will create a buffer with room for queue_size values
-	    buffer = new char[queue_size * format->bits / 8];
+	    next = 0;
 	}
 
 	~disk_que() {
@@ -8449,18 +8464,15 @@ extern "C++" {
 	}
 
 	T pop_front(void) {
-	    if (next % queue_size == 0) {
+	    if ((next != 0) && (next % queue_size == 0)) {
 		// XXX check return value
 		if (compress_proptables) {
-		    zlib_read(file, (char *) buffer, queue_size * format->bits / 8);
+		    zlib_read(file, (char *) queue, queue_size * sizeof(T));
 		} else {
-		    read(fd, buffer, queue_size * format->bits / 8);
+		    read(fd, queue, queue_size * sizeof(T));
 		}
 	    }
-	    proptable_ptr retval(format, buffer, next % queue_size);
-	    next ++;
-
-	    return (T) retval;
+	    return queue[(next++) % queue_size];
 	}
     };
 
@@ -8628,7 +8640,7 @@ extern "C++" {
 
     pthread_mutex_t priority_queue_lock = PTHREAD_MUTEX_INITIALIZER;
 
-    template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<typename MemoryContainer::iterator> >
+    template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
     class priority_queue {
 
 	typedef class std::deque<DiskContainer *> DiskQueQue;
@@ -8790,11 +8802,12 @@ class proptable_entry {
  */
 
 class proptable_iterator;
+class memory_proptable;
 
 class proptable_ptr : public proptable_entry {
 
     friend class proptable_iterator;
-    friend class disk_que<proptable_iterator, proptable_entry>;
+    friend class disk_que<memory_proptable>;
     friend void swap(proptable_ptr a, proptable_ptr b);
 
  private:
@@ -8851,8 +8864,8 @@ void swap(proptable_ptr a, proptable_ptr b) {
 
 class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_ptr> {
 
-    friend class new_proptable;
-    friend class disk_que<proptable_iterator, proptable_entry>;
+    friend class memory_proptable;
+    friend class disk_que<memory_proptable>;
 
  private:
     proptable_format *format;
@@ -8925,7 +8938,7 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
     }
 };
 
-class new_proptable {
+class memory_proptable {
 
  private:
     int size;
@@ -8936,11 +8949,11 @@ class new_proptable {
     typedef proptable_entry value_type;
     typedef proptable_iterator iterator;
 
- new_proptable(int size_in_bytes, proptable_format *format):
+ memory_proptable(int size_in_bytes, proptable_format *format):
     size(size_in_bytes * 8 / format->bits), data(new char[size_in_bytes]), format(format)
 	{}
 
-    ~new_proptable() {
+    ~memory_proptable() {
 	delete data;
     }
 
@@ -8953,9 +8966,85 @@ class new_proptable {
     }
 };
 
+/* We don't use the generic disk_que template defined above, because it can't handle bit-aligned
+ * tables.  Instead, we specialize a disk_que that dumps a bit-aligned table.
+ */
+
+extern "C++" {
+    template <>
+    struct disk_que<memory_proptable> {
+
+	typedef proptable_entry value_type;
+
+	static const int queue_size = 256;	// size of in-memory queue; must be a multiple of 8
+
+	int size;
+	int next;
+	void *buffer;
+	proptable_format *format;
+
+	int fd;
+	char filename[16];
+	void *file;
+	int count;
+
+    disk_que(proptable_iterator head, proptable_iterator tail): size(tail - head), next(0), format(head.format) {
+
+	    size_t bits = size * format->bits;
+	    size_t bytes = (bits + 7)/8;
+
+	    strcpy(filename, "proptableXXXXXX");
+	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
+
+	    if (compress_proptables) {
+		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
+		zlib_write(file, (const char *) (void *) *head, bytes);
+		zlib_flush(file);
+		zlib_free(file);
+		lseek(fd, 0, SEEK_SET);
+		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
+	    } else {
+		do_write(fd, (void *) *head, bytes);
+		lseek(fd, 0, SEEK_SET);
+	    }
+
+	    // this will create a buffer with room for queue_size values
+	    buffer = new char[queue_size * format->bits / 8];
+	}
+
+	~disk_que() {
+	    if (compress_proptables) {
+		zlib_close(file);
+	    } else {
+		close(fd);
+	    }
+	    unlink(filename);
+	}
+
+	bool empty(void) {
+	    return (next == size);
+	}
+
+	proptable_entry pop_front(void) {
+	    if (next % queue_size == 0) {
+		// XXX check return value
+		if (compress_proptables) {
+		    zlib_read(file, (char *) buffer, queue_size * format->bits / 8);
+		} else {
+		    read(fd, buffer, queue_size * format->bits / 8);
+		}
+	    }
+	    proptable_ptr retval(format, buffer, next % queue_size);
+	    next ++;
+
+	    return (proptable_entry) retval;
+	}
+    };
+}
+
 /* Finally, the actual priority queue(s) */
 
-typedef priority_queue<class proptable_entry, class new_proptable, disk_que<proptable_iterator, proptable_entry> > proptable;
+typedef priority_queue<class proptable_entry, class memory_proptable> proptable;
 
 proptable * input_proptable;
 proptable * output_proptable;
@@ -9102,8 +9191,8 @@ void * proptable_pass_thread(void * ptr)
 
 void proptable_pass(int target_dtm)
 {
-    /* Swap proptables.  prepare_to_retrieve() frees a lot of memory, so we call it before allocing
-     * a new proptable.
+    /* Proptable for intra-tablebase propagation only needs to record the index, since the dtm is
+     * known from the pass number, the movecnt is always one, and we're done tracking futuremoves.
      */
 
     proptable_format format;
@@ -9117,6 +9206,10 @@ void proptable_pass(int target_dtm)
     format.futuremove_offset = 0;
     format.futuremove_bits = 0;
     format.bits = format.index_bits;
+
+    /* Swap proptables.  prepare_to_retrieve() frees a lot of memory, so we call it before allocing
+     * a new proptable.
+     */
 
     input_proptable = output_proptable;
     if (input_proptable != NULL) input_proptable->prepare_to_retrieve();
@@ -13356,6 +13449,15 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	/* Using proptables.  No futurevectors array.  We back propagate the futurebases into the
 	 * proptable, then in a single pass initialize the entries array and commit the proptable
 	 * into it, checking each position move as we go to make sure its futuremoves are handled.
+	 *
+	 * Required field sizes for futurebase back-propagation:
+	 *
+	 *   index - figure out from max_index
+	 *   dtm - figure out from futurebase preload, unless it isn't being tracked
+	 *   movecnt - 0 (XXX - discarded futuremove only), 1, or 2 for 8-way symmetry conversion
+	 *   futuremove - figure out from total_futuremoves
+	 *
+	 * XXX turn off movecnt if we don't have 8-way symmetry
 	 */
 
 	proptable_format format;
@@ -14203,7 +14305,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.691 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.692 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
