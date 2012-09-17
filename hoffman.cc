@@ -5645,7 +5645,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.694 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.695 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8466,11 +8466,15 @@ extern "C++" {
 
 	T pop_front(void) {
 	    if ((next != 0) && (next % queue_size == 0)) {
-		// XXX check return value
+		ssize_t retval;
 		if (compress_proptables) {
-		    zlib_read(file, (char *) queue, queue_size * sizeof(T));
+		    retval = zlib_read(file, (char *) queue, queue_size * sizeof(T));
 		} else {
-		    read(fd, queue, queue_size * sizeof(T));
+		    retval = read(fd, queue, queue_size * sizeof(T));
+		}
+		if ((retval != queue_size * sizeof(T))
+		    && (retval != (size - next) * sizeof(T))) {
+		    throw "Short read in disk_que";
 		}
 	    }
 	    return queue[(next++) % queue_size];
@@ -9026,11 +9030,15 @@ extern "C++" {
 
 	proptable_entry pop_front(void) {
 	    if (next % queue_size == 0) {
-		// XXX check return value
+		ssize_t retval;
 		if (compress_proptables) {
-		    zlib_read(file, buffer, queue_size * format.bits / 8);
+		    retval = zlib_read(file, buffer, queue_size * format.bits / 8);
 		} else {
-		    read(fd, buffer, queue_size * format.bits / 8);
+		    retval = read(fd, buffer, queue_size * format.bits / 8);
+		}
+		if ((retval != queue_size * format.bits / 8)
+		    && (retval != ((size - next) * format.bits + 7) / 8)) {
+		    throw "Short read in disk_que";
 		}
 	    }
 	    proptable_ptr retval(&format, buffer, next % queue_size);
@@ -14305,7 +14313,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.694 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.695 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
