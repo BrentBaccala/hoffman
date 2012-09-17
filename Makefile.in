@@ -6,7 +6,7 @@ CXXFLAGS= @CFLAGS@ @READLINE_CPPFLAGS@ @XML_CPPFLAGS@ @CURL_CFLAGS@
 
 hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@
 
-configure_SRCS = configure configure.in Makefile.in config.h.in config.guess config.sub install-sh
+configure_SRCS = configure configure.ac Makefile.in config.h.in config.guess config.sub install-sh
 hoffman_SRCS = hoffman.cc probe.c egtb.cpp lock.h tbdecode.h url_fopen.c ftp_fopen.c zlib_fopen.c url_fopen.h ftp_fopen.h zlib_fopen.h bitlib.h
 hoffman_DTD = tablebase.dtd
 hoffman_SCRIPTS = pawngen genctlfile.pl gensuicide.pl genalltb genalltb.bat hoffman.nsi md5htb cgi-bin/*
