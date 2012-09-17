@@ -5644,7 +5644,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.692 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.693 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8669,8 +8669,25 @@ extern "C++" {
 	    tail = head;
 	}
 
+	void prepare_to_retrieve(void) {
+	    if (disk_ques.empty()) {
+		if (! sorted) sort_in_memory_queue();
+		/* XXX ideally, resize the in-memory table to (tail-head) elements */
+	    } else {
+		if (in_memory_queue != NULL) {
+		    if (head != tail) {
+			dump_memory_queue_to_disk();
+		    }
+		    delete in_memory_queue;
+		    in_memory_queue = NULL;
+		}
+	    }
+	}
+
     public:
     
+	/* Our constructor passes all of its arguments to MemoryContainer's constructor */
+
 	template <typename... Args>
     priority_queue(Args... args):
 	snetwork(&disk_ques),
@@ -8710,21 +8727,6 @@ extern "C++" {
 
 	bool empty(void) {
 	    return disk_ques.empty() ? (head == tail) : snetwork.empty();
-	}
-
-	void prepare_to_retrieve(void) {
-	    if (disk_ques.empty()) {
-		if (! sorted) sort_in_memory_queue();
-		/* XXX ideally, resize the in-memory table to (tail-head) elements */
-	    } else {
-		if (in_memory_queue != NULL) {
-		    if (head != tail) {
-			dump_memory_queue_to_disk();
-		    }
-		    delete in_memory_queue;
-		    in_memory_queue = NULL;
-		}
-	    }
 	}
 
 	const T front(void) {
@@ -8799,6 +8801,10 @@ class proptable_entry {
  * proptable_ptr has to operate as an lvalue that both points into the proptable (Swappable) and
  * also can hold a temporary value (MoveConstructable and Move Assignable).  So we subclass
  * proptable_entry in order to hold a value, and also keep a base/i that points into the proptable.
+ *
+ * Both proptable_ptr and proptable_iterator contain pointers to the format, since both of them are
+ * dependent on either a memory_proptable or a disk_que<memory_proptable>.  On the other hand, both
+ * memory_proptable and disk_que<memory_proptable> contain actual format structures, not pointers.
  */
 
 class proptable_iterator;
@@ -8941,16 +8947,16 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
 class memory_proptable {
 
  private:
-    int size;
+    proptable_format format;
+    size_t size_in_entries;
     char *data;
-    proptable_format *format;
 
  public:
     typedef proptable_entry value_type;
     typedef proptable_iterator iterator;
 
- memory_proptable(int size_in_bytes, proptable_format *format):
-    size(size_in_bytes * 8 / format->bits), data(new char[size_in_bytes]), format(format)
+ memory_proptable(size_t size_in_bytes, proptable_format format):
+    format(format), size_in_entries(size_in_bytes / format.bits * 8), data(new char[size_in_bytes])
 	{}
 
     ~memory_proptable() {
@@ -8958,11 +8964,11 @@ class memory_proptable {
     }
 
     class proptable_iterator begin() {
-	return proptable_iterator(format, data, 0);
+	return proptable_iterator(&format, data, 0);
     }
 
     class proptable_iterator end() {
-	return proptable_iterator(format, data, size);
+	return proptable_iterator(&format, data, size_in_entries);
     }
 };
 
@@ -8980,17 +8986,17 @@ extern "C++" {
 
 	int size;
 	int next;
-	void *buffer;
-	proptable_format *format;
+	char *buffer;
+	proptable_format format;
 
 	int fd;
 	char filename[16];
 	void *file;
 	int count;
 
-    disk_que(proptable_iterator head, proptable_iterator tail): size(tail - head), next(0), format(head.format) {
+    disk_que(proptable_iterator head, proptable_iterator tail): size(tail - head), next(0), format(*(head.format)) {
 
-	    size_t bits = size * format->bits;
+	    size_t bits = size * format.bits;
 	    size_t bytes = (bits + 7)/8;
 
 	    strcpy(filename, "proptableXXXXXX");
@@ -9009,7 +9015,7 @@ extern "C++" {
 	    }
 
 	    // this will create a buffer with room for queue_size values
-	    buffer = new char[queue_size * format->bits / 8];
+	    buffer = new char[queue_size * format.bits / 8];
 	}
 
 	~disk_que() {
@@ -9019,6 +9025,7 @@ extern "C++" {
 		close(fd);
 	    }
 	    unlink(filename);
+	    delete buffer;
 	}
 
 	bool empty(void) {
@@ -9029,12 +9036,12 @@ extern "C++" {
 	    if (next % queue_size == 0) {
 		// XXX check return value
 		if (compress_proptables) {
-		    zlib_read(file, (char *) buffer, queue_size * format->bits / 8);
+		    zlib_read(file, buffer, queue_size * format.bits / 8);
 		} else {
-		    read(fd, buffer, queue_size * format->bits / 8);
+		    read(fd, buffer, queue_size * format.bits / 8);
 		}
 	    }
-	    proptable_ptr retval(format, buffer, next % queue_size);
+	    proptable_ptr retval(&format, buffer, next % queue_size);
 	    next ++;
 
 	    return (proptable_entry) retval;
@@ -9207,14 +9214,15 @@ void proptable_pass(int target_dtm)
     format.futuremove_bits = 0;
     format.bits = format.index_bits;
 
-    /* Swap proptables.  prepare_to_retrieve() frees a lot of memory, so we call it before allocing
-     * a new proptable.
+    /* Swap proptables.  Our priority queue implementation is designed to do all the insertions
+     * first, then all the retrievals, and starting to retrieve can free a lot of memory, so we
+     * retrieve the first entry in the old proptable before allocing a new proptable.
      */
 
     input_proptable = output_proptable;
-    if (input_proptable != NULL) input_proptable->prepare_to_retrieve();
+    if (input_proptable != NULL) input_proptable->front();
 
-    output_proptable = new proptable(proptable_MBs << 20, &format);
+    output_proptable = new proptable(proptable_MBs << 20, format);
 
     /* fprintf(stderr, "proptable_pass(%d); size of proptable: %llu\n", target_dtm, input_proptable->size()); */
 
@@ -13479,7 +13487,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
 	entriesTable = new DiskEntriesTable;
 
-	output_proptable = new proptable(proptable_MBs << 20, &format);
+	output_proptable = new proptable(proptable_MBs << 20, format);
 
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
@@ -14305,7 +14313,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.692 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.693 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
