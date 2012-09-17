@@ -92,6 +92,7 @@
 #include <algorithm>		/* for std::sort */
 #include <deque>
 #include <vector>
+#include <mutex>
 
 extern "C" {
 
@@ -5644,7 +5645,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.693 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.694 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8633,15 +8634,14 @@ extern "C++" {
      * as a trigger to sort and dump 1/n-th of it.  So long as the table is at least n^2 elements,
      * we're fine.
      *
-     * XXX about the mutex... I'm a bit scared to use the new C++11 stuff... we only lock when we
-     * insert... we expect the caller to already hold the lock when we retrieve... we do this
-     * because we want to atomically retrieve the front element along with any elements equal to it
+     * about inheriting std::mutex... we lock when we insert (though we shouldn't need this if tail
+     * can be bumped atomically)... we expect the caller to already hold the lock when we
+     * retrieve... we do this because we want to atomically retrieve the front element along with
+     * any elements equal to it
      */
 
-    pthread_mutex_t priority_queue_lock = PTHREAD_MUTEX_INITIALIZER;
-
     template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
-    class priority_queue {
+	class priority_queue : public std::mutex {
 
 	typedef class std::deque<DiskContainer *> DiskQueQue;
 
@@ -8706,14 +8706,6 @@ extern "C++" {
 	    disk_ques.clear();
 	}
 
-	void lock(void) {
-	    pthread_mutex_lock(&priority_queue_lock);
-	}
-
-	void unlock(void) {
-	    pthread_mutex_unlock(&priority_queue_lock);
-	}
-	
 	void push(const T& x) {
 	    lock();
 	    if (in_memory_queue == NULL) throw "priority_queue: push attempted after retrieval started";
@@ -14313,7 +14305,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.693 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.694 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
