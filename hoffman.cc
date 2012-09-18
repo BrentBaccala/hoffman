@@ -5651,7 +5651,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.696 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.697 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8801,8 +8801,12 @@ class proptable_entry {
  * To support std::sort, proptable_iterator has to dereference into a type that is Swappable,
  * MoveConstructable and MoveAssignable (the C++11 standard's terminology).  That means that
  * proptable_ptr has to operate as an lvalue that both points into the proptable (Swappable) and
- * also can hold a temporary value (MoveConstructable and Move Assignable).  So we subclass
+ * also can hold a temporary value (MoveConstructable and MoveAssignable).  So we subclass
  * proptable_entry in order to hold a value, and also keep a base/i that points into the proptable.
+ *
+ * We need a type T that works like this (given two values 'a' and 'b' of type T):
+ *      T x = a;    (MoveConstructable)
+ *      b = x;      (MoveAssignable)
  *
  * Both proptable_ptr and proptable_iterator contain pointers to the format, since both of them are
  * dependent on either a memory_proptable or a disk_que<memory_proptable>.  On the other hand, both
@@ -8864,10 +8868,10 @@ class proptable_ptr : public proptable_entry {
 };
 
 void swap(proptable_ptr a, proptable_ptr b) {
-    unsigned int x = get_unsigned_int_field(a.base, a.i * a.format->bits, a.format->bits);
-    set_unsigned_int_field(a.base, a.i * a.format->bits, a.format->bits,
-			   get_unsigned_int_field(b.base, b.i * b.format->bits, b.format->bits));
-    set_unsigned_int_field(b.base, b.i * b.format->bits, b.format->bits, x);
+    uint64_t x = get_unsigned_int_field(a.base, a.i * a.format->bits, a.format->bits);
+    set_uint64_t_field(a.base, a.i * a.format->bits, a.format->bits,
+		       get_uint64_t_field(b.base, b.i * b.format->bits, b.format->bits));
+    set_uint64_t_field(b.base, b.i * b.format->bits, b.format->bits, x);
 }
 
 class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_ptr> {
@@ -8959,7 +8963,10 @@ class memory_proptable {
 
  memory_proptable(size_t size_in_bytes, proptable_format format):
     format(format), size_in_entries(size_in_bytes / format.bits * 8), data(new char[size_in_bytes])
-	{}
+	{
+	    /* We use a uint64_t to swap proptable entries */
+	    if (format.bits > 64) throw "proptable format too large";
+	}
 
     ~memory_proptable() {
 	delete data;
@@ -14319,7 +14326,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.696 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.697 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
