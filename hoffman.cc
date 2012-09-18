@@ -9,7 +9,7 @@
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
- * written in a mismash of C, C++, and C++11
+ * written in a mismash of C, C99, C++, and C++11
  *
  * This program is formated for a (minimum) 100 character wide display.
  *
@@ -169,9 +169,15 @@ extern "C" {
 #define PRIx64 "llx"
 #endif
 
+#ifdef USE_SMALL_INDICES
 typedef uint32_t index_t;
 #define PRIindex PRIu32
-#define INVALID_INDEX 0xffffffff
+#define INVALID_INDEX UINT32_MAX
+#else
+typedef uint64_t index_t;
+#define PRIindex PRIu64
+#define INVALID_INDEX UINT64_MAX
+#endif
 
 /* If we're going to run multi-threaded, we need the POSIX threads library */
 
@@ -5463,15 +5469,15 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     if (modulus != NULL) {
 	if (strcmp((char *) modulus, "auto") == 0) {
 	    tb->modulus = round_up_to_prime(tb->max_index + 1);
-	    if (! is_futurebase) fprintf(stderr, "Using %d as auto modulus\n", tb->modulus);
+	    if (! is_futurebase) info("Using %" PRIindex " as auto modulus\n", tb->modulus);
 	} else {
 	    tb->modulus = strtoll((const char *) modulus, NULL, 0);
 	    if (! is_prime(tb->modulus)) {
-		fatal("modulus %d is not a prime number\n", tb->modulus);
+		fatal("modulus %" PRIindex " is not a prime number\n", tb->modulus);
 		return NULL;
 	    }
 	    if (tb->modulus <= tb->max_index) {
-		fatal("modulus %d less than max_index %d\n", tb->modulus, tb->max_index);
+		fatal("modulus %" PRIindex " less than max_index %" PRIindex "\n", tb->modulus, tb->max_index);
 		return NULL;
 	    }
 	}
@@ -5645,7 +5651,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.695 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.696 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7586,7 +7592,7 @@ class EntriesTable {
     void initialize_entry(index_t index, int movecnt, int dtm) {
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE) {
-	    fprintf(stderr, "initialize index %d %s movecnt %d; dtm %d\n",
+	    fprintf(stderr, "initialize index %" PRIindex " %s movecnt %d; dtm %d\n",
 		    index, index_to_FEN(current_tb, index), movecnt, dtm);
 	}
 #endif
@@ -8101,7 +8107,7 @@ inline void PTM_wins(index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("PTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, entriesTable->get_raw_DTM(index));
+	printf("PTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n", index, dtm, entriesTable->get_raw_DTM(index));
 #endif
 
     if (dtm < 0) {
@@ -8138,7 +8144,7 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("add_one_to_PNTM_wins; index=%d; dtm=%d; table dtm=%d\n", index, dtm, entriesTable->get_raw_DTM(index));
+	printf("add_one_to_PNTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n", index, dtm, entriesTable->get_raw_DTM(index));
 #endif
 
     if (dtm > 0) {
@@ -9291,7 +9297,7 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("insert_or_commit_proptable; index=%d; dtm=%d; movecnt=%d; futuremove=%d\n",
+	printf("insert_or_commit_proptable; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
 	       index, dtm, movecnt, futuremove);
 #endif
 
@@ -12448,7 +12454,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	fprintf(stderr, "Initializing %d\n", index);
+	fprintf(stderr, "Initializing %" PRIindex "\n", index);
 #endif
 
     if (progress_dots > 0) {
@@ -13204,7 +13210,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE) {
-	    fprintf(stderr, "Writing %d: DTM %d; movecnt %d\n", index,
+	    fprintf(stderr, "Writing %" PRIindex ": DTM %d; movecnt %d\n", index,
 		    entriesTable->get_DTM(index), entriesTable->get_movecnt(index));
 	}
 #endif
@@ -13615,19 +13621,19 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		    if (dtm > 0) {
 			if ((dtm-1) != ((65536-4)/2)-score+1) {
-			    printf("%s (%d): Nalimov says %s (%d), but we say mate in %d\n",
+			    printf("%s (%" PRIindex "): Nalimov says %s (%d), but we say mate in %d\n",
 				   global_position_to_FEN(&global), index,
 				   nalimov_to_english(score), score, dtm-1);
 			}
 		    } else if (dtm < 0) {
 			if ((-dtm-1) != ((65536-4)/2)+score) {
-			    printf("%s (%d): Nalimov says %s (%d), but we say mated in %d\n",
+			    printf("%s (%" PRIindex "): Nalimov says %s (%d), but we say mated in %d\n",
 				   global_position_to_FEN(&global), index,
 				   nalimov_to_english(score), score, -dtm-1);
 			}
 		    } else if (dtm == 0) {
 			if (score != 0) {
-			    printf("%s (%d): Nalimov says %s (%d), but we say draw\n",
+			    printf("%s (%" PRIindex "): Nalimov says %s (%d), but we say draw\n",
 				   global_position_to_FEN(&global), index,
 				   nalimov_to_english(score), ((65536-4)/2)+score);
 			}
@@ -13642,13 +13648,13 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		    if (global.side_to_move == BLACK) score *= -1;
 
 		    if ((basic != 2) && (score < 0)) {
-			fprintf(stderr, "%s (%d): Nalimov says PNTM wins, but we say %s\n",
+			fprintf(stderr, "%s (%" PRIindex "): Nalimov says PNTM wins, but we say %s\n",
 				global_position_to_FEN(&global), index, basic_meaning[basic]);
 		    } else if ((basic != 1) && (score > 0)) {
-			fprintf(stderr, "%s (%d): Nalimov says PTM wins, but we say %s\n",
+			fprintf(stderr, "%s (%" PRIindex "): Nalimov says PTM wins, but we say %s\n",
 				global_position_to_FEN(&global), index, basic_meaning[basic]);
 		    } else if ((basic != 0) && (score == 0)) {
-			fprintf(stderr, "%s (%d): Nalimov says draw, but we say %s\n",
+			fprintf(stderr, "%s (%" PRIindex "): Nalimov says draw, but we say %s\n",
 				global_position_to_FEN(&global), index, basic_meaning[basic]);
 		    }
 
@@ -13661,21 +13667,21 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		    if (global.side_to_move == BLACK) score *= -1;
 
 		    if (flag && (score < 0)) {
-			fprintf(stderr, "%s (%d): Nalimov says black wins, but we say white wins or draws\n",
+			fprintf(stderr, "%s (%" PRIindex "): Nalimov says black wins, but we say white wins or draws\n",
 				global_position_to_FEN(&global), index);
 		    } else if (flag && (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) && (score == 0)) {
-			fprintf(stderr, "%s (%d): Nalimov says draw, but we say white wins\n",
+			fprintf(stderr, "%s (%" PRIindex "): Nalimov says draw, but we say white wins\n",
 				global_position_to_FEN(&global), index);
 		    } else if ((!flag) && (score > 0)) {
-			fprintf(stderr, "%s (%d): Nalimov says white wins, but we say black wins or draws\n",
+			fprintf(stderr, "%s (%" PRIindex "): Nalimov says white wins, but we say black wins or draws\n",
 				global_position_to_FEN(&global), index);
 		    } else if ((!flag) && (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) && (score == 0)) {
-			fprintf(stderr, "%s (%d): Nalimov says draw, but we say black wins\n",
+			fprintf(stderr, "%s (%" PRIindex "): Nalimov says draw, but we say black wins\n",
 				global_position_to_FEN(&global), index);
 		    }
 		}
 	    } else {
-		fprintf(stderr, "%s (%d): Nalimov says illegal, but we don't\n",
+		fprintf(stderr, "%s (%" PRIindex "): Nalimov says illegal, but we don't\n",
 			global_position_to_FEN(&global), index);
 	    }
 	}
@@ -14203,7 +14209,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	     * of the various next positions that we'll consider
 	     */
 
-	    printf("Index %d (%s)\n", index, tb->filename);
+	    printf("Index %" PRIindex " (%s)\n", index, tb->filename);
 
 	    if (global_position.side_to_move == WHITE) {
 		ptm = "White";
@@ -14313,7 +14319,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.695 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.696 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
