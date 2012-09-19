@@ -57,7 +57,7 @@ typedef unsigned int bitoffset;
 
 #define CREATE_UNSIGNED_FIELD_FUNCTIONS(TYPE, TYPE_WITH_UNDERSCORES)					\
 													\
-inline TYPE get_ ## TYPE_WITH_UNDERSCORES ## _field(void * ptr, bitoffset offset, int size)		\
+inline TYPE get_ ## TYPE_WITH_UNDERSCORES ## _field(const void * ptr, bitoffset offset, int size)	\
 {													\
     TYPE * iptr;											\
     TYPE val;												\
