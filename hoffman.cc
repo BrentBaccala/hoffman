@@ -5651,7 +5651,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.697 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.698 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8385,6 +8385,10 @@ struct proptable_format {
     int movecnt_bits;
     int futuremove_offset;
     int futuremove_bits;
+    uint64_t index_mask;
+    uint64_t dtm_mask;
+    uint64_t movecnt_mask;
+    uint64_t futuremove_mask;
     int bits;
 };
 
@@ -8801,12 +8805,7 @@ class proptable_entry {
  * To support std::sort, proptable_iterator has to dereference into a type that is Swappable,
  * MoveConstructable and MoveAssignable (the C++11 standard's terminology).  That means that
  * proptable_ptr has to operate as an lvalue that both points into the proptable (Swappable) and
- * also can hold a temporary value (MoveConstructable and MoveAssignable).  So we subclass
- * proptable_entry in order to hold a value, and also keep a base/i that points into the proptable.
- *
- * We need a type T that works like this (given two values 'a' and 'b' of type T):
- *      T x = a;    (MoveConstructable)
- *      b = x;      (MoveAssignable)
+ * also can hold a temporary value (MoveConstructable and MoveAssignable).
  *
  * Both proptable_ptr and proptable_iterator contain pointers to the format, since both of them are
  * dependent on either a memory_proptable or a disk_que<memory_proptable>.  On the other hand, both
@@ -8816,7 +8815,7 @@ class proptable_entry {
 class proptable_iterator;
 class memory_proptable;
 
-class proptable_ptr : public proptable_entry {
+class proptable_ptr {
 
     friend class proptable_iterator;
     friend class disk_que<memory_proptable>;
@@ -8826,26 +8825,35 @@ class proptable_ptr : public proptable_entry {
     proptable_format *format;
     int i;
     void *base;
+    uint64_t value;
 
     /* Private constructor: friend proptable_iterator constructs proptable_ptr when dereferencing */
 
     proptable_ptr(proptable_format *format, void *base, int i):
-	proptable_entry(get_unsigned_int_field(base, i*format->bits + format->index_offset, format->index_bits),
-			get_int_field(base, i*format->bits + format->dtm_offset, format->dtm_bits),
-			get_unsigned_int_field(base, i*format->bits + format->movecnt_offset, format->movecnt_bits) + 1,
-			get_unsigned_int_field(base, i*format->bits + format->futuremove_offset, format->futuremove_bits)),
-	format(format), i(i), base(base) {}
+	format(format), i(i), base(base) {
+	    value = get_uint64_t_field(base, i * format->bits, format->bits);
+	}
 
  public:
 
+    operator proptable_entry() {
+	int dtm = (value >> format->dtm_offset) & format->dtm_mask;
+	if (dtm > (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
+
+	return proptable_entry(value >> format->index_offset, dtm,
+			       ((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
+			       (value >> format->futuremove_offset) & format->futuremove_mask);
+    }
+
     proptable_ptr & operator=(proptable_entry other) {
 	/* Set both our local copy and the copy in the proptable */
-	proptable_entry::operator=(other);
 
-	set_unsigned_int_field(base, i*format->bits + format->index_offset, format->index_bits, other.index);
-	set_int_field(base, i*format->bits + format->dtm_offset, format->dtm_bits, other.dtm);
-	set_unsigned_int_field(base, i*format->bits + format->movecnt_offset, format->movecnt_bits, other.movecnt - 1);
-	set_unsigned_int_field(base, i*format->bits + format->futuremove_offset, format->futuremove_bits, other.futuremove);
+	value = (other.index << format->index_offset)
+	| ((other.dtm & format->dtm_mask) << format->dtm_offset)
+	| (((other.movecnt - 1) & format->movecnt_mask) << format->movecnt_offset)
+	| ((other.futuremove & format->futuremove_mask) << format->futuremove_offset);
+
+	set_uint64_t_field(base, i * format->bits, format->bits, value);
 
 	return *this;
     }
@@ -8853,7 +8861,18 @@ class proptable_ptr : public proptable_entry {
     /* We don't use the default copy operator, since that would change base and i. */
 
     proptable_ptr & operator=(proptable_ptr other) {
-	return operator=((proptable_entry) other);
+	value = other.value;
+	set_uint64_t_field(base, i * format->bits, format->bits, value);
+	return *this;
+    }
+
+    /* We want to compare index fields, but we don't want to have to extract all the fields, since
+     * this function will be used a lot during sorting.  We make sure that index occupies the most
+     * significant bits, making this comparision simple.
+     */
+
+    bool operator<(const proptable_ptr & other) const {
+	return value < other.value;
     }
 
     /* This is here to allow disk_que's constructor to cast us to a (void *) and write us to disk
@@ -9225,6 +9244,10 @@ void proptable_pass(int target_dtm)
     format.movecnt_bits = 0;
     format.futuremove_offset = 0;
     format.futuremove_bits = 0;
+    format.index_mask = (1ULL << format.index_bits) - 1;
+    format.dtm_mask = 0;
+    format.movecnt_mask = 0;
+    format.futuremove_mask = 0;
     format.bits = format.index_bits;
 
     /* Swap proptables.  Our priority queue implementation is designed to do all the insertions
@@ -13483,17 +13506,24 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
 	proptable_format format;
 
-	format.index_offset = 0;
 	for (format.index_bits = 1; 1ULL << (format.index_bits-1) < tb->max_index; format.index_bits ++);
-	format.dtm_offset = format.index_bits;
 	for (format.dtm_bits = 1; (max_tracked_dtm > (1 << (format.dtm_bits - 1)) - 1)
 		     || (min_tracked_dtm < -(1 << (format.dtm_bits - 1))); format.dtm_bits ++);
-	format.movecnt_offset = format.dtm_offset + format.dtm_bits;
 	format.movecnt_bits = 1;
-	format.futuremove_offset = format.movecnt_offset + format.movecnt_bits;
 	for (format.futuremove_bits = 1; 1U << (format.futuremove_bits-1) < num_futuremoves[WHITE] - 1
 		 || 1U << (format.futuremove_bits-1) < num_futuremoves[BLACK] - 1; format.futuremove_bits ++);
-	format.bits = format.futuremove_offset + format.futuremove_bits;
+
+	format.dtm_offset = 0;
+	format.movecnt_offset = format.dtm_bits;
+	format.futuremove_offset = format.movecnt_offset + format.movecnt_bits;
+	format.index_offset = format.futuremove_offset + format.futuremove_bits;
+
+	format.index_mask = (1ULL << format.index_bits) - 1;
+	format.dtm_mask = (1ULL << format.dtm_bits) - 1;
+	format.movecnt_mask = (1ULL << format.movecnt_bits) - 1;
+	format.futuremove_mask = (1ULL << format.futuremove_bits) - 1;
+
+	format.bits = format.index_offset + format.index_bits;
 
 	info("Initial proptable format: %d bits index; %d bits dtm; %d bit movecnt; %d bits futuremove\n",
 	     format.index_bits, format.dtm_bits, format.movecnt_bits, format.futuremove_bits);
@@ -14326,7 +14356,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.697 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.698 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
