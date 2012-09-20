@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.703 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.704 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8877,7 +8877,7 @@ class proptable_ptr {
 
  private:
     proptable_format *format;
-    int i;
+    uint64_t i;
     void *base;
     uint64_t value;
 
@@ -8954,7 +8954,7 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
 
  private:
     proptable_format *format;
-    int i;
+    uint64_t i;
     void *ptr;
 
     /* Private constructor ensures that only friends can create a proptable_iterator */
@@ -14595,7 +14595,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.703 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.704 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
