@@ -92,7 +92,9 @@
 #include <algorithm>		/* for std::sort */
 #include <deque>
 #include <vector>
+
 #include <mutex>
+#include <condition_variable>
 
 extern "C" {
 
@@ -183,7 +185,7 @@ typedef uint64_t index_t;
 
 #ifdef USE_THREADS
 #include <pthread.h>
-int num_threads = 1;
+unsigned int num_threads = 1;
 long contended_locks = 0;
 long contended_indices = 0;
 #endif
@@ -5651,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.698 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.699 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7147,7 +7149,7 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
     if (index != tb->next_read_index) {
 	if (zlib_seek(tb->file, tb->offset + (off_t) (index * tb->format.bits / 8), SEEK_SET)
 	    != tb->offset + (off_t) (index * tb->format.bits / 8)) {
-	    fatal("Seek failed for index %d in fetch_entry_pointer()\n", index);
+	    fatal("Seek failed for index %" PRIindex " in fetch_entry_pointer()\n", index);
 	}
 	tb->next_read_index = index;
     }
@@ -8267,7 +8269,7 @@ void non_proptable_pass(int target_dtm)
 
     intratable_propagation_control_t *controls;
     pthread_t *threads;
-    int thread;
+    unsigned int thread;
 
     entriesTable->set_threads(num_threads);
 
@@ -8642,11 +8644,10 @@ extern "C++" {
      * network.  Otherwise, we read back directly from a single MemoryContainer, i.e, we don't use a
      * DiskContainer at all unless we fill up a MemoryContainer.
      *
-     * XXX should take advantage of multi-threading by breaking the in-memory table into equal size
-     * portions, then making each thread sort and write a single portion.  This can be done without
-     * locking just by detecting when we write into the last n elements in the table and using that
-     * as a trigger to sort and dump 1/n-th of it.  So long as the table is at least n^2 elements,
-     * we're fine.
+     * we take advantage of multi-threading by breaking the in-memory table into equal size blocks,
+     * then making each thread sort and write a single block.  This is done by detecting when we
+     * write into the last num_threads elements in the table and using that as a trigger to sort and
+     * dump 1/num_threads-th of it.  So long as the table is at least n^2 elements, we're fine.
      *
      * about inheriting std::mutex... we lock when we insert (though we shouldn't need this if tail
      * can be bumped atomically)... we expect the caller to already hold the lock when we
@@ -8658,39 +8659,39 @@ extern "C++" {
 	class priority_queue : public std::mutex {
 
 	typedef class std::deque<DiskContainer *> DiskQueQue;
+	typedef typename MemoryContainer::iterator Iterator;
 
     private:
 	DiskQueQue disk_ques;
 	class sorting_network<DiskQueQue> snetwork;
 
 	MemoryContainer * in_memory_queue;
-	typename MemoryContainer::iterator head;
-	typename MemoryContainer::iterator tail;
+	Iterator head;
+	Iterator tail;
 	bool sorted;
 
-	void sort_in_memory_queue(void) {
-	    if (! sorted) {
-		std::sort(head, tail);
-		//std::make_heap(head, tail);
-		//std::sort_heap(head, tail);
-		sorted = true;
-	    }
-	}
+	size_t block_size;
+	unsigned int blocks_dumped_to_disk;
+	std::condition_variable blocks_dumped_to_disk_cond;
+	std::mutex blocks_dumped_to_disk_mutex;
 
-	void dump_memory_queue_to_disk(void) {
-	    sort_in_memory_queue();
-	    disk_ques.push_back(new DiskContainer(head, tail));
-	    tail = head;
+	void dump_memory_queue_to_disk(Iterator begin, Iterator end) {
+	    std::sort(begin, end);
+	    // XXX lock disk_ques
+	    disk_ques.push_back(new DiskContainer(begin, end));
 	}
 
 	void prepare_to_retrieve(void) {
 	    if (disk_ques.empty()) {
-		if (! sorted) sort_in_memory_queue();
+		if (! sorted) std::sort(head, tail);
+		sorted = true;
 		/* XXX ideally, resize the in-memory table to (tail-head) elements */
 	    } else {
+		// XXX check to see if we've already dumped part of the table
 		if (in_memory_queue != NULL) {
 		    if (head != tail) {
-			dump_memory_queue_to_disk();
+			dump_memory_queue_to_disk(head, tail);
+			tail = head;
 		    }
 		    delete in_memory_queue;
 		    in_memory_queue = NULL;
@@ -8709,7 +8710,14 @@ extern "C++" {
 	head(in_memory_queue->begin()),
 	tail(head),
 	sorted(true)
-	{}
+	{
+	    block_size = (in_memory_queue->end() - in_memory_queue->begin()) / num_threads;
+
+	    /* Round down block_size to a multiple of eight to ensure that the blocks are byte aligned */
+	    while ((block_size % 8) != 0) block_size --;
+
+	    blocks_dumped_to_disk = 0;
+	}
 
 	~priority_queue() {
 	    if (in_memory_queue != NULL) delete in_memory_queue;
@@ -8721,14 +8729,48 @@ extern "C++" {
 	}
 
 	void push(const T& x) {
-	    lock();
+	    size_t remaining_space;
+
 	    if (in_memory_queue == NULL) throw "priority_queue: push attempted after retrieval started";
-	    if (tail == in_memory_queue->end()) {
-		dump_memory_queue_to_disk();
-	    }
+
+	    lock();
 	    *(tail ++) = x;
 	    sorted = false;
-	    unlock();
+	    remaining_space = in_memory_queue->end() - tail;
+
+	    /* Locking invariant: only unlock if there's room to insert */
+	    if (remaining_space > 0) unlock();
+
+	    if (remaining_space < num_threads) {
+		unsigned int current = num_threads - remaining_space - 1;
+
+		if (current != num_threads - 1) {
+		    dump_memory_queue_to_disk(in_memory_queue->begin() + current * block_size,
+					      in_memory_queue->begin() + (current+1) * block_size);
+		} else {
+		    dump_memory_queue_to_disk(in_memory_queue->begin() + current * block_size,
+					      in_memory_queue->end());
+		}
+
+		std::unique_lock<std::mutex> _(blocks_dumped_to_disk_mutex);
+		blocks_dumped_to_disk ++;
+		blocks_dumped_to_disk_cond.notify_all();
+	    }
+
+	    if (remaining_space == 0) {
+		/* We're locked, and dumps to disk have at least started for all blocks.  Make sure
+		 * they're all done before we let everything get going again.
+		 */
+		std::unique_lock<std::mutex> cond_lock(blocks_dumped_to_disk_mutex);
+
+		while (blocks_dumped_to_disk < num_threads) {
+		    blocks_dumped_to_disk_cond.wait(cond_lock);
+		}
+
+		tail = head;
+		blocks_dumped_to_disk = 0;
+		unlock();
+	    }
 	}
 
 	bool empty(void) {
@@ -8881,7 +8923,7 @@ class proptable_ptr {
      */
 
     operator void *() {
-	return base;
+	return (char *)base + i * format->bits / 8;
     }
 
 };
@@ -9213,7 +9255,7 @@ void * proptable_pass_thread(void * ptr)
 #if 0
 		    global_position_t global;
 		    index_to_global_position(current_tb, index, &global);
-		    fprintf(stderr, "Futuremove discrepancy: %d %s\n", index, global_position_to_FEN(&global));
+		    fprintf(stderr, "Futuremove discrepancy: %" PRIindex " %s\n", index, global_position_to_FEN(&global));
 #endif
 		} else {
 		    finalize_futuremove(current_tb, index, possible_futuremoves ^ futurevector);
@@ -9272,7 +9314,7 @@ void proptable_pass(int target_dtm)
 
     proptable_propagation_control_t *controls;
     pthread_t *threads;
-    int thread;
+    unsigned int thread;
 
     entriesTable->set_threads(num_threads);
 
@@ -10868,7 +10910,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 #ifdef USE_THREADS
 	    pthread_t *threads;
-	    int thread;
+	    unsigned int thread;
 
 	    /* XXX check for malloc failure */
 	    threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
@@ -10931,7 +10973,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
     if (futurevector & unpruned_futuremoves[stm]) {
 	global_position_t global;
 	index_to_global_position(tb, index, &global);
-	fatal("Futuremoves not handled: %d %s", index, global_position_to_FEN(&global));
+	fatal("Futuremoves not handled: %" PRIindex " %s", index, global_position_to_FEN(&global));
 	for (futuremove = 0; futuremove < num_futuremoves[stm]; futuremove ++) {
 	    if (futurevector & FUTUREVECTOR(futuremove)	& unpruned_futuremoves[stm]) {
 		fatal(" %s", movestr[stm][futuremove]);
@@ -12037,7 +12079,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	info("back_propagate_index_within_table; index=%d\n", index);
+	info("back_propagate_index_within_table; index=%" PRIindex "\n", index);
 #endif
 
     flip_side_to_move_local(&position);
@@ -13042,7 +13084,7 @@ void initialize_tablebase(void)
 {
     initialization_control_t *controls;
     pthread_t *threads;
-    int thread;
+    unsigned int thread;
 
     /* XXX check for malloc failure */
     controls = (initialization_control_t *) malloc(sizeof(initialization_control_t) * num_threads);
@@ -14356,7 +14398,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.698 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.699 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
