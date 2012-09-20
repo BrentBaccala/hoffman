@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.704 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.705 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8883,7 +8883,7 @@ class proptable_ptr {
 
     /* Private constructor: friend proptable_iterator constructs proptable_ptr when dereferencing */
 
-    proptable_ptr(proptable_format *format, void *base, int i):
+    proptable_ptr(proptable_format *format, void *base, uint64_t i):
 	format(format), i(i), base(base) {
 	    value = get_uint64_t_field(base, i * format->bits, format->bits);
 	}
@@ -8947,7 +8947,7 @@ void swap(proptable_ptr a, proptable_ptr b) {
     set_uint64_t_field(b.base, b.i * b.format->bits, b.format->bits, x);
 }
 
-class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_ptr> {
+class proptable_iterator : public std::iterator<std::random_access_iterator_tag, proptable_ptr, uint64_t> {
 
     friend class memory_proptable;
     friend class disk_que<memory_proptable>;
@@ -8959,7 +8959,7 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
 
     /* Private constructor ensures that only friends can create a proptable_iterator */
 
-    proptable_iterator(proptable_format *format, void *ptr, int i) : format(format), i(i), ptr(ptr) {}
+    proptable_iterator(proptable_format *format, void *ptr, uint64_t i) : format(format), i(i), ptr(ptr) {}
 
  public:
 
@@ -9001,7 +9001,7 @@ class proptable_iterator : public std::iterator<std::random_access_iterator_tag,
 	return retval;
     }
 
-    int operator-(const proptable_iterator & other) {
+    uint64_t operator-(const proptable_iterator & other) {
 	return i - other.i;
     }
 
@@ -14595,7 +14595,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.704 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.705 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
