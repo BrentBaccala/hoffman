@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.705 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.706 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8418,11 +8418,11 @@ extern "C++" {
 	typedef typename Container::value_type T;
 	typedef T value_type;
 
-	static const int queue_size = 256;	// size of in-memory queue
+	static const unsigned int queue_size = 256;	// size of in-memory queue
 
 	int fd;
-	int next;
-	int size;
+	unsigned int next;
+	unsigned int size;
 	T queue[queue_size];
 	char filename[16];
 	void *file;
@@ -8439,13 +8439,13 @@ extern "C++" {
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
 	    }
 
-	    for (size = 0, iter = head; (size <= queue_size) && (iter != tail); iter++, size++) {
+	    for (size = 0, iter = head; (size < queue_size) && (iter != tail); iter++, size++) {
 		queue[size] = *iter;
 	    }
 
 	    for (; iter != tail; iter++, size++) {
 		if (compress_proptables) {
-		    zlib_write(file, (const char *) (void *) *iter, sizeof(T));
+		    zlib_write(file, (const char *) (void *) *iter, Container::value_size);
 		} else {
 		    do_write(fd, (void *) *iter, sizeof(T));
 		}
@@ -8480,12 +8480,12 @@ extern "C++" {
 	    if ((next != 0) && (next % queue_size == 0)) {
 		ssize_t retval;
 		if (compress_proptables) {
-		    retval = zlib_read(file, (char *) queue, queue_size * sizeof(T));
+		    retval = zlib_read(file, (char *) queue, queue_size * Container::value_size);
 		} else {
-		    retval = read(fd, queue, queue_size * sizeof(T));
+		    retval = read(fd, queue, queue_size * Container::value_size);
 		}
-		if ((retval != queue_size * sizeof(T))
-		    && (retval != (size - next) * sizeof(T))) {
+		if ((retval != (ssize_t) (queue_size * Container::value_size))
+		    && (retval != (ssize_t) ((size - next) * Container::value_size))) {
 		    throw "Short read in disk_que";
 		}
 	    }
@@ -9135,8 +9135,6 @@ extern "C++" {
     };
 }
 
-#if 0
-
 /* This version uses typed arrays instead of bit arrays. */
 
 extern "C++" {
@@ -9148,7 +9146,7 @@ extern "C++" {
 
 	friend class typed_proptable_iterator<T>;
 	friend class disk_que<memory_typed_proptable<T> >;
-	//friend void swap(typed_proptable_ptr a, typed_proptable_ptr b);
+	template <typename T2> friend void swap(typed_proptable_ptr<T2> a, typed_proptable_ptr<T2> b);
 
     private:
 	proptable_format *format;
@@ -9164,7 +9162,7 @@ extern "C++" {
 
 	operator proptable_entry() {
 	    int dtm = (value >> format->dtm_offset) & format->dtm_mask;
-	    if (dtm > (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
+	    if ((unsigned int)dtm > (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
 
 	    return proptable_entry(value >> format->index_offset, dtm,
 				   ((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
@@ -9206,20 +9204,20 @@ extern "C++" {
 	 * XXX fix this to use streams; we need a zlib I/O stream
 	 */
 
-	operator void *() {
+	operator void *() const {
 	    return ptr;
 	}
 
     };
 
-#if 0
-    void swap(typed_proptable_ptr a, typed_proptable_ptr b) {
-	uint64_t x = get_unsigned_int_field(a.base, a.i * a.format->bits, a.format->bits);
-	set_uint64_t_field(a.base, a.i * a.format->bits, a.format->bits,
-			   get_uint64_t_field(b.base, b.i * b.format->bits, b.format->bits));
-	set_uint64_t_field(b.base, b.i * b.format->bits, b.format->bits, x);
+    template <typename T>
+    void swap(typed_proptable_ptr<T> a, typed_proptable_ptr<T> b) {
+	T x = a.value;
+	a.value = b.value;
+	b.value = x;
+	*(a.ptr) = a.value;
+	*(b.ptr) = b.value;
     }
-#endif
 
     template <typename T>
     class typed_proptable_iterator : public std::iterator<std::random_access_iterator_tag, typed_proptable_ptr<T> > {
@@ -9263,13 +9261,13 @@ extern "C++" {
 	    return *this;
 	}
 
-	const typed_proptable_iterator<T> operator+(int val) {
+	const typed_proptable_iterator<T> operator+(ssize_t val) {
 	    typed_proptable_iterator<T> retval(*this);
 	    retval.ptr += val;
 	    return retval;
 	}
 
-	const typed_proptable_iterator<T> operator-(int val) {
+	const typed_proptable_iterator<T> operator-(ssize_t val) {
 	    typed_proptable_iterator<T> retval(*this);
 	    retval.ptr -= val;
 	    return retval;
@@ -9305,29 +9303,32 @@ extern "C++" {
 
  public:
 
+	typedef proptable_entry value_type;
+	typedef typed_proptable_iterator<T> iterator;
+	static const ssize_t value_size = sizeof(T);
+
 	template <typename... Args>
 	    memory_typed_proptable(proptable_format format, Args... args):
 	std::vector<T>(args...), format(format)
 	{
-	    if (format.bits > sizeof(T)) throw "proptable format too large";
+	    // XXX make format.bits unsigned
+	    //if (format.bits > sizeof(T)) throw "proptable format too large";
 	}
 
 	class typed_proptable_iterator<T> begin() {
-	    return typed_proptable_iterator<T>(&format, std::vector<T>::begin());
+	    return typed_proptable_iterator<T>(&format, std::vector<T>::data());
 	}
 
 	class typed_proptable_iterator<T> end() {
-	    return typed_proptable_iterator<T>(&format, std::vector<T>::end());
+	    return typed_proptable_iterator<T>(&format, std::vector<T>::data() + std::vector<T>::size());
 	}
     };
 }
 
-#endif
-
 /* Finally, the actual priority queue(s) */
 
-typedef priority_queue<class proptable_entry, class memory_proptable> proptable;
-//typedef priority_queue<class proptable_entry, class memory_typed_proptable<uint64_t> > proptable;
+//typedef priority_queue<class proptable_entry, class memory_proptable> proptable;
+typedef priority_queue<class proptable_entry, class memory_typed_proptable<uint64_t> > proptable;
 
 proptable * input_proptable;
 proptable * output_proptable;
@@ -14595,7 +14596,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.705 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.706 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
