@@ -35,7 +35,7 @@
 
 #include <inttypes.h>		/* C99 integer types */
 
-typedef unsigned int bitoffset;
+typedef uint64_t bitoffset;
 
 /* XXX If we don't have __sync_fetch_and_and_8 and
  * __sync_fetch_and_or_8, we might have problems with 64 bit words.
