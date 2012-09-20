@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.699 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.700 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8670,28 +8670,37 @@ extern "C++" {
 	Iterator tail;
 	bool sorted;
 
+	size_t remaining_space;
 	size_t block_size;
 	unsigned int blocks_dumped_to_disk;
 	std::condition_variable blocks_dumped_to_disk_cond;
-	std::mutex blocks_dumped_to_disk_mutex;
 
-	void dump_memory_queue_to_disk(Iterator begin, Iterator end) {
+	void sort_and_dump_to_disk(Iterator begin, Iterator end) {
 	    std::sort(begin, end);
 	    // XXX lock disk_ques
 	    disk_ques.push_back(new DiskContainer(begin, end));
 	}
 
 	void prepare_to_retrieve(void) {
-	    if (disk_ques.empty()) {
+	    if (disk_ques.empty() && (remaining_space >= num_threads)) {
 		if (! sorted) std::sort(head, tail);
 		sorted = true;
 		/* XXX ideally, resize the in-memory table to (tail-head) elements */
 	    } else {
-		// XXX check to see if we've already dumped part of the table
+		/* We assume that we're locked, so remaining_space remains constant and indicates
+		 * whether other threads are dumping to disk.
+		 */
 		if (in_memory_queue != NULL) {
-		    if (head != tail) {
-			dump_memory_queue_to_disk(head, tail);
-			tail = head;
+		    if (remaining_space >= num_threads) {
+			if (head != tail) {
+			    sort_and_dump_to_disk(head, tail);
+			    tail = head;
+			}
+		    } else {
+			unsigned int current = num_threads - remaining_space - 1;
+
+			sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
+					      in_memory_queue->end());
 		    }
 		    delete in_memory_queue;
 		    in_memory_queue = NULL;
@@ -8717,6 +8726,7 @@ extern "C++" {
 	    while ((block_size % 8) != 0) block_size --;
 
 	    blocks_dumped_to_disk = 0;
+	    remaining_space = in_memory_queue->end() - in_memory_queue->begin();
 	}
 
 	~priority_queue() {
@@ -8729,47 +8739,49 @@ extern "C++" {
 	}
 
 	void push(const T& x) {
-	    size_t remaining_space;
+
+	    std::unique_lock<std::mutex> lock(*this);
 
 	    if (in_memory_queue == NULL) throw "priority_queue: push attempted after retrieval started";
 
-	    lock();
 	    *(tail ++) = x;
+	    remaining_space --;
 	    sorted = false;
-	    remaining_space = in_memory_queue->end() - tail;
-
-	    /* Locking invariant: only unlock if there's room to insert */
-	    if (remaining_space > 0) unlock();
 
 	    if (remaining_space < num_threads) {
+
 		unsigned int current = num_threads - remaining_space - 1;
 
 		if (current != num_threads - 1) {
-		    dump_memory_queue_to_disk(in_memory_queue->begin() + current * block_size,
-					      in_memory_queue->begin() + (current+1) * block_size);
+		    /* We unlock while we're sorting and dumping to disk since there's still room to
+		     * insert at the end, but the real reason to unlock is to let other threads into
+		     * this code so they can also sort and dump to disk (it's a slow operation).
+		     */
+		    lock.unlock();
+		    sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
+					  in_memory_queue->begin() + (current+1) * block_size);
+		    lock.lock();
 		} else {
-		    dump_memory_queue_to_disk(in_memory_queue->begin() + current * block_size,
-					      in_memory_queue->end());
+		    sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
+					  in_memory_queue->end());
 		}
 
-		std::unique_lock<std::mutex> _(blocks_dumped_to_disk_mutex);
 		blocks_dumped_to_disk ++;
 		blocks_dumped_to_disk_cond.notify_all();
-	    }
 
-	    if (remaining_space == 0) {
-		/* We're locked, and dumps to disk have at least started for all blocks.  Make sure
-		 * they're all done before we let everything get going again.
-		 */
-		std::unique_lock<std::mutex> cond_lock(blocks_dumped_to_disk_mutex);
+		if (current == num_threads - 1) {
+		    /* We're locked, and dumps to disk have at least started for all blocks.  Make sure
+		     * they're all done before we let everything get going again.
+		     */
 
-		while (blocks_dumped_to_disk < num_threads) {
-		    blocks_dumped_to_disk_cond.wait(cond_lock);
+		    while (blocks_dumped_to_disk < num_threads) {
+			blocks_dumped_to_disk_cond.wait(lock);
+		    }
+
+		    tail = head;
+		    remaining_space = in_memory_queue->end() - in_memory_queue->begin();
+		    blocks_dumped_to_disk = 0;
 		}
-
-		tail = head;
-		blocks_dumped_to_disk = 0;
-		unlock();
 	    }
 	}
 
@@ -14398,7 +14410,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.699 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.700 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
