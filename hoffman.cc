@@ -94,6 +94,7 @@
 #include <vector>
 
 #include <thread>
+#include <atomic>
 #include <mutex>
 #include <condition_variable>
 
@@ -182,14 +183,10 @@ typedef uint64_t index_t;
 #define INVALID_INDEX UINT64_MAX
 #endif
 
-/* If we're going to run multi-threaded, we need the POSIX threads library */
-
-#ifdef USE_THREADS
-#include <pthread.h>
 unsigned int num_threads = 1;
-long contended_locks = 0;
-long contended_indices = 0;
-#endif
+
+    std::atomic<long> contended_locks(0);
+    std::atomic<long> contended_indices(0);
 
 /* If we're multithreaded, we use gcc 4's built-ins for atomic memory access, which are identical to
  * Intel's.  If the compiler doesn't feature these built-ins, then the simplest way to fix that is
@@ -274,11 +271,11 @@ inline uint64_t __sync_fetch_and_add_8(uint64_t *ptr, uint64_t val) {
 
 /* Variables for gathering statistics */
 
-uint64_t total_legal_positions = 0;
-uint64_t total_PNTM_mated_positions = 0;
-uint64_t total_stalemate_positions = 0;
-uint64_t total_moves = 0;
-uint64_t total_futuremoves = 0;
+    std::atomic<uint64_t> total_legal_positions(0);
+    std::atomic<uint64_t> total_PNTM_mated_positions(0);
+    std::atomic<uint64_t> total_stalemate_positions(0);
+    std::atomic<uint64_t> total_moves(0);
+    std::atomic<uint64_t> total_futuremoves(0);
 uint64_t total_backproped_moves = 0;
 uint64_t player_wins[2];
 int max_dtm = 0;
@@ -1031,7 +1028,7 @@ inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
     if (pthread_mutex_trylock(mutex) != 0) {
 	pthread_mutex_lock(mutex);
 
-	__sync_incr(contended_locks);
+	contended_locks ++;
     }
 }
 
@@ -5654,7 +5651,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.714 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.715 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6063,15 +6060,13 @@ void finalize_pass_statistics()
     snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_minflt);
     xmlNodeSetContent(page_reclaims, BAD_CAST strbuf);
 
-#ifdef USE_THREADS
     if (num_threads > 1) {
-	snprintf(strbuf, sizeof(strbuf), "%ld", contended_locks);
+	snprintf(strbuf, sizeof(strbuf), "%ld", (long) contended_locks);
 	xmlNodeSetContent(contended_locks_node, BAD_CAST strbuf);
 
-	snprintf(strbuf, sizeof(strbuf), "%ld", contended_indices);
+	snprintf(strbuf, sizeof(strbuf), "%ld", (long) contended_indices);
 	xmlNodeSetContent(contended_indices_node, BAD_CAST strbuf);
     }
-#endif
 
     /* Now add a element with current pass statistics */
 
@@ -6190,13 +6185,13 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     snprintf(strbuf, sizeof(strbuf), "%" PRIindex, tb->max_index + 1);
     xmlNewChild(node, NULL, BAD_CAST "indices", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_PNTM_mated_positions);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_PNTM_mated_positions);
     xmlNewChild(node, NULL, BAD_CAST "PNTM-mated-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_legal_positions);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_legal_positions);
     xmlNewChild(node, NULL, BAD_CAST "legal-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_stalemate_positions);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_stalemate_positions);
     xmlNewChild(node, NULL, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
 
     /* If we generating a full tablebase, report both white-wins-positions and black-wins-positions.
@@ -6221,10 +6216,10 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     }
 
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_moves);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_moves);
     xmlNewChild(node, NULL, BAD_CAST "forward-moves", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_futuremoves);
+    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_futuremoves);
     xmlNewChild(node, NULL, BAD_CAST "futuremoves", BAD_CAST strbuf);
     if (tb->format.dtm_bits > 0) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
@@ -7473,21 +7468,17 @@ class EntriesTable {
      */
 
     void lock_entry(index_t index) {
-#ifdef USE_THREADS
 	if (locking_bit_offset >= 0) {
 	    if (spinlock_bit_field(pointer(index), offset(index) + locking_bit_offset)) {
-		__sync_incr(contended_indices);
+		contended_indices ++;
 	    }
 	}
-#endif
     }
 
     void unlock_entry(index_t index) {
-#ifdef USE_THREADS
 	if (locking_bit_offset >= 0) {
 	    set_bit_field(pointer(index), offset(index) + locking_bit_offset, 0);
 	}
-#endif
     }
 
     /* The remaining method functions in the class access an individual entry in the table and do
@@ -7630,7 +7621,7 @@ class EntriesTable {
 
 	initialize_entry(index, MOVECNT_PNTM_WINS_UNPROPED, -1);
 
-	__sync_incr(total_legal_positions);
+	total_legal_positions ++;
     }
 
     void initialize_entry_with_PNTM_mated(index_t index) {
@@ -7650,7 +7641,7 @@ class EntriesTable {
 	    initialize_entry(index, MOVECNT_PTM_WINS_UNPROPED, 1);
 	}
 
-	__sync_incr(total_PNTM_mated_positions);
+	total_PNTM_mated_positions ++;
     }
 
     void initialize_entry_with_stalemate(index_t index) {
@@ -7674,10 +7665,10 @@ class EntriesTable {
 	    }
 	} else {
 	    initialize_entry(index, MOVECNT_STALEMATE, 0);
-	    __sync_incr(total_stalemate_positions);
+	    total_stalemate_positions ++;
 	}
 
-	__sync_incr(total_legal_positions);
+	total_legal_positions ++;
     }
 
     void initialize_entry_with_movecnt(index_t index, unsigned int movecnt) {
@@ -7688,7 +7679,7 @@ class EntriesTable {
 
 	initialize_entry(index, movecnt, 0);
 
-	__sync_incr(total_legal_positions);
+	total_legal_positions ++;
     }
 
     void initialize_entry_with_DTM(index_t index, int dtm) {
@@ -7705,7 +7696,7 @@ class EntriesTable {
 	    initialize_entry(index, MOVECNT_PNTM_WINS_UNPROPED, dtm);
 	}
 
-	__sync_incr(total_legal_positions);
+	total_legal_positions ++;
     }
 };
 
@@ -9227,7 +9218,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
  * Commit an old set of proptables into the entries array while writing a new set.
  */
 
-index_t proptable_shared_index;
+std::atomic<index_t> proptable_shared_index;
 
 void proptable_pass_thread(int target_dtm)
 {
@@ -9247,7 +9238,7 @@ void proptable_pass_thread(int target_dtm)
 	{
 	    std::lock_guard<std::mutex> _(*input_proptable);
 
-	    index = __sync_incr(proptable_shared_index);
+	    index = (proptable_shared_index ++);
 
 	    if (index > current_tb->max_index) break;
 
@@ -9812,7 +9803,7 @@ int promotion_move;
 tablebase_t * futurebase;
 int invert_colors_of_futurebase;
 
-index_t next_future_index;
+std::atomic<index_t> next_future_index;
 
 /* The four futurebase back-propagation functions
  *
@@ -9872,7 +9863,7 @@ void propagate_moves_from_promotion_futurebase(void)
 
     while (1) {
 
-	future_index = __sync_incr(next_future_index);
+	future_index = (next_future_index ++);
 
 	if (future_index > futurebase->max_index) break;
 
@@ -10079,7 +10070,7 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 
     while (1) {
 
-	future_index = __sync_incr(next_future_index);
+	future_index = (next_future_index ++);
 
 	if (future_index > futurebase->max_index) break;
 
@@ -10496,7 +10487,7 @@ void propagate_moves_from_capture_futurebase(void)
 
     while (1) {
 
-	future_index = __sync_incr(next_future_index);
+	future_index = (next_future_index ++);
 
 	if (future_index > futurebase->max_index) break;
 
@@ -10636,7 +10627,7 @@ void propagate_moves_from_normal_futurebase(void)
 
     while (1) {
 
-	future_index = __sync_incr(next_future_index);
+	future_index = (next_future_index ++);
 
 	if (future_index > futurebase->max_index) break;
 
@@ -13026,11 +13017,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	} else {
 
-	    /* total_moves += movecnt; */
-	    (void) __sync_add(&total_moves, movecnt);
-
-	    /* total_futuremoves += futuremovecnt; */
-	    (void) __sync_add(&total_futuremoves, futuremovecnt);
+	    total_moves += movecnt;
+	    total_futuremoves += futuremovecnt;
 
 	    /* In suicide, captures are forced, so if any captures are possible they are our only
 	     * moves.  Of course, if we can capture the opponent's last piece, then we win!
@@ -13512,8 +13500,8 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	finalize_pass_statistics();
 	total_passes ++;
 
-	info("Total legal positions: %lld\n", total_legal_positions);
-	info("Total moves: %lld\n", total_moves);
+	info("Total legal positions: %" PRIu64 "\n", (uint64_t) total_legal_positions);
+	info("Total moves: %" PRIu64 "\n", (uint64_t) total_moves);
 
 	pass_type[total_passes] = "futurebase backprop";
 
@@ -13575,8 +13563,8 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	    pass_type[total_passes] = "initialization";
 	    propagation_pass(0);
 
-	    info("Total legal positions: %lld\n", total_legal_positions);
-	    info("Total moves: %lld\n", total_moves);
+	    info("Total legal positions: %" PRIu64 "\n", (uint64_t) total_legal_positions);
+	    info("Total moves: %" PRIu64 "\n", (uint64_t) total_moves);
 
 	    info("All futuremoves handled under move restrictions\n");
 	}
@@ -14383,7 +14371,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.714 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.715 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
