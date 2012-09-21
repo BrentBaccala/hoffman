@@ -968,19 +968,6 @@ void expand_per_pass_statistics(void)
     bzero(pass_target_dtms + total_passes, (max_passes-total_passes)*sizeof(int));
 }
 
-#ifdef USE_THREADS
-
-inline void pthread_mutex_lock_instrumented(pthread_mutex_t * mutex)
-{
-    if (pthread_mutex_trylock(mutex) != 0) {
-	pthread_mutex_lock(mutex);
-
-	contended_locks ++;
-    }
-}
-
-#endif
-
 /***** MOVEMENT VECTORS *****/
 
 /* The idea here is to calculate piece movements, and to do it FAST.
@@ -5598,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.716 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.717 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5632,12 +5619,10 @@ tablebase_t * parse_XML_control_file(char *filename)
     page_faults = create_GenStats_node("page-faults");
     page_reclaims = create_GenStats_node("page-reclaims");
 
-#ifdef USE_THREADS
     if (num_threads > 1) {
 	contended_locks_node = create_GenStats_node("contended-locks");
 	contended_indices_node = create_GenStats_node("contended-indices");
     }
-#endif
 
     return tb;
 }
@@ -7323,7 +7308,6 @@ class EntriesTable {
 
 	locking_bit_offset = -1;
 
-#ifdef USE_THREADS
 	/* We include a locking bit on the entries if
 	 *    1) we're actually running with multiple threads, and
 	 *    2) we're not using proptables, because they group all operations on a single entry to
@@ -7333,7 +7317,6 @@ class EntriesTable {
 	    locking_bit_offset = movecnt_offset;
 	    movecnt_offset ++;
 	}
-#endif
 
 	/* The DTM field is deliberately last, so that it can be easily expanded */
 	dtm_offset = movecnt_offset + movecnt_bits;
@@ -14324,7 +14307,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.716 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.717 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

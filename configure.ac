@@ -2,57 +2,15 @@ dnl Process this file with autoconf to produce a configure script.
 
 AC_INIT([hoffman],[1.4])
 
-if test x"$CFLAGS" = x; then
-        CFLAGS="-O3"
+if test x"$CXXFLAGS" = x; then
+        CXXFLAGS="-O3"
 fi
 
-AC_PROG_CC
 AC_PROG_CXX
 
-if test x"$GCC" = xyes; then
-        CFLAGS="$CFLAGS -Wall"
-else
-	AC_MSG_WARN(You don't have gcc; Hoffman uses several gcc extensions)
-fi
-
-dnl AC_LANG_PUSH([C++])
-AX_CHECK_COMPILE_FLAG([-std=c++0x], [CFLAGS="$CFLAGS -std=c++0x"])
-dnl AC_LANG_POP
-
-AC_DEFUN([CHECK_INTEL_ATOMIC_OPS], [
-	AC_MSG_CHECKING([whether Intel atomic operations are available])
-	AC_LANG_PUSH([C])
-        AC_LINK_IFELSE([AC_LANG_PROGRAM([], [[int x; __sync_fetch_and_or(&x,1);]])],
-                [intel_atomic_ops_ok=yes],
-                [intel_atomic_ops_ok=no])
-
-        if test x"$intel_atomic_ops_ok" = xyes; then
-		ifelse([$1],,AC_DEFINE(HAVE_INTEL_ATOMIC_OPS,1,[Define if you have Intel atomic operations]),[$1])
-		:
-		AC_MSG_RESULT(yes)
-	else
-		AC_MSG_RESULT(no)
-        fi
-	AC_LANG_POP
-])
-
-AC_DEFUN([FREESOFT_CHECK_SYNC_FETCH_AND_ADD_8],
-[
-	AC_MSG_CHECKING([whether __sync_fetch_and_add works on 64-bit integers])
-        AC_LINK_IFELSE([AC_LANG_PROGRAM([[]], [[
-			long long int x;
-			__sync_fetch_and_add(&x,1);
-                ]])],[ac_cv_sync_fetch_and_add_8=yes],[ac_cv_sync_fetch_and_add_8=no])
-
-        if test x"$ac_cv_sync_fetch_and_add_8" = "xyes"
-        then
-                AC_DEFINE(HAVE_SYNC_FETCH_AND_ADD_8, 1,
-                        [ Define if your system has a __sync_fetch_and_add_8 ])
-		AC_MSG_RESULT(yes)
-	else
-		AC_MSG_RESULT(no)
-        fi
-])
+AC_LANG_PUSH([C++])
+AX_CHECK_COMPILE_FLAG([-std=c++0x], [CXXFLAGS="$CXXFLAGS -std=c++0x"])
+AC_LANG_POP
 
 AC_ARG_WITH([pthreads],
   [AS_HELP_STRING([--without-pthreads], [Don't use pthreads])],
@@ -60,14 +18,7 @@ AC_ARG_WITH([pthreads],
   [with_pthreads=check])
 
 AS_IF([test "x$with_pthreads" != xno],
-[AX_PTHREAD([CHECK_INTEL_ATOMIC_OPS
-	AS_IF([test $intel_atomic_ops_ok = yes],[
-		    AC_DEFINE(HAVE_PTHREAD,1,[Define if you have POSIX threads libraries and header files.])
-		    AC_DEFINE(USE_THREADS,1,[Define to use POSIX threads libraries and header files.])
-		    CC="$PTHREAD_CC"; CFLAGS="$CFLAGS $PTHREAD_CFLAGS"; LIBS="$PTHREAD_LIBS $LIBS"
-		    FREESOFT_CHECK_SYNC_FETCH_AND_ADD_8
-	],[AC_MSG_WARN([Intel atomic operations unavailable - disabling threading])]
-)])])
+	    [AX_PTHREAD(CC="$PTHREAD_CC"; CXXFLAGS="$CXXFLAGS $PTHREAD_CFLAGS"; LIBS="$PTHREAD_LIBS $LIBS")])
 
 dnl Check for the required libraries
 
