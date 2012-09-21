@@ -106,13 +106,7 @@ sub print_cntl_file {
     printnl '';
     printnl '<tablebase>';
 
-    if (index($filename, 'p') == -1) {
-	printnl '   <index type="combinadic3" symmetry="8-way"/>';
-    } else {
-	printnl '   <index type="combinadic3" symmetry="2-way"/>';
-    }
-
-    printnl '   <format><dtm/></format>';
+    printnl '   <dtm/>';
     printnl '   <piece color="white" type="king"/>';
     printnl '   <piece color="black" type="king"/>';
     for my $piece (split(//, $white_pieces)) {
@@ -164,9 +158,7 @@ sub print_cntl_file {
 	}
     }
 
-    printnl '   <generation-controls>';
-    printnl '      <output filename ="' . $filename . '.htb"/>';
-    printnl '   </generation-controls>';
+    printnl '   <output filename ="' . $filename . '.htb"/>';
 
     printnl '</tablebase>';
     close XMLFILE;
@@ -205,14 +197,14 @@ sub gen {
 }
 
 # kk
-# &gen(1,1);
+&gen(1,1);
 
 # 3-piece TBs
-# &gen(2,1);
+&gen(2,1);
 
 # 4-piece TBs
-# &gen(3,1);
-# &gen(2,2);
+&gen(3,1);
+&gen(2,2);
 
 # 5-piece TBs
 &gen(3,2);
