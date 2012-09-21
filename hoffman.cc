@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.708 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.709 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8882,7 +8882,9 @@ class proptable_entry {
 };
 }
 
-/* proptable_iterator (defined below) dereferences into proptable_ptr, which is a pointer into the
+/* proptable - bit-aligned version
+ *
+ * proptable_iterator (defined below) dereferences into proptable_ptr, which is a pointer into the
  * in-memory table.  It's not a normal pointer because the in-memory table is bit-aligned, not
  * byte-aligned.  It contains a pointer to the table format structure, a pointer to the base of the
  * in-memory table, and an offset into the table, measured in entries, the exact size of which is
@@ -9170,199 +9172,6 @@ extern "C++" {
 /* This version uses typed arrays instead of bit arrays. */
 
 extern "C++" {
-    template <typename T> class typed_proptable_iterator;
-    template <typename T> class memory_typed_proptable;
-
-    template <typename T>
-    class typed_proptable_ptr {
-
-	friend class typed_proptable_iterator<T>;
-	friend class disk_que<memory_typed_proptable<T> >;
-	template <typename T2> friend void swap(typed_proptable_ptr<T2> a, typed_proptable_ptr<T2> b);
-
-    private:
-	proptable_format *format;
-	T * ptr;
-	T value;
-
-	/* Private constructor: friend typed_proptable_iterator constructs typed_proptable_ptr when dereferencing */
-
-    typed_proptable_ptr(proptable_format *format, T *ptr):
-	format(format), ptr(ptr), value(*ptr) { }
-
-    public:
-
-	operator proptable_entry() {
-	    int dtm = (value >> format->dtm_offset) & format->dtm_mask;
-	    if ((unsigned int)dtm > (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
-
-	    return proptable_entry(value >> format->index_offset, dtm,
-				   ((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
-				   (value >> format->futuremove_offset) & format->futuremove_mask);
-	}
-
-	typed_proptable_ptr<T> & operator=(proptable_entry other) {
-	    /* Set both our local copy and the copy in the proptable */
-
-	    value = (other.index << format->index_offset)
-	    | ((other.dtm & format->dtm_mask) << format->dtm_offset)
-	    | (((other.movecnt - 1) & format->movecnt_mask) << format->movecnt_offset)
-	    | ((other.futuremove & format->futuremove_mask) << format->futuremove_offset);
-
-	    *ptr = value;
-
-	    return *this;
-	}
-
-	/* We don't use the default copy operator, since that would change ptr and i. */
-
-	typed_proptable_ptr & operator=(typed_proptable_ptr other) {
-	    value = other.value;
-	    *ptr = value;
-	    return *this;
-	}
-
-	/* We want to compare index fields, but we don't want to have to extract all the fields,
-	 * since this function will be used a lot during sorting.  We make sure that index occupies
-	 * the most significant bits, making this comparision simple.
-	 */
-
-	bool operator<(const typed_proptable_ptr & other) const {
-	    return value < other.value;
-	}
-
-	/* This is here to allow disk_que's constructor to cast us to a (void *) and write us to disk
-	 *
-	 * XXX fix this to use streams; we need a zlib I/O stream
-	 */
-
-	operator void *() const {
-	    return ptr;
-	}
-
-    };
-
-    template <typename T>
-    void swap(typed_proptable_ptr<T> a, typed_proptable_ptr<T> b) {
-	T x = a.value;
-	a.value = b.value;
-	b.value = x;
-	*(a.ptr) = a.value;
-	*(b.ptr) = b.value;
-    }
-
-    template <typename T>
-    class typed_proptable_iterator : public std::iterator<std::random_access_iterator_tag, typed_proptable_ptr<T> > {
-
-	friend class memory_typed_proptable<T>;
-	friend class disk_que<memory_typed_proptable<T> >;
-
- private:
-	proptable_format *format;
-	T *ptr;
-
-	/* Private constructor ensures that only friends can create a typed_proptable_iterator */
-
-    typed_proptable_iterator(proptable_format *format, T *ptr) : format(format), ptr(ptr) {}
-
- public:
-
-	typed_proptable_ptr<T> operator*() const {
-	    return typed_proptable_ptr<T>(format, ptr);
-	}
-
-	const typed_proptable_iterator<T> operator++(int zero) {
-	    typed_proptable_iterator<T> retval(*this);
-	    ptr ++;
-	    return retval;
-	}
-
-	const typed_proptable_iterator<T> & operator++() {
-	    ptr ++;
-	    return *this;
-	}
-
-	const typed_proptable_iterator<T> operator--(int zero) {
-	    typed_proptable_iterator<T> retval(*this);
-	    ptr --;
-	    return retval;
-	}
-
-	const typed_proptable_iterator<T> & operator--() {
-	    ptr --;
-	    return *this;
-	}
-
-	const typed_proptable_iterator<T> operator+(ssize_t val) {
-	    typed_proptable_iterator<T> retval(*this);
-	    retval.ptr += val;
-	    return retval;
-	}
-
-	const typed_proptable_iterator<T> operator-(ssize_t val) {
-	    typed_proptable_iterator<T> retval(*this);
-	    retval.ptr -= val;
-	    return retval;
-	}
-
-	int operator-(const typed_proptable_iterator<T> & other) {
-	    return ptr - other.ptr;
-	}
-
-	bool operator==(const class typed_proptable_iterator<T> & other) {
-	    return ptr == other.ptr;
-	}
-
-	bool operator!=(const class typed_proptable_iterator<T> & other) {
-	    return ptr != other.ptr;
-	}
-
-	bool operator<(const class typed_proptable_iterator<T> & other) {
-	    return ptr < other.ptr;
-	}
-
-	// this is for the loop comparision in disk_que
-	bool operator<=(const class typed_proptable_iterator<T> & other) const {
-	    return ptr <= other.ptr;
-	}
-    };
-
-    template <typename T>
-    class memory_typed_proptable : public std::vector<T> {
-
- private:
-	proptable_format format;
-
- public:
-
-	typedef proptable_entry value_type;
-	typedef typed_proptable_iterator<T> iterator;
-	static const ssize_t value_size = sizeof(T);
-
-	template <typename... Args>
-	    memory_typed_proptable(proptable_format format, Args... args):
-	std::vector<T>(args...), format(format)
-	{
-	    // XXX make format.bits unsigned
-	    //if (format.bits > sizeof(T)) throw "proptable format too large";
-	}
-
-	class typed_proptable_iterator<T> begin() {
-	    return typed_proptable_iterator<T>(&format, std::vector<T>::data());
-	}
-
-	class typed_proptable_iterator<T> end() {
-	    return typed_proptable_iterator<T>(&format, std::vector<T>::data() + std::vector<T>::size());
-	}
-    };
-}
-
-/* Finally, the actual priority queue(s) */
-
-//typedef priority_queue<class proptable_entry, class memory_proptable> proptable;
-//typedef priority_queue<class proptable_entry, class memory_typed_proptable<uint64_t> > proptable;
-
-extern "C++" {
     template<typename T>
     class typed_proptable : public priority_queue<T> {
     private:
@@ -9392,6 +9201,9 @@ extern "C++" {
     };
 }
 
+/* Finally, the actual priority queue(s) */
+
+//typedef priority_queue<class proptable_entry, class memory_proptable> proptable;
 typedef typed_proptable<uint64_t> proptable;
 
 proptable * input_proptable;
@@ -14660,7 +14472,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.708 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.709 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
