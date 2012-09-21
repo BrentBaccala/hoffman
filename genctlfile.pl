@@ -107,16 +107,12 @@ sub print_cntl_file {
     printnl '<tablebase>';
 
     if (index($filename, 'p') == -1) {
-	printnl '   <index type="compact" symmetry="8-way"/>';
-	printnl '   <format><dtm bits="8"/></format>';
-    } elsif ($filename ne "kppkp") {
-	printnl '   <index type="compact" symmetry="2-way"/>';
-	printnl '   <format><dtm bits="8"/></format>';
+	printnl '   <index type="combinadic3" symmetry="8-way"/>';
     } else {
-	printnl '   <index type="compact" symmetry="2-way"/>';
-	printnl '   <format><dtm bits="16"/></format>';
+	printnl '   <index type="combinadic3" symmetry="2-way"/>';
     }
 
+    printnl '   <format><dtm/></format>';
     printnl '   <piece color="white" type="king"/>';
     printnl '   <piece color="black" type="king"/>';
     for my $piece (split(//, $white_pieces)) {
@@ -170,13 +166,6 @@ sub print_cntl_file {
 
     printnl '   <generation-controls>';
     printnl '      <output filename ="' . $filename . '.htb"/>';
-    if ($filename eq "kppkp") {
-	printnl '      <entries-format>';
-	printnl '         <dtm bits="9" offset="0"/>';
-	printnl '         <locking-bit offset="9"/>';
-	printnl '         <movecnt bits="6" offset="10"/>';
-	printnl '      </entries-format>';
-    }
     printnl '   </generation-controls>';
 
     printnl '</tablebase>';
@@ -216,15 +205,15 @@ sub gen {
 }
 
 # kk
-&gen(1,1);
+# &gen(1,1);
 
 # 3-piece TBs
-&gen(2,1);
+# &gen(2,1);
 
 # 4-piece TBs
-&gen(3,1);
-&gen(2,2);
+# &gen(3,1);
+# &gen(2,2);
 
 # 5-piece TBs
-# &gen(3,2);
+&gen(3,2);
 # &gen(4,1);
