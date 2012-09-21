@@ -239,8 +239,8 @@ unsigned int progress_dots = 100;
 int total_passes = 0;
 int max_passes = 0;
 
-const char ** pass_type = NULL;
-int * pass_target_dtms = NULL;
+const char ** pass_type = nullptr;
+int * pass_target_dtms = nullptr;
 
 std::atomic<int> positions_finalized_this_pass;
 std::vector<int> positions_finalized;
@@ -251,8 +251,8 @@ std::vector<uint64_t> backproped_moves;
 bool tracking_dtm = true;   // XXX should clear this variable if we're generating a bitbase
 int min_tracked_dtm = -2;
 int max_tracked_dtm = 2;
-uint8_t * positive_passes_needed = NULL;
-uint8_t * negative_passes_needed = NULL;
+uint8_t * positive_passes_needed = nullptr;
+uint8_t * negative_passes_needed = nullptr;
 
 
 /***** DATA STRUCTURES *****/
@@ -413,10 +413,10 @@ typedef struct {
 #define KNIGHT 4
 #define PAWN 5
 
-const char * piece_name[NUM_PIECES+1] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", NULL};
+const char * piece_name[NUM_PIECES+1] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", nullptr};
 const char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
 
-const char * colors[3] = {"WHITE", "BLACK", NULL};
+const char * colors[3] = {"WHITE", "BLACK", nullptr};
 
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
@@ -455,13 +455,13 @@ struct format {
     int basic_offset;
 };
 
-const char * format_fields[] = {"dtm", "flag", "basic", NULL};
+const char * format_fields[] = {"dtm", "flag", "basic", nullptr};
 
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_FLAG 1
 #define FORMAT_FIELD_BASIC 2
 
-const char * format_flag_types[] = {"", "white-wins", "white-draws", NULL};
+const char * format_flag_types[] = {"", "white-wins", "white-draws", nullptr};
 
 #define FORMAT_FLAG_NONE 0
 #define FORMAT_FLAG_WHITE_WINS 1
@@ -508,12 +508,12 @@ typedef void entry_t;
 #define RESTRICTION_DISCARD 1
 #define RESTRICTION_CONCEDE 2
 
-const char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", NULL};
+const char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", nullptr};
 
 #define FORMAT_FOURBYTE 0
 #define FORMAT_ONE_BYTE_DTM 1
 
-const char * formats[] = {"fourbyte", "one-byte-dtm", NULL};
+const char * formats[] = {"fourbyte", "one-byte-dtm", nullptr};
 
 #define NAIVE_INDEX 0
 #define NAIVE2_INDEX 1
@@ -637,7 +637,7 @@ typedef struct tablebase {
 
 int zeros_fd = -1;
 
-tablebase_t *current_tb = NULL;
+tablebase_t *current_tb = nullptr;
 
 tablebase_t **futurebases;
 int num_futurebases;
@@ -689,8 +689,8 @@ index_t debug_futuremove = INVALID_INDEX;
 
 int fatal_errors = 0;
 
-char * error_report_url = NULL;
-char * completion_report_url = NULL;
+char * error_report_url = nullptr;
+char * completion_report_url = nullptr;
 
 #define MAX_FATAL_ERRORS 10
 
@@ -704,9 +704,9 @@ char * completion_report_url = NULL;
 
     if (fatal_errors > 0) {
 #ifdef USE_LIBCURL
-	if (error_report_url != NULL) {
+	if (error_report_url != nullptr) {
 	    file = url_open(error_report_url, "w");
-	    if ((current_tb != NULL) && (current_tb->xml != NULL)) {
+	    if ((current_tb != nullptr) && (current_tb->xml != nullptr)) {
 		xmlDocDumpMemory(current_tb->xml, &buf, &size);
 		url_write(file, (char *) buf, size);
 		xmlFree(buf);
@@ -717,9 +717,9 @@ char * completion_report_url = NULL;
 	exit(EXIT_FAILURE);
     } else {
 #ifdef USE_LIBCURL
-	if (completion_report_url != NULL) {
+	if (completion_report_url != nullptr) {
 	    file = url_open(completion_report_url, "w");
-	    if ((current_tb != NULL) && (current_tb->xml != NULL)) {
+	    if ((current_tb != nullptr) && (current_tb->xml != nullptr)) {
 		xmlDocDumpMemory(current_tb->xml, &buf, &size);
 		url_write(file, (char *) buf, size);
 		xmlFree(buf);
@@ -737,7 +737,7 @@ void fatal (const char * format, ...)
     static char strbuf[256] = {'\0'};
 
     /* BREAKPOINT */
-    if (index(format, '\n') != NULL) fatal_errors ++;
+    if (index(format, '\n') != nullptr) fatal_errors ++;
 
     va_start(va, format);
     vfprintf(stderr, format, va);
@@ -745,14 +745,14 @@ void fatal (const char * format, ...)
 
     va_start(va, format);
 
-    if ((current_tb != NULL) && (current_tb->xml != NULL)) {
+    if ((current_tb != nullptr) && (current_tb->xml != nullptr)) {
 	vsnprintf(strbuf + strlen(strbuf), sizeof(strbuf) - strlen(strbuf), format, va);
-	if (index(strbuf, '\n') != NULL) {
+	if (index(strbuf, '\n') != nullptr) {
 	    xmlNodePtr tablebase = xmlDocGetRootElement(current_tb->xml);
 
 	    *index(strbuf, '\n') = '\0';
 	    xmlNodeAddContent(tablebase, BAD_CAST "   ");
-	    xmlNewChild(tablebase, NULL, BAD_CAST "error", BAD_CAST strbuf);
+	    xmlNewChild(tablebase, nullptr, BAD_CAST "error", BAD_CAST strbuf);
 	    xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
 	    memset(strbuf, 0, sizeof(strbuf));
@@ -795,7 +795,7 @@ void sigaction_internal_error (int signal, siginfo_t * siginfo, void * ucontext)
     terminate();
 }
 
-/* Matches a string against a NULL-terminated array of strings using case insensitive match.
+/* Matches a string against a nullptr-terminated array of strings using case insensitive match.
  * Returns index in array of matching string, or -1 if there was no match.
  */
 
@@ -803,9 +803,9 @@ int find_name_in_array(char * name, const char * array[])
 {
     int i=0;
 
-    if (name == NULL) return -1;
+    if (name == nullptr) return -1;
 
-    while (*array != NULL) {
+    while (*array != nullptr) {
 	if (!strcasecmp(name, *array)) return i;
 	array ++;
 	i ++;
@@ -2806,7 +2806,7 @@ bool combinadic_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->permutations[piece] != NULL) {
+	if (tb->permutations[piece] != nullptr) {
 	    int perm = 0;
 
 	    while (tb->permutations[piece][perm] != 0) {
@@ -3065,7 +3065,7 @@ bool combinadic2_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	if (p->piece_position[piece] >= 64) return false;
 
-	if (tb->permutations[piece] != NULL) {
+	if (tb->permutations[piece] != nullptr) {
 	    int perm = 0;
 
 	    while (tb->permutations[piece][perm] != 0) {
@@ -3393,7 +3393,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	if (tb->permutations[piece] != NULL) {
+	if (tb->permutations[piece] != nullptr) {
 	    int perm = 0;
 
 	    while (tb->permutations[piece][perm] != 0) {
@@ -3587,7 +3587,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	/* run this loop once for each set of identical pieces */
-	if (tb->permutations[piece] != NULL) {
+	if (tb->permutations[piece] != nullptr) {
 	    int perm = 0;
 
 	    while (tb->permutations[piece][perm] != 0) {
@@ -4060,14 +4060,14 @@ bool parse_format(xmlNodePtr formatNode, struct format *format, bool expl)
     format->flag_offset = -1;
     format->basic_offset = -1;
 
-    for (child = formatNode->children; child != NULL; child = child->next) {
+    for (child = formatNode->children; child != nullptr; child = child->next) {
 	if (child->type == XML_ELEMENT_NODE) {
 	    char * bitstr = (char *) xmlGetProp(child, BAD_CAST "bits");
 	    char * typestr;
-	    int bits = (bitstr != NULL) ? atoi(bitstr) : 0;
+	    int bits = (bitstr != nullptr) ? atoi(bitstr) : 0;
 	    int format_field = find_name_in_array((char *) child->name, format_fields);
 
-	    if (bitstr != NULL) xmlFree(bitstr);
+	    if (bitstr != nullptr) xmlFree(bitstr);
 
 	    if (format_field == -1) {
 		if (expl) {
@@ -4088,7 +4088,7 @@ bool parse_format(xmlNodePtr formatNode, struct format *format, bool expl)
 		bits = 1;
 		typestr = (char *) xmlGetProp(child, BAD_CAST "type");
 		format->flag_type = find_name_in_array(typestr, format_flag_types);
-		if (typestr != NULL) xmlFree(typestr);
+		if (typestr != nullptr) xmlFree(typestr);
 		if (format->flag_type == -1) {
 		    fatal("'type' is a required property in format field 'flag'\n");
 		    return false;
@@ -4153,9 +4153,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     int piece_in_set = 1;
 
     tb = (tablebase_t *) malloc(sizeof(tablebase_t));
-    if (tb == NULL) {
+    if (tb == nullptr) {
 	fatal("Can't malloc tablebase\n");
-	return NULL;
+	return nullptr;
     }
     memset(tb, 0, sizeof(tablebase_t));
 
@@ -4205,7 +4205,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     result = xmlXPathEvalExpression(BAD_CAST "//program", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	xmlChar * content = xmlNodeGetContent(result->nodesetval->nodeTab[0]);
-	if (content != NULL) {
+	if (content != nullptr) {
 	    sscanf((char *) content, "Hoffman %*[$]Revision: 1.%u $", &generating_version);
 	    xmlFree(content);
 	}
@@ -4227,7 +4227,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     result = xmlXPathEvalExpression(BAD_CAST "//max-dtm", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	xmlChar * content = xmlNodeGetContent(result->nodesetval->nodeTab[0]);
-	if (content != NULL) {
+	if (content != nullptr) {
 	    tb->max_dtm = atoi((char *) content);
 	    xmlFree(content);
 	}
@@ -4239,7 +4239,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     result = xmlXPathEvalExpression(BAD_CAST "//min-dtm", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	xmlChar * content = xmlNodeGetContent(result->nodesetval->nodeTab[0]);
-	if (content != NULL) {
+	if (content != nullptr) {
 	    tb->min_dtm = atoi((char *) content);
 	    xmlFree(content);
 	}
@@ -4256,8 +4256,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "type");
 	tb->stalemate_prune_type = find_name_in_array((char *) prune_type, restriction_types);
 	tb->stalemate_prune_color = find_name_in_array((char *) prune_color, colors);
-	if (prune_color != NULL) xmlFree(prune_color);
-	if (prune_type != NULL) xmlFree(prune_type);
+	if (prune_color != nullptr) xmlFree(prune_color);
+	if (prune_type != nullptr) xmlFree(prune_type);
 	if (tb->stalemate_prune_type != RESTRICTION_CONCEDE) {
 	    fatal("Stalemates can only be pruned to 'concede'\n");
 	}
@@ -4274,7 +4274,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     if (tb->num_pieces > MAX_PIECES) {
 	fatal("Too many pieces (%d compiled-in maximum)!\n", MAX_PIECES);
-	return NULL;
+	return nullptr;
     }
 
     tb->white_king = -1;
@@ -4290,7 +4290,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	tb->piece_color[piece] = find_name_in_array((char *) color, colors);
 	tb->piece_type[piece] = find_name_in_array((char *) type, piece_name);
 
-	if (location == NULL) {
+	if (location == nullptr) {
 	    if (tb->piece_type[piece] == PAWN) {
 		tb->legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
 	    } else {
@@ -4312,7 +4312,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    }
 	}
 
-	if ((index_ordering != NULL) && (strcmp((char *) index_ordering, "reverse") == 0)) {
+	if ((index_ordering != nullptr) && (strcmp((char *) index_ordering, "reverse") == 0)) {
 	    tb->reverse_index_ordering[piece] = 1;
 	} else {
 	    tb->reverse_index_ordering[piece] = 0;
@@ -4344,21 +4344,21 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	}
 
-	if (color != NULL) xmlFree(color);
-	if (type != NULL) xmlFree(type);
-	if (location != NULL) xmlFree(location);
-	if (index_ordering != NULL) xmlFree(index_ordering);
+	if (color != nullptr) xmlFree(color);
+	if (type != nullptr) xmlFree(type);
+	if (location != nullptr) xmlFree(location);
+	if (index_ordering != nullptr) xmlFree(index_ordering);
     }
 
     if ((tb->num_pieces_by_color[WHITE] == 0) || (tb->num_pieces_by_color[BLACK] == 0)) {
 	fatal("Must have at least one white piece and one black piece!\n");
-	return NULL;
+	return nullptr;
     }
 
     if (tb->variant != VARIANT_SUICIDE) {
 	if ((tb->white_king == -1) || (tb->black_king == -1)) {
 	    fatal("Must have one white king and one black one!\n");
-	    return NULL;
+	    return nullptr;
 	}
     }
 
@@ -4409,7 +4409,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
 	    uint64_t pawn_positions = 0xffffffffffffffffLL;
 
-	    if ((location != NULL) && (location[2] == '+')) {
+	    if ((location != nullptr) && (location[2] == '+')) {
 
 		int square = rowcol2square(location[1] - '1', location[0] - 'a');
 		int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
@@ -4451,7 +4451,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		 */
 	    }
 
-	    if (location != NULL) xmlFree(location);
+	    if (location != nullptr) xmlFree(location);
 	}
     }
 
@@ -4465,7 +4465,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 		xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
 
-		if ((location != NULL) && (location[2] == '+')) {
+		if ((location != nullptr) && (location[2] == '+')) {
 
 		    int square = rowcol2square(location[1] - '1', location[0] - 'a');
 		    int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
@@ -4481,7 +4481,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		    }
 		}
 
-		if (location != NULL) xmlFree(location);
+		if (location != nullptr) xmlFree(location);
 	    }
 	}
     }
@@ -4633,14 +4633,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     index = xmlGetProp(tablebase, BAD_CAST "index");
     index_node = tablebase;
-    if (index == NULL) {
+    if (index == nullptr) {
 	context = xmlXPathNewContext(tb->xml);
 	result = xmlXPathEvalExpression(BAD_CAST "//index", context);
 	if (result->nodesetval->nodeNr == 1) {
 	    index_node = result->nodesetval->nodeTab[0];
 	    index = xmlGetProp(index_node, BAD_CAST "type");
 	    xmlChar * index_offset = xmlGetProp(index_node, BAD_CAST "offset");
-	    if (index_offset != NULL) {
+	    if (index_offset != nullptr) {
 		tb->index_offset = atoi((char *) index_offset);
 		xmlFree(index_offset);
 	    }
@@ -4649,11 +4649,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	xmlXPathFreeContext(context);
     }
 
-    if (index == NULL) {
+    if (index == nullptr) {
 	tb->index_type = DEFAULT_INDEX;
 
 	xmlNodeAddContent(tablebase, BAD_CAST "   ");
-	index_node = xmlNewChild(tablebase, NULL, BAD_CAST "index", NULL);
+	index_node = xmlNewChild(tablebase, nullptr, BAD_CAST "index", nullptr);
 	xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
 	xmlNewProp(index_node, BAD_CAST "type", BAD_CAST index_types[DEFAULT_INDEX]);
@@ -4661,10 +4661,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	tb->index_type = find_name_in_array((char *) index, index_types);
 	if (tb->index_type == -1) {
 	    fatal("Unknown tablebase index type '%s'\n", index);
-	    return NULL;
+	    return nullptr;
 	}
 	xmlFree(index);
-	index = NULL;
+	index = nullptr;
     }
 
     /* The other encoding schemes depend on a special encoding for the kings, which might not even
@@ -4674,7 +4674,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     if ((tb->variant == VARIANT_SUICIDE) && (tb->index_type != NAIVE_INDEX)
 	&& (tb->index_type != SIMPLE_INDEX) && (tb->index_type != COMBINADIC3_INDEX)) {
 	fatal("Only 'naive', 'simple', and 'combinadic3' indices are compatible with 'suicide' variant\n");
-	return NULL;
+	return nullptr;
     }
 
     /* Now, I had this idea that I could completely discard those positions where the king was in
@@ -4688,7 +4688,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      */
 
     king_positions = xmlGetProp(index_node, BAD_CAST "king-positions");
-    if (king_positions != NULL) {
+    if (king_positions != nullptr) {
 	if (!strcmp((char *) king_positions, "no-frozen-checks")) no_frozen_check_king_positions = 1;
 	else no_frozen_check_king_positions = 0;
 	xmlFree(king_positions);
@@ -4725,7 +4725,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    if (BITVECTOR(square) == tb->semilegal_squares[piece]) {
 		if (tb->frozen_pieces_vector & BITVECTOR(square)) {
 		    fatal("More than one piece frozen on %c%c", 'a' + COL(square), '1' + ROW(square));
-		    return NULL;
+		    return nullptr;
 		}
 		tb->frozen_pieces_vector |= BITVECTOR(square);
 
@@ -4792,27 +4792,27 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      */
 
     format = xmlGetProp(tablebase, BAD_CAST "format");
-    if (format != NULL) {
+    if (format != nullptr) {
 	switch (find_name_in_array((char *) format, formats)) {
 	case FORMAT_ONE_BYTE_DTM:
 	    tb->format = one_byte_dtm_format;
 	    break;
 	default:
 	    fatal("Unknown tablebase format '%s'\n", format);
-	    return NULL;
+	    return nullptr;
 	}
 	xmlFree(format);
     } else {
 	context = xmlXPathNewContext(tb->xml);
 	result = xmlXPathEvalExpression(BAD_CAST "//format", context);
 	if (result->nodesetval->nodeNr == 1) {
-	    if (! parse_format(result->nodesetval->nodeTab[0], &tb->format, true)) return NULL;
+	    if (! parse_format(result->nodesetval->nodeTab[0], &tb->format, true)) return nullptr;
 	} else {
 	    if (! parse_format(tablebase, &tb->format, false)) {
 		tb->format = dtm_format;
 
 		xmlNodeAddContent(tablebase, BAD_CAST "   ");
-		xmlNewChild(tablebase, NULL, BAD_CAST "dtm", NULL);
+		xmlNewChild(tablebase, nullptr, BAD_CAST "dtm", nullptr);
 		xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
 		warning("Format not expressly specified; assuming dtm\n");
@@ -4825,7 +4825,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     /* Extract index symmetry (if it was specified) */
 
     index_symmetry = xmlGetProp(index_node, BAD_CAST "symmetry");
-    if (index_symmetry != NULL) {
+    if (index_symmetry != nullptr) {
 	tb->symmetry = atoi((char *) index_symmetry);
 	if ((tb->symmetry != 1) && (tb->symmetry != 2) && (tb->symmetry != 4) && (tb->symmetry != 8)) {
 	    fatal("Bad index symmetry %d\n", tb->symmetry);
@@ -4864,7 +4864,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     if ((tb->variant == VARIANT_SUICIDE) && (tb->symmetry != 1)) {
 	fatal("Can't use symmetry with 'suicide' variant (yet)\n");
-	return NULL;
+	return nullptr;
     }
 
     /* Check piece specification to make sure it matches symmetry
@@ -4876,14 +4876,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     if ((tb->symmetry == 8) && ((tb->index_type == NAIVE_INDEX) || (tb->index_type == NAIVE2_INDEX))) {
 	fatal("8-way symmetry incompatible with naive/naive2 index types\n");
-	return NULL;
+	return nullptr;
     }
 
     if (tb->symmetry >= 4) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->piece_type[piece] == PAWN) {
 		fatal("Pawns not allowed with 4/8-way symmetric indices\n");
-		return NULL;
+		return nullptr;
 	    }
 	}
     }
@@ -4893,7 +4893,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    if (((tb->piece_type[piece] != PAWN) && (tb->legal_squares[piece] != ALL_ONES_BITVECTOR))
 		|| ((tb->piece_type[piece] == PAWN) && (tb->legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
 		fatal("Piece restrictions not allowed with symmetric indices (yet)\n");
-		return NULL;
+		return nullptr;
 	    }
 	}
     }
@@ -4902,7 +4902,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->legal_squares[piece] != tb->semilegal_squares[piece]) {
 		fatal("Non-identical overlapping piece restrictions not allowed with this index type\n");
-		return NULL;
+		return nullptr;
 	    }
 	}
     }
@@ -4923,12 +4923,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 			if ((col > 0)
 			    && (tb->legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col-1)))) {
 			    fatal("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible\n");
-			    return NULL;
+			    return nullptr;
 			}
 			if ((col < 7)
 			    && (tb->legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col+1)))) {
 			    fatal("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible\n");
-			    return NULL;
+			    return nullptr;
 			}
 		    }
 		}
@@ -4980,7 +4980,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
 		fatal("Can't have more than two identical pieces with 'naive2' index (yet)\n");
-		return NULL;
+		return nullptr;
 	    }
 
 	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
@@ -5062,7 +5062,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
 		fatal("Can't have more than two identical pieces with 'compact' index (yet)\n");
-		return NULL;
+		return nullptr;
 	    }
 
 	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
@@ -5166,7 +5166,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 		if ((tb->blocking_piece[piece] > piece) && (tb->piece_color[piece] != WHITE)) {
 		    fatal("Mutually blocking pawns must currently be specified white pawn first\n");
-		    return NULL;
+		    return nullptr;
 		}
 
 		if (tb->blocking_piece[piece] > piece) {
@@ -5322,7 +5322,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
 		fatal("Can't have more than two identical pieces with 'no-en-passant' index (yet)\n");
-		return NULL;
+		return nullptr;
 	    }
 
 	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
@@ -5337,11 +5337,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 		if ((tb->prev_piece_in_encoding_group[piece] != -1) || (tb->next_piece_in_encoding_group[piece] != -1)) {
 		    fatal("Can't have a doubled pawn opposed by enemy pawn (yet)\n");
-		    return NULL;
+		    return nullptr;
 		}
 		if ((tb->blocking_piece[piece] > piece) && (tb->piece_color[piece] != WHITE)) {
 		    fatal("Mutually blocking pawns must currently be specified white pawn first\n");
-		    return NULL;
+		    return nullptr;
 		}
 		if (tb->blocking_piece[piece] > piece) {
 		    tb->next_piece_in_encoding_group[piece] = tb->blocking_piece[piece];
@@ -5400,19 +5400,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     /* See if an index modulus was specified for inversion in a finite field */
 
     modulus = xmlGetProp(index_node, BAD_CAST "modulus");
-    if (modulus != NULL) {
+    if (modulus != nullptr) {
 	if (strcmp((char *) modulus, "auto") == 0) {
 	    tb->modulus = round_up_to_prime(tb->max_index + 1);
 	    if (! is_futurebase) info("Using %" PRIindex " as auto modulus\n", tb->modulus);
 	} else {
-	    tb->modulus = strtoll((const char *) modulus, NULL, 0);
+	    tb->modulus = strtoll((const char *) modulus, nullptr, 0);
 	    if (! is_prime(tb->modulus)) {
 		fatal("modulus %" PRIindex " is not a prime number\n", tb->modulus);
-		return NULL;
+		return nullptr;
 	    }
 	    if (tb->modulus <= tb->max_index) {
 		fatal("modulus %" PRIindex " less than max_index %" PRIindex "\n", tb->modulus, tb->max_index);
-		return NULL;
+		return nullptr;
 	    }
 	}
 	tb->max_index = tb->modulus - 1;
@@ -5442,15 +5442,15 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		tb->prune_enable[color] |= type;
 	    }
 
-	    if (color_str != NULL) xmlFree(color_str);
-	    if (type_str != NULL) xmlFree(type_str);
+	    if (color_str != nullptr) xmlFree(color_str);
+	    if (type_str != nullptr) xmlFree(type_str);
 	}
     }
 
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    return (fatal_errors == starting_fatal_errors) ? tb : NULL;
+    return (fatal_errors == starting_fatal_errors) ? tb : nullptr;
 }
 
 /* Parses an XML control file.
@@ -5461,7 +5461,7 @@ xmlNodePtr create_GenStats_node(const char *name)
     xmlNodePtr node;
 
     xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
-    node = xmlNewChild(generation_statistics, NULL, BAD_CAST name, NULL);
+    node = xmlNewChild(generation_statistics, nullptr, BAD_CAST name, nullptr);
     xmlNodeAddContent(generation_statistics, BAD_CAST "\n   ");
 
     return node;
@@ -5485,16 +5485,16 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     dtd_input_buffer = xmlParserInputBufferCreateMem(tablebase_dtd, strlen(tablebase_dtd),
 						     XML_CHAR_ENCODING_ASCII);
-    dtd = xmlIOParseDTD(NULL, dtd_input_buffer, XML_CHAR_ENCODING_ASCII);
+    dtd = xmlIOParseDTD(nullptr, dtd_input_buffer, XML_CHAR_ENCODING_ASCII);
 
     /* load the control file from the specified filename or URL */
 
-    doc = xmlReadFile(filename, NULL, 0);
+    doc = xmlReadFile(filename, nullptr, 0);
 
     /* check if parsing suceeded */
-    if (doc == NULL) {
+    if (doc == nullptr) {
 	fatal("'%s' failed XML read\n", filename);
-	return NULL;
+	return nullptr;
     }
 
     /* Does the tablebase specify URLs to report errors or successful completion to?  If so, extract
@@ -5521,11 +5521,11 @@ tablebase_t * parse_XML_control_file(char *filename)
     /* check if validation suceeded */
     if (! xmlValidateDtd(xmlNewValidCtxt(), doc, dtd)) {
 	fatal("'%s' failed XML validatation\n", filename);
-	return NULL;
+	return nullptr;
     }
 
     tb = parse_XML_into_tablebase(doc, 0);
-    if (tb == NULL) return NULL;
+    if (tb == nullptr) return nullptr;
 
     /* We don't free the XML doc because the tablebase struct contains a pointer to it */
 
@@ -5551,7 +5551,7 @@ tablebase_t * parse_XML_control_file(char *filename)
 	do_restart = 0;
 
 	xmlNodeAddContent(tablebase, BAD_CAST "   ");
-	generation_statistics = xmlNewChild(tablebase, NULL, BAD_CAST "generation-statistics", NULL);
+	generation_statistics = xmlNewChild(tablebase, nullptr, BAD_CAST "generation-statistics", nullptr);
 	xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
     } else {
@@ -5561,17 +5561,17 @@ tablebase_t * parse_XML_control_file(char *filename)
 	do_restart = 1;
 
 	node = xmlAddNextSibling(result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1], xmlNewText(BAD_CAST "\n   "));
-	generation_statistics = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "generation-statistics", NULL));
+	generation_statistics = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, nullptr, BAD_CAST "generation-statistics", nullptr));
 
 	xmlXPathFreeObject(result);
 	result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics//pass", context);
 
 	dtm = xmlGetProp(result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1], BAD_CAST "dtm");
-	if (dtm == NULL) {
+	if (dtm == nullptr) {
 	    /* check for futurebase pass */
 	    fatal("Last pass before checkpoint wasn't an intratable pass\n");
 	} else {
-	    last_dtm_before_restart = strtol((const char *)dtm, NULL, 0);
+	    last_dtm_before_restart = strtol((const char *)dtm, nullptr, 0);
 	    xmlFree(dtm);
 	}
     }
@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.718 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.719 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5606,9 +5606,9 @@ tablebase_t * parse_XML_control_file(char *filename)
      */
 
     xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
-    positive_passes_needed_node = xmlNewChild(generation_statistics, NULL, BAD_CAST "positive-passes-needed", NULL);
+    positive_passes_needed_node = xmlNewChild(generation_statistics, nullptr, BAD_CAST "positive-passes-needed", nullptr);
     positive_passes_needed_text_node = xmlAddChild(generation_statistics, xmlNewText(BAD_CAST "\n      "));
-    negative_passes_needed_node = xmlNewChild(generation_statistics, NULL, BAD_CAST "negative-passes-needed", NULL);
+    negative_passes_needed_node = xmlNewChild(generation_statistics, nullptr, BAD_CAST "negative-passes-needed", nullptr);
     negative_passes_needed_text_node = xmlAddChild(generation_statistics, xmlNewText(BAD_CAST "\n   "));
 
     /* create global counter nodes */
@@ -5636,13 +5636,13 @@ tablebase_t * parse_XML_control_file(char *filename)
 
 tablebase_t * preload_futurebase_from_file(char *filename)
 {
-    void * file = NULL;
+    void * file = nullptr;
     xmlDocPtr doc;
-    tablebase_t *tb = NULL;
+    tablebase_t *tb = nullptr;
     xmlNodePtr tablebase;
     xmlChar * offsetstr;
 
-    if (rindex(filename, ':') == NULL) {
+    if (rindex(filename, ':') == nullptr) {
 	int fd;
 
 	fd = open(filename, O_RDONLY|O_LARGEFILE, 0);
@@ -5653,7 +5653,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     } else if (strncmp(filename, "ftp:", 4) == 0) {
 #ifdef HAVE_LIBFTP
 	void *ptr = ftp_openurl(filename, "r");
-	if (ptr != NULL) {
+	if (ptr != nullptr) {
 	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
 #else
@@ -5663,21 +5663,21 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 	fatal("http: URLs currently unsupported for tablebase I/O\n");
     }
 
-    if (file == NULL) {
+    if (file == nullptr) {
 	fatal("Can't open tablebase '%s'\n", filename);
-	return NULL;
+	return nullptr;
     }
 
     /* My experiments with xmlReadIO indicate that it only calls its read function enough times to
      * get the XML document, which is good, because we don't want it reading the entire file.
      */
-    doc = xmlReadIO(&zlib_read_int, NULL, file, NULL, NULL, 0);
+    doc = xmlReadIO(&zlib_read_int, nullptr, file, nullptr, nullptr, 0);
 
     tb = parse_XML_into_tablebase(doc, 1);
 
-    if (tb == NULL) {
+    if (tb == nullptr) {
 	fatal("Futurebase preload failed: '%s'\n", filename);
-	return NULL;
+	return nullptr;
     }
 
     tb->filename = filename;
@@ -5685,8 +5685,8 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     tablebase = xmlDocGetRootElement(doc);
 
     offsetstr = xmlGetProp(tablebase, BAD_CAST "offset");
-    tb->offset = strtol((const char *) offsetstr, NULL, 0);
-    if (offsetstr != NULL) xmlFree(offsetstr);
+    tb->offset = strtol((const char *) offsetstr, nullptr, 0);
+    if (offsetstr != nullptr) xmlFree(offsetstr);
 
     zlib_close(file);
 
@@ -5696,9 +5696,9 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 void open_futurebase(tablebase_t * tb)
 {
     /* already open? */
-    if (tb->file != NULL) return;
+    if (tb->file != nullptr) return;
 
-    if (rindex(tb->filename, ':') == NULL) {
+    if (rindex(tb->filename, ':') == nullptr) {
 	int fd;
 	fd = open(tb->filename, O_RDONLY|O_LARGEFILE, 0);
 	if (fd != -1) {
@@ -5707,7 +5707,7 @@ void open_futurebase(tablebase_t * tb)
     } else if (strncmp(tb->filename, "ftp:", 4) == 0) {
 #ifdef HAVE_LIBFTP
 	void *ptr = ftp_openurl(tb->filename, "r");
-	if (ptr != NULL) {
+	if (ptr != nullptr) {
 	    tb->file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
 #else
@@ -5717,7 +5717,7 @@ void open_futurebase(tablebase_t * tb)
 	fatal("http: URLs currently unsupported for tablebase I/O\n");
     }
 
-    if (tb->file == NULL) {
+    if (tb->file == nullptr) {
 	fatal("Can't open tablebase '%s'\n", tb->filename);
     }
 
@@ -5730,21 +5730,21 @@ void open_futurebase(tablebase_t * tb)
 
 void close_futurebase(tablebase_t * tb)
 {
-    if (tb->file != NULL) {
+    if (tb->file != nullptr) {
 	if (zlib_close(tb->file) != 0) {
 	    warning("zlib_close failed in close_futurebase()\n");
 	}
     }
-    tb->file = NULL;
+    tb->file = nullptr;
 }
 
 void unload_futurebase(tablebase_t *tb)
 {
-    if (tb->filename != NULL) xmlFree(tb->filename);
-    tb->filename = NULL;
+    if (tb->filename != nullptr) xmlFree(tb->filename);
+    tb->filename = nullptr;
 
-    if (tb->xml != NULL) xmlFreeDoc(tb->xml);
-    tb->xml = NULL;
+    if (tb->xml != nullptr) xmlFreeDoc(tb->xml);
+    tb->xml = nullptr;
 
     close_futurebase(tb);
 }
@@ -5866,7 +5866,7 @@ bool preload_all_futurebases(tablebase_t *tb)
     result = xmlXPathEvalExpression(BAD_CAST "//futurebase", context);
     num_futurebases = result->nodesetval->nodeNr;
     futurebases = (tablebase_t **) malloc(sizeof(tablebase_t *) * num_futurebases);
-    if (futurebases == NULL) {
+    if (futurebases == nullptr) {
 	fatal("Can't malloc futurebases array\n");
 	return false;
     }
@@ -5877,10 +5877,10 @@ bool preload_all_futurebases(tablebase_t *tb)
 	xmlChar * type;
 
 	filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "filename");
-	if (filename == NULL) {
+	if (filename == nullptr) {
 	    filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "url");
 	}
-	if (filename == NULL) {
+	if (filename == nullptr) {
 	    fatal("No filename or URL specified in futurebase element\n");
 	    continue;
 	}
@@ -5888,7 +5888,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	futurebases[fbnum] = preload_futurebase_from_file((char *) filename);
 
 	/* load_futurebase_from_file() already printed some kind of error message */
-	if (futurebases[fbnum] == NULL) continue;
+	if (futurebases[fbnum] == nullptr) continue;
 
 	if (futurebases[fbnum]->variant != tb->variant) {
 	    fatal("Futurebases have to use same 'variant' as tablebase under construction!\n");
@@ -5905,7 +5905,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 
 	futurebases[fbnum]->invert_colors = 0;
 	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "colors");
-	if (colors_property != NULL) {
+	if (colors_property != nullptr) {
 	    if (!strcasecmp((char *) colors_property, "invert")) futurebases[fbnum]->invert_colors = 1;
 	    xmlFree(colors_property);
 	}
@@ -5922,7 +5922,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	}
 
 	type = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "type");
-	if (type != NULL) {
+	if (type != nullptr) {
 	    if (futurebases[fbnum]->futurebase_type != find_name_in_array((char *) type, futurebase_types)) {
 		fatal("'%s': Specified futurebase type '%s' doesn't match autodetected type '%s'\n",
 		      filename, type, futurebase_types[futurebases[fbnum]->futurebase_type]);
@@ -5931,7 +5931,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	}
 
 	/* We can't xmlFree filename here, because it's stashed away in the tablebase structure */
-	/* if (filename != NULL) xmlFree(filename); */
+	/* if (filename != nullptr) xmlFree(filename); */
     }
 
     xmlXPathFreeObject(result);
@@ -5969,7 +5969,7 @@ void finalize_pass_statistics()
 
     /* Update global statistics */
 
-    gettimeofday(&timeval, NULL);
+    gettimeofday(&timeval, nullptr);
     getrusage(RUSAGE_SELF, &rusage);
 
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&timeval.tv_sec));
@@ -6002,11 +6002,11 @@ void finalize_pass_statistics()
 
     /* Now add a element with current pass statistics */
 
-    gettimeofday(&timeval, NULL);
+    gettimeofday(&timeval, nullptr);
     getrusage(RUSAGE_SELF, &rusage);
 
     xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
-    passNode = xmlNewChild(generation_statistics, NULL, BAD_CAST "pass", NULL);
+    passNode = xmlNewChild(generation_statistics, nullptr, BAD_CAST "pass", nullptr);
     xmlNodeAddContent(generation_statistics, BAD_CAST "\n   ");
 
     xmlNewProp(passNode, BAD_CAST "type", BAD_CAST pass_type[total_passes]);
@@ -6024,7 +6024,7 @@ void finalize_pass_statistics()
     sprint_timeval(strbuf, &rusage.ru_utime);
     xmlNewProp(passNode, BAD_CAST "user-time", BAD_CAST strbuf);
 
-    gettimeofday(&last_timeval, NULL);
+    gettimeofday(&last_timeval, nullptr);
     getrusage(RUSAGE_SELF, &last_rusage);
     last_timings_valid = 1;
 
@@ -6087,7 +6087,7 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     result = xmlXPathEvalExpression(BAD_CAST "//dtm", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	node = result->nodesetval->nodeTab[0];
-	if (xmlGetProp(node, BAD_CAST "bits") == NULL) {
+	if (xmlGetProp(node, BAD_CAST "bits") == nullptr) {
 	    char str[16];
 	    sprintf(str, "%d", tb->format.dtm_bits);
 	    xmlNewProp(node, BAD_CAST "bits", BAD_CAST str);
@@ -6106,25 +6106,25 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 	warning("Can't find /generation-statistics in XML\n");
 
 	xmlNodeAddContent(tablebase, BAD_CAST "   ");
-	node = xmlNewChild(tablebase, NULL, BAD_CAST "tablebase-statistics", NULL);
+	node = xmlNewChild(tablebase, nullptr, BAD_CAST "tablebase-statistics", nullptr);
     } else {
 	node = result->nodesetval->nodeTab[0];
-	node = xmlAddPrevSibling(node, xmlNewDocNode(tb->xml, NULL, BAD_CAST "tablebase-statistics", NULL));
+	node = xmlAddPrevSibling(node, xmlNewDocNode(tb->xml, nullptr, BAD_CAST "tablebase-statistics", nullptr));
 	xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n   "));
     }
 
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%" PRIindex, tb->max_index + 1);
-    xmlNewChild(node, NULL, BAD_CAST "indices", BAD_CAST strbuf);
+    xmlNewChild(node, nullptr, BAD_CAST "indices", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_PNTM_mated_positions);
-    xmlNewChild(node, NULL, BAD_CAST "PNTM-mated-positions", BAD_CAST strbuf);
+    xmlNewChild(node, nullptr, BAD_CAST "PNTM-mated-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_legal_positions);
-    xmlNewChild(node, NULL, BAD_CAST "legal-positions", BAD_CAST strbuf);
+    xmlNewChild(node, nullptr, BAD_CAST "legal-positions", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_stalemate_positions);
-    xmlNewChild(node, NULL, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
+    xmlNewChild(node, nullptr, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
 
     /* If we generating a full tablebase, report both white-wins-positions and black-wins-positions.
      * If we generating a bitbase, report only one or the other of white-wins-positions or
@@ -6134,39 +6134,39 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) player_wins[WHITE]);
-	xmlNewChild(node, NULL, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
+	xmlNewChild(node, nullptr, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
     }
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) player_wins[BLACK]);
-	xmlNewChild(node, NULL, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
+	xmlNewChild(node, nullptr, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
     }
     if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_legal_positions - player_wins[1]);
-	xmlNewChild(node, NULL, BAD_CAST "white-wins-or-draws-positions", BAD_CAST strbuf);
+	xmlNewChild(node, nullptr, BAD_CAST "white-wins-or-draws-positions", BAD_CAST strbuf);
     }
 
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_moves);
-    xmlNewChild(node, NULL, BAD_CAST "forward-moves", BAD_CAST strbuf);
+    xmlNewChild(node, nullptr, BAD_CAST "forward-moves", BAD_CAST strbuf);
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_futuremoves);
-    xmlNewChild(node, NULL, BAD_CAST "futuremoves", BAD_CAST strbuf);
+    xmlNewChild(node, nullptr, BAD_CAST "futuremoves", BAD_CAST strbuf);
     if (tb->format.dtm_bits > 0) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	snprintf(strbuf, sizeof(strbuf), "%d", max_dtm);
-	xmlNewChild(node, NULL, BAD_CAST "max-dtm", BAD_CAST strbuf);
+	xmlNewChild(node, nullptr, BAD_CAST "max-dtm", BAD_CAST strbuf);
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
 	snprintf(strbuf, sizeof(strbuf), "%d", min_dtm);
-	xmlNewChild(node, NULL, BAD_CAST "min-dtm", BAD_CAST strbuf);
+	xmlNewChild(node, nullptr, BAD_CAST "min-dtm", BAD_CAST strbuf);
     }
 
     xmlNodeAddContent(node, BAD_CAST "\n   ");
 
     /* Rename the last checkpoint-time to completion-time */
 
-    node = xmlNewDocNode(tb->xml, NULL, BAD_CAST "completion-time", xmlNodeGetContent(checkpoint_time));
+    node = xmlNewDocNode(tb->xml, nullptr, BAD_CAST "completion-time", xmlNodeGetContent(checkpoint_time));
     xmlReplaceNode(checkpoint_time, node);
 
     /* Remove the passes needed nodes from the XML */
@@ -6360,7 +6360,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
 
 	/* run this loop once for each set of identical pieces */
-	if (local_tb->permutations[local_piece] != NULL) {
+	if (local_tb->permutations[local_piece] != nullptr) {
 
 	    int perm = 0;
 	    int saved_position;
@@ -7069,7 +7069,7 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 
     /* assert(index % 8 == 0); */
 
-    if (tb->file == NULL) {
+    if (tb->file == nullptr) {
 	fatal("fetch_entry_pointer() called on a non-preloaded tablebase\n");
 	terminate();
     }
@@ -7096,9 +7096,9 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 
 inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 {
-    static tablebase_t *cached_tb = NULL;
-    static void *cached_entries = NULL;
-    static index_t *cached_indices = NULL;
+    static tablebase_t *cached_tb = nullptr;
+    static void *cached_entries = nullptr;
+    static index_t *cached_indices = nullptr;
     static int num_cached_entries = 0;
     int n = 0;
 
@@ -7109,16 +7109,16 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
     /* If we're switching tablebases, discard old cache */
 
-    if ((cached_tb != NULL) && (cached_tb != tb)) {
+    if ((cached_tb != nullptr) && (cached_tb != tb)) {
 	free(cached_entries);
 	free(cached_indices);
-	cached_entries = NULL;
-	cached_indices = NULL;
+	cached_entries = nullptr;
+	cached_indices = nullptr;
 
 	cached_thread_ids.resize(0);
 
 	num_cached_entries = 0;
-	cached_tb = NULL;
+	cached_tb = nullptr;
     }
 
     /* Find current thread's cache line */
@@ -7641,7 +7641,7 @@ class MemoryEntriesTable: public EntriesTable {
     MemoryEntriesTable(void) {
 	long long bytes = (((long long) current_tb->max_index + 1) * bits + 7) / 8;
 	entries = malloc(bytes);
-	if (entries == NULL) {
+	if (entries == nullptr) {
 	    fatal("Can't malloc %dMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
 	} else {
 	    if (bytes < 1024*1024) {
@@ -7666,7 +7666,7 @@ class MemoryEntriesTable: public EntriesTable {
 
 	    /* resize */
 	    entries = realloc(entries, bytes);
-	    if (entries == NULL) {
+	    if (entries == nullptr) {
 		fatal("Can't realloc %dMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
 		return;
 	    } else {
@@ -7892,7 +7892,7 @@ class DiskEntriesTable: public EntriesTable {
 	    entry_buffer_bytes = (entry_buffer_size * bits) / 8;
 
 	    entry_buffer = realloc(entry_buffer, entry_buffer_bytes);
-	    if (entry_buffer == NULL) {
+	    if (entry_buffer == nullptr) {
 		fatal("Can't realloc entries buffer\n");
 		return;
 	    }
@@ -7952,7 +7952,7 @@ class DiskEntriesTable: public EntriesTable {
 	/* first, malloc the entries buffer */
 
 	entry_buffer = malloc(entry_buffer_bytes);
-	if (entry_buffer == NULL) {
+	if (entry_buffer == nullptr) {
 	    fatal("Can't malloc entries buffer\n");
 	    return;
 	}
@@ -8606,7 +8606,7 @@ extern "C++" {
 		/* We assume that we're locked, so remaining_space remains constant and indicates
 		 * whether other threads are dumping to disk.
 		 */
-		if (in_memory_queue != NULL) {
+		if (in_memory_queue != nullptr) {
 		    if (remaining_space >= num_threads) {
 			if (head != tail) {
 			    sort_and_dump_to_disk(head, tail);
@@ -8619,7 +8619,7 @@ extern "C++" {
 					      in_memory_queue->end());
 		    }
 		    delete in_memory_queue;
-		    in_memory_queue = NULL;
+		    in_memory_queue = nullptr;
 		}
 	    }
 	}
@@ -8646,7 +8646,7 @@ extern "C++" {
 	}
 
 	~priority_queue() {
-	    if (in_memory_queue != NULL) delete in_memory_queue;
+	    if (in_memory_queue != nullptr) delete in_memory_queue;
 	    for (typename DiskQueQue::iterator diskque = disk_ques.begin(); diskque < disk_ques.end(); diskque ++) {
 		/* XXX probably should use unique_ptr so this happens automatically */
 		delete *diskque;
@@ -8658,7 +8658,7 @@ extern "C++" {
 
 	    std::unique_lock<std::mutex> self_lock(*this);
 
-	    if (in_memory_queue == NULL) throw "priority_queue: push attempted after retrieval started";
+	    if (in_memory_queue == nullptr) throw "priority_queue: push attempted after retrieval started";
 
 	    *(tail ++) = x;
 	    remaining_space --;
@@ -9284,7 +9284,7 @@ void proptable_pass(int target_dtm)
      */
 
     input_proptable = output_proptable;
-    if (input_proptable != NULL) input_proptable->front();
+    if (input_proptable != nullptr) input_proptable->front();
 
     output_proptable = new proptable(format, proptable_MBs << 20);
 
@@ -9388,7 +9388,7 @@ int propagation_pass(int target_dtm)
 	}
     }
 
-    if (pass_type[total_passes] == NULL) pass_type[total_passes] = "intratable";
+    if (pass_type[total_passes] == nullptr) pass_type[total_passes] = "intratable";
     pass_target_dtms[total_passes] = target_dtm;
 
     if (using_proptables) {
@@ -10809,7 +10809,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	invert_colors_of_futurebase = futurebase->invert_colors;
 
 	next_future_index = 0;
-	backprop_function = NULL;
+	backprop_function = nullptr;
 
 	switch (futurebase->futurebase_type) {
 
@@ -10868,7 +10868,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	}
 
-	if (backprop_function != NULL) {
+	if (backprop_function != nullptr) {
 
 	    std::thread t[num_threads];
 	    unsigned int thread;
@@ -11041,9 +11041,9 @@ int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
 	    }
 	}
 
-	if (prune_color != NULL) xmlFree(prune_color);
-	if (prune_move != NULL) xmlFree(prune_move);
-	if (prune_type != NULL) xmlFree(prune_type);
+	if (prune_color != nullptr) xmlFree(prune_color);
+	if (prune_move != nullptr) xmlFree(prune_move);
+	if (prune_type != nullptr) xmlFree(prune_type);
     }
 
     xmlXPathFreeObject(result);
@@ -11553,8 +11553,8 @@ bool compute_pruned_futuremoves(tablebase_t *tb) {
 	    fatal("Prune statements don't match tablebase prune-enables\n");
 	}
 
-	if (prune_color != NULL) xmlFree(prune_color);
-	if (prune_type != NULL) xmlFree(prune_type);
+	if (prune_color != nullptr) xmlFree(prune_color);
+	if (prune_type != nullptr) xmlFree(prune_type);
     }
 
     xmlXPathFreeObject(result);
@@ -13138,7 +13138,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 {
     xmlDocPtr doc;
     index_t index;
-    void *file = NULL;
+    void *file = nullptr;
     xmlNodePtr tablebase;
     xmlChar *buf;
     int size;
@@ -13150,13 +13150,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 #ifdef HAVE_LIBFTP
     if (strncmp(filename, "ftp:", 4) == 0) {
 	void *ptr = ftp_openurl(filename, "w");
-	if (ptr != NULL) {
+	if (ptr != nullptr) {
 	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
 	}
     }
 #endif
 
-    if (file == NULL) {
+    if (file == nullptr) {
 	int fd;
 	fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
 	if (fd != -1) {
@@ -13164,7 +13164,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	}
     }
 
-    if (file == NULL) {
+    if (file == nullptr) {
 	fatal("Can't open output tablebase '%s'\n", filename);
 	terminate();
     }
@@ -13296,7 +13296,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 #endif
 
     tb = parse_XML_control_file(control_filename);
-    if (tb == NULL) return false;
+    if (tb == nullptr) return false;
 
     /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
     current_tb = tb;
@@ -13305,18 +13305,18 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
     context = xmlXPathNewContext(tb->xml);
     result = xmlXPathEvalExpression(BAD_CAST "//output", context);
-    if ((result->nodesetval->nodeNr == 0) && (output_filename == NULL)) {
+    if ((result->nodesetval->nodeNr == 0) && (output_filename == nullptr)) {
 	fatal("Output filename must be specified either on command line or with <output> tag\n");
 	return false;
     }
     if (result->nodesetval->nodeNr > 0) {
-	if (output_filename != NULL) {
+	if (output_filename != nullptr) {
 	    warning("Output filename specified on command line overrides <output> tag\n");
 	} else {
 	    /* XXX little memory leak here, but fixing it would clutter this routine */
-	    if ((output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) != NULL) {
+	    if ((output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) != nullptr) {
 		/* output_filename_needs_xmlFree = 1; */
-	    } else if ((output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) != NULL) {
+	    } else if ((output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) != nullptr) {
 		/* output_filename_needs_xmlFree = 1; */
 	    }
 	}
@@ -13324,7 +13324,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    if (output_filename == NULL) {
+    if (output_filename == nullptr) {
 	fatal("No output filename or URL specified\n");
 	return false;
     }
@@ -13363,7 +13363,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     positive_passes_needed = (uint8_t *) calloc(max_tracked_dtm + 1, sizeof(uint8_t));
     negative_passes_needed = (uint8_t *) calloc(-min_tracked_dtm + 1, sizeof(uint8_t));
 
-    if ((positive_passes_needed == NULL) || (negative_passes_needed == NULL)) {
+    if ((positive_passes_needed == nullptr) || (negative_passes_needed == nullptr)) {
 	fatal("Can't calloc positive/negative_passes_needed\n");
 	return false;
     }
@@ -13385,7 +13385,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
 	futurevector_bytes = (((long long)(tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3;
 	tb->futurevectors = (char *) malloc(futurevector_bytes);
-	if (tb->futurevectors == NULL) {
+	if (tb->futurevectors == nullptr) {
 	    fatal("Can't malloc %dMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
 		  strerror(errno));
 	    return false;
@@ -13457,7 +13457,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	total_passes ++;
 
 	free(tb->futurevectors);
-	tb->futurevectors=NULL;
+	tb->futurevectors=nullptr;
 
     } else {
 
@@ -13544,7 +13544,7 @@ void init_nalimov_code(void)
 	info("%d piece Nalimov tablebases found\n", nalimov_num);
     }
     EGTB_cache = malloc(EGTB_CACHE_DEFAULT);
-    if (EGTB_cache == NULL) {
+    if (EGTB_cache == nullptr) {
 	fatal("Can't malloc EGTB cache\n");
     } else {
 	FTbSetCacheSize(EGTB_cache, EGTB_CACHE_DEFAULT);
@@ -13681,7 +13681,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 #endif /* USE_NALIMOV */
 
 
-/* Search an array of tablebases for a global position.  Array should be terminated with a NULL ptr.
+/* Search an array of tablebases for a global position.  Array should be terminated with a nullptr ptr.
  *
  * XXX can't probe for a position in an inverted tablebase
  */
@@ -13691,7 +13691,7 @@ bool search_tablebases_for_global_position(tablebase_t **tbs, global_position_t 
 {
     index_t index;
 
-    for (; *tbs != NULL; tbs++) {
+    for (; *tbs != nullptr; tbs++) {
 	index = global_position_to_index(*tbs, global_position);
 	if (index != INVALID_INDEX) {
 	    *tbptr = *tbs;
@@ -14104,15 +14104,15 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 void probe_tablebases(tablebase_t **tbs) {
     global_position_t global_position;
     bool global_position_valid = false;
-    tablebase_t *tb = NULL;
+    tablebase_t *tb = nullptr;
     int i;
 
-    if (tbs[0] == NULL) {
+    if (tbs[0] == nullptr) {
 	fatal("No valid tablebases to probe!\n");
 	terminate();
     }
 
-    for (i=1; tbs[i] != NULL; i ++) {
+    for (i=1; tbs[i] != nullptr; i ++) {
 	if (tbs[i]->variant != tbs[0]->variant) {
 	    fatal("All probed tablebases must use same variant!\n");
 	    terminate();
@@ -14153,7 +14153,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	    char *buffer;
 
 	    buffer = readline(global_position_valid ? "Index, FEN or move? " : "Index or FEN? ");
-	    if (buffer == NULL) {
+	    if (buffer == nullptr) {
 		write_history(".hoffman_history");
 		printf("\n");
 		return;
@@ -14164,7 +14164,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	    char buffer[256];
 
 	    printf(global_position_valid ? "Index, FEN or move? " : "FEN? ");
-	    if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
+	    if (fgets(buffer, sizeof(buffer), stdin) == nullptr) {
 		printf("\n");
 		return;
 	    }
@@ -14175,7 +14175,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	    if (parse_FEN_to_global_position(buffer, &global_position))
 		break;
 	    // XXX can't parse "0" as an index
-	    if ((index = strtol(buffer, NULL, 10)) != 0)
+	    if ((index = strtol(buffer, nullptr, 10)) != 0)
 		break;
 
 	    printf("Bad input\n\n");
@@ -14191,7 +14191,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	    index_to_global_position(tb, index, &global_position);
 	}
 
-	if ((tb != NULL) && (index != 0)) {
+	if ((tb != nullptr) && (index != 0)) {
 
 	    const char *ptm, *pntm;
 
@@ -14263,7 +14263,7 @@ void usage(char *program_name)
 
 int main(int argc, char *argv[])
 {
-    /* Make sure this tablebase array is one bigger than we need, so it can be NULL terminated */
+    /* Make sure this tablebase array is one bigger than we need, so it can be nullptr terminated */
     tablebase_t **tbs;
     int argi;
     int i;
@@ -14272,7 +14272,7 @@ int main(int argc, char *argv[])
     int probing=0;
     int verify=0;
     int dump_info=0;
-    char *output_filename = NULL;
+    char *output_filename = nullptr;
     extern char *optarg;
     extern int optind;
     char *options_string_ptr = options_string;
@@ -14283,31 +14283,31 @@ int main(int argc, char *argv[])
     memset(&action, 0, sizeof(action));
     action.sa_flags = SA_SIGINFO;
     action.sa_sigaction = sigaction_user_interrupt;
-    if (sigaction(SIGINT, &action, NULL) == -1) {
+    if (sigaction(SIGINT, &action, nullptr) == -1) {
 	warning("Can't install SIGINTR handler: %s\n", strerror(errno));
     }
 
     action.sa_sigaction = sigaction_internal_error;
-    if (sigaction(SIGSEGV, &action, NULL) == -1) {
+    if (sigaction(SIGSEGV, &action, nullptr) == -1) {
 	warning("Can't install SIGSEGV handler: %s\n", strerror(errno));
     }
-    if (sigaction(SIGILL, &action, NULL) == -1) {
+    if (sigaction(SIGILL, &action, nullptr) == -1) {
 	warning("Can't install SIGILL handler: %s\n", strerror(errno));
     }
-    if (sigaction(SIGFPE, &action, NULL) == -1) {
+    if (sigaction(SIGFPE, &action, nullptr) == -1) {
 	warning("Can't install SIGFPE handler: %s\n", strerror(errno));
     }
-    if (sigaction(SIGBUS, &action, NULL) == -1) {
+    if (sigaction(SIGBUS, &action, nullptr) == -1) {
 	warning("Can't install SIGBUS handler: %s\n", strerror(errno));
     }
 
     /* Note program start time */
 
-    gettimeofday(&program_start_time, NULL);
+    gettimeofday(&program_start_time, nullptr);
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.718 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.719 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14340,10 +14340,10 @@ int main(int argc, char *argv[])
 #ifdef DEBUG_MOVE
 	case 'd':
 	    /* XXX might want strtoll or something here */
-	    if (strtol(optarg, NULL, 0) > 0) {
-		debug_move = strtol(optarg, NULL, 0);
-	    } else if (strtol(optarg, NULL, 0) < 0) {
-		debug_futuremove = -strtol(optarg, NULL, 0);
+	    if (strtol(optarg, nullptr, 0) > 0) {
+		debug_move = strtol(optarg, nullptr, 0);
+	    } else if (strtol(optarg, nullptr, 0) < 0) {
+		debug_futuremove = -strtol(optarg, nullptr, 0);
 	    } else {
 		fatal("can't parse debugging index %s\n", optarg);
 	    }
@@ -14378,11 +14378,11 @@ int main(int argc, char *argv[])
 	    break;
 	case 'P':
 	    /* set size of proptable in megabytes */
-	    proptable_MBs = strtol(optarg, NULL, 0);
+	    proptable_MBs = strtol(optarg, nullptr, 0);
 	    using_proptables = true;
 	    break;
 	case 't':
-	    num_threads = strtol(optarg, NULL, 0);
+	    num_threads = strtol(optarg, nullptr, 0);
 	    break;
 	}
     }
@@ -14403,7 +14403,7 @@ int main(int argc, char *argv[])
 	terminate();
     }
 
-    if (!generating && (output_filename != NULL)) {
+    if (!generating && (output_filename != nullptr)) {
 	fatal("An output filename can not be specified when probing or verifying\n");
 	usage(argv[0]);
 	terminate();
@@ -14439,7 +14439,7 @@ int main(int argc, char *argv[])
 	tbs[i] = preload_futurebase_from_file(argv[argi]);
 	open_futurebase(tbs[i]);
 	if (dump_info) xmlDocDump(stdout, tbs[i]->xml);
-	if (tbs[i] == NULL) {
+	if (tbs[i] == nullptr) {
 	    fatal("Error loading '%s'\n", argv[argi]);
 	} else {
 #ifdef USE_NALIMOV
