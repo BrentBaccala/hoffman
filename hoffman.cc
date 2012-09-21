@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.710 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.711 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8392,6 +8392,45 @@ struct proptable_format {
     uint64_t movecnt_mask;
     uint64_t futuremove_mask;
     int bits;
+
+    proptable_format(index_t max_index, int min_dtm, int max_dtm, int movecnt_bits, int max_futuremoves)
+	: movecnt_bits(movecnt_bits) {
+
+	/* Tricky, tricky, tricky... max_index can actually occur in the index field, so
+	 * 2^index_bits must be strictly greater than max_index.  dtm ranges in [min_dtm, max_dtm]
+	 * inclusive, so 2^(dtm_bits-1) must be strictly greater than max_dtm and 2^(dtm_bits-1)
+	 * must be greater than or equal to -min_dtm.  futuremove numbers range from 0 to
+	 * max_futuremoves-1, so 2^futuremove_bits must be greater than or equal to
+	 * max_futuremoves... and the senses of the comparisons are reversed for the loop!  Hope I
+	 * got it all right!
+	 */
+
+	for (index_bits = 1; (1ULL << index_bits) <= max_index; index_bits ++);
+
+	if ((max_dtm != 0) || (min_dtm != 0)) {
+	    for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) && (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
+	} else {
+	    dtm_bits = 0;
+	}
+
+	for (futuremove_bits = 0; (1 << futuremove_bits) < max_futuremoves; futuremove_bits ++);
+
+	/* Ordering is significant, since we may sort by directly comparing the marshaled values to
+	 * each other.  Therefore, index has to be the most significant field.
+	 */
+
+	dtm_offset = 0;
+	movecnt_offset = dtm_bits;
+	futuremove_offset = movecnt_offset + movecnt_bits;
+	index_offset = futuremove_offset + futuremove_bits;
+
+	index_mask = (1ULL << index_bits) - 1;
+	dtm_mask = (1ULL << dtm_bits) - 1;
+	movecnt_mask = (1ULL << movecnt_bits) - 1;
+	futuremove_mask = (1ULL << futuremove_bits) - 1;
+
+	bits = index_offset + index_bits;
+    }
 };
 
 extern "C++" {
@@ -8407,7 +8446,7 @@ extern "C++" {
      * Caveat: Instances of this class can not be copied, because then both copies would have the same
      * file descriptor and the first one destroyed would close it.
      *
-     * Caveat: We don't actually use this class, but specialize it later.
+     * For bit-aligned proptables, we don't actually use this class, but specialize it later.
      *
      * XXX we'd like to use operator<< to write an object in the container.  Instead we just dump
      * its memory block to disk.
@@ -8823,63 +8862,96 @@ extern "C++" {
  */
 
 extern "C++" {
-class proptable_entry {
+    class proptable_entry {
 
- private:
-    template<typename T>
-    static int value_to_dtm(proptable_format *format, T value) {
-	int dtm = (value >> format->dtm_offset) & format->dtm_mask;
-	if (dtm > (int) (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
-	return dtm;
-    }
+    private:
+	template<typename T>
+	static int value_to_dtm(proptable_format *format, T value) {
+	    int dtm = (value >> format->dtm_offset) & format->dtm_mask;
+	    if (dtm > (int) (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
+	    return dtm;
+	}
 
- public:
-    index_t index;
-    int dtm;
-    unsigned int movecnt;
-    int futuremove;
+    public:
+	index_t index;
+	int dtm;
+	unsigned int movecnt;
+	int futuremove;
 
-    /* Can't initialize all our fields during construction since sorting_network creates an
-     * uninitialized array of proptable_entry's.
-     */
-    proptable_entry() {}
+	/* Can't initialize all our fields during construction since sorting_network creates an
+	 * uninitialized array of proptable_entry's.
+	 */
+	proptable_entry() {}
 
-    proptable_entry(index_t index, int dtm, unsigned int movecnt, int futuremove):
-	index(index), dtm(dtm), movecnt(movecnt), futuremove(futuremove) {}
+	proptable_entry(index_t index, int dtm, unsigned int movecnt, int futuremove):
+	    index(index), dtm(dtm), movecnt(movecnt), futuremove(futuremove) {}
 
 #if 0
-    template<typename T>
+	template<typename T>
 	proptable_entry(proptable_format *format, T value):
-	proptable_entry(value >> format->index_offset, value_to_dtm(format, value),
-			((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
-			(value >> format->futuremove_offset) & format->futuremove_mask)
-	    {}
+	    proptable_entry(value >> format->index_offset, value_to_dtm(format, value),
+			    ((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
+			    (value >> format->futuremove_offset) & format->futuremove_mask)
+	{}
 #else
-    template<typename T>
+	template<typename T>
 	proptable_entry(proptable_format *format, T value):
-	index(value >> format->index_offset), dtm(value_to_dtm(format, value)),
+	    index(value >> format->index_offset), dtm(value_to_dtm(format, value)),
 	    movecnt(((value >> format->movecnt_offset) & format->movecnt_mask) + 1),
 	    futuremove((value >> format->futuremove_offset) & format->futuremove_mask)
-	    {}
+	{}
 #endif
 
 	template<typename T>
-	    T encode(proptable_format *format) {
+	T encode(proptable_format *format) {
 	    return (index << format->index_offset)
 		| ((dtm & format->dtm_mask) << format->dtm_offset)
 		| (((movecnt - 1) & format->movecnt_mask) << format->movecnt_offset)
 		| ((futuremove & format->futuremove_mask) << format->futuremove_offset);
 	}
 
-    /* This is used when we build current_pt_entries */
+	/* This is used when we build current_pt_entries */
 
-    bool operator<(const proptable_entry &other) const {
-	return index < other.index;
-    }
-};
+	bool operator<(const proptable_entry &other) const {
+	    return index < other.index;
+	}
+    };
+
+
+    /* Proptable - byte-aligned version
+     *
+     * Very simple - just construct a priority queue of a specified (integer) type and
+     * marshal/demarshal proptable_entry's into that integer.
+     */
+
+    template<typename T>
+    class typed_proptable : public priority_queue<T> {
+    private:
+	proptable_format format;
+
+    public:
+
+	typed_proptable(proptable_format format, size_t size_in_bytes):
+	    priority_queue<T>(size_in_bytes / sizeof(T)), format(format)
+	{
+	    if (format.bits > 8 * (int) sizeof(T)) throw "proptable format too large";
+	}
+
+	proptable_entry front() {
+	    return proptable_entry(&format, priority_queue<T>::front());
+	}
+
+	proptable_entry pop_front() {
+	    return proptable_entry(&format, priority_queue<T>::pop_front());
+	}
+
+	void push(proptable_entry &entry) {
+	    priority_queue<T>::push(entry.encode<T>(&format));
+	}
+    };
 }
 
-/* proptable - bit-aligned version
+/* Proptable - bit-aligned version
  *
  * proptable_iterator (defined below) dereferences into proptable_ptr, which is a pointer into the
  * in-memory table.  It's not a normal pointer because the in-memory table is bit-aligned, not
@@ -9166,36 +9238,6 @@ extern "C++" {
     };
 }
 
-/* This version uses typed arrays instead of bit arrays. */
-
-extern "C++" {
-    template<typename T>
-    class typed_proptable : public priority_queue<T> {
-    private:
-	proptable_format format;
-
-    public:
-
-    typed_proptable(proptable_format format, size_t size_in_bytes):
-	priority_queue<T>(size_in_bytes / sizeof(T)), format(format)
-	{
-	    if (format.bits > 8 * (int) sizeof(T)) throw "proptable format too large";
-	}
-
-	proptable_entry front() {
-	    return proptable_entry(&format, priority_queue<T>::front());
-	}
-
-	proptable_entry pop_front() {
-	    return proptable_entry(&format, priority_queue<T>::pop_front());
-	}
-
-	void push(proptable_entry &entry) {
-	    priority_queue<T>::push(entry.encode<T>(&format));
-	}
-    };
-}
-
 /* Finally, the actual priority queue(s) */
 
 // The bit-aligned version.  Significantly slower.
@@ -9349,21 +9391,7 @@ void proptable_pass(int target_dtm)
      * known from the pass number, the movecnt is always one, and we're done tracking futuremoves.
      */
 
-    proptable_format format;
-
-    format.index_offset = 0;
-    for (format.index_bits = 1; 1ULL << (format.index_bits-1) < current_tb->max_index; format.index_bits ++);
-    format.dtm_offset = 0;
-    format.dtm_bits = 0;
-    format.movecnt_offset = 0;
-    format.movecnt_bits = 0;
-    format.futuremove_offset = 0;
-    format.futuremove_bits = 0;
-    format.index_mask = (1ULL << format.index_bits) - 1;
-    format.dtm_mask = 0;
-    format.movecnt_mask = 0;
-    format.futuremove_mask = 0;
-    format.bits = format.index_bits;
+    proptable_format format(current_tb->max_index, 0, 0, 0, 0);
 
     /* Swap proptables.  Our priority queue implementation is designed to do all the insertions
      * first, then all the retrievals, and starting to retrieve can free a lot of memory, so we
@@ -13619,26 +13647,8 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	 * XXX turn off movecnt if we don't have 8-way symmetry
 	 */
 
-	proptable_format format;
-
-	for (format.index_bits = 1; 1ULL << (format.index_bits-1) < tb->max_index; format.index_bits ++);
-	for (format.dtm_bits = 1; (max_tracked_dtm > (1 << (format.dtm_bits - 1)) - 1)
-		     || (min_tracked_dtm < -(1 << (format.dtm_bits - 1))); format.dtm_bits ++);
-	format.movecnt_bits = 1;
-	for (format.futuremove_bits = 1; 1U << (format.futuremove_bits-1) < num_futuremoves[WHITE] - 1
-		 || 1U << (format.futuremove_bits-1) < num_futuremoves[BLACK] - 1; format.futuremove_bits ++);
-
-	format.dtm_offset = 0;
-	format.movecnt_offset = format.dtm_bits;
-	format.futuremove_offset = format.movecnt_offset + format.movecnt_bits;
-	format.index_offset = format.futuremove_offset + format.futuremove_bits;
-
-	format.index_mask = (1ULL << format.index_bits) - 1;
-	format.dtm_mask = (1ULL << format.dtm_bits) - 1;
-	format.movecnt_mask = (1ULL << format.movecnt_bits) - 1;
-	format.futuremove_mask = (1ULL << format.futuremove_bits) - 1;
-
-	format.bits = format.index_offset + format.index_bits;
+	proptable_format format(tb->max_index, min_tracked_dtm, max_tracked_dtm,
+				1, std::max(num_futuremoves[WHITE], num_futuremoves[BLACK]));
 
 	info("Initial proptable format: %d bits index; %d bits dtm; %d bit movecnt; %d bits futuremove\n",
 	     format.index_bits, format.dtm_bits, format.movecnt_bits, format.futuremove_bits);
@@ -14471,7 +14481,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.710 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.711 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
