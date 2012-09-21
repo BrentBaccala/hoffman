@@ -1,7 +1,7 @@
 #!/usr/bin/perl
 #
-# This script writes control files for 'standard' tablebases (i.e, no
-# pruning or move restrictions) into the current directory.
+# This script writes control files for suicide tablebases into the
+# current directory.
 #
 # by Brent Baccala; no rights reserved
 #
@@ -134,23 +134,13 @@ sub print_cntl_file {
     printnl '<tablebase>';
     printnl '   <variant name="suicide"/>';
 
-    if (0) {
-	if ($white_pieces eq "" or $black_pieces eq "") {
-	    if (index($filename, 'p') == -1) {
-		printnl '   <index type="simple" symmetry="8-way"/>';
-		printnl '   <format><dtm bits="8"/></format>';
-	    } else {
-		printnl '   <index type="simple" symmetry="2-way"/>';
-		printnl '   <format><dtm bits="8"/></format>';
-	    }
-	} else {
-	    printnl '   <index type="naive" symmetry="1"/>';
-	    printnl '   <format><dtm bits="8"/></format>';
-	}
+    if (index($filename, 'p') == -1) {
+	printnl '   <index type="combinadic3" symmetry="8-way"/>';
     } else {
-	    printnl '   <index type="naive"/>';
-	    printnl '   <format><dtm bits="8"/></format>';
+	printnl '   <index type="combinadic3" symmetry="2-way"/>';
     }
+
+    printnl '   <format><dtm/></format>';
 
     for my $piece (split(//, $white_pieces)) {
 	printnl '   <piece color="white" type="' . $pieces{$piece} . '"/>';
@@ -259,12 +249,12 @@ sub gen {
 &gen(1,1);
 
 # 3-piece TBs
-#&gen(2,1);
+&gen(2,1);
 #&gen(1,2);
 
 # 4-piece TBs
-#&gen(3,1);
-#&gen(2,2);
+&gen(3,1);
+&gen(2,2);
 #&gen(1,3);
 
 # 5-piece TBs
