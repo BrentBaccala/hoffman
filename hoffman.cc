@@ -5654,7 +5654,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.713 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.714 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7175,12 +7175,10 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     static int num_cached_entries = 0;
     int n = 0;
 
-#ifdef USE_THREADS
-    static pthread_t *cached_thread_ids = NULL;
-    static pthread_mutex_t cache_lock = PTHREAD_MUTEX_INITIALIZER;
+    static std::vector<std::thread::id> cached_thread_ids;
+    static std::mutex cache_lock;
 
-    pthread_mutex_lock(&cache_lock);
-#endif
+    std::lock_guard<std::mutex> _(cache_lock);
 
     /* If we're switching tablebases, discard old cache */
 
@@ -7189,21 +7187,18 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	free(cached_indices);
 	cached_entries = NULL;
 	cached_indices = NULL;
-#ifdef USE_THREADS
-	free(cached_thread_ids);
-	cached_thread_ids = NULL;
-#endif
+
+	cached_thread_ids.resize(0);
+
 	num_cached_entries = 0;
 	cached_tb = NULL;
     }
 
     /* Find current thread's cache line */
 
-#ifdef USE_THREADS
     for (n = 0; n < num_cached_entries; n++) {
-	if (cached_thread_ids[n] == pthread_self()) break;
+	if (cached_thread_ids[n] == std::this_thread::get_id()) break;
     }
-#endif
 
     /* If cache is non existant or isn't big enough, build it or expand it */
 
@@ -7212,10 +7207,10 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	cached_entries = realloc(cached_entries, tb->format.bits * num_cached_entries);
 	cached_indices = (index_t *) realloc(cached_indices, sizeof(index_t) * num_cached_entries);
 	cached_indices[n] = INVALID_INDEX;
-#ifdef USE_THREADS
-	cached_thread_ids = (pthread_t *) realloc(cached_thread_ids, sizeof(pthread_t) * num_cached_entries);
-	cached_thread_ids[n] = pthread_self();
-#endif
+
+	cached_thread_ids.resize(num_cached_entries);
+	cached_thread_ids[n] = std::this_thread::get_id();
+
 	cached_tb = tb;
     }
 
@@ -7249,10 +7244,6 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	    prefetch_entry_pointer(tb, cached_indices[n], (char *)cached_entries + n * tb->format.bits);
 	}
     }
-
-#ifdef USE_THREADS
-    pthread_mutex_unlock(&cache_lock);
-#endif
 
     return (char *)cached_entries + n * tb->format.bits;
 }
@@ -14392,7 +14383,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.713 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.714 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
