@@ -1,16 +1,19 @@
 
-- allow kings and side-to-move-flag to be positioned within index
+- more clever encoding
 
-Right now, side to move flag is always the low bit, and kings always
-come next.
+Black/white symmetric tablebases like kqkq don't require a side to
+move flag at all, and are currently twice as big as needed.
 
+En passant is what makes lasker1901 so ridiculously big with
+combinadic3 encoding.
 
-- on-the-fly reformating of tablebases when various fields overflow
+Allow kings and side-to-move-flag to be positioned within index. Right
+now, side to move flag is always the low bit, and kings always come
+next.
 
-This applies to entries and proptable formats.  Should also shrink
-fields (movecnt) that decrement monotonically.  Also allow an 'offset'
-field to adjust the range of the fields, i.e, allow DTM field to range
-from -10 to 5 and still fit into 4 bits.
+Allow an 'offset' field to adjust the range of the fields, i.e, allow
+DTM field to range from -10 to 5 and still fit into 4 bits.
+
 
 - fast movecnt generation with perfect hashing
 
@@ -53,26 +56,20 @@ Hyatt's website for ideas.  Intel processors have bit scan
 instructions (BSF/BSR) that search a register for the first or last 1
 bit, we probably want to make sure we use these when counting
 movements (logical AND to find what pieces we can hit, then bit scan
-to find which one we hit first).  Also, when we advance the loop by a
-single index, we're typically moving a single piece (or none at all,
-just flipping the side-to-move flag), so this can be optimized.  This
-would also be useful during futurebase backprop.  Might want to
-hand-code critical sections of this loop in assembly, and there should
-be a big difference between a 32-bit and a 64-bit architecture (since
-bitboards have 64 bits).  I'll also note that some things (PTM_vector)
-only need to be computed during initialization.
+to find which one we hit first).  Perfect hashing (magic bitboards)
+look even better.  Also, when we advance the loop by a single index,
+we're typically moving a single piece (or none at all, just flipping
+the side-to-move flag), so this can be optimized.  This would also be
+useful during futurebase backprop.  Might want to hand-code critical
+sections of this loop in assembly, and there should be a big
+difference between a 32-bit and a 64-bit architecture (since bitboards
+have 64 bits).  I'll also note that some things (PTM_vector) only need
+to be computed during initialization.
 
 The tablebase operation, the main thing right now is to insure that
-the program really becomes disk-bound, then look at some ideas like
-compressing the proptable/entries files on disk.  For proptables, I
-see no reason not to compress them so long as we can push the
-program's performance so that it stays disk-bound even with the extra
-CPU overhead of decompression.  For entries files, the issue isn't so
-clear because I'm still thinking that we should have a single entries
-file instead of a pair of in/out files, which would preclude
-compressing the file.  Needs investigation.  Also want to check to see
-if keeping the input and output files (or some similar split) on
-seperate disks/controllers can be exploited.
+the program really becomes disk-bound.  Also want to check to see if
+keeping the input and output files (or some similar split) on seperate
+disks/controllers can be exploited.
 
 
 - use an FPGA
@@ -91,15 +88,14 @@ tablebases practical.
 - improve compressibility
 
 Hoffman tablebases are significantly larger than Nalimovs.  Probably
-the biggest help would be to clump like positions together (exactly
-what we're trying to avoid with inversion).  Right now, the index LSB
-is the side-to-move flag, we'd really like it to be elsewhere (like
-the MSB) when one side is dominant and is going to have the bulk of
-the mates.  A couple places in the code depend on the side-to-move
-flag being LSB; they need to be found, investigated, and made more
-flexible.  Then we can add a <side-to-move-flag/> element to the XML,
-that gets put into the pieces list at the position that we'd like the
-flag to be.
+the biggest help would be to clump like positions together.  Right
+now, the index LSB is the side-to-move flag, we'd really like it to be
+elsewhere (like the MSB) when one side is dominant and is going to
+have the bulk of the mates.  A couple places in the code depend on the
+side-to-move flag being LSB; they need to be found, investigated, and
+made more flexible.  Then we can add a <side-to-move-flag/> element to
+the XML, that gets put into the pieces list at the position that we'd
+like the flag to be.
 
 Also, we could use a modified gzip library that lets us flag certain
 bytes as 'irrelevant', which instructs the library to fill these bytes
@@ -151,12 +147,6 @@ the dtm field overflows - just checkpoint, terminate, and use our
 (unimplemented) reformating ability.
 
 
-- some things are uint32 right now (indices and futurevectors) that
-  sometimes need to be uint64
-
-Add configure switches --with-big-indices and --with-big-futurevectors
-
-
 - fix libcurl handling of FTP put transactions and use it exclusively
 
 I had a lot of problems using libcurl for FTP writes, so much so that
@@ -175,23 +165,6 @@ implement - Guy Haworth has written some papers about this.
 
 
 - be more consistent about current tablebase being a global var
-
-
-- use two different proptable formats
-
-One for the first (futurebase) pass and one for subsequent passes.
-Since the 'futurevector' field is only needed on the first pass, this
-would be a fairly simple change that would cut the size of default
-proptable entries in half.
-
-
-- decide whether we need compiled-in proptable formats
-
-Compiling-in entries formats obviously make sense for in-memory
-operation (though gcc3 doesn't optimize them well; use gcc4), but it
-isn't as clear for proptable formats.  Compiling them in only makes
-sense if not doing so would introduce enough overhead that the program
-becomes compute-bound instead of disk-bound.
 
 
 - check indexing logic with an automated theorem prover
