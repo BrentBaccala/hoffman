@@ -185,63 +185,8 @@ typedef uint64_t index_t;
 
 unsigned int num_threads = 1;
 
-    std::atomic<long> contended_locks(0);
-    std::atomic<long> contended_indices(0);
-
-/* If we're multithreaded, we use gcc 4's built-ins for atomic memory access, which are identical to
- * Intel's.  If the compiler doesn't feature these built-ins, then the simplest way to fix that is
- * to turn off multithreading, and use these functions here instead.  I distinguish between
- * __sync_fetch_and_XXX and __sync_XXX because the first variant returns the original, unmodified
- * value, and the second variant (of my own creation) returns nothing.  Naming them differently
- * hopefully helps make the code clearer and less error prone.  We condition on
- * HAVE_INTEL_ATOMIC_OPS instead of USE_THREADS because even if we're not using threads, the builtin
- * functions might still be defined.
- *
- * __sync_incr(var) is "var ++" done atomically.
- */
-
-#ifdef HAVE_INTEL_ATOMIC_OPS
-
-#define __sync_or __sync_fetch_and_or
-#define __sync_xor __sync_fetch_and_xor
-#define __sync_add __sync_fetch_and_add
-#define __sync_and __sync_fetch_and_and
-
-#define __sync_incr(var) __sync_fetch_and_add(&var, 1)
-
-#else
-
-#define __sync_or(ptr, val) (*(ptr) |= (val))
-#define __sync_xor(ptr, val) (*(ptr) ^= (val))
-#define __sync_add(ptr, val) (*(ptr) += (val))
-#define __sync_and(ptr, val) (*(ptr) &= (val))
-
-#define __sync_incr(var) (var ++)
-
-#define __sync_fetch_and_and  __non_builtin_sync_fetch_and_and
-
-inline uint32_t __sync_fetch_and_and(uint32_t *ptr, uint32_t val) {
-    uint32_t tmp = *ptr;
-    *(ptr) &= (val);
-    return tmp;
-}
-
-#endif
-
-/* I don't have an 8-byte sync_fetch_and_add on i686, so I use this instead. */
-
-#if defined(USE_THREADS) && !defined(HAVE_SYNC_FETCH_AND_ADD_8)
-inline uint64_t __sync_fetch_and_add_8(uint64_t *ptr, uint64_t val) {
-    static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
-    uint64_t ret;
-    pthread_mutex_lock(&lock);
-    ret = *ptr;
-    *ptr += val;
-    pthread_mutex_unlock(&lock);
-    return ret;
-}
-#endif
-
+std::atomic<long> contended_locks(0);
+std::atomic<long> contended_indices(0);
 
 /***** GLOBAL CONSTANTS *****/
 
@@ -271,13 +216,13 @@ inline uint64_t __sync_fetch_and_add_8(uint64_t *ptr, uint64_t val) {
 
 /* Variables for gathering statistics */
 
-    std::atomic<uint64_t> total_legal_positions(0);
-    std::atomic<uint64_t> total_PNTM_mated_positions(0);
-    std::atomic<uint64_t> total_stalemate_positions(0);
-    std::atomic<uint64_t> total_moves(0);
-    std::atomic<uint64_t> total_futuremoves(0);
+std::atomic<uint64_t> total_legal_positions(0);
+std::atomic<uint64_t> total_PNTM_mated_positions(0);
+std::atomic<uint64_t> total_stalemate_positions(0);
+std::atomic<uint64_t> total_moves(0);
+std::atomic<uint64_t> total_futuremoves(0);
 uint64_t total_backproped_moves = 0;
-uint64_t player_wins[2];
+std::atomic<uint64_t> player_wins[2] {ATOMIC_VAR_INIT(0), ATOMIC_VAR_INIT(0)};
 int max_dtm = 0;
 int min_dtm = 0;
 
@@ -296,8 +241,12 @@ int max_passes = 0;
 
 const char ** pass_type = NULL;
 int * pass_target_dtms = NULL;
-int * positions_finalized = NULL;
-uint64_t * backproped_moves = NULL;
+
+std::atomic<int> positions_finalized_this_pass;
+std::vector<int> positions_finalized;
+
+std::atomic<uint64_t> backproped_moves_this_pass;
+std::vector<uint64_t> backproped_moves;
 
 bool tracking_dtm = true;   // XXX should clear this variable if we're generating a bitbase
 int min_tracked_dtm = -2;
@@ -1011,14 +960,12 @@ void expand_per_pass_statistics(void)
 
     pass_type = (const char **) realloc(pass_type, max_passes * sizeof(const char *));
     pass_target_dtms = (int *) realloc(pass_target_dtms, max_passes * sizeof(int));
-    positions_finalized = (int *) realloc(positions_finalized, max_passes * sizeof(int));
-    backproped_moves = (uint64_t *) realloc(backproped_moves, max_passes * sizeof(uint64_t));
+    positions_finalized.resize(max_passes, 0);
+    backproped_moves.resize(max_passes, 0);
 
     /* not all of these arrays are cumulative, but just zero them all to be on the safe size */
     bzero(pass_type + total_passes, (max_passes-total_passes)*sizeof(char *));
     bzero(pass_target_dtms + total_passes, (max_passes-total_passes)*sizeof(int));
-    bzero(positions_finalized + total_passes, (max_passes-total_passes)*sizeof(int));
-    bzero(backproped_moves + total_passes, (max_passes-total_passes)*sizeof(uint64_t));
 }
 
 #ifdef USE_THREADS
@@ -5651,7 +5598,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.715 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.716 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6201,12 +6148,12 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, player_wins[0]);
+	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) player_wins[WHITE]);
 	xmlNewChild(node, NULL, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
     }
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1)) {
 	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, player_wins[1]);
+	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) player_wins[BLACK]);
 	xmlNewChild(node, NULL, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
     }
     if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
@@ -8207,12 +8154,12 @@ void back_propagate_index(index_t index, int target_dtm)
 	 * mated) positions, so we don't increment anything if DTM is 1.
 	 */
 
-	__sync_incr(positions_finalized[total_passes]);
+	positions_finalized_this_pass ++;
 
 	if (entriesTable->does_PTM_win(index)) {
-	    if (target_dtm > 1) __sync_incr(player_wins[index_to_side_to_move(current_tb, index)]);
+	    if (target_dtm > 1) player_wins[index_to_side_to_move(current_tb, index)] ++;
 	} else {
-	    __sync_incr(player_wins[1 - index_to_side_to_move(current_tb, index)]);
+	    player_wins[1 - index_to_side_to_move(current_tb, index)] ++;
 	}
 
     }
@@ -9407,7 +9354,7 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 	       index, dtm, movecnt, futuremove);
 #endif
 
-    __sync_incr(backproped_moves[total_passes]);
+    backproped_moves_this_pass ++;
 
     if (!using_proptables) {
 
@@ -9447,6 +9394,9 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
 int propagation_pass(int target_dtm)
 {
+    positions_finalized_this_pass = 0;
+    backproped_moves_this_pass = 0;
+
     if (tracking_dtm) {
 	if (target_dtm > 0) {
 	    entriesTable->verify_DTM_field_size(target_dtm+1);
@@ -9466,22 +9416,25 @@ int propagation_pass(int target_dtm)
 
     if (progress_dots > 0) info("\n");
 
+    positions_finalized[total_passes] = positions_finalized_this_pass;
+    backproped_moves[total_passes] = backproped_moves_this_pass;
+
     total_backproped_moves += backproped_moves[total_passes];
 
-    if (positions_finalized[total_passes] > 0) {
+    if (positions_finalized_this_pass > 0) {
 	if (target_dtm > max_dtm) max_dtm = target_dtm;
 	if (target_dtm < min_dtm) min_dtm = target_dtm;
     }
 
     finalize_pass_statistics();
     if (target_dtm != 0) {
-	info("Pass %3d complete; %d positions finalized\n", target_dtm, positions_finalized[total_passes]);
+	info("Pass %3d complete; %d positions finalized\n", target_dtm, (int) positions_finalized_this_pass);
     }
 
     total_passes ++;
     if (total_passes == max_passes) expand_per_pass_statistics();
 
-    return positions_finalized[total_passes-1];
+    return positions_finalized_this_pass;
 }
 
 /***** FUTUREBASES *****/
@@ -14371,7 +14324,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.715 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.716 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
