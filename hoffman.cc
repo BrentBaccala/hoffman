@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.709 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.710 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8733,9 +8733,6 @@ extern "C++" {
 
 	    *(tail ++) = x;
 	    remaining_space --;
-	    if (remaining_space > 2000000) {
-		fatal("Hi\n");
-	    }
 	    sorted = false;
 
 	    if (remaining_space < num_threads) {
@@ -9179,12 +9176,10 @@ extern "C++" {
 
     public:
 
-	template <typename... Args>
-	    typed_proptable(proptable_format format, Args... args):
-	priority_queue<T>(args...), format(format)
+    typed_proptable(proptable_format format, size_t size_in_bytes):
+	priority_queue<T>(size_in_bytes / sizeof(T)), format(format)
 	{
-	    // XXX make format.bits unsigned
-	    //if (format.bits > sizeof(T)) throw "proptable format too large";
+	    if (format.bits > 8 * (int) sizeof(T)) throw "proptable format too large";
 	}
 
 	proptable_entry front() {
@@ -9203,7 +9198,11 @@ extern "C++" {
 
 /* Finally, the actual priority queue(s) */
 
+// The bit-aligned version.  Significantly slower.
 //typedef priority_queue<class proptable_entry, class memory_proptable> proptable;
+
+// Byte-aligned versions.  No appreciable slowdown in using 64-bit version on a 32-bit problem.
+//typedef typed_proptable<uint32_t> proptable;
 typedef typed_proptable<uint64_t> proptable;
 
 proptable * input_proptable;
@@ -14472,7 +14471,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.709 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.710 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
