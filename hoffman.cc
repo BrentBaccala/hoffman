@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.707 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.708 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8398,11 +8398,11 @@ extern "C++" {
 
     /* A simple disk-backed que.
      *
-     * Template argument Container is the in-memory container class we're backing up.  It has to
-     * provide a value_type typedef and an iterator typedef.  Our constructor takes a pair of
-     * iterators.  They have to dereference into something that can be cast to a void * and accessed
-     * as a memory structure of size sizeof(value_type).  Our semantics are to make a copy of the
-     * container and export a pop_front() method to walk through our data.
+     * Template argument Container is the in-memory container class we're backing up, and it has to
+     * be a contiguous array.  It has to provide a value_type typedef and an iterator typedef.  Our
+     * constructor takes a pair of iterators.  They have to provide a base() method that returns a
+     * pointer.  Our semantics are to make a copy of the container and export a pop_front() method
+     * to walk through our data.
      *
      * Caveat: Instances of this class can not be copied, because then both copies would have the same
      * file descriptor and the first one destroyed would close it.
@@ -8415,48 +8415,34 @@ extern "C++" {
 
     template <typename Container>
     struct disk_que {
-	typedef typename Container::value_type T;
-	typedef T value_type;
+	typedef typename Container::value_type value_type;
 
 	static const unsigned int queue_size = 256;	// size of in-memory queue
 
 	int fd;
 	unsigned int next;
 	unsigned int size;
-	T queue[queue_size];
+	value_type queue[queue_size];
 	char filename[16];
 	void *file;
 	int count;
 
 	disk_que(typename Container::iterator head, typename Container::iterator tail) {
 
-	    typename Container::iterator iter = head;
-
 	    strcpy(filename, "proptableXXXXXX");
 	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
 
+	    size = (tail - head);
+
 	    if (compress_proptables) {
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-	    }
-
-	    for (size = 0, iter = head; (size < queue_size) && (iter != tail); iter++, size++) {
-		queue[size] = *iter;
-	    }
-
-	    for (; iter != tail; iter++, size++) {
-		if (compress_proptables) {
-		    zlib_write(file, (const char *) iter.base(), sizeof(T));
-		} else {
-		    do_write(fd, iter.base(), sizeof(T));
-		}
-	    }
-
-	    if (compress_proptables) {
+		zlib_write(file, (const char *) head.base(), size * sizeof(value_type));
 		zlib_flush(file);
 		zlib_free(file);
 		lseek(fd, 0, SEEK_SET);
 		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
 	    } else {
+		do_write(fd, head.base(), size * sizeof(value_type));
 		lseek(fd, 0, SEEK_SET);
 	    }
 
@@ -8476,16 +8462,16 @@ extern "C++" {
 	    return (next == size);
 	}
 
-	T pop_front(void) {
-	    if ((next != 0) && (next % queue_size == 0)) {
+	value_type pop_front(void) {
+	    if (next % queue_size == 0) {
 		ssize_t retval;
 		if (compress_proptables) {
-		    retval = zlib_read(file, (char *) queue, queue_size * sizeof(T));
+		    retval = zlib_read(file, (char *) queue, queue_size * sizeof(value_type));
 		} else {
-		    retval = read(fd, queue, queue_size * sizeof(T));
+		    retval = read(fd, queue, queue_size * sizeof(value_type));
 		}
-		if ((retval != (ssize_t) (queue_size * sizeof(T)))
-		    && (retval != (ssize_t) ((size - next) * sizeof(T)))) {
+		if ((retval != (ssize_t) (queue_size * sizeof(value_type)))
+		    && (retval != (ssize_t) ((size - next) * sizeof(value_type)))) {
 		    throw "Short read in disk_que";
 		}
 	    }
@@ -14674,7 +14660,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.707 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.708 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
