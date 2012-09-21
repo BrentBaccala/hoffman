@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.706 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.707 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8445,9 +8445,9 @@ extern "C++" {
 
 	    for (; iter != tail; iter++, size++) {
 		if (compress_proptables) {
-		    zlib_write(file, (const char *) (void *) *iter, Container::value_size);
+		    zlib_write(file, (const char *) iter.base(), sizeof(T));
 		} else {
-		    do_write(fd, (void *) *iter, sizeof(T));
+		    do_write(fd, iter.base(), sizeof(T));
 		}
 	    }
 
@@ -8480,12 +8480,12 @@ extern "C++" {
 	    if ((next != 0) && (next % queue_size == 0)) {
 		ssize_t retval;
 		if (compress_proptables) {
-		    retval = zlib_read(file, (char *) queue, queue_size * Container::value_size);
+		    retval = zlib_read(file, (char *) queue, queue_size * sizeof(T));
 		} else {
-		    retval = read(fd, queue, queue_size * Container::value_size);
+		    retval = read(fd, queue, queue_size * sizeof(T));
 		}
-		if ((retval != (ssize_t) (queue_size * Container::value_size))
-		    && (retval != (ssize_t) ((size - next) * Container::value_size))) {
+		if ((retval != (ssize_t) (queue_size * sizeof(T)))
+		    && (retval != (ssize_t) ((size - next) * sizeof(T)))) {
 		    throw "Short read in disk_que";
 		}
 	    }
@@ -8673,6 +8673,7 @@ extern "C++" {
 	size_t remaining_space;
 	size_t block_size;
 	unsigned int blocks_dumped_to_disk;
+	std::mutex blocks_dumped_to_disk_mutex;
 	std::condition_variable blocks_dumped_to_disk_cond;
 
 	void sort_and_dump_to_disk(Iterator begin, Iterator end) {
@@ -8740,12 +8741,15 @@ extern "C++" {
 
 	void push(const T& x) {
 
-	    std::unique_lock<std::mutex> lock(*this);
+	    std::unique_lock<std::mutex> self_lock(*this);
 
 	    if (in_memory_queue == NULL) throw "priority_queue: push attempted after retrieval started";
 
 	    *(tail ++) = x;
 	    remaining_space --;
+	    if (remaining_space > 2000000) {
+		fatal("Hi\n");
+	    }
 	    sorted = false;
 
 	    if (remaining_space < num_threads) {
@@ -8753,25 +8757,33 @@ extern "C++" {
 		unsigned int current = num_threads - remaining_space - 1;
 
 		if (current != num_threads - 1) {
-		    /* We unlock while we're sorting and dumping to disk since there's still room to
-		     * insert at the end, but the real reason to unlock is to let other threads into
+		    /* If there's still room to insert at the end, we unlock while we're sorting and
+		     * dumping to disk, but the real reason to unlock is to let other threads into
 		     * this code so they can also sort and dump to disk (it's a slow operation).
 		     */
-		    lock.unlock();
+		    self_lock.unlock();
 		    sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
 					  in_memory_queue->begin() + (current+1) * block_size);
-		    lock.lock();
 		} else {
 		    sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
 					  in_memory_queue->end());
 		}
 
+		/* Now we lock on a different mutex that protects a condition variable.  We never
+		 * hold this lock doing anything that blocks on the primary lock - just increment
+		 * blocks_dumped_to_disk and notify the thread waiting for it to reach num_threads,
+		 * which is holding the primary lock.
+		 */
+
+		std::unique_lock<std::mutex> lock(blocks_dumped_to_disk_mutex);
+
 		blocks_dumped_to_disk ++;
 		blocks_dumped_to_disk_cond.notify_all();
 
 		if (current == num_threads - 1) {
-		    /* We're locked, and dumps to disk have at least started for all blocks.  Make sure
-		     * they're all done before we let everything get going again.
+		    /* There's no remaining space, we're locked, and dumps to disk have at least
+		     * started for all blocks.  Make sure they're all done before we reset
+		     * everything and get going again.
 		     */
 
 		    while (blocks_dumped_to_disk < num_threads) {
@@ -8827,7 +8839,16 @@ extern "C++" {
  *   futuremove - unneeded
  */
 
+extern "C++" {
 class proptable_entry {
+
+ private:
+    template<typename T>
+    static int value_to_dtm(proptable_format *format, T value) {
+	int dtm = (value >> format->dtm_offset) & format->dtm_mask;
+	if (dtm > (int) (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
+	return dtm;
+    }
 
  public:
     index_t index;
@@ -8843,12 +8864,37 @@ class proptable_entry {
     proptable_entry(index_t index, int dtm, unsigned int movecnt, int futuremove):
 	index(index), dtm(dtm), movecnt(movecnt), futuremove(futuremove) {}
 
+#if 0
+    template<typename T>
+	proptable_entry(proptable_format *format, T value):
+	proptable_entry(value >> format->index_offset, value_to_dtm(format, value),
+			((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
+			(value >> format->futuremove_offset) & format->futuremove_mask)
+	    {}
+#else
+    template<typename T>
+	proptable_entry(proptable_format *format, T value):
+	index(value >> format->index_offset), dtm(value_to_dtm(format, value)),
+	    movecnt(((value >> format->movecnt_offset) & format->movecnt_mask) + 1),
+	    futuremove((value >> format->futuremove_offset) & format->futuremove_mask)
+	    {}
+#endif
+
+	template<typename T>
+	    T encode(proptable_format *format) {
+	    return (index << format->index_offset)
+		| ((dtm & format->dtm_mask) << format->dtm_offset)
+		| (((movecnt - 1) & format->movecnt_mask) << format->movecnt_offset)
+		| ((futuremove & format->futuremove_mask) << format->futuremove_offset);
+	}
+
     /* This is used when we build current_pt_entries */
 
     bool operator<(const proptable_entry &other) const {
 	return index < other.index;
     }
 };
+}
 
 /* proptable_iterator (defined below) dereferences into proptable_ptr, which is a pointer into the
  * in-memory table.  It's not a normal pointer because the in-memory table is bit-aligned, not
@@ -9328,7 +9374,39 @@ extern "C++" {
 /* Finally, the actual priority queue(s) */
 
 //typedef priority_queue<class proptable_entry, class memory_proptable> proptable;
-typedef priority_queue<class proptable_entry, class memory_typed_proptable<uint64_t> > proptable;
+//typedef priority_queue<class proptable_entry, class memory_typed_proptable<uint64_t> > proptable;
+
+extern "C++" {
+    template<typename T>
+    class typed_proptable : public priority_queue<T> {
+    private:
+	proptable_format format;
+
+    public:
+
+	template <typename... Args>
+	    typed_proptable(proptable_format format, Args... args):
+	priority_queue<T>(args...), format(format)
+	{
+	    // XXX make format.bits unsigned
+	    //if (format.bits > sizeof(T)) throw "proptable format too large";
+	}
+
+	proptable_entry front() {
+	    return proptable_entry(&format, priority_queue<T>::front());
+	}
+
+	proptable_entry pop_front() {
+	    return proptable_entry(&format, priority_queue<T>::pop_front());
+	}
+
+	void push(proptable_entry &entry) {
+	    priority_queue<T>::push(entry.encode<T>(&format));
+	}
+    };
+}
+
+typedef typed_proptable<uint64_t> proptable;
 
 proptable * input_proptable;
 proptable * output_proptable;
@@ -14596,7 +14674,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.706 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.707 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
