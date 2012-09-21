@@ -5653,7 +5653,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.711 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.712 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7804,12 +7804,6 @@ class MemoryEntriesTable: public EntriesTable {
  * accessing the table at all!
  */
 
-static pthread_mutex_t ready_to_advance_mutex = PTHREAD_MUTEX_INITIALIZER;
-static pthread_cond_t ready_to_advance_cond = PTHREAD_COND_INITIALIZER;
-static pthread_cond_t ready_to_reset_cond = PTHREAD_COND_INITIALIZER;
-static int threads_waiting_to_advance = 0;
-static int threads_waiting_to_reset = 0;
-
 class DiskEntriesTable: public EntriesTable {
 
  private:
@@ -7821,6 +7815,12 @@ class DiskEntriesTable: public EntriesTable {
 
     char entries_read_filename[16];
     char entries_write_filename[16];
+
+    std::mutex ready_to_advance_mutex;
+    std::condition_variable ready_to_advance_cond;
+    std::condition_variable ready_to_reset_cond;
+    int threads_waiting_to_advance;
+    int threads_waiting_to_reset;
 
     void open_new_entries_write_file(void) {
 
@@ -7902,16 +7902,16 @@ class DiskEntriesTable: public EntriesTable {
     }
 
     void wait_for_all_threads_ready_then_advance_entry_buffer(void) {
-	pthread_mutex_lock(&ready_to_advance_mutex);
+	std::unique_lock<std::mutex> lock(ready_to_advance_mutex);
+
 	threads_waiting_to_advance ++;
 	if (threads_waiting_to_advance + threads_waiting_to_reset < threads) {
-	    pthread_cond_wait(&ready_to_advance_cond, &ready_to_advance_mutex);
+	    ready_to_advance_cond.wait(lock);
 	} else {
 	    advance_entry_buffer();
 	    threads_waiting_to_advance = 0;
-	    pthread_cond_broadcast(&ready_to_advance_cond);
+	    ready_to_advance_cond.notify_all();
 	}
-	pthread_mutex_unlock(&ready_to_advance_mutex);
     }
 
     void reset_files(void) {
@@ -8004,16 +8004,16 @@ class DiskEntriesTable: public EntriesTable {
     }
 
     void wait_for_all_threads_ready_then_reset(void) {
-	pthread_mutex_lock(&ready_to_advance_mutex);
+	std::unique_lock<std::mutex> lock(ready_to_advance_mutex);
+
 	threads_waiting_to_reset ++;
 	if (threads_waiting_to_reset < threads) {
-	    pthread_cond_wait(&ready_to_reset_cond, &ready_to_advance_mutex);
+	    ready_to_reset_cond.wait(lock);
 	} else {
 	    reset_files();
 	    threads_waiting_to_reset = 0;
-	    pthread_cond_broadcast(&ready_to_reset_cond);
+	    ready_to_reset_cond.notify_all();
 	}
-	pthread_mutex_unlock(&ready_to_advance_mutex);
     }
 
     void advance_entry_buffer_to_index(index_t index)
@@ -8032,6 +8032,9 @@ class DiskEntriesTable: public EntriesTable {
 	entry_buffer_bytes = (entry_buffer_size * bits) / 8;
 	input_entry_buffer_bytes = entry_buffer_bytes;
 	resize_on_next_pass = 0;
+
+	threads_waiting_to_advance = 0;
+	threads_waiting_to_reset = 0;
 
 	/* first, malloc the entries buffer */
 
@@ -14481,7 +14484,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.711 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.712 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
