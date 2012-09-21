@@ -93,6 +93,7 @@
 #include <deque>
 #include <vector>
 
+#include <thread>
 #include <mutex>
 #include <condition_variable>
 
@@ -5653,7 +5654,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.712 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.713 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8240,67 +8241,41 @@ void back_propagate_index(index_t index, int target_dtm)
  * through the entries table, intra-table backpropagating to a single target DTM.
  */
 
-typedef struct {
-    index_t start_index;
-    index_t end_index;
-    int target_dtm;
-} intratable_propagation_control_t;
-
-void * back_propagate_section(void * ptr)
+void back_propagate_section(index_t start_index, index_t end_index, int target_dtm)
 {
-    intratable_propagation_control_t * control = (intratable_propagation_control_t *) ptr;
     index_t index;
 
-    for (index = control->start_index; index <= control->end_index; index ++) {
-	back_propagate_index(index, control->target_dtm);
+    for (index = start_index; index <= end_index; index ++) {
+	back_propagate_index(index, target_dtm);
     }
-
-    return NULL;
 }
 
 void non_proptable_pass(int target_dtm)
 {
-#ifndef USE_THREADS
-
-    index_t index;
-
-    for (index = 0; index <= current_tb->max_index; index ++) {
-	back_propagate_index(index, target_dtm);
-    }
-
-#else
-
-    intratable_propagation_control_t *controls;
-    pthread_t *threads;
+    std::thread t[num_threads];
     unsigned int thread;
+    index_t block_size = (current_tb->max_index+1)/num_threads;
 
     entriesTable->set_threads(num_threads);
 
-    /* XXX check for malloc failure */
-    controls = (intratable_propagation_control_t *) malloc(sizeof(intratable_propagation_control_t) * num_threads);
-    threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
-
     for (thread = 0; thread < num_threads; thread ++) {
-	controls[thread].target_dtm = target_dtm;
-	controls[thread].start_index = ((current_tb->max_index+1)*thread)/num_threads;
-	if (thread != num_threads-1) {
-	    controls[thread].end_index = ((current_tb->max_index+1)*(thread+1))/num_threads - 1;
-	} else {
-	    controls[thread].end_index = current_tb->max_index;
-	}
-	pthread_create(&threads[thread], NULL, &back_propagate_section, &controls[thread]);
+	index_t start_index = thread*block_size;
+	index_t end_index;
+
+        if (thread != num_threads-1) {
+            end_index = (thread+1)*block_size - 1;
+        } else {
+            end_index = current_tb->max_index;
+        }
+
+	t[thread] = std::thread(back_propagate_section, start_index, end_index, target_dtm);
     }
 
     for (thread = 0; thread < num_threads; thread ++) {
-	pthread_join(threads[thread], NULL);
+	t[thread].join();
     }
-
-    free(threads);
-    free(controls);
 
     entriesTable->set_threads(1);
-
-#endif
 }
 
 /***** PROPTABLES *****
@@ -9263,14 +9238,8 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 
 index_t proptable_shared_index;
 
-typedef struct {
-    int target_dtm;
-} proptable_propagation_control_t;
-
-void * proptable_pass_thread(void * ptr)
+void proptable_pass_thread(int target_dtm)
 {
-    proptable_propagation_control_t * control = (proptable_propagation_control_t *) ptr;
-    int target_dtm = control->target_dtm;
     index_t index;
 
     while (1) {
@@ -9384,12 +9353,13 @@ void * proptable_pass_thread(void * ptr)
 	}
 
     }
-
-    return NULL;
 }
 
 void proptable_pass(int target_dtm)
 {
+    std::thread t[num_threads];
+    unsigned int thread;
+
     /* Proptable for intra-tablebase propagation only needs to record the index, since the dtm is
      * known from the pass number, the movecnt is always one, and we're done tracking futuremoves.
      */
@@ -9406,41 +9376,19 @@ void proptable_pass(int target_dtm)
 
     output_proptable = new proptable(format, proptable_MBs << 20);
 
-    /* fprintf(stderr, "proptable_pass(%d); size of proptable: %llu\n", target_dtm, input_proptable->size()); */
-
     proptable_shared_index = 0;
-
-#ifndef USE_THREADS
-
-    proptable_pass_thread(target_dtm);
-
-#else
-
-    proptable_propagation_control_t *controls;
-    pthread_t *threads;
-    unsigned int thread;
 
     entriesTable->set_threads(num_threads);
 
-    /* XXX check for malloc failure */
-    controls = (proptable_propagation_control_t *) malloc(sizeof(proptable_propagation_control_t) * num_threads);
-    threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
-
     for (thread = 0; thread < num_threads; thread ++) {
-	controls[thread].target_dtm = target_dtm;
-	pthread_create(&threads[thread], NULL, &proptable_pass_thread, &controls[thread]);
+	t[thread] = std::thread(proptable_pass_thread, target_dtm);
     }
 
     for (thread = 0; thread < num_threads; thread ++) {
-	pthread_join(threads[thread], NULL);
+	t[thread].join();
     }
-
-    free(threads);
-    free(controls);
 
     entriesTable->set_threads(1);
-
-#endif
 
     delete input_proptable;
 }
@@ -9895,7 +9843,7 @@ index_t next_future_index;
  * futurebase, so all we really do is blunder check.
  */
 
-void * propagate_moves_from_promotion_futurebase(void * ptr)
+void propagate_moves_from_promotion_futurebase(void)
 {
     index_t future_index;
     local_position_t foreign_position;
@@ -9916,7 +9864,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 	|| (invert_colors_of_futurebase
 	    && (current_tb->piece_color[futurebase->missing_pawn] == futurebase->piece_color[futurebase->extra_piece]))) {
 	fatal("Conversion error during promotion back-prop\n");
-	return NULL;
+	return;
     }
 
     for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
@@ -9924,7 +9872,7 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
     }
     if (promotion == promotion_possibilities) {
 	fatal("Couldn't find futurebase's extra piece in promoted_pieces list\n");
-	return NULL;
+	return;
     }
 
     /* XXX We could limit the range of future_index here to only those positions where the promoted
@@ -10099,11 +10047,9 @@ void * propagate_moves_from_promotion_futurebase(void * ptr)
 	    }
 	}
     }
-
-    return NULL;
 }
 
-void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
+void propagate_moves_from_promotion_capture_futurebase(void)
 {
     index_t future_index;
     local_position_t foreign_position;
@@ -10125,7 +10071,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 	|| (invert_colors_of_futurebase
 	    && (current_tb->piece_color[futurebase->missing_pawn] == futurebase->piece_color[futurebase->extra_piece]))) {
 	fatal("Conversion error during promotion capture back-prop\n");
-	return NULL;
+	return;
     }
 
     for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
@@ -10133,7 +10079,7 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
     }
     if (promotion == promotion_possibilities) {
 	fatal("Couldn't find futurebase's extra piece in promoted_pieces list\n");
-	return NULL;
+	return;
     }
 
     /* XXX We could limit the range of future_index here to only those positions where the promoted
@@ -10347,8 +10293,6 @@ void * propagate_moves_from_promotion_capture_futurebase(void * ptr)
 	    }
 	}
     }
-
-    return NULL;
 }
 
 /* Propagate moves from a futurebase that resulted from capturing one of the pieces in the current
@@ -10550,7 +10494,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 }
 
-void * propagate_moves_from_capture_futurebase(void * ptr)
+void propagate_moves_from_capture_futurebase(void)
 {
     index_t future_index;
     local_position_t position;
@@ -10678,8 +10622,6 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
 	    }
 	}
     }
-
-    return NULL;
 }
 
 /* A "normal" futurebase is one that's identical to our own in terms of the number and types
@@ -10689,7 +10631,7 @@ void * propagate_moves_from_capture_futurebase(void * ptr)
  * don't allow frozen pieces in symmetric tablebases.
  */
 
-void * propagate_moves_from_normal_futurebase(void * ptr)
+void propagate_moves_from_normal_futurebase(void)
 {
     index_t future_index;
     local_position_t parent_position;
@@ -10922,8 +10864,6 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 	    }
 	}
     }
-
-    return NULL;
 }
 
 /* Back propagates from all the futurebases.
@@ -10939,7 +10879,7 @@ void * propagate_moves_from_normal_futurebase(void * ptr)
 bool back_propagate_all_futurebases(tablebase_t *tb) {
 
     int fbnum;
-    void * (* backprop_function)(void *);
+    void (* backprop_function)(void);
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 
@@ -11012,22 +10952,17 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	if (backprop_function != NULL) {
 
-#ifdef USE_THREADS
-	    pthread_t *threads;
+	    std::thread t[num_threads];
 	    unsigned int thread;
 
-	    /* XXX check for malloc failure */
-	    threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
+	    for (thread = 0; thread < num_threads; thread ++) {
+		t[thread] = std::thread(backprop_function);
+	    }
 
 	    for (thread = 0; thread < num_threads; thread ++) {
-		pthread_create(&threads[thread], NULL, backprop_function, (void *)((size_t)thread));
+		t[thread].join();
 	    }
-	    for (thread = 0; thread < num_threads; thread ++) {
-		pthread_join(threads[thread], NULL);
-	    }
-#else
-	    (*backprop_function)(0);
-#endif
+
 	    if (progress_dots > 0) info("\n");
 	}
 
@@ -13152,67 +13087,42 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
  * thread synchronization is trivial.
  */
 
-typedef struct {
-    index_t start_index;
-    index_t end_index;
-} initialization_control_t;
-
-void * initialize_tablebase_section(void * ptr)
+void initialize_tablebase_section(index_t start_index, index_t end_index)
 {
-    initialization_control_t *control = (initialization_control_t *) ptr;
     index_t index;
 
-    for (index=control->start_index; index <= control->end_index; index++) {
+    for (index=start_index; index <= end_index; index++) {
 
 	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 
 	set_unsigned_int_field(current_tb->futurevectors, bit_offset, current_tb->futurevector_bits,
 			       initialize_tablebase_entry(current_tb, index));
     }
-
-    return NULL;
 }
-
-#ifndef USE_THREADS
 
 void initialize_tablebase(void)
 {
-    initialization_control_t control = {0, current_tb->max_index};
-
-    initialize_tablebase_section(&control);
-}
-
-#else
-
-void initialize_tablebase(void)
-{
-    initialization_control_t *controls;
-    pthread_t *threads;
+    std::thread t[num_threads];
     unsigned int thread;
-
-    /* XXX check for malloc failure */
-    controls = (initialization_control_t *) malloc(sizeof(initialization_control_t) * num_threads);
-    threads = (pthread_t *) malloc(sizeof(pthread_t) * num_threads);
+    index_t block_size = (current_tb->max_index+1)/num_threads;
 
     for (thread = 0; thread < num_threads; thread ++) {
-	controls[thread].start_index = ((current_tb->max_index+1)*thread)/num_threads;
+	index_t start_index = thread*block_size;
+	index_t end_index;
+
 	if (thread != num_threads-1) {
-	    controls[thread].end_index = ((current_tb->max_index+1)*(thread+1))/num_threads - 1;
+	    end_index = (thread+1)*block_size - 1;
 	} else {
-	    controls[thread].end_index = current_tb->max_index;
+	    end_index = current_tb->max_index;
 	}
-	pthread_create(&threads[thread], NULL, &initialize_tablebase_section, &controls[thread]);
+
+	t[thread] = std::thread(initialize_tablebase_section, start_index, end_index);
     }
 
     for (thread = 0; thread < num_threads; thread ++) {
-	pthread_join(threads[thread], NULL);
+	t[thread].join();
     }
-
-    free(threads);
-    free(controls);
 }
-
-#endif
 
 /* Intra-table propagation is (almost) trivial.  Keep making passes over the tablebase first until
  * we've processed everything from the futurebases, then until no more progress can be made.  We
@@ -14426,9 +14336,7 @@ void usage(char *program_name)
     fprintf(stderr, "Possible GENERATING-OPTIONS are:\n");
     fprintf(stderr, "   -o OUTPUT-FILENAME    set output filename (overrides control file)\n");
     fprintf(stderr, "   -P PROPTABLE-SIZE     enable proptables and sets size in MBs\n");
-#ifdef USE_THREADS
     fprintf(stderr, "   -t NUM-THREADS        sets number of threads to use (default 1)\n");
-#endif
     fprintf(stderr, "   -q                    quiet mode; suppress informational messages\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Other options:\n");
@@ -14484,7 +14392,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.712 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.713 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14558,11 +14466,9 @@ int main(int argc, char *argv[])
 	    proptable_MBs = strtol(optarg, NULL, 0);
 	    using_proptables = true;
 	    break;
-#ifdef USE_THREADS
 	case 't':
 	    num_threads = strtol(optarg, NULL, 0);
 	    break;
-#endif
 	}
     }
 
