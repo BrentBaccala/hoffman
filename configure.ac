@@ -3,7 +3,7 @@ dnl Process this file with autoconf to produce a configure script.
 AC_INIT([hoffman],[1.4])
 
 if test x"$CXXFLAGS" = x; then
-        CXXFLAGS="-O3"
+        CXXFLAGS="-O3 -march=native"
 fi
 
 AC_PROG_CXX
