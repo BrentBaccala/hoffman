@@ -43,11 +43,11 @@ propagation tables allow the program to build tablebases of
 essentially unlimited size with no swapping and reasonable CPU
 utilization.
 
-Propagation tables are implemented using a Library Insertion Sort and
-the merge trees described by Knuth in \cite{knuth}.  Probably the most
-novel aspect of the implementation (to my knowledge) is the use of
-inversion in a finite field to smooth the distribution of index
-numbers.
+Propagation tables are implemented using an in-memory bucket sort and
+then a merge tree (described by Knuth in \cite{knuth}) to combine the
+disk files.  Probably the most novel aspect of the implementation (to
+my knowledge) is the use of inversion in a finite field to smooth the
+distribution of index numbers.
 
 \section{The Algorithm}
 
@@ -68,20 +68,18 @@ in-memory merge tree, and the sorted updates are applied sequentially
 as we move through the entries table, generating a new set of output
 proptables as we go.
 
-\section{Library Insertion Sort}
+\section{Bucket Sort}
 
-The in-memory sorted table is built using a Library Insertion Sort,
-which is similar in spirit to Bender et al.'s algorithm
-(\cite{bender}), but was developed independently and is much different
-in its details.
+The in-memory sorted table is built using a varient of bucket sort;
+see also Knuth's discussion of the address calculation sort on p. 99 of
+\cite{knuth}.
 
-The basic idea is to sort the way a librarian would --- start with an
-empty shelf, and insert the books into roughly the positions they are
-predicted to occupy based on their titles.  In our case, this means
-inserting based on the index numbers of the positions.  The sort works
-best when these numbers are evenly spread, so we invert the indices
-modulo a prime number in order to achieve this even spread.  This is
-computationally expensive, but we expect to be disk-bound anyway.
+The basic idea is to start with an empty array and insert the entries
+into roughly the positions they are predicted to occupy based on their
+keys.  The sort works best when these keys (called indices, in our
+case) are evenly spread, so we invert the indices modulo a prime
+number in order to achieve this even spread.  This is computationally
+expensive, but we expect to be disk-bound anyway.
 
 The table is initialized to all-ones (since zero may be used an as
 index, and ``inverts'' to itself).  Given an index to be inserted, we
@@ -175,8 +173,7 @@ corresponding array entries.  Once an all-ones value appears at node
 
 \bibitem{knuth} Knuth, Art of Computer Programming, Vol 3, 2nd Ed.
 
-\bibitem{bender} INSERTION SORT is O(n log n) -  Bender, Farach-Colton, Mosteiro (2004)   
-\hfil\break {\tt http://citeseer.ist.psu.edu/630187.html}
+\bibitem{bucket sort} {\tt http://en.wikipedia.org/wiki/Bucket\_sort}
 
 \end{thebibliography}
 
