@@ -1,8 +1,7 @@
 
 HOFFMAN ?= ./hoffman
 
-CFLAGS= @CFLAGS@ @READLINE_CPPFLAGS@ @XML_CPPFLAGS@ @CURL_CFLAGS@
-CXXFLAGS= @CFLAGS@ @READLINE_CPPFLAGS@ @XML_CPPFLAGS@ @CURL_CFLAGS@
+CXXFLAGS= @CXXFLAGS@ @READLINE_CPPFLAGS@ @XML_CPPFLAGS@ @CURL_CFLAGS@
 
 hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@
 
@@ -17,7 +16,7 @@ hoffman_XMLS = xml/*.xml
 hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPTS) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS)
 
 hoffman: $(hoffman_OBJS)
-	@LINKER@ @CFLAGS@ -o hoffman $^ @XML_LIBS@ @CURL_LIBS@ @LIBS@
+	@LINKER@ $(CXXFLAGS) -o hoffman $^ @XML_LIBS@ @CURL_LIBS@ @LIBS@
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
