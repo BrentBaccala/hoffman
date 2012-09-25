@@ -622,7 +622,6 @@ typedef struct tablebase {
     uint64_t illegal_white_king_squares;
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
-    int reverse_index_ordering[MAX_PIECES];
     int *permutations[MAX_PIECES];
 
     int last_overlapping_piece[MAX_PIECES];
@@ -2760,10 +2759,7 @@ bool combinadic_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
-	     (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-	     (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
-
+	for (square = 0; square < 64; square ++) {
 	    if ((tb->piece_index[piece][square] != INVALID_INDEX)
 		&& (tb->piece_index[piece][square] <= index)) {
 		p->piece_position[piece] = square;
@@ -2980,10 +2976,7 @@ bool combinadic2_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
-	     (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-	     (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
-
+	for (square = 0; square < 64; square ++) {
 	    if ((tb->piece_index[piece][square] != INVALID_INDEX)
 		&& (tb->piece_index[piece][square] <= index)) {
 		p->piece_position[piece] = square;
@@ -4305,9 +4298,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	if (index_ordering && (strcmp((char *) index_ordering, "reverse") == 0)) {
 	    fatal("reverse index ordering no longer supported\n");
-	    tb->reverse_index_ordering[piece] = 1;
-	} else {
-	    tb->reverse_index_ordering[piece] = 0;
 	}
 
 	if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
@@ -4991,9 +4981,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	tb->max_index = 2;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
-		 (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-		 (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
+	    for (square = 0; square < 64; square ++) {
 		if (! (tb->legal_squares[piece] & BITVECTOR(square))) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
@@ -5064,9 +5052,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	     * identical pieces assumes that both pieces occupy the same range of squares.
 	     */
 
-	    for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
-		 (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-		 (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
+	    for (square = 0; square < 64; square ++) {
 
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
 
@@ -5234,9 +5220,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	     * row (i.e, less than 8), since pawns can never be there.
 	     */
 
-	    for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
-		 (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-		 (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
+	    for (square = 0; square < 64; square ++) {
 
 		if ((tb->semilegal_squares[piece] & BITVECTOR(square))
 		    || ((tb->piece_type[piece] == PAWN)
@@ -5270,15 +5254,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	     * which has the benefit of not requiring comparisons with INVALID_INDEX.
 	     */
 
-	    if (tb->piece_index[piece][tb->reverse_index_ordering[piece] ? 0 : 63] == INVALID_INDEX)
-		tb->piece_index[piece][tb->reverse_index_ordering[piece] ? 0 : 63] = tb->max_index;
+	    if (tb->piece_index[piece][63] == INVALID_INDEX) tb->piece_index[piece][63] = tb->max_index;
 
-	    for (square = (tb->reverse_index_ordering[piece] ? 1 : 62);
-		 (tb->reverse_index_ordering[piece] ? (square < 64) : (square >= 0));
-		 (tb->reverse_index_ordering[piece] ? (square ++) : (square --))) {
-
+	    for (square = 62; square >= 0; square--) {
 		if (tb->piece_index[piece][square] == INVALID_INDEX) {
-		    tb->piece_index[piece][square] = tb->piece_index[piece][square + (tb->reverse_index_ordering[piece] ? -1 : 1)];
+		    tb->piece_index[piece][square] = tb->piece_index[piece][square + 1];
 		}
 
 	    }
@@ -5380,9 +5360,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	     * identical pieces assumes that both pieces occupy the same range of squares.
 	     */
 
-	    for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
-		 (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-		 (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
+	    for (square = 0; square < 64; square ++) {
 
 		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
 
@@ -5607,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.722 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.723 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14337,7 +14315,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.722 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.723 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
