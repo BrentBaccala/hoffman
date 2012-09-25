@@ -2755,16 +2755,11 @@ bool combinadic_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
-	int square;
-
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	for (square = 0; square < 64; square ++) {
-	    if ((tb->piece_index[piece][square] != INVALID_INDEX)
-		&& (tb->piece_index[piece][square] <= index)) {
-		p->piece_position[piece] = square;
-	    }
-	}
+	p->piece_position[piece]
+	    = std::lower_bound(tb->piece_index[piece], tb->piece_index[piece+1], index+1)
+	    - tb->piece_index[piece] - 1;
 
 	index -= tb->piece_index[piece][p->piece_position[piece]];
 
@@ -2972,16 +2967,11 @@ bool combinadic2_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
-	int square;
-
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	for (square = 0; square < 64; square ++) {
-	    if ((tb->piece_index[piece][square] != INVALID_INDEX)
-		&& (tb->piece_index[piece][square] <= index)) {
-		p->piece_position[piece] = square;
-	    }
-	}
+	p->piece_position[piece]
+	    = std::lower_bound(tb->piece_index[piece], tb->piece_index[piece+1], index+1)
+	    - tb->piece_index[piece] - 1;
 
 	index -= tb->piece_index[piece][p->piece_position[piece]];
 
@@ -3229,6 +3219,8 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     /* Binary search for the largest value in piece_index[] that is less than or equal to the
      * (running) index, subtract it out of the index, and store the (tenative) piece positions.
+     * This loop has to run in reverse order over the pieces, since a combinadic encoding should be
+     * backed out from the largest piece first.
      */
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
@@ -5585,7 +5577,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.723 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.724 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14315,7 +14307,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.723 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.724 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
