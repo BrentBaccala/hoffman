@@ -704,9 +704,9 @@ char * completion_report_url = nullptr;
 
     if (fatal_errors > 0) {
 #ifdef USE_LIBCURL
-	if (error_report_url != nullptr) {
+	if (error_report_url) {
 	    file = url_open(error_report_url, "w");
-	    if ((current_tb != nullptr) && (current_tb->xml != nullptr)) {
+	    if (current_tb && current_tb->xml) {
 		xmlDocDumpMemory(current_tb->xml, &buf, &size);
 		url_write(file, (char *) buf, size);
 		xmlFree(buf);
@@ -717,9 +717,9 @@ char * completion_report_url = nullptr;
 	exit(EXIT_FAILURE);
     } else {
 #ifdef USE_LIBCURL
-	if (completion_report_url != nullptr) {
+	if (completion_report_url) {
 	    file = url_open(completion_report_url, "w");
-	    if ((current_tb != nullptr) && (current_tb->xml != nullptr)) {
+	    if (current_tb && current_tb->xml) {
 		xmlDocDumpMemory(current_tb->xml, &buf, &size);
 		url_write(file, (char *) buf, size);
 		xmlFree(buf);
@@ -737,7 +737,7 @@ void fatal (const char * format, ...)
     static char strbuf[256] = {'\0'};
 
     /* BREAKPOINT */
-    if (index(format, '\n') != nullptr) fatal_errors ++;
+    if (index(format, '\n')) fatal_errors ++;
 
     va_start(va, format);
     vfprintf(stderr, format, va);
@@ -745,9 +745,9 @@ void fatal (const char * format, ...)
 
     va_start(va, format);
 
-    if ((current_tb != nullptr) && (current_tb->xml != nullptr)) {
+    if (current_tb && current_tb->xml) {
 	vsnprintf(strbuf + strlen(strbuf), sizeof(strbuf) - strlen(strbuf), format, va);
-	if (index(strbuf, '\n') != nullptr) {
+	if (index(strbuf, '\n')) {
 	    xmlNodePtr tablebase = xmlDocGetRootElement(current_tb->xml);
 
 	    *index(strbuf, '\n') = '\0';
@@ -805,7 +805,7 @@ int find_name_in_array(char * name, const char * array[])
 
     if (name == nullptr) return -1;
 
-    while (*array != nullptr) {
+    while (*array) {
 	if (!strcasecmp(name, *array)) return i;
 	array ++;
 	i ++;
@@ -2806,7 +2806,7 @@ bool combinadic_index_to_local_position(tablebase_t *tb, index_t index, local_po
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->permutations[piece] != nullptr) {
+	if (tb->permutations[piece]) {
 	    int perm = 0;
 
 	    while (tb->permutations[piece][perm] != 0) {
@@ -3065,7 +3065,7 @@ bool combinadic2_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	if (p->piece_position[piece] >= 64) return false;
 
-	if (tb->permutations[piece] != nullptr) {
+	if (tb->permutations[piece]) {
 	    int perm = 0;
 
 	    while (tb->permutations[piece][perm] != 0) {
@@ -3395,7 +3395,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	if (tb->permutations[piece] != nullptr) {
+	if (tb->permutations[piece]) {
 	    int perm = 0;
 
 	    while (tb->permutations[piece][perm] != 0) {
@@ -3589,7 +3589,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	/* run this loop once for each set of identical pieces */
-	if (tb->permutations[piece] != nullptr) {
+	if (tb->permutations[piece]) {
 	    int perm = 0;
 
 	    while (tb->permutations[piece][perm] != 0) {
@@ -4062,14 +4062,14 @@ bool parse_format(xmlNodePtr formatNode, struct format *format, bool expl)
     format->flag_offset = -1;
     format->basic_offset = -1;
 
-    for (child = formatNode->children; child != nullptr; child = child->next) {
+    for (child = formatNode->children; child; child = child->next) {
 	if (child->type == XML_ELEMENT_NODE) {
 	    char * bitstr = (char *) xmlGetProp(child, BAD_CAST "bits");
 	    char * typestr;
-	    int bits = (bitstr != nullptr) ? atoi(bitstr) : 0;
+	    int bits = bitstr ? atoi(bitstr) : 0;
 	    int format_field = find_name_in_array((char *) child->name, format_fields);
 
-	    if (bitstr != nullptr) xmlFree(bitstr);
+	    if (bitstr) xmlFree(bitstr);
 
 	    if (format_field == -1) {
 		if (expl) {
@@ -4090,7 +4090,7 @@ bool parse_format(xmlNodePtr formatNode, struct format *format, bool expl)
 		bits = 1;
 		typestr = (char *) xmlGetProp(child, BAD_CAST "type");
 		format->flag_type = find_name_in_array(typestr, format_flag_types);
-		if (typestr != nullptr) xmlFree(typestr);
+		if (typestr) xmlFree(typestr);
 		if (format->flag_type == -1) {
 		    fatal("'type' is a required property in format field 'flag'\n");
 		    return false;
@@ -4207,7 +4207,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     result = xmlXPathEvalExpression(BAD_CAST "//program", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	xmlChar * content = xmlNodeGetContent(result->nodesetval->nodeTab[0]);
-	if (content != nullptr) {
+	if (content) {
 	    sscanf((char *) content, "Hoffman %*[$]Revision: 1.%u $", &generating_version);
 	    xmlFree(content);
 	}
@@ -4229,7 +4229,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     result = xmlXPathEvalExpression(BAD_CAST "//max-dtm", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	xmlChar * content = xmlNodeGetContent(result->nodesetval->nodeTab[0]);
-	if (content != nullptr) {
+	if (content) {
 	    tb->max_dtm = atoi((char *) content);
 	    xmlFree(content);
 	}
@@ -4241,7 +4241,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     result = xmlXPathEvalExpression(BAD_CAST "//min-dtm", context);
     if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 	xmlChar * content = xmlNodeGetContent(result->nodesetval->nodeTab[0]);
-	if (content != nullptr) {
+	if (content) {
 	    tb->min_dtm = atoi((char *) content);
 	    xmlFree(content);
 	}
@@ -4258,8 +4258,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "type");
 	tb->stalemate_prune_type = find_name_in_array((char *) prune_type, restriction_types);
 	tb->stalemate_prune_color = find_name_in_array((char *) prune_color, colors);
-	if (prune_color != nullptr) xmlFree(prune_color);
-	if (prune_type != nullptr) xmlFree(prune_type);
+	if (prune_color) xmlFree(prune_color);
+	if (prune_type) xmlFree(prune_type);
 	if (tb->stalemate_prune_type != RESTRICTION_CONCEDE) {
 	    fatal("Stalemates can only be pruned to 'concede'\n");
 	}
@@ -4314,7 +4314,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    }
 	}
 
-	if ((index_ordering != nullptr) && (strcmp((char *) index_ordering, "reverse") == 0)) {
+	if (index_ordering && (strcmp((char *) index_ordering, "reverse") == 0)) {
 	    tb->reverse_index_ordering[piece] = 1;
 	} else {
 	    tb->reverse_index_ordering[piece] = 0;
@@ -4346,10 +4346,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	}
 
-	if (color != nullptr) xmlFree(color);
-	if (type != nullptr) xmlFree(type);
-	if (location != nullptr) xmlFree(location);
-	if (index_ordering != nullptr) xmlFree(index_ordering);
+	if (color) xmlFree(color);
+	if (type) xmlFree(type);
+	if (location) xmlFree(location);
+	if (index_ordering) xmlFree(index_ordering);
     }
 
     if ((tb->num_pieces_by_color[WHITE] == 0) || (tb->num_pieces_by_color[BLACK] == 0)) {
@@ -4411,7 +4411,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
 	    uint64_t pawn_positions = 0xffffffffffffffffLL;
 
-	    if ((location != nullptr) && (location[2] == '+')) {
+	    if (location && (location[2] == '+')) {
 
 		int square = rowcol2square(location[1] - '1', location[0] - 'a');
 		int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
@@ -4453,7 +4453,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		 */
 	    }
 
-	    if (location != nullptr) xmlFree(location);
+	    if (location) xmlFree(location);
 	}
     }
 
@@ -4467,7 +4467,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 		xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
 
-		if ((location != nullptr) && (location[2] == '+')) {
+		if (location && (location[2] == '+')) {
 
 		    int square = rowcol2square(location[1] - '1', location[0] - 'a');
 		    int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
@@ -4483,7 +4483,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		    }
 		}
 
-		if (location != nullptr) xmlFree(location);
+		if (location) xmlFree(location);
 	    }
 	}
     }
@@ -4642,7 +4642,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    index_node = result->nodesetval->nodeTab[0];
 	    index = xmlGetProp(index_node, BAD_CAST "type");
 	    xmlChar * index_offset = xmlGetProp(index_node, BAD_CAST "offset");
-	    if (index_offset != nullptr) {
+	    if (index_offset) {
 		tb->index_offset = atoi((char *) index_offset);
 		xmlFree(index_offset);
 	    }
@@ -4690,7 +4690,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      */
 
     king_positions = xmlGetProp(index_node, BAD_CAST "king-positions");
-    if (king_positions != nullptr) {
+    if (king_positions) {
 	if (!strcmp((char *) king_positions, "no-frozen-checks")) no_frozen_check_king_positions = 1;
 	else no_frozen_check_king_positions = 0;
 	xmlFree(king_positions);
@@ -4794,7 +4794,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      */
 
     format = xmlGetProp(tablebase, BAD_CAST "format");
-    if (format != nullptr) {
+    if (format) {
 	switch (find_name_in_array((char *) format, formats)) {
 	case FORMAT_ONE_BYTE_DTM:
 	    tb->format = one_byte_dtm_format;
@@ -4827,7 +4827,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     /* Extract index symmetry (if it was specified) */
 
     index_symmetry = xmlGetProp(index_node, BAD_CAST "symmetry");
-    if (index_symmetry != nullptr) {
+    if (index_symmetry) {
 	tb->symmetry = atoi((char *) index_symmetry);
 	if ((tb->symmetry != 1) && (tb->symmetry != 2) && (tb->symmetry != 4) && (tb->symmetry != 8)) {
 	    fatal("Bad index symmetry %d\n", tb->symmetry);
@@ -5402,7 +5402,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     /* See if an index modulus was specified for inversion in a finite field */
 
     modulus = xmlGetProp(index_node, BAD_CAST "modulus");
-    if (modulus != nullptr) {
+    if (modulus) {
 	if (strcmp((char *) modulus, "auto") == 0) {
 	    tb->modulus = round_up_to_prime(tb->max_index + 1);
 	    if (! is_futurebase) info("Using %" PRIindex " as auto modulus\n", tb->modulus);
@@ -5444,8 +5444,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		tb->prune_enable[color] |= type;
 	    }
 
-	    if (color_str != nullptr) xmlFree(color_str);
-	    if (type_str != nullptr) xmlFree(type_str);
+	    if (color_str) xmlFree(color_str);
+	    if (type_str) xmlFree(type_str);
 	}
     }
 
@@ -5587,7 +5587,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.720 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.721 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5655,7 +5655,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     } else if (strncmp(filename, "ftp:", 4) == 0) {
 #ifdef HAVE_LIBFTP
 	void *ptr = ftp_openurl(filename, "r");
-	if (ptr != nullptr) {
+	if (ptr) {
 	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
 #else
@@ -5688,7 +5688,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
     offsetstr = xmlGetProp(tablebase, BAD_CAST "offset");
     tb->offset = strtol((const char *) offsetstr, nullptr, 0);
-    if (offsetstr != nullptr) xmlFree(offsetstr);
+    if (offsetstr) xmlFree(offsetstr);
 
     zlib_close(file);
 
@@ -5698,7 +5698,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 void open_futurebase(tablebase_t * tb)
 {
     /* already open? */
-    if (tb->file != nullptr) return;
+    if (tb->file) return;
 
     if (rindex(tb->filename, ':') == nullptr) {
 	int fd;
@@ -5709,7 +5709,7 @@ void open_futurebase(tablebase_t * tb)
     } else if (strncmp(tb->filename, "ftp:", 4) == 0) {
 #ifdef HAVE_LIBFTP
 	void *ptr = ftp_openurl(tb->filename, "r");
-	if (ptr != nullptr) {
+	if (ptr) {
 	    tb->file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
 	}
 #else
@@ -5732,7 +5732,7 @@ void open_futurebase(tablebase_t * tb)
 
 void close_futurebase(tablebase_t * tb)
 {
-    if (tb->file != nullptr) {
+    if (tb->file) {
 	if (zlib_close(tb->file) != 0) {
 	    warning("zlib_close failed in close_futurebase()\n");
 	}
@@ -5742,10 +5742,10 @@ void close_futurebase(tablebase_t * tb)
 
 void unload_futurebase(tablebase_t *tb)
 {
-    if (tb->filename != nullptr) xmlFree(tb->filename);
+    if (tb->filename) xmlFree(tb->filename);
     tb->filename = nullptr;
 
-    if (tb->xml != nullptr) xmlFreeDoc(tb->xml);
+    if (tb->xml) xmlFreeDoc(tb->xml);
     tb->xml = nullptr;
 
     close_futurebase(tb);
@@ -5907,7 +5907,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 
 	futurebases[fbnum]->invert_colors = 0;
 	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "colors");
-	if (colors_property != nullptr) {
+	if (colors_property) {
 	    if (!strcasecmp((char *) colors_property, "invert")) futurebases[fbnum]->invert_colors = 1;
 	    xmlFree(colors_property);
 	}
@@ -5924,7 +5924,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	}
 
 	type = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "type");
-	if (type != nullptr) {
+	if (type) {
 	    if (futurebases[fbnum]->futurebase_type != find_name_in_array((char *) type, futurebase_types)) {
 		fatal("'%s': Specified futurebase type '%s' doesn't match autodetected type '%s'\n",
 		      filename, type, futurebase_types[futurebases[fbnum]->futurebase_type]);
@@ -5933,7 +5933,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	}
 
 	/* We can't xmlFree filename here, because it's stashed away in the tablebase structure */
-	/* if (filename != nullptr) xmlFree(filename); */
+	/* if (filename) xmlFree(filename); */
     }
 
     xmlXPathFreeObject(result);
@@ -6362,7 +6362,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
 
 	/* run this loop once for each set of identical pieces */
-	if (local_tb->permutations[local_piece] != nullptr) {
+	if (local_tb->permutations[local_piece]) {
 
 	    int perm = 0;
 	    int saved_position;
@@ -7111,7 +7111,7 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
     /* If we're switching tablebases, discard old cache */
 
-    if ((cached_tb != nullptr) && (cached_tb != tb)) {
+    if (cached_tb && (cached_tb != tb)) {
 	free(cached_entries);
 	free(cached_indices);
 	cached_entries = nullptr;
@@ -8498,7 +8498,14 @@ extern "C++" {
 
     public:
 
-	sorting_network(Container * containers): containers(containers), highbit(0) { }
+	sorting_network(Container * containers):
+	    containers(containers), network(nullptr), container_num(nullptr), highbit(0)
+	{ }
+
+	~sorting_network() {
+	    if (network) delete network;
+	    if (container_num) delete container_num;
+	}
 
 	bool empty(void) {
 	    return (highbit == 0) ? containers->empty() : (container_num[1] == -1);
@@ -8608,7 +8615,7 @@ extern "C++" {
 		/* We assume that we're locked, so remaining_space remains constant and indicates
 		 * whether other threads are dumping to disk.
 		 */
-		if (in_memory_queue != nullptr) {
+		if (in_memory_queue) {
 		    if (remaining_space >= num_threads) {
 			if (head != tail) {
 			    sort_and_dump_to_disk(head, tail);
@@ -8648,7 +8655,7 @@ extern "C++" {
 	}
 
 	~priority_queue() {
-	    if (in_memory_queue != nullptr) delete in_memory_queue;
+	    if (in_memory_queue) delete in_memory_queue;
 	    for (typename DiskQueQue::iterator diskque = disk_ques.begin(); diskque < disk_ques.end(); diskque ++) {
 		/* XXX probably should use unique_ptr so this happens automatically */
 		delete *diskque;
@@ -9286,7 +9293,7 @@ void proptable_pass(int target_dtm)
      */
 
     input_proptable = output_proptable;
-    if (input_proptable != nullptr) input_proptable->front();
+    if (input_proptable) input_proptable->front();
 
     output_proptable = new proptable(format, proptable_MBs << 20);
 
@@ -10870,7 +10877,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	}
 
-	if (backprop_function != nullptr) {
+	if (backprop_function) {
 
 	    std::thread t[num_threads];
 	    unsigned int thread;
@@ -11043,9 +11050,9 @@ int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
 	    }
 	}
 
-	if (prune_color != nullptr) xmlFree(prune_color);
-	if (prune_move != nullptr) xmlFree(prune_move);
-	if (prune_type != nullptr) xmlFree(prune_type);
+	if (prune_color) xmlFree(prune_color);
+	if (prune_move) xmlFree(prune_move);
+	if (prune_type) xmlFree(prune_type);
     }
 
     xmlXPathFreeObject(result);
@@ -11555,8 +11562,8 @@ bool compute_pruned_futuremoves(tablebase_t *tb) {
 	    fatal("Prune statements don't match tablebase prune-enables\n");
 	}
 
-	if (prune_color != nullptr) xmlFree(prune_color);
-	if (prune_type != nullptr) xmlFree(prune_type);
+	if (prune_color) xmlFree(prune_color);
+	if (prune_type) xmlFree(prune_type);
     }
 
     xmlXPathFreeObject(result);
@@ -13152,7 +13159,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 #ifdef HAVE_LIBFTP
     if (strncmp(filename, "ftp:", 4) == 0) {
 	void *ptr = ftp_openurl(filename, "w");
-	if (ptr != nullptr) {
+	if (ptr) {
 	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
 	}
     }
@@ -13313,13 +13320,13 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	return false;
     }
     if (result->nodesetval->nodeNr > 0) {
-	if (output_filename != nullptr) {
+	if (output_filename) {
 	    warning("Output filename specified on command line overrides <output> tag\n");
 	} else {
 	    /* XXX little memory leak here, but fixing it would clutter this routine */
-	    if ((output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) != nullptr) {
+	    if (output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) {
 		/* output_filename_needs_xmlFree = 1; */
-	    } else if ((output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) != nullptr) {
+	    } else if (output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) {
 		/* output_filename_needs_xmlFree = 1; */
 	    }
 	}
@@ -13327,7 +13334,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     xmlXPathFreeObject(result);
     xmlXPathFreeContext(context);
 
-    if (output_filename == nullptr) {
+    if (! output_filename) {
 	fatal("No output filename or URL specified\n");
 	return false;
     }
@@ -13694,7 +13701,7 @@ bool search_tablebases_for_global_position(tablebase_t **tbs, global_position_t 
 {
     index_t index;
 
-    for (; *tbs != nullptr; tbs++) {
+    for (; *tbs; tbs++) {
 	index = global_position_to_index(*tbs, global_position);
 	if (index != INVALID_INDEX) {
 	    *tbptr = *tbs;
@@ -14115,7 +14122,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	terminate();
     }
 
-    for (i=1; tbs[i] != nullptr; i ++) {
+    for (i=1; tbs[i]; i ++) {
 	if (tbs[i]->variant != tbs[0]->variant) {
 	    fatal("All probed tablebases must use same variant!\n");
 	    terminate();
@@ -14194,7 +14201,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	    index_to_global_position(tb, index, &global_position);
 	}
 
-	if ((tb != nullptr) && (index != 0)) {
+	if (tb && (index != 0)) {
 
 	    const char *ptm, *pntm;
 
@@ -14310,7 +14317,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.720 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.721 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14406,7 +14413,7 @@ int main(int argc, char *argv[])
 	terminate();
     }
 
-    if (!generating && (output_filename != nullptr)) {
+    if (!generating && output_filename) {
 	fatal("An output filename can not be specified when probing or verifying\n");
 	usage(argv[0]);
 	terminate();
