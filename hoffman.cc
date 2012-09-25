@@ -3234,28 +3234,17 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = ILLEGAL_POSITION;
 
-    /* Working backwards through the piece array, search for the largest value in
-     * piece_index[] that is less than the (running) index, subtract it out of the index,
-     * and store the (tenative) piece positions.
-     *
-     * XXX replace with a binary search, modified to take INVALID_INDEX into account
+    /* Binary search for the largest value in piece_index[] that is less than or equal to the
+     * (running) index, subtract it out of the index, and store the (tenative) piece positions.
      */
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
-	int square;
-
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	for (square = (tb->reverse_index_ordering[piece] ? 63 : 0);
-	     (tb->reverse_index_ordering[piece] ? (square >= 0) : (square < 64));
-	     (tb->reverse_index_ordering[piece] ? (square --) : (square ++))) {
-
-	    if ((tb->piece_index[piece][square] != INVALID_INDEX)
-		&& (tb->piece_index[piece][square] <= index)) {
-		p->piece_position[piece] = square;
-	    }
-	}
+	p->piece_position[piece]
+	    = std::lower_bound(tb->piece_index[piece], tb->piece_index[piece+1], index+1)
+	    - tb->piece_index[piece] - 1;
 
 	index -= tb->piece_index[piece][p->piece_position[piece]];
 
@@ -4315,6 +4304,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	}
 
 	if (index_ordering && (strcmp((char *) index_ordering, "reverse") == 0)) {
+	    fatal("reverse index ordering no longer supported\n");
 	    tb->reverse_index_ordering[piece] = 1;
 	} else {
 	    tb->reverse_index_ordering[piece] = 0;
@@ -5263,6 +5253,36 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    }
 
+	    /* Now we want to remove INVALID_INDEX from the array, to avoid having to deal with it when
+	     * we decode indices.
+	     *
+	     * Let A, B, C, D, E be valid index values and let I be INVALID_INDEX.  If our table is:
+	     *
+	     *     0 1 2 3 4 5 6 7
+	     *     A B C I I I D E
+	     *
+	     * then our square is 2 if C <= index < D, 6 if D <= index < E.  std::lower_bound will
+	     * return the same result if we replace the table with
+	     *
+	     *     0 1 2 3 4 5 6 7
+	     *     A B C D D D D E
+	     *
+	     * which has the benefit of not requiring comparisons with INVALID_INDEX.
+	     */
+
+	    if (tb->piece_index[piece][tb->reverse_index_ordering[piece] ? 0 : 63] == INVALID_INDEX)
+		tb->piece_index[piece][tb->reverse_index_ordering[piece] ? 0 : 63] = tb->max_index;
+
+	    for (square = (tb->reverse_index_ordering[piece] ? 1 : 62);
+		 (tb->reverse_index_ordering[piece] ? (square < 64) : (square >= 0));
+		 (tb->reverse_index_ordering[piece] ? (square ++) : (square --))) {
+
+		if (tb->piece_index[piece][square] == INVALID_INDEX) {
+		    tb->piece_index[piece][square] = tb->piece_index[piece][square + (tb->reverse_index_ordering[piece] ? -1 : 1)];
+		}
+
+	    }
+
 	    /* Now back out any positions that we saved with the 'combinadic2' or 'combinadic3' indices */
 
 	    if ((tb->index_type == COMBINADIC2_INDEX) || (tb->index_type == COMBINADIC3_INDEX)) {
@@ -5587,7 +5607,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.721 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.722 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14317,7 +14337,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.721 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.722 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
