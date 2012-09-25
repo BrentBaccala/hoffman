@@ -3129,8 +3129,6 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
     int piece, piece2;
     uint8_t vals[MAX_PIECES];
 
-    index = 0;
-
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	int decrement = 0;
@@ -3187,18 +3185,22 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 	}
     }
 
+    /* Encode the pieces */
+
+    index = 0;
+
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	/* Kings have their own encoding table */
-
-	if (piece == tb->white_king) {
-	    index += 2 * tb->king_index[pos->piece_position[tb->white_king]]
-		[pos->piece_position[tb->black_king]];
-	}
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	index += tb->piece_index[piece][vals[piece]];
+    }
+
+    /* Kings have their own encoding table */
+
+    if (tb->white_king != -1) {
+	index += 2 * tb->king_index[pos->piece_position[tb->white_king]]
+	    [pos->piece_position[tb->black_king]];
     }
 
     /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
@@ -3330,21 +3332,12 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	if (p->piece_position[piece] >= 64) return false;
     }
 
-    /* We've got all the numbers right, but maybe not in the right order, since each encoding group
-     * is sorted in ascending order.
-     *
-     * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
-     * encoding groups of identical pieces into ascending order, then permutes until all the pieces
-     * are on legal squares.  Mimic this action here.
-     *
-     * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
+    /* En passant pawns always trail on a file, since they just moved from their starting positions.
+     * So, white en passant pawns are still sorted, but black ones have to be moved to the end of
+     * their group.
      */
 
     if (en_passant_pawn != -1) {
-
-	/* Remember that en passant pawns always trail.  So, white en passant pawns are still
-	 * sorted, but black ones have to be moved to the end of their group.
-	 */
 
 	for (piece = tb->next_piece_in_encoding_group[en_passant_pawn];
 	     (piece != -1)
@@ -3366,6 +3359,16 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
  	    return false;
  	}
     }
+
+    /* We've got all the numbers right, but maybe not in the right order, since each encoding group
+     * is sorted in ascending order.
+     *
+     * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
+     * encoding groups of identical pieces into ascending order, then permutes until all the pieces
+     * are on legal squares.  Mimic this action here.
+     *
+     * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
+     */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -3404,12 +3407,11 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	int square = p->piece_position[piece];
 
-	/* This can happen if we have multiple identical pieces because we counted semilegal
-	 * positions to encode them with, not legal positions.
+	/* This can happen because we counted semilegal positions to encode with, not legal
+	 * positions.
 	 */
 
 	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
-	    /* fprintf(stderr, "Illegal piece position in combinadic3_index_to_local_position!\n"); */
 	    return false;
 	}
 
@@ -5577,7 +5579,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.724 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.725 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14307,7 +14309,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.724 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.725 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
