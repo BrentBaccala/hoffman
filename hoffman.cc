@@ -251,8 +251,8 @@ std::vector<uint64_t> backproped_moves;
 bool tracking_dtm = true;   // XXX should clear this variable if we're generating a bitbase
 int min_tracked_dtm = -2;
 int max_tracked_dtm = 2;
-uint8_t * positive_passes_needed = nullptr;
-uint8_t * negative_passes_needed = nullptr;
+bool * positive_passes_needed = nullptr;
+bool * negative_passes_needed = nullptr;
 
 
 /***** DATA STRUCTURES *****/
@@ -646,7 +646,7 @@ bool compress_proptables = true;
 bool compress_entries_table = true;
 int proptable_MBs = 0;
 
-int do_restart = 0;
+bool do_restart = false;
 int last_dtm_before_restart;
 
 xmlNodePtr generation_statistics;
@@ -5542,8 +5542,6 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
 
-	do_restart = 0;
-
 	xmlNodeAddContent(tablebase, BAD_CAST "   ");
 	generation_statistics = xmlNewChild(tablebase, nullptr, BAD_CAST "generation-statistics", nullptr);
 	xmlNodeAddContent(tablebase, BAD_CAST "\n");
@@ -5552,7 +5550,7 @@ tablebase_t * parse_XML_control_file(char *filename)
 
 	xmlChar * dtm;
 
-	do_restart = 1;
+	do_restart = true;
 
 	node = xmlAddNextSibling(result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1], xmlNewText(BAD_CAST "\n   "));
 	generation_statistics = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, nullptr, BAD_CAST "generation-statistics", nullptr));
@@ -5579,7 +5577,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.725 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.726 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7509,8 +7507,8 @@ class EntriesTable {
 	/* We always initialize with fairly small DTMs (never bigger than two), so we don't need to
 	 * check these array bounds for overflow here.
 	 */
-	if (dtm > 0) positive_passes_needed[dtm] = 1;
-	if (dtm < 0) negative_passes_needed[-dtm] = 1;
+	if (dtm > 0) positive_passes_needed[dtm] = true;
+	if (dtm < 0) negative_passes_needed[-dtm] = true;
 
 	/* XXX there's a matching "XXX" down below where we malloc the entries table and then zero
 	 * it with memset.  Might be more efficient to set the entire entry here, making sure that
@@ -8037,7 +8035,7 @@ inline void PTM_wins(index_t index, int dtm)
 
 	entriesTable->set_PTM_wins_unpropagated(index);
 	entriesTable->set_raw_DTM(index, dtm);
-	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 1;
+	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
 
     } else if ((dtm < entriesTable->get_raw_DTM(index))
 	       && (entriesTable->does_PTM_win(index))
@@ -8048,7 +8046,7 @@ inline void PTM_wins(index_t index, int dtm)
 	 */
 
 	entriesTable->set_raw_DTM(index, dtm);
-	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 1;
+	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
     }
 }
 
@@ -8078,14 +8076,14 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 	     */
 	    dtm = entriesTable->get_raw_DTM(index);
 #ifdef DEBUG_PASS_DEPENDANCIES
-	    if ((dtm >= min_tracked_dtm) && (negative_passes_needed[-dtm] == 0)) {
+	    if ((dtm >= min_tracked_dtm) && (! negative_passes_needed[-dtm])) {
 		global_position_t global;
 		index_to_global_position(current_tb, index, &global);
 		printf("%d pass needed by %" PRIindex " %s\n",
 		       dtm, index, global_position_to_FEN(&global));
 	    }
 #endif
-	    if (dtm >= min_tracked_dtm) negative_passes_needed[-dtm] = 1;
+	    if (dtm >= min_tracked_dtm) negative_passes_needed[-dtm] = true;
 	}
     }
 }
@@ -8117,8 +8115,8 @@ void back_propagate_index(index_t index, int target_dtm)
 	}
     }
 
-    if (entriesTable->is_unpropagated(index)
-	&& (!tracking_dtm || (entriesTable->get_DTM(index) == target_dtm))) {
+    if (((! tracking_dtm) && entriesTable->is_unpropagated(index))
+	|| (entriesTable->get_DTM(index) == target_dtm)) {
 
 	back_propagate_index_within_table(index, REFLECTION_NONE);
 	if (current_tb->symmetry == 8) {
@@ -9304,6 +9302,46 @@ void proptable_pass(int target_dtm)
     entriesTable->set_threads(1);
 
     delete input_proptable;
+}
+
+/* reconstruct_proptable() is hardly ever used.  I put it in here because I had a kqqkqq calculation
+ * that died due to a memory leak and I wanted to restart it.
+ */
+
+void reconstruct_proptable_thread(int target_dtm)
+{
+    while (1) {
+
+	index_t index = (proptable_shared_index ++);
+
+	if (index > current_tb->max_index) break;
+
+	back_propagate_index(index, target_dtm);
+    }
+}
+
+void reconstruct_proptable(int target_dtm)
+{
+    std::thread t[num_threads];
+    unsigned int thread;
+
+    proptable_format format(current_tb->max_index, 0, 0, 0, 0);
+
+    output_proptable = new proptable(format, proptable_MBs << 20);
+
+    proptable_shared_index = 0;
+
+    entriesTable->set_threads(num_threads);
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	t[thread] = std::thread(proptable_pass_thread, target_dtm);
+    }
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	t[thread].join();
+    }
+
+    entriesTable->set_threads(1);
 }
 
 void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, int futuremove)
@@ -13063,7 +13101,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
      * needed or desired because we don't count moves into check as part of movecnt.
      */
 
-    positive_passes_needed[1] = 0;
+    positive_passes_needed[1] = false;
 
     if (do_restart) {
 	if (last_dtm_before_restart > 0) dtm = -last_dtm_before_restart;
@@ -13088,7 +13126,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 	    else
 		positions_finalized_on_last_pass = 0;
 
-	    if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = 0;
+	    if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = false;
 
 	    /* PNTM wins */
 	    if (((-dtm >= min_tracked_dtm) && negative_passes_needed[dtm])
@@ -13097,7 +13135,7 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 	    else
 		positions_finalized_on_last_pass = 0;
 
-	    if (-dtm >= min_tracked_dtm) negative_passes_needed[dtm] = 0;
+	    if (-dtm >= min_tracked_dtm) negative_passes_needed[dtm] = false;
 
 	    dtm ++;
 	}
@@ -13362,13 +13400,8 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     /* Part of preloading the futurebases was to compute the smallest and largest DTMs in them, so
      * we now know what the sizes of these two arrays have to be.
      */
-    positive_passes_needed = (uint8_t *) calloc(max_tracked_dtm + 1, sizeof(uint8_t));
-    negative_passes_needed = (uint8_t *) calloc(-min_tracked_dtm + 1, sizeof(uint8_t));
-
-    if ((positive_passes_needed == nullptr) || (negative_passes_needed == nullptr)) {
-	fatal("Can't calloc positive/negative_passes_needed\n");
-	return false;
-    }
+    positive_passes_needed = new bool[max_tracked_dtm + 1];
+    negative_passes_needed = new bool[-min_tracked_dtm + 1];
 
     if (!using_proptables) {
 
@@ -14309,7 +14342,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.725 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.726 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
