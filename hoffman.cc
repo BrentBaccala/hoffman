@@ -5577,7 +5577,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.726 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.727 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8646,7 +8646,7 @@ extern "C++" {
 
 	~priority_queue() {
 	    if (in_memory_queue) delete in_memory_queue;
-	    for (typename DiskQueQue::iterator diskque = disk_ques.begin(); diskque < disk_ques.end(); diskque ++) {
+	    for (auto diskque = disk_ques.begin(); diskque < disk_ques.end(); diskque ++) {
 		/* XXX probably should use unique_ptr so this happens automatically */
 		delete *diskque;
 	    }
@@ -9187,8 +9187,7 @@ void proptable_pass_thread(int target_dtm)
 	    possible_futuremoves = initialize_tablebase_entry(current_tb, index);
 	}
 
-	for (std::vector<class proptable_entry>::iterator pt_entry = current_pt_entries.begin();
-	     pt_entry != current_pt_entries.end(); pt_entry ++) {
+	for (auto pt_entry = current_pt_entries.begin(); pt_entry != current_pt_entries.end(); pt_entry ++) {
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE)
@@ -14342,7 +14341,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.726 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.727 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
