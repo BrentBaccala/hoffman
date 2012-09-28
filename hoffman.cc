@@ -5577,7 +5577,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.727 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.728 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12253,51 +12253,79 @@ void back_propagate_index_within_table(index_t index, int reflection)
     }
 }
 
-/* initialize_tablebase()
+/* In-check tests
  *
- * This is another critical function; don't be deceived by the tame word 'initialize'.
+ * We use board masks for quickly testing a position to see if we're in check.
  *
- * We determine that a position is won for the player not to move (PNTM) if all possible moves (of
- * the player to move) lead to a won game for PNTM.  We count down this total during back
- * propagation, so it stands to reason that we need an accurate count to start with.  Thus the
- * importance of this function.
+ * The test works by indexing an array by piece type, piece square, and king square, which returns a
+ * mask that is ANDed with the board mask.  If the result is non-zero, then no capture is possible.
+ * If the result is zero, then the king's in check from that piece.  For sliding piece attacks, we
+ * use a mask with ones along the path between the two squares.  For positions where capture is
+ * always possible, we use a zero mask.  For positions where no capture is possible, we use an
+ * all-1s mask.
  *
- * We don't count moves into check at all.
+ * We segregate pawn checks by color; they are a special case.
  *
- * Basically, there are two types of moves we need to consider in each position:
+ * sizeof(board_mask) = 229376, so this array should fit in your average L2 cache (mine is 2 MB)
  *
- * 1. non-capture, non-promotion, non-restricted moves
- *
- * We just add these up and then count them down during intra-table propagation, depending on the
- * integrity of the program's algorithm to make sure that every move counted forward gets considered
- * as a move backward.
- *
- * 2. everything else (futuremoves)
- *
- * These always lead to a different tablebase (a futurebase).  The only way we handle them is
- * through inter-table back propagation.  We keep a seperate count of futuremoves because, unlike
- * intratable moves, we might miss some of these moves if we don't have a complete set of
- * futurebases.  So we count futuremoves by themselves (as well as part of the standard count), and
- * count them down normally during a single sweep through our futurebases.  If that takes care of
- * everything fine.  Otherwise, during our first pass through the current tablebase, we'll find that
- * some of the futuremoves remain unaccounted for.  If they occur with the "good guys" as PTM, we
- * just double-check that the restriction is OK, subtract the remaining futuremoves out from the
- * standard count, and keep going.  But if the "bad guys" are PTM, then the position has to be
- * assumed won for PTM.
- *
+ * XXX could use this to speed up the routines after PTM_in_check(), but none of them are used
+ * during generation, so they're not as important.
  */
+
+uint64_t board_mask[7][64][64];
+
+void initialize_board_masks(void)
+{
+    /* Initialize entire array with ALL_ONES_BITVECTOR */
+    memset(board_mask, 0xff, sizeof(board_mask));
+
+    for (int piece = KING; piece <= PAWN+1; piece++) {
+
+	for (int piece_square = 0; piece_square < 64; piece_square ++) {
+
+	    if (piece < PAWN) {
+
+		for (int dir = 0; dir < number_of_movement_directions[piece]; dir++) {
+
+		    uint64_t mask = 0;
+
+		    for (auto movementptr = movements[piece][piece_square][dir];
+			 movementptr->square != -1; movementptr++) {
+
+			board_mask[piece][piece_square][movementptr->square] = mask;
+
+			mask |= movementptr->vector;
+		    }
+
+		}
+
+	    } else {
+		for (auto movementptr = capture_pawn_movements[piece_square][piece - PAWN];
+		     movementptr->square != -1; movementptr++) {
+
+		    board_mask[piece][piece_square][movementptr->square] = 0;
+		}
+	    }
+	}
+    }
+}
 
 bool PTM_in_check(tablebase_t *tb, local_position_t *position)
 {
-    int piece;
-    int dir;
-    struct movement *movementptr;
+    static bool initialized = false;
+
+    int king_position = position->piece_position[(position->side_to_move == WHITE) ? tb->white_king : tb->black_king];
+
+    if (!initialized) {
+	initialize_board_masks();
+	initialized = true;
+    }
 
     /* The concept of check doesn't exist in suicide - kings are normal pieces */
 
     if (tb->variant == VARIANT_SUICIDE) return false;
 
-    for (piece = 0; piece < tb->num_pieces; piece++) {
+    for (int piece = 0; piece < tb->num_pieces; piece++) {
 
 	/* We only want to consider pieces of the side which is NOT to move... */
 
@@ -12309,36 +12337,14 @@ bool PTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	if (tb->piece_type[piece] != PAWN) {
 
-	    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+	    if ((board_mask[tb->piece_type[piece]][position->piece_position[piece]][king_position]
+		 & position->board_vector) == 0) return true;
 
-		for (movementptr = movements[tb->piece_type[piece]][position->piece_position[piece]][dir];
-		     (movementptr->vector & position->board_vector) == 0;
-		     movementptr++) {
-		}
-
-		/* Now check to see if the movement ended because we hit against the king
-		 * of the opposite color.  If so, we're in check.
-		 */
-
-		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[tb->white_king])) return true;
-
-		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[tb->black_king])) return true;
-
-	    }
 	} else {
-	    for (movementptr = capture_pawn_movements[position->piece_position[piece]][tb->piece_color[piece]];
-		 movementptr->square != -1;
-		 movementptr++) {
 
-		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[tb->white_king])) return true;
+	    if (board_mask[tb->piece_type[piece] + tb->piece_color[piece]][position->piece_position[piece]][king_position]
+		== 0) return true;
 
-		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[tb->black_king])) return true;
-
-	    }
 	}
     }
 
@@ -12509,6 +12515,40 @@ bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
 
     return false;
 }
+
+/* initialize_tablebase()
+ *
+ * This is another critical function; don't be deceived by the tame word 'initialize'.
+ *
+ * We determine that a position is won for the player not to move (PNTM) if all possible moves (of
+ * the player to move) lead to a won game for PNTM.  We count down this total during back
+ * propagation, so it stands to reason that we need an accurate count to start with.  Thus the
+ * importance of this function.
+ *
+ * We don't count moves into check at all.
+ *
+ * Basically, there are two types of moves we need to consider in each position:
+ *
+ * 1. non-capture, non-promotion, non-restricted moves
+ *
+ * We just add these up and then count them down during intra-table propagation, depending on the
+ * integrity of the program's algorithm to make sure that every move counted forward gets considered
+ * as a move backward.
+ *
+ * 2. everything else (futuremoves)
+ *
+ * These always lead to a different tablebase (a futurebase).  The only way we handle them is
+ * through inter-table back propagation.  We keep a seperate count of futuremoves because, unlike
+ * intratable moves, we might miss some of these moves if we don't have a complete set of
+ * futurebases.  So we count futuremoves by themselves (as well as part of the standard count), and
+ * count them down normally during a single sweep through our futurebases.  If that takes care of
+ * everything fine.  Otherwise, during our first pass through the current tablebase, we'll find that
+ * some of the futuremoves remain unaccounted for.  If they occur with the "good guys" as PTM, we
+ * just double-check that the restriction is OK, subtract the remaining futuremoves out from the
+ * standard count, and keep going.  But if the "bad guys" are PTM, then the position has to be
+ * assumed won for PTM.
+ *
+ */
 
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 {
@@ -14341,7 +14381,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.727 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.728 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
