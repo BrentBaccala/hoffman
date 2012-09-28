@@ -5231,32 +5231,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    }
 
-	    /* Now we want to remove INVALID_INDEX from the array, to avoid having to deal with it when
-	     * we decode indices.
-	     *
-	     * Let A, B, C, D, E be valid index values and let I be INVALID_INDEX.  If our table is:
-	     *
-	     *     0 1 2 3 4 5 6 7
-	     *     A B C I I I D E
-	     *
-	     * then our square is 2 if C <= index < D, 6 if D <= index < E.  std::lower_bound will
-	     * return the same result if we replace the table with
-	     *
-	     *     0 1 2 3 4 5 6 7
-	     *     A B C D D D D E
-	     *
-	     * which has the benefit of not requiring comparisons with INVALID_INDEX.
-	     */
-
-	    if (tb->piece_index[piece][63] == INVALID_INDEX) tb->piece_index[piece][63] = tb->max_index;
-
-	    for (square = 62; square >= 0; square--) {
-		if (tb->piece_index[piece][square] == INVALID_INDEX) {
-		    tb->piece_index[piece][square] = tb->piece_index[piece][square + 1];
-		}
-
-	    }
-
 	    /* Now back out any positions that we saved with the 'combinadic2' or 'combinadic3' indices */
 
 	    if ((tb->index_type == COMBINADIC2_INDEX) || (tb->index_type == COMBINADIC3_INDEX)) {
@@ -5279,6 +5253,37 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	}
 
 	tb->max_index --;
+
+	/* Now we want to remove INVALID_INDEX from the piece_index array, to avoid having to deal
+	 * with it when we decode indices.
+	 *
+	 * Let A, B, C, D, E be valid index values and let I be INVALID_INDEX.  If our table is:
+	 *
+	 *     0 1 2 3 4 5 6 7
+	 *     A B C I I I D E
+	 *
+	 * then our square is 2 if C <= index < D, 6 if D <= index < E.  std::lower_bound will
+	 * return the same result if we replace the table with
+	 *
+	 *     0 1 2 3 4 5 6 7
+	 *     A B C D D D D E
+	 *
+	 * which has the benefit of not requiring comparisons with INVALID_INDEX.  We wait until
+	 * we've computed max_index so that we can deal with the case where the trailing indices are
+	 * invalid.
+	 */
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->piece_index[piece][63] == INVALID_INDEX) tb->piece_index[piece][63] = tb->max_index;
+
+	    for (square = 62; square >= 0; square--) {
+		if (tb->piece_index[piece][square] == INVALID_INDEX) {
+		    tb->piece_index[piece][square] = tb->piece_index[piece][square + 1];
+		}
+
+	    }
+	}
+
 	break;
 
     case NO_EN_PASSANT_INDEX:
@@ -5577,7 +5582,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.729 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.730 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14381,7 +14386,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.729 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.730 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
