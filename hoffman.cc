@@ -5580,7 +5580,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.732 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.733 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8572,15 +8572,18 @@ extern "C++" {
      * any elements equal to it
      */
 
+    template <class T>
+    class synchronized : public T, public std::mutex { };
+
     template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
 	class priority_queue : public std::mutex {
 
-	typedef class std::deque<DiskContainer *> DiskQueQue;
+	typedef class synchronized<std::deque<DiskContainer *>> DiskContainerQue;
 	typedef typename MemoryContainer::iterator Iterator;
 
     private:
-	DiskQueQue disk_ques;
-	class sorting_network<DiskQueQue> snetwork;
+	DiskContainerQue disk_ques;
+	class sorting_network<DiskContainerQue> snetwork;
 
 	MemoryContainer * in_memory_queue;
 	Iterator head;
@@ -8594,8 +8597,9 @@ extern "C++" {
 	std::condition_variable blocks_dumped_to_disk_cond;
 
 	void sort_and_dump_to_disk(Iterator begin, Iterator end) {
+	    /* The sort is time-consuming, so we don't lock disk_ques until it's done */
 	    std::sort(begin, end);
-	    // XXX lock disk_ques
+	    std::lock_guard<std::mutex> _(disk_ques);
 	    disk_ques.push_back(new DiskContainer(begin, end));
 	}
 
@@ -14384,7 +14388,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.732 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.733 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
