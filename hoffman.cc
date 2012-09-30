@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.734 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.735 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8438,6 +8438,11 @@ extern "C++" {
 	typedef T type;
     };
 
+    template <typename T>
+    struct dereference<std::shared_ptr<T>> {
+	typedef T type;
+    };
+
     template <class Container>
     class sorting_network {
 
@@ -8583,7 +8588,7 @@ extern "C++" {
     template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
 	class priority_queue : public std::mutex {
 
-	typedef class synchronized<std::deque<DiskContainer *>> DiskContainerQue;
+	typedef class synchronized<std::deque<std::shared_ptr<DiskContainer>>> DiskContainerQue;
 	typedef typename MemoryContainer::iterator Iterator;
 
     private:
@@ -8605,7 +8610,8 @@ extern "C++" {
 	    /* The sort is time-consuming, so we don't lock disk_ques until it's done */
 	    std::sort(begin, end);
 	    std::lock_guard<std::mutex> _(disk_ques);
-	    disk_ques.push_back(new DiskContainer(begin, end));
+	    std::shared_ptr<DiskContainer> ptr(new DiskContainer(begin, end));
+	    disk_ques.push_back(ptr);
 	}
 
 	void prepare_to_retrieve(void) {
@@ -8658,11 +8664,6 @@ extern "C++" {
 
 	~priority_queue() {
 	    if (in_memory_queue) delete in_memory_queue;
-	    for (auto diskque = disk_ques.begin(); diskque < disk_ques.end(); diskque ++) {
-		/* XXX probably should use unique_ptr so this happens automatically */
-		delete *diskque;
-	    }
-	    disk_ques.clear();
 	}
 
 	void push(const T& x) {
@@ -14393,7 +14394,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.734 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.735 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
