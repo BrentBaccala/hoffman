@@ -5521,10 +5521,13 @@ tablebase_t * parse_XML_control_file(char *filename)
     xmlXPathFreeContext(context);
 
     /* check if validation suceeded */
-    if (! xmlValidateDtd(xmlNewValidCtxt(), doc, dtd)) {
+
+    xmlValidCtxtPtr validCtxtPtr = xmlNewValidCtxt();
+    if (! xmlValidateDtd(validCtxtPtr, doc, dtd)) {
 	fatal("'%s' failed XML validatation\n", filename);
 	return nullptr;
     }
+    xmlFree(validCtxtPtr);
 
     tb = parse_XML_into_tablebase(doc, 0);
     if (tb == nullptr) return nullptr;
@@ -5585,7 +5588,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.736 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.737 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6093,7 +6096,8 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 	    xmlNewProp(node, BAD_CAST "bits", BAD_CAST str);
 	}
     }
-
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
     /* Add a set of tablebase-statistics.  We prefer to add this before the generation-statistics,
      * because the generation-statistics are long and boring, and because this is how it's always
@@ -6112,6 +6116,8 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 	node = xmlAddPrevSibling(node, xmlNewDocNode(tb->xml, nullptr, BAD_CAST "tablebase-statistics", nullptr));
 	xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n   "));
     }
+    xmlXPathFreeObject(result);
+    xmlXPathFreeContext(context);
 
     xmlNodeAddContent(node, BAD_CAST "\n      ");
     snprintf(strbuf, sizeof(strbuf), "%" PRIindex, tb->max_index + 1);
@@ -6166,8 +6172,10 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
 
     /* Rename the last checkpoint-time to completion-time */
 
-    node = xmlNewDocNode(tb->xml, nullptr, BAD_CAST "completion-time", xmlNodeGetContent(checkpoint_time));
+    xmlChar * content = xmlNodeGetContent(checkpoint_time);
+    node = xmlNewDocNode(tb->xml, nullptr, BAD_CAST "completion-time", content);
     xmlReplaceNode(checkpoint_time, node);
+    xmlFree(content);
 
     /* Remove the passes needed nodes from the XML */
 
@@ -7885,7 +7893,7 @@ class DiskEntriesTable: public EntriesTable {
 	    if (entries_read_fd != -1) close(entries_read_fd);
 	}
 
-	unlink(entries_read_filename);
+	if (entries_read_fd != -1) unlink(entries_read_filename);
 
 	entries_read_fd = entries_write_fd;
 	strcpy(entries_read_filename, entries_write_filename);
@@ -7905,7 +7913,7 @@ class DiskEntriesTable: public EntriesTable {
 	    bits ++;
 	    entry_buffer_bytes = (entry_buffer_size * bits) / 8;
 
-	    entry_buffer = realloc(entry_buffer, entry_buffer_bytes);
+	    entry_buffer = realloc(entry_buffer, entry_buffer_bytes + 2*sizeof(int));
 	    if (entry_buffer == nullptr) {
 		fatal("Can't realloc entries buffer\n");
 		return;
@@ -8002,7 +8010,12 @@ class DiskEntriesTable: public EntriesTable {
     }
 
     ~DiskEntriesTable(void) {
-	unlink(entries_read_filename);
+	free(entry_buffer);
+	if (entries_read_fd != -1) {
+	    zlib_close(entries_read_file);
+	    unlink(entries_read_filename);
+	}
+	zlib_close(entries_write_file);
 	unlink(entries_write_filename);
     }
 
@@ -8629,15 +8642,19 @@ extern "C++" {
 	}
 
 	void prepare_to_retrieve(void) {
-#if 00
+
+	    /* If we never had to push anything to disk, just sort and retrieve in-memory.  The
+	     * problem with this code is that we might not be able to free much memory, something
+	     * that we can assure if we write everything out to disk.
+	     */
 	    if (disk_ques.empty() && (remaining_space >= num_threads)) {
-		if (! sorted) std::sort(head, tail);
-		sorted = true;
-		/* XXX ideally, resize the in-memory table to (tail-head) elements */
-		in_memory_queue->shrink_to_fit();
+		if (! sorted) {
+		    std::sort(head, tail);
+		    in_memory_queue->resize(tail-head);
+		    sorted = true;
+		}
 		return;
 	    }
-#endif
 
 	    /* We assume that we're locked, so remaining_space remains constant and indicates
 	     * whether other threads are dumping to disk.
@@ -9321,7 +9338,6 @@ void proptable_pass(int target_dtm)
 
     entriesTable->set_threads(num_threads);
 
-#if 11
     for (thread = 0; thread < num_threads; thread ++) {
 	t[thread] = std::thread(proptable_pass_thread, target_dtm);
     }
@@ -9329,7 +9345,6 @@ void proptable_pass(int target_dtm)
     for (thread = 0; thread < num_threads; thread ++) {
 	t[thread].join();
     }
-#endif
 
     entriesTable->set_threads(1);
 
@@ -13297,6 +13312,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
      */
 
     xmlDocDumpMemory(doc, &buf, &size);
+    xmlFree(buf);
     padded_size = (size+5)&(~3);
 
     sprintf(str, "0x%04x", padded_size);
@@ -13311,9 +13327,17 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	terminate();
     }
 
-    if (zlib_write(file, (char *) buf, padded_size) != padded_size) {
+    if (zlib_write(file, (char *) buf, size) != size) {
 	fatal("Tablebase write failed\n");
 	terminate();
+    }
+
+    if (padded_size > size) {
+	bzero(entrybuf, sizeof(entrybuf));
+	if (zlib_write(file, entrybuf, padded_size - size) != padded_size - size) {
+	    fatal("Tablebase write failed\n");
+	    terminate();
+	}
     }
 
     xmlFree(buf);
@@ -13400,7 +13424,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
     long long futurevector_bytes;
-    /* int output_filename_needs_xmlFree = 0; */
+    bool output_filename_needs_xmlFree = false;
 
 #if defined(RLIMIT_MEMLOCK) && LOCK_MEMORY
     struct rlimit rlimit;
@@ -13425,11 +13449,11 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	if (output_filename) {
 	    warning("Output filename specified on command line overrides <output> tag\n");
 	} else {
-	    /* XXX little memory leak here, but fixing it would clutter this routine */
+	    /* XXX this can leak memory on an error return, but fixing it would clutter this routine */
 	    if (output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) {
-		/* output_filename_needs_xmlFree = 1; */
+		output_filename_needs_xmlFree = true;
 	    } else if (output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) {
-		/* output_filename_needs_xmlFree = 1; */
+		output_filename_needs_xmlFree = true;
 	    }
 	}
     }
@@ -13595,9 +13619,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
 
-#if 11
 	    if (! back_propagate_all_futurebases(tb)) return false;
-#endif
 
 	    finalize_pass_statistics();
 	    total_passes ++;
@@ -13622,6 +13644,8 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     propagate_all_moves_within_tablebase(tb);
 
     write_tablebase_to_file(tb, output_filename);
+
+    if (output_filename_needs_xmlFree) xmlFree(output_filename);
 
     delete entriesTable;
 
@@ -14416,7 +14440,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.736 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.737 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

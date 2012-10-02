@@ -133,6 +133,12 @@ void zlib_free (void *ptr)
 {
     struct cookie *cookie = ptr;
 
+    if (cookie->operation == 'r') {
+	inflateEnd(&cookie->zstream);
+    } else {
+	deflateEnd(&cookie->zstream);
+    }
+
     free(cookie->buffer);
     free(cookie);
 }
@@ -216,6 +222,7 @@ int zlib_seekptr (void *ptr, off_t *position, int whence)
 	    fprintf(stderr, "zlib_seekptr: can't reset underlying stream\n");
 	    return -1;
 	}
+	inflateEnd(&cookie->zstream);
 	memset(&cookie->zstream, 0, sizeof(z_stream));
 	if (inflateInit2(&cookie->zstream, 32 + MAX_WBITS) != Z_OK) {
 	    fprintf(stderr, "zlib_seekptr: can't inflatInit2\n");
