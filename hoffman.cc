@@ -5585,7 +5585,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.735 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.736 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5960,7 +5960,7 @@ void finalize_pass_statistics()
 
     static struct timeval last_timeval;
     static struct rusage last_rusage;
-    static int last_timings_valid = 0;
+    static int last_timings_valid = false;
 
     struct timeval timeval;
     struct rusage rusage;
@@ -6026,7 +6026,7 @@ void finalize_pass_statistics()
 
     gettimeofday(&last_timeval, nullptr);
     getrusage(RUSAGE_SELF, &last_rusage);
-    last_timings_valid = 1;
+    last_timings_valid = true;
 
     if (! strcmp(pass_type[total_passes], "intratable")) {
 	if (tracking_dtm) {
@@ -7121,6 +7121,22 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	cached_tb = nullptr;
     }
 
+    /* If cache is non existant, build it */
+
+    if (! cached_tb) {
+
+	cached_tb = tb;
+
+	/* The calculation here is that tb->format.bits bytes is enough space for 8 entries. */
+
+	cached_entries = malloc(tb->format.bits * num_threads + 2*sizeof(int));
+
+	cached_indices = (index_t *) malloc(sizeof(index_t) * num_threads);
+	memset(cached_indices, 0xff, sizeof(index_t) * num_threads);
+
+	cached_thread_ids.resize(num_threads);
+    }
+
     /* Find current thread's cache line */
 
     for (n = 0; n < num_cached_entries; n++) {
@@ -7131,14 +7147,12 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
     if (n == num_cached_entries) {
 	num_cached_entries ++;
-	cached_entries = realloc(cached_entries, tb->format.bits * num_cached_entries);
-	cached_indices = (index_t *) realloc(cached_indices, sizeof(index_t) * num_cached_entries);
-	cached_indices[n] = INVALID_INDEX;
 
-	cached_thread_ids.resize(num_cached_entries);
 	cached_thread_ids[n] = std::this_thread::get_id();
+    }
 
-	cached_tb = tb;
+    if (n == num_threads) {
+	fatal("More threads than cache lines in fetch_entry_pointer()!");
     }
 
     /* Check to see if we've got the requested index in the current thread's cache line */
@@ -7639,7 +7653,7 @@ class MemoryEntriesTable: public EntriesTable {
 
  public:
     MemoryEntriesTable(void) {
-	long long bytes = (((long long) current_tb->max_index + 1) * bits + 7) / 8;
+	long long bytes = (((long long) current_tb->max_index + 1) * bits + 7) / 8 + 2*sizeof(int);
 	entries = malloc(bytes);
 	if (entries == nullptr) {
 	    fatal("Can't malloc %dMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
@@ -7951,7 +7965,7 @@ class DiskEntriesTable: public EntriesTable {
 
 	/* first, malloc the entries buffer */
 
-	entry_buffer = malloc(entry_buffer_bytes);
+	entry_buffer = malloc(entry_buffer_bytes + 2*sizeof(int));
 	if (entry_buffer == nullptr) {
 	    fatal("Can't malloc entries buffer\n");
 	    return;
@@ -8615,29 +8629,33 @@ extern "C++" {
 	}
 
 	void prepare_to_retrieve(void) {
+#if 00
 	    if (disk_ques.empty() && (remaining_space >= num_threads)) {
 		if (! sorted) std::sort(head, tail);
 		sorted = true;
 		/* XXX ideally, resize the in-memory table to (tail-head) elements */
-	    } else {
-		/* We assume that we're locked, so remaining_space remains constant and indicates
-		 * whether other threads are dumping to disk.
-		 */
-		if (in_memory_queue) {
-		    if (remaining_space >= num_threads) {
-			if (head != tail) {
-			    sort_and_dump_to_disk(head, tail);
-			    tail = head;
-			}
-		    } else {
-			unsigned int current = num_threads - remaining_space - 1;
+		in_memory_queue->shrink_to_fit();
+		return;
+	    }
+#endif
 
-			sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
-					      in_memory_queue->end());
+	    /* We assume that we're locked, so remaining_space remains constant and indicates
+	     * whether other threads are dumping to disk.
+	     */
+	    if (in_memory_queue) {
+		if (remaining_space >= num_threads) {
+		    if (head != tail) {
+			sort_and_dump_to_disk(head, tail);
+			tail = head;
 		    }
-		    delete in_memory_queue;
-		    in_memory_queue = nullptr;
+		} else {
+		    unsigned int current = num_threads - remaining_space - 1;
+
+		    sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
+					  in_memory_queue->end());
 		}
+		delete in_memory_queue;
+		in_memory_queue = nullptr;
 	    }
 	}
 
@@ -9303,6 +9321,7 @@ void proptable_pass(int target_dtm)
 
     entriesTable->set_threads(num_threads);
 
+#if 11
     for (thread = 0; thread < num_threads; thread ++) {
 	t[thread] = std::thread(proptable_pass_thread, target_dtm);
     }
@@ -9310,6 +9329,7 @@ void proptable_pass(int target_dtm)
     for (thread = 0; thread < num_threads; thread ++) {
 	t[thread].join();
     }
+#endif
 
     entriesTable->set_threads(1);
 
@@ -13452,8 +13472,8 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     /* Part of preloading the futurebases was to compute the smallest and largest DTMs in them, so
      * we now know what the sizes of these two arrays have to be.
      */
-    positive_passes_needed = new bool[max_tracked_dtm + 1];
-    negative_passes_needed = new bool[-min_tracked_dtm + 1];
+    positive_passes_needed = new bool[max_tracked_dtm + 1] ();
+    negative_passes_needed = new bool[-min_tracked_dtm + 1] ();
 
     if (!using_proptables) {
 
@@ -13575,7 +13595,9 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
 
+#if 11
 	    if (! back_propagate_all_futurebases(tb)) return false;
+#endif
 
 	    finalize_pass_statistics();
 	    total_passes ++;
@@ -14394,7 +14416,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.735 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.736 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
