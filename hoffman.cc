@@ -5588,7 +5588,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.737 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.738 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9200,13 +9200,14 @@ std::atomic<index_t> proptable_shared_index;
 void proptable_pass_thread(int target_dtm)
 {
     index_t index;
+    std::deque<class proptable_entry> current_pt_entries;
 
     while (1) {
 
 	futurevector_t futurevector = 0;
 	futurevector_t possible_futuremoves = 0;
 
-	std::vector<class proptable_entry> current_pt_entries;
+	current_pt_entries.clear();
 
 	/* Lock the input proptable, advance the shared index, retrieve everything
 	 * from the proptable that matches the new index, then unlock
@@ -14440,7 +14441,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.737 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.738 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
