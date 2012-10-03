@@ -551,14 +551,12 @@ typedef struct tablebase {
     int positions_with_adjacent_kings_are_illegal;
     int symmetry;
 
-    /* Pieces are grouped into encoding groups to form indices */
-    int total_legal_piece_positions[MAX_PIECES];
-    int piece_position[MAX_PIECES][64];
-    index_t piece_index[MAX_PIECES][64];
-    int prev_piece_in_encoding_group[MAX_PIECES];
-    int next_piece_in_encoding_group[MAX_PIECES];
+    /* Kings are usually encoded together to take advantage of them never being adjacent.  Given a
+     * pair of king positions, king_index[WHITE_KING_POSITION][BLACK_KING_POSITION] returns the
+     * associated index, while white_king_position[INDEX] and black_king_position[INDEX] reverse
+     * that function.  white_king and black_king are the piece numbers of the two kings.
+     */
 
-    /* Kings are usual encoded together to take advantage of them never being adjacent */
     int white_king;
     int black_king;
     uint8_t white_king_position[64*64];
@@ -586,6 +584,13 @@ typedef struct tablebase {
 
     xmlDocPtr xml;
 
+    /* Pieces */
+
+    int num_pieces;
+    short num_pieces_by_color[2];
+    short piece_type[MAX_PIECES];
+    short piece_color[MAX_PIECES];
+
     /* Pieces can restricted according to which squares they are allowed to move on.
      *
      * Legal squares are just that.
@@ -604,27 +609,37 @@ typedef struct tablebase {
      * identical pieces have move restrictions that don't overlap (so they can't exchange places),
      * they're not considered identical.
      *
-     * "Grouped" pieces are those encoded together, only their positions are encoded, not their
-     * identities within the group.  They are usually identical pieces, but in the 'no-en-passant'
-     * and 'combinadic3' schemes, pawns restricted to a single file using plus syntax are grouped,
-     * even if they are not the same color.
+     * "Encoding groups" are encoded together into the index.  Only their positions are encoded, not
+     * their identities.  Thus, encoding groups are usually identical pieces, but in the
+     * 'no-en-passant' and 'combinadic3' schemes, pawns restricted to a single file using plus
+     * syntax are grouped, even if they are not the same color.  They can't pass each other because
+     * there are no captures within a tablebase.
+     *
+     * Some of the combinadic indexing schemes use "overlapping" pieces, which happens when a
+     * piece's semilegal range completely contains the semilegal range of a earlier piece.  We'll be
+     * able to remove some of our positions since they must be occupied by the earlier piece.
      */
 
-    int num_pieces;
-    short num_pieces_by_color[2];
-    short piece_type[MAX_PIECES];
-    short piece_color[MAX_PIECES];
     uint64_t legal_squares[MAX_PIECES];
     uint64_t semilegal_squares[MAX_PIECES];
     uint64_t frozen_pieces_vector;
     int blocking_piece[MAX_PIECES];
-    uint64_t illegal_black_king_squares;
     uint64_t illegal_white_king_squares;
+    uint64_t illegal_black_king_squares;
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
-    int *permutations[MAX_PIECES];
+    int prev_piece_in_encoding_group[MAX_PIECES];
+    int next_piece_in_encoding_group[MAX_PIECES];
 
     int last_overlapping_piece[MAX_PIECES];
+
+    int total_legal_piece_positions[MAX_PIECES];
+    int total_legal_piece_values[MAX_PIECES];
+    int piece_position[MAX_PIECES][64];
+    index_t piece_index[MAX_PIECES][64];
+    int piece_value[MAX_PIECES][64];
+
+    int *permutations[MAX_PIECES];
 
     int prune_enable[2];		/* one for each color */
     int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
@@ -3147,10 +3162,10 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		|| ((tb->piece_color[piece] == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    vals[piece] = COL(pos->en_passant_square);
-	    /* continue;  Probably can do this, as we never change en-passant values */
+	    vals[piece] = tb->piece_value[piece][COL(pos->en_passant_square)];
+	    continue;  /* Have to do this, as we never change en-passant values */
 	} else {
-	    vals[piece] = pos->piece_position[piece];
+	    vals[piece] = tb->piece_value[piece][pos->piece_position[piece]];
 	}
 
 	/* Remove positions for overlapping pieces, but we don't touch the kings, and we don't
@@ -3171,7 +3186,7 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 	for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
 
 	for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
-	    if (vals[piece] > pos->piece_position[piece2]) decrement ++;
+	    if (pos->piece_position[piece] > pos->piece_position[piece2]) decrement ++;
 	}
 
 	vals[piece] -= decrement;
@@ -3218,6 +3233,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
     int piece;
     int en_passant_pawn = -1;
     int en_passant_color = 0;
+    uint8_t vals[MAX_PIECES];
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = ILLEGAL_POSITION;
@@ -3232,13 +3248,13 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	p->piece_position[piece]
+	vals[piece]
 	    = std::lower_bound(tb->piece_index[piece], tb->piece_index[piece+1], index+1)
 	    - tb->piece_index[piece] - 1;
 
-	index -= tb->piece_index[piece][p->piece_position[piece]];
+	index -= tb->piece_index[piece][vals[piece]];
 
-	if ((tb->piece_type[piece] == PAWN) && (p->piece_position[piece] < 8)) {
+	if ((tb->piece_type[piece] == PAWN) && (tb->piece_position[piece][vals[piece]] < 8)) {
 	    if (en_passant_pawn != -1) return false;  /* can't have two en passant pawns */
 	    en_passant_pawn = piece;
 	}
@@ -3273,6 +3289,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	/* If there's an en passant pawn, it must be the opposite color of PTM */
 	en_passant_color = 1 - p->side_to_move;
+	p->piece_position[en_passant_pawn] = tb->piece_position[en_passant_pawn][vals[en_passant_pawn]];
 
 	if (en_passant_color == WHITE) {
 	    p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
@@ -3308,6 +3325,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	if (piece == en_passant_pawn) continue;
 
+	p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
 	smallest_position = ILLEGAL_POSITION;
 
 	do {
@@ -3326,13 +3344,15 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	    }
 
 	    if (next_smallest_position != ILLEGAL_POSITION) {
-		p->piece_position[piece] ++;
+		vals[piece] ++;
+		if (vals[piece] >= tb->total_legal_piece_positions[piece]) return false;
+
+		p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
 		smallest_position = next_smallest_position;
 	    }
 
 	} while (next_smallest_position != ILLEGAL_POSITION);
 
-	if (p->piece_position[piece] >= 64) return false;
     }
 
     /* En passant pawns always trail on a file, since they just moved from their starting positions.
@@ -5225,21 +5245,29 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 			&& (tb->semilegal_squares[piece]
 			    & BITVECTOR(rowcol2square(tb->piece_color[piece] == WHITE ? 3 : 4, square))))) {
 
-		    tb->piece_index[piece][square]
+		    tb->piece_value[piece][square] = tb->total_legal_piece_positions[piece];
+		    tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = square;
+
+		    tb->piece_index[piece][tb->total_legal_piece_positions[piece]]
 			= choose(tb->total_legal_piece_positions[piece], piece_in_set) * tb->max_index;
+
 		    tb->total_legal_piece_positions[piece] ++;
 		} else {
-		    tb->piece_index[piece][square] = INVALID_INDEX;
+		    //tb->piece_index[piece][square] = INVALID_INDEX;
+		    /* This value should never get used. */
+		    tb->piece_value[piece][square] = ILLEGAL_POSITION;
 		}
 
 	    }
 
-	    /* Now back out any positions that we saved with the 'combinadic2' or 'combinadic3' indices */
+	    /* Now back out any values that we saved because of any earlier overlapping pieces. */
+
+	    tb->total_legal_piece_values[piece] = tb->total_legal_piece_positions[piece];
 
 	    if ((tb->index_type == COMBINADIC2_INDEX) || (tb->index_type == COMBINADIC3_INDEX)) {
 		for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
 		for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
-		    tb->total_legal_piece_positions[piece] --;
+		    tb->total_legal_piece_values[piece] --;
 		}
 	    }
 
@@ -5249,41 +5277,29 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		fatal("BUG: Identical pieces don't have the same number of total semilegal positions\n");
 	    }
 
+	    if ((tb->prev_piece_in_encoding_group[piece] != -1)
+		&& (tb->total_legal_piece_values[piece]
+		    != tb->total_legal_piece_values[tb->prev_piece_in_encoding_group[piece]])) {
+		fatal("BUG: Identical pieces don't have the same number of encoding values\n");
+	    }
+
 	    if (tb->next_piece_in_encoding_group[piece] == -1) {
-		tb->max_index *= choose(tb->total_legal_piece_positions[piece], piece_in_set);
+		tb->max_index *= choose(tb->total_legal_piece_values[piece], piece_in_set);
 	    }
 
 	}
 
 	tb->max_index --;
 
-	/* Now we want to remove INVALID_INDEX from the piece_index array, to avoid having to deal
-	 * with it when we decode indices.
-	 *
-	 * Let A, B, C, D, E be valid index values and let I be INVALID_INDEX.  If our table is:
-	 *
-	 *     0 1 2 3 4 5 6 7
-	 *     A B C I I I D E
-	 *
-	 * then our square is 2 if C <= index < D, 6 if D <= index < E.  std::lower_bound will
-	 * return the same result if we replace the table with
-	 *
-	 *     0 1 2 3 4 5 6 7
-	 *     A B C D D D D E
-	 *
-	 * which has the benefit of not requiring comparisons with INVALID_INDEX.  We wait until
-	 * we've computed max_index so that we can deal with the case where the trailing indices are
-	 * invalid.
+	/* Now we pad the tail end of the piece_index arrays with max_index+1.  This allows us to
+	 * search the table using std::lower_bound without having to worry about where its actual
+	 * end is, which will typically be before its physical end.
 	 */
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->piece_index[piece][63] == INVALID_INDEX) tb->piece_index[piece][63] = tb->max_index;
-
-	    for (square = 62; square >= 0; square--) {
-		if (tb->piece_index[piece][square] == INVALID_INDEX) {
-		    tb->piece_index[piece][square] = tb->piece_index[piece][square + 1];
-		}
-
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	    for (int value = tb->total_legal_piece_values[piece]; value < 64; value ++) {
+		tb->piece_index[piece][value] = tb->max_index + 1;
 	    }
 	}
 
@@ -5588,7 +5604,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.738 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.739 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6590,7 +6606,7 @@ int translate_foreign_index_to_local_position(tablebase_t *foreign_tb, index_t i
  * It's only use now is by the probing code (see next function).
  */
 
-index_t global_position_to_local_position(tablebase_t *tb, global_position_t *global, local_position_t *local)
+int global_position_to_local_position(tablebase_t *tb, global_position_t *global, local_position_t *local)
 {
     int square;
     tablebase_t fake_tb;
@@ -14441,7 +14457,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.738 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.739 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
