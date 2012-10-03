@@ -2793,6 +2793,8 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = ILLEGAL_POSITION;
 
+    p->side_to_move = index % 2;
+
     /* Binary search for the largest value in piece_index[] that is less than or equal to the
      * (running) index, subtract it out of the index, and store the encoding values.  This loop has
      * to run in reverse order over the pieces, since a combinadic encoding must be backed out from
@@ -2832,7 +2834,6 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     }
 
-    p->side_to_move = index % 2;
     index /= 2;
 
     if (tb->variant != VARIANT_SUICIDE) {
@@ -5131,7 +5132,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.740 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.741 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13984,7 +13985,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.740 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.741 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
