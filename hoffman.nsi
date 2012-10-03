@@ -57,7 +57,7 @@ Function installTypePage
 	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 0 100% 12u 'freesoft.org'
 	Pop $0
 
-	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 15u 100% 12u 'Hoffman 1.3'
+	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 15u 100% 12u 'Hoffman 1.4'
 	Pop $0
 
 	nsDialogs::CreateControl /NOUNLOAD STATIC ${__NSD_Label_STYLE}|${ES_CENTER} ${__NSD_Label_EXSTYLE} 0 40u 100% 12u 'Chess endgame retrograde analyzer'
