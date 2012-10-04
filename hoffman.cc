@@ -92,6 +92,7 @@
 #include <algorithm>		/* for std::sort */
 #include <deque>
 #include <vector>
+#include <bitset>
 
 #include <thread>
 #include <atomic>
@@ -2783,12 +2784,25 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
     return index;
 }
 
+std::bitset<64> smaller_pieces[64];
+
 bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
     int en_passant_pawn = -1;
     int en_passant_color = 0;
     uint8_t vals[MAX_PIECES];
+    std::bitset<64> overlapping_pieces[MAX_PIECES];
+    static bool do_once = false;
+
+    if (!do_once) {
+	for (int i=0; i<64; i++) {
+	    for (int j=0; j<=i; j++) {
+		smaller_pieces[i].set(j);
+	    }
+	}
+	do_once = true;
+    }
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = ILLEGAL_POSITION;
@@ -2830,6 +2844,8 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 		p->en_passant_square = p->piece_position[en_passant_pawn] + 5*8;
 		p->piece_position[en_passant_pawn] += 4*8;
 	    }
+
+	    overlapping_pieces[en_passant_pawn].set(p->piece_position[en_passant_pawn]);
 	}
 
     }
@@ -2845,6 +2861,9 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	p->piece_position[tb->white_king] = tb->white_king_position[index];
 	p->piece_position[tb->black_king] = tb->black_king_position[index];
+
+	overlapping_pieces[tb->white_king].set(p->piece_position[tb->white_king]);
+	overlapping_pieces[tb->black_king].set(p->piece_position[tb->black_king]);
 
     } else {
 
@@ -2868,47 +2887,29 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	int piece2;
-	uint8_t smallest_position, next_smallest_position;
+	std::bitset<64> overlapping_piece;
 
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	if ((piece == tb->white_king) || (piece == tb->black_king) || (piece == en_passant_pawn)) continue;
 
-	/* En passant positions are never changed, since they are encoded using the first row,
-	 * which isn't part of a pawn's legal range, so skip en passant pawns.
-	 */
-
-	if (piece == en_passant_pawn) continue;
+	if (tb->prev_piece_in_encoding_group[piece] != -1) {
+	    overlapping_piece = overlapping_pieces[tb->prev_piece_in_encoding_group[piece]];
+	} else if (tb->last_overlapping_piece[piece] != -1) {
+	    overlapping_piece = overlapping_pieces[tb->last_overlapping_piece[piece]];
+	}
 
 	p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
-	smallest_position = ILLEGAL_POSITION;
 
-	do {
-	    next_smallest_position = ILLEGAL_POSITION;
+	int increment = (overlapping_piece & smaller_pieces[p->piece_position[piece]]).count();
 
-	    for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
-
-	    for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
-		if (p->piece_position[piece2] <= p->piece_position[piece]) {
-		    if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
-			if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
-			    next_smallest_position = p->piece_position[piece2];
-			}
-		    }
-		}
-	    }
-
-	    if (next_smallest_position != ILLEGAL_POSITION) {
+	while (increment--) {
+	    do {
 		vals[piece] ++;
-
-		/* I suspect that this test never triggers */
-		if (vals[piece] >= tb->total_legal_piece_values[piece]) return false;
-
 		p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
-		smallest_position = next_smallest_position;
-	    }
+	    } while (overlapping_piece[p->piece_position[piece]]);
+	}
 
-	} while (next_smallest_position != ILLEGAL_POSITION);
-
+	overlapping_piece.set(p->piece_position[piece]);
+	overlapping_pieces[piece] = overlapping_piece;
     }
 
     /* En passant pawns always trail on a file, since they just moved from their starting positions.
@@ -5134,7 +5135,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.742 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.743 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13987,7 +13988,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.742 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.743 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
