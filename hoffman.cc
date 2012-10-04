@@ -92,7 +92,6 @@
 #include <algorithm>		/* for std::sort */
 #include <deque>
 #include <vector>
-#include <bitset>
 
 #include <thread>
 #include <atomic>
@@ -2784,25 +2783,27 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
     return index;
 }
 
-std::bitset<64> smaller_pieces[64];
-
 bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
     int en_passant_pawn = -1;
     int en_passant_color = 0;
     uint8_t vals[MAX_PIECES];
-    std::bitset<64> overlapping_pieces[MAX_PIECES];
+    uint64_t overlapping_pieces[MAX_PIECES];
+
+    static uint64_t smaller_pieces[64];
     static bool do_once = false;
 
     if (!do_once) {
+	bzero(smaller_pieces, sizeof(smaller_pieces));
 	for (int i=0; i<64; i++) {
 	    for (int j=0; j<=i; j++) {
-		smaller_pieces[i].set(j);
+		smaller_pieces[i] |= (1ULL << j);
 	    }
 	}
 	do_once = true;
     }
+    bzero(overlapping_pieces, sizeof(overlapping_pieces));
 
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = ILLEGAL_POSITION;
@@ -2893,17 +2894,20 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	    p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
 
-	    int increment = (overlapping_pieces[piece] & smaller_pieces[p->piece_position[piece]]).count();
+	    uint64_t increments = (overlapping_pieces[piece] & smaller_pieces[p->piece_position[piece]]);
 
-	    while (increment--) {
+	    /* Loop once for each bit set in "increments".  Brian Kernighan's way of counting bits. */
+
+	    while (increments) {
+		increments &= increments - 1;
 		do {
 		    vals[piece] ++;
 		    p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
-		} while (overlapping_pieces[piece][p->piece_position[piece]]);
+		} while (overlapping_pieces[piece] & (1ULL << (p->piece_position[piece])));
 	    }
 	}
 
-	overlapping_pieces[piece].set(p->piece_position[piece]);
+	overlapping_pieces[piece] |= (1ULL << (p->piece_position[piece]));
     }
 
     /* En passant pawns always trail on a file, since they just moved from their starting positions.
@@ -5129,7 +5133,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.744 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.745 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13982,7 +13986,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.744 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.745 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
