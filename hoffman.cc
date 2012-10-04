@@ -2880,6 +2880,13 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
      * and a queen on square 34 that got encoded as 32.  We need to increment 32 to 33 for 12, then
      * increment 33 to 34 for 33, and if we try to handle the king on 33 first, we won't increment
      * because 32 is less than 33.
+     *
+     * I've tried to minimize the number of loops by maintaining a bit vector (overlapping_pieces)
+     * for each piece that has a bit set both for that piece's position and for the positions of any
+     * earlier overlapping pieces.  For each piece, we count the bits set at earlier positions in
+     * the bit vector, but we have to be careful to check additional bits as we increment.  In the
+     * example above, we can count all the bits from 0 to 32, find that 12 is set, but then we have
+     * to check 33 as we increment to know that we need to increment again to 34.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -2889,6 +2896,8 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	} else if (tb->last_overlapping_piece[piece] != -1) {
 	    overlapping_pieces[piece] = overlapping_pieces[tb->last_overlapping_piece[piece]];
 	}
+
+	/* Kings and en passant pawns have their own encoding schemes and have already been decoded */
 
 	if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)) {
 
@@ -5133,7 +5142,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.745 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.746 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13986,7 +13995,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.745 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.746 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
