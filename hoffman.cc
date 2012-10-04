@@ -2845,7 +2845,6 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 		p->piece_position[en_passant_pawn] += 4*8;
 	    }
 
-	    overlapping_pieces[en_passant_pawn].set(p->piece_position[en_passant_pawn]);
 	}
 
     }
@@ -2861,9 +2860,6 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	p->piece_position[tb->white_king] = tb->white_king_position[index];
 	p->piece_position[tb->black_king] = tb->black_king_position[index];
-
-	overlapping_pieces[tb->white_king].set(p->piece_position[tb->white_king]);
-	overlapping_pieces[tb->black_king].set(p->piece_position[tb->black_king]);
 
     } else {
 
@@ -2887,29 +2883,27 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	std::bitset<64> overlapping_piece;
-
-	if ((piece == tb->white_king) || (piece == tb->black_king) || (piece == en_passant_pawn)) continue;
-
 	if (tb->prev_piece_in_encoding_group[piece] != -1) {
-	    overlapping_piece = overlapping_pieces[tb->prev_piece_in_encoding_group[piece]];
+	    overlapping_pieces[piece] = overlapping_pieces[tb->prev_piece_in_encoding_group[piece]];
 	} else if (tb->last_overlapping_piece[piece] != -1) {
-	    overlapping_piece = overlapping_pieces[tb->last_overlapping_piece[piece]];
+	    overlapping_pieces[piece] = overlapping_pieces[tb->last_overlapping_piece[piece]];
 	}
 
-	p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
+	if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)) {
 
-	int increment = (overlapping_piece & smaller_pieces[p->piece_position[piece]]).count();
+	    p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
 
-	while (increment--) {
-	    do {
-		vals[piece] ++;
-		p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
-	    } while (overlapping_piece[p->piece_position[piece]]);
+	    int increment = (overlapping_pieces[piece] & smaller_pieces[p->piece_position[piece]]).count();
+
+	    while (increment--) {
+		do {
+		    vals[piece] ++;
+		    p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
+		} while (overlapping_pieces[piece][p->piece_position[piece]]);
+	    }
 	}
 
-	overlapping_piece.set(p->piece_position[piece]);
-	overlapping_pieces[piece] = overlapping_piece;
+	overlapping_pieces[piece].set(p->piece_position[piece]);
     }
 
     /* En passant pawns always trail on a file, since they just moved from their starting positions.
@@ -5135,7 +5129,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.743 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.744 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13988,7 +13982,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.743 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.744 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
