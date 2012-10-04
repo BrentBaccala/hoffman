@@ -579,6 +579,7 @@ typedef struct tablebase {
     int extra_piece;
     int missing_pawn;
     int missing_non_pawn;
+    int matching_local_piece[MAX_PIECES];
 
     xmlDocPtr xml;
 
@@ -607,6 +608,8 @@ typedef struct tablebase {
      * identical pieces have move restrictions that don't overlap (so they can't exchange places),
      * they're not considered identical.
      *
+     * "Really identical" pieces are identical pieces, ignoring move restrictions.
+     *
      * "Encoding groups" are encoded together into the index.  Only their positions are encoded, not
      * their identities.  Thus, encoding groups are usually identical pieces, but in the
      * 'no-en-passant' and 'combinadic3' schemes, pawns restricted to a single file using plus
@@ -626,6 +629,7 @@ typedef struct tablebase {
     uint64_t illegal_black_king_squares;
     int last_identical_piece[MAX_PIECES];
     int next_identical_piece[MAX_PIECES];
+    int next_really_identical_piece[MAX_PIECES];
     int prev_piece_in_encoding_group[MAX_PIECES];
     int next_piece_in_encoding_group[MAX_PIECES];
 
@@ -4051,6 +4055,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	tb->last_identical_piece[piece] = -1;
 	tb->next_identical_piece[piece] = -1;
+	tb->next_really_identical_piece[piece] = -1;
 
 	tb->semilegal_squares[piece] = tb->legal_squares[piece];
 
@@ -4062,6 +4067,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		    tb->last_identical_piece[piece] = piece2;
 		    tb->semilegal_squares[piece2] |= tb->semilegal_squares[piece];
 		    tb->semilegal_squares[piece] |= tb->semilegal_squares[piece2];
+		}
+
+		if (tb->next_really_identical_piece[piece2] == -1) {
+		    tb->next_really_identical_piece[piece2] = piece;
 		}
 	    }
 	}
@@ -5142,7 +5151,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.746 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.747 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5341,17 +5350,29 @@ bool compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, 
     piece_vector = (1 << tb->num_pieces) - 1;
 
     for (future_piece = 0; future_piece < futurebase->num_pieces; future_piece ++) {
+
+	futurebase->matching_local_piece[future_piece] = -1;
+
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (! (piece_vector & (1 << piece))) continue;
 	    if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
 		&& ((!futurebase->invert_colors &&
 		     (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
 		    || (futurebase->invert_colors &&
 			(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-		piece_vector ^= (1 << piece);
-		break;
+
+		if (futurebase->matching_local_piece[future_piece] == -1) {
+		    futurebase->matching_local_piece[future_piece] = piece;
+		}
+
+		if (! (piece_vector & (1 << piece))) {
+		    continue;
+		} else {
+		    piece_vector ^= (1 << piece);
+		    break;
+		}
 	    }
 	}
+
 	if (piece == tb->num_pieces) {
 	    if ((futurebase->extra_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
 		futurebase->extra_piece = future_piece;
@@ -5895,13 +5916,10 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
 
-	for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
+	for (local_piece = foreign_tb->matching_local_piece[foreign_piece];
+	     local_piece != -1; local_piece = local_tb->next_really_identical_piece[local_piece]) {
 
-	    if ((foreign_tb->piece_type[foreign_piece] == local_tb->piece_type[local_piece])
-		&& (invert_colors
-		    ? (foreign_tb->piece_color[foreign_piece] != local_tb->piece_color[local_piece])
-		    : (foreign_tb->piece_color[foreign_piece] == local_tb->piece_color[local_piece]))
-		&& (local_tb->semilegal_squares[local_piece] & BITVECTOR(sq))
+	    if ((local_tb->semilegal_squares[local_piece] & BITVECTOR(sq))
 		&& !(local_pieces_processed_bitvector & (1 << local_piece))) {
 
 		local_position->piece_position[local_piece] = sq;
@@ -6055,13 +6073,10 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	    return -1;
 	}
 
-	for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
+	for (local_piece = foreign_tb->matching_local_piece[foreign_piece];
+	     local_piece != -1; local_piece = local_tb->next_really_identical_piece[local_piece]) {
 
-	    if ((foreign_tb->piece_type[foreign_piece] == local_tb->piece_type[local_piece])
-		&& (invert_colors
-		    ? (foreign_tb->piece_color[foreign_piece] != local_tb->piece_color[local_piece])
-		    : (foreign_tb->piece_color[foreign_piece] == local_tb->piece_color[local_piece]))
-		&& !(local_pieces_processed_bitvector & (1 << local_piece))) {
+	    if (!(local_pieces_processed_bitvector & (1 << local_piece))) {
 
 		local_position->piece_position[local_piece] = sq;
 		local_position->board_vector |= BITVECTOR(sq);
@@ -6077,7 +6092,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	    }
 	}
 
-	if (local_piece == local_tb->num_pieces) {
+	if (local_piece == -1) {
 	    if (extra_piece != NONE) {
 		/* More than one extra piece in translation */
 		return -1;
@@ -13995,7 +14010,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.746 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.747 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
