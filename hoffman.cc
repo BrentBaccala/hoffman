@@ -5152,7 +5152,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.748 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.749 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9413,7 +9413,6 @@ int last_back_rank_square;
 int promotion_move;
 
 tablebase_t * futurebase;
-int invert_colors_of_futurebase;
 
 std::atomic<index_t> next_future_index;
 
@@ -9453,9 +9452,9 @@ void propagate_moves_from_promotion_futurebase(void)
 
     if ((current_tb->piece_type[futurebase->missing_pawn] != PAWN)
 	|| (futurebase->piece_type[futurebase->extra_piece] == PAWN)
-	|| (!invert_colors_of_futurebase
+	|| (!futurebase->invert_colors
 	    && (current_tb->piece_color[futurebase->missing_pawn] != futurebase->piece_color[futurebase->extra_piece]))
-	|| (invert_colors_of_futurebase
+	|| (futurebase->invert_colors
 	    && (current_tb->piece_color[futurebase->missing_pawn] == futurebase->piece_color[futurebase->extra_piece]))) {
 	fatal("Conversion error during promotion back-prop\n");
 	return;
@@ -9504,7 +9503,7 @@ void propagate_moves_from_promotion_futurebase(void)
 
 	    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
 									     current_tb, &position,
-									     invert_colors_of_futurebase);
+									     futurebase->invert_colors);
 
 	    if (conversion_result != -1) {
 
@@ -9556,7 +9555,7 @@ void propagate_moves_from_promotion_futurebase(void)
 
 		    int promotion_sq = foreign_position.piece_position[extra_piece];
 
-		    if (invert_colors_of_futurebase)
+		    if (futurebase->invert_colors)
 			promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
 		    /* The extra piece has to be on the back rank.
@@ -9619,7 +9618,7 @@ void propagate_moves_from_promotion_futurebase(void)
 			int new_promotion_sq
 			    = foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]];
 
-			if (invert_colors_of_futurebase)
+			if (futurebase->invert_colors)
 			    new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
 
 			for (piece = 0; piece < current_tb->num_pieces; piece ++) {
@@ -9660,9 +9659,9 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 
     if ((current_tb->piece_type[futurebase->missing_pawn] != PAWN)
 	|| (futurebase->piece_type[futurebase->extra_piece] == PAWN)
-	|| (!invert_colors_of_futurebase
+	|| (!futurebase->invert_colors
 	    && (current_tb->piece_color[futurebase->missing_pawn] != futurebase->piece_color[futurebase->extra_piece]))
-	|| (invert_colors_of_futurebase
+	|| (futurebase->invert_colors
 	    && (current_tb->piece_color[futurebase->missing_pawn] == futurebase->piece_color[futurebase->extra_piece]))) {
 	fatal("Conversion error during promotion capture back-prop\n");
 	return;
@@ -9711,7 +9710,7 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 
 	    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
 									     current_tb, &position,
-									     invert_colors_of_futurebase);
+									     futurebase->invert_colors);
 
 	    if (conversion_result != -1) {
 
@@ -9763,7 +9762,7 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 
 		    int promotion_sq = foreign_position.piece_position[extra_piece];
 
-		    if (invert_colors_of_futurebase)
+		    if (futurebase->invert_colors)
 			promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
 		    /* The extra piece has to be on the back rank.
@@ -9865,7 +9864,7 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 			int new_promotion_sq
 			    = foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]];
 
-			if (invert_colors_of_futurebase)
+			if (futurebase->invert_colors)
 			    new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
 
 			for (piece = 0; piece < current_tb->num_pieces; piece ++) {
@@ -10130,7 +10129,7 @@ void propagate_moves_from_capture_futurebase(void)
 	    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
 									  reflections[reflection],
 									  current_tb, &position,
-									  invert_colors_of_futurebase);
+									  futurebase->invert_colors);
 
 #ifdef DEBUG_FUTUREMOVE
 	    if (future_index == DEBUG_FUTUREMOVE) {
@@ -10266,7 +10265,7 @@ void propagate_moves_from_normal_futurebase(void)
 	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
 								      REFLECTION_NONE,
 								      current_tb, &current_position,
-								      invert_colors_of_futurebase);
+								      futurebase->invert_colors);
 
 	if (conversion_result != -1) {
 
@@ -10482,7 +10481,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	open_futurebase(futurebase);
 
 	max_reflection = compute_reflections(tb, futurebase, reflections);
-	invert_colors_of_futurebase = futurebase->invert_colors;
 
 	next_future_index = 0;
 	backprop_function = nullptr;
@@ -14030,7 +14028,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.748 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.749 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
