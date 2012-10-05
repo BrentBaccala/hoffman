@@ -580,6 +580,7 @@ typedef struct tablebase {
     int missing_pawn;
     int missing_non_pawn;
     int matching_local_piece[MAX_PIECES];
+    int matching_local_piece_by_square[MAX_PIECES][64];
 
     xmlDocPtr xml;
 
@@ -5151,7 +5152,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.747 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.748 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5315,32 +5316,35 @@ void unload_futurebase(tablebase_t *tb)
     close_futurebase(tb);
 }
 
-/* compute_extra_and_missing_piece()
+/* compute_extra_and_missing_pieces()
  *
- * See comments for translate_foreign_position_to_local_position(), since this function mimicks that
- * one, except that this function works on an entire tablebase, while the other one works on a
- * single position within the tablebase.
+ * This function precomputes information that will later be used to translate positions between
+ * tablebases in translate_foreign_position_to_local_position().  That function is used extensively
+ * during futurebase back-propagation, so we try to figure out as much stuff as we can here,
+ * specifically:
+ *
+ * - for each piece in the futurebase, we store a pointer to the first identical piece in the local
+ *   tablebase
+ *
+ * - for each piece/square pair in the futurebase, we compute the corresponding semilegal group in
+ *   the local tablebase, and store a pointer to the first piece in it
+ *
+ * - if there is a single extra piece in the futurebase, store its piece number
+ *
+ * - if there is a single missing piece in the futurebase, store its piece number along with an
+ *   indication if it is a pawn or not
  */
 
-bool compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, char *filename)
+void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
+    throw (const char *)
 {
     int piece;
     int future_piece;
     int piece_vector;
-    int color;
 
     futurebase->extra_piece = -1;
     futurebase->missing_pawn = -1;
     futurebase->missing_non_pawn = -1;
-
-    /* Check futurebase to make sure its prune enable(s) match our own */
-
-    for (color = 0; color < 2; color ++) {
-	if (futurebase->prune_enable[color] & ~(tb->prune_enable[futurebase->invert_colors ? 1 - color : color])) {
-	    fatal("'%s': Futurebase doesn't match prune-enables!\n", filename);
-	    return false;
-	}
-    }
 
     /* The futurebase can have different pieces than the current tablebase.  There can be a single
      * extra piece, as well as a missing pawn and/or a missing non-pawn.  Find them.
@@ -5352,6 +5356,9 @@ bool compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, 
     for (future_piece = 0; future_piece < futurebase->num_pieces; future_piece ++) {
 
 	futurebase->matching_local_piece[future_piece] = -1;
+	for (int square = 0; square < 64; square ++) {
+	    futurebase->matching_local_piece_by_square[future_piece][square] = -1;
+	}
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
@@ -5362,6 +5369,14 @@ bool compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, 
 
 		if (futurebase->matching_local_piece[future_piece] == -1) {
 		    futurebase->matching_local_piece[future_piece] = piece;
+		}
+
+		for (int square = 0; square < 64; square ++) {
+		    if (tb->legal_squares[piece] & BITVECTOR(square)) {
+			if (futurebase->matching_local_piece_by_square[future_piece][square] == -1) {
+			    futurebase->matching_local_piece_by_square[future_piece][square] = piece;
+			}
+		    }
 		}
 
 		if (! (piece_vector & (1 << piece))) {
@@ -5377,8 +5392,7 @@ bool compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, 
 	    if ((futurebase->extra_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
 		futurebase->extra_piece = future_piece;
 	    } else {
-		fatal("'%s': Couldn't find future piece in tablebase\n", filename);
-		return false;
+		throw "Couldn't find future piece in local tablebase";
 	    }
 	}
     }
@@ -5400,11 +5414,9 @@ bool compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase, 
     }
 
     if (piece_vector != 0) {
-	fatal("'%s': Too many missing pieces in futurebase\n", filename);
-	return false;
+	throw "Too many missing pieces in futurebase";
     }
 
-    return true;
 }
 
 int autodetect_futurebase_type(tablebase_t *futurebase)
@@ -5488,11 +5500,25 @@ bool preload_all_futurebases(tablebase_t *tb)
 	    xmlFree(colors_property);
 	}
 
+	/* Check futurebase to make sure its prune enable(s) match our own */
+
+	for (int color = 0; color < 2; color ++) {
+	    if (futurebases[fbnum]->prune_enable[color] & ~(tb->prune_enable[futurebases[fbnum]->invert_colors ? 1 - color : color])) {
+		fatal("'%s': Futurebase doesn't match prune-enables!\n", filename);
+		return false;
+	    }
+	}
+
+	try {
+	    compute_extra_and_missing_pieces(tb, futurebases[fbnum]);
+	} catch (const char * reason) {
+	    fatal("'%s': %s\n", filename, reason);
+	}
+
 	/* We used to have to specify futurebase type in the XML, but now it is autodetected.  Check
 	 * for correctness if the XML (optionally now) specified the type.
 	 */
 
-	compute_extra_and_missing_pieces(tb, futurebases[fbnum], (char *)filename);
 	futurebases[fbnum]->futurebase_type = autodetect_futurebase_type(futurebases[fbnum]);
 
 	if (futurebases[fbnum]->futurebase_type == -1) {
@@ -5826,24 +5852,25 @@ void invert_colors_of_global_position(global_position_t *global)
     }
 }
 
-/* translate_foreign_index_to_local_position() - one of our key, key functions, used extensively
- * during futurebase back propagation.  It takes an index into a foreign tablebase and converts it
+/* translate_foreign_position_to_local_position() - one of our key, key functions, used extensively
+ * during futurebase back propagation.  It takes a position in a foreign tablebase and converts it
  * to a position in the local tablebase (the tablebase we're processing).  Of course, the pieces
  * might not match up between the two tablebases, but there are only a finite number of possible
  * differences:
  *
  * 1. There can be an "extra" piece in the foreign tablebase that doesn't appear in the
- * local tablebase.
+ * local tablebase (a pawn will promote into it).
  *
- * 2. There can be up to two "missing" pieces in the local tablebase that don't appear in
- * the foreign tablebase.
+ * 2. There can be up to two "missing" pieces in the local tablebase that don't appear in the
+ * foreign tablebase (one will either be captured, or will be a pawn that promotes, and two will be
+ * a pawn that captures and promotes).
  *
  * 3. There can be one piece (the "restricted" piece) that matches up, but is on a square flagged
- * illegal for it in the local tablebase.
+ * illegal for it in the local tablebase (it will move onto a legal square).
  *
  * If there are additional differences not covered in this list (more than one extra piece, for
- * example), or if the index isn't legal in the foreign tablebase, the function returns -1.
- * Otherwise, the return value is a 32 bit integer split into four eight bit fields:
+ * example), the function returns -1.  Otherwise, the return value is a 32 bit integer split into
+ * four eight bit fields:
  *
  * bits 0-7:   local tb piece number of missing piece #1
  * bits 8-15:  local tb piece number of restricted piece
@@ -5855,24 +5882,15 @@ void invert_colors_of_global_position(global_position_t *global)
  * as missing piece #1.  If there are multiple identical missing pieces, the last one will always be
  * returned as the missing piece(s).
  *
- * The function does not depend on the indexing scheme used by the foreign tablebase.  Instead, it
- * uses index_to_local_position() on the foreign tablebase.
+ * To speed this function, we precomputed missing/extra/restricted pieces along with
+ * piece-and-square-to-piece and piece-to-piece mapping tables.
  *
- * This function never calls fatal(), returning -1 instead, since it's used while probing a set of
- * tablebases to see which one of them matches a given position.
- *
- * The only thing I don't like about this function right now is that it returns -1 if there is more
- * than one restricted piece, and we certainly could have liberal tablebases with lots of restricted
- * pieces that we want to back-prop from.
+ * In addition to back-progagation, this function is also used while probing a set of tablebases to
+ * see which one of them matches a given position.
  *
  * XXX need to ASSERT that sizeof(..._pieces_processed_bitvector) is at least MAX_PIECES!!
  *
- * XXX newer versions of hoffman precompute missing/extra/restricted pieces as part of futurebase
- * auto-detection (we used to have to explicitly tell the program which kind of futurebase each one
- * was).  There's probably no reason we couldn't precompute an entire piece-to-piece mapping table
- * from the futurebase to the local tablebase, which should speed up this routine dramatically.
- *
- * XXX we assume that int holds at least 32 bits
+ * XXX the return value assumes that int holds at least 32 bits
  */
 
 #define NONE 0x80
@@ -5903,11 +5921,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     if (invert_colors) flip_side_to_move_local(local_position);
 
     /* First, see if we can slot foreign pieces into the local tablebase on legal squares.  We start
-     * by slotting them onto semilegal squares, then permuting them around if needed to get them
-     * onto legal squares.
-     *
-     * This code could probably be made more efficient by keeping pointers to the semilegal groups
-     * of each piece color/type for each square on the board.
+     * by slotting them onto semilegal squares.
      */
 
     for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
@@ -5916,11 +5930,10 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
 
-	for (local_piece = foreign_tb->matching_local_piece[foreign_piece];
-	     local_piece != -1; local_piece = local_tb->next_really_identical_piece[local_piece]) {
+	for (local_piece = foreign_tb->matching_local_piece_by_square[foreign_piece][sq];
+	     local_piece != -1; local_piece = local_tb->next_identical_piece[local_piece]) {
 
-	    if ((local_tb->semilegal_squares[local_piece] & BITVECTOR(sq))
-		&& !(local_pieces_processed_bitvector & (1 << local_piece))) {
+	    if (!(local_pieces_processed_bitvector & (1 << local_piece))) {
 
 		local_position->piece_position[local_piece] = sq;
 
@@ -5939,7 +5952,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
 
-	/* run this loop once for each set of identical pieces */
+	/* run this loop once for each set of identical pieces (i.e, each semilegal set) */
 	if (local_tb->permutations[local_piece]) {
 
 	    int perm = 0;
@@ -5963,7 +5976,8 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 		/* permute */
 		transpose_array(local_position->piece_position,
-				local_tb->permutations[local_piece][perm] & 0xff, local_tb->permutations[local_piece][perm] >> 8);
+				local_tb->permutations[local_piece][perm] & 0xff,
+				local_tb->permutations[local_piece][perm] >> 8);
 		perm ++;
 	    }
 
@@ -6188,6 +6202,12 @@ int global_position_to_local_position(tablebase_t *tb, global_position_t *global
 		}
 	    }
 	}
+    }
+
+    try {
+	compute_extra_and_missing_pieces(tb, &fake_tb);
+    } catch (const char * reason) {
+	return 0;
     }
 
     return translate_foreign_position_to_local_position(&fake_tb, &fake_position, tb, local, 0);
@@ -14010,7 +14030,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.747 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.748 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
