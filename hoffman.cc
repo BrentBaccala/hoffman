@@ -3042,11 +3042,11 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
  * identical pieces so the piece on the lowest numbered square always appears first in the position.
  *
  * But this creates problems when trying to move a piece.  Consider for example, the two rooks.  If
- * we now being moving rook #1 along the e file, it moves to e5, then e6, then e7.  Now, at e7, it
- * has become the rook on the higher numbered square, so the pieces have just "flipped" in the
- * position structure!  Additionally, if we have symmetry involved, then which piece is on the
- * higher numbered square can depend on the reflections required to get the kings to their
- * restricted areas.
+ * we are moving rook #1 along the e file, it moves to e5, then e6, then e7.  Now, at e7, it has
+ * become the rook on the higher numbered square, so the pieces have just "flipped" in the position
+ * structure!  Additionally, if we have symmetry involved, then which piece is on the higher
+ * numbered square can depend on the reflections required to get the kings to their restricted
+ * areas.
  *
  * And we can't simply hide all of this in the guts of the position-to-index functions, because we
  * track futuremoves.  Figuring out "which one" of an identical pair of pieces got captured is
@@ -3152,11 +3152,17 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
      * previous step), and then systematically apply permutations until we find the first one that
      * places all the pieces onto legal squares.  If none of the permutations work, we don't care.
      * This position is then illegal and will get rejected when we try to convert it to an index.
+     *
+     * Here's an obvious improvement if we have a lot of pieces in a semilegal group.  Count the
+     * number of illegally positioned pieces, then only check legality of the pieces we're swapping
+     * in each transposition to update the count.  Keep going until the count reaches zero.
+     * Only improves speed if we have a lot of pieces in the group, though, so the current
+     * code is definitely better for two pieces in the group.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	/* run this loop once for each set of identical pieces */
+	/* run this loop once for each semilegal group */
 	if (tb->permutations[piece]) {
 	    int perm = 0;
 
@@ -3164,7 +3170,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 
 		int piece2;
 
-		/* check for legality of all pieces in this set */
+		/* check for legality of all pieces in this group */
 		for (piece2 = piece; piece2 != -1; piece2 = tb->next_identical_piece[piece2]) {
 		    if (! (tb->legal_squares[piece2] & BITVECTOR(position->piece_position[piece2]))) {
 			break;
@@ -3184,7 +3190,12 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 		perm ++;
 	    }
 
-	    /* We don't check the final permutation for legality, just leave it alone. */
+	    /* We don't check the final permutation for legality, just leave it alone.  Why?  Well,
+	     * this function returns void, so what should it do if the position isn't legal?  On the
+	     * other hand, normalized_position_to_index (the next step after this one in
+	     * local_position_to_index) will check the position for legality and return
+	     * INVALID_INDEX if it isn't.
+	     */
 	}
     }
 
@@ -5152,7 +5163,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.749 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.750 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5333,6 +5344,9 @@ void unload_futurebase(tablebase_t *tb)
  *
  * - if there is a single missing piece in the futurebase, store its piece number along with an
  *   indication if it is a pawn or not
+ *
+ * If there is ambiguity because there are other pieces in the futurebase identical to the extra or
+ * missings piece(s), the highest piece numbers will be returned.
  */
 
 void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
@@ -5861,9 +5875,30 @@ void invert_colors_of_global_position(global_position_t *global)
  * 1. There can be an "extra" piece in the foreign tablebase that doesn't appear in the
  * local tablebase (a pawn will promote into it).
  *
+ * If there are multiple identical extra pieces, it'll be like QQQ in the futurebase, while we've
+ * got QQP in the local tablebase.  If the futurebase position has only one queen on the back rank,
+ * then it must be the extra piece, even if it's numbered differently (because of restrictions) than
+ * the piece number we detect here.  If the futurebase position has multiple queens on the back
+ * rank, then one queen might be "extra" back-proping into one position, while another queen might
+ * be "extra" back-proping into a different position, but from the same futurebase position.
+ *
  * 2. There can be up to two "missing" pieces in the local tablebase that don't appear in the
  * foreign tablebase (one will either be captured, or will be a pawn that promotes, and two will be
  * a pawn that captures and promotes).
+ *
+ * If there are multiple identical missing pieces due to capture, it'll be like QQ in the futurebase
+ * and we've got QQQ in the local tb.  If only one queen can be captured in a given position, then
+ * that's the missing piece.  But there are positions in which two different queen captures are both
+ * possible, and then it's unclear which is the missing piece.  There are futurebase positions which
+ * back-prop into multiple local positions with different missing pieces, depending on the piece
+ * numbering.
+ *
+ * If there are multiple identical missing pieces due to capture, it'll be like Q in the futurebase
+ * and we've got QQ in the local tb.  If only one queen can be captured in a given position, then
+ * that's the missing piece.  But there are positions in which two different queen captures are both
+ * possible, and then it's unclear which is the missing piece.  There are futurebase positions which
+ * back-prop into multiple local positions with different missing pieces, depending on the piece
+ * numbering.
  *
  * 3. There can be one piece (the "restricted" piece) that matches up, but is on a square flagged
  * illegal for it in the local tablebase (it will move onto a legal square).
@@ -5894,6 +5929,40 @@ void invert_colors_of_global_position(global_position_t *global)
  */
 
 #define NONE 0x80
+
+bool semilegal_group_is_legal(tablebase_t *tb, local_position_t *position, int first_piece_in_group)
+{
+    for (int piece = first_piece_in_group; piece != -1; piece = tb->next_identical_piece[piece]) {
+	if ((position->piece_position[piece] != ILLEGAL_POSITION)
+	    && ! (tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece]))) {
+	    return false;
+	}
+    }
+    return true;
+}
+
+bool permute_semilegal_group_until_legal(tablebase_t *tb, local_position_t *position, int first_piece_in_group)
+{
+    for (int perm = 0; tb->permutations[first_piece_in_group][perm] != 0; perm ++) {
+
+	if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
+
+	transpose_array(position->piece_position,
+			tb->permutations[first_piece_in_group][perm] & 0xff,
+			tb->permutations[first_piece_in_group][perm] >> 8);
+    }
+
+    if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
+
+    /* If none of the permutations result in a legal position, then the permutation list is
+     * structured so that this final transposition takes us back to the original position and we
+     * return false.
+     */
+
+    transpose_array(position->piece_position,
+		    first_piece_in_group, tb->next_identical_piece[first_piece_in_group]);
+    return false;
+}
 
 int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_position_t *foreign_position,
 						 tablebase_t *local_tb, local_position_t *local_position,
@@ -5955,114 +6024,36 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	/* run this loop once for each set of identical pieces (i.e, each semilegal set) */
 	if (local_tb->permutations[local_piece]) {
 
-	    int perm = 0;
-	    int saved_position;
+	    if (! permute_semilegal_group_until_legal(local_tb, local_position, local_piece)) {
 
-	    while (local_tb->permutations[local_piece][perm] != 0) {
+		/* That didn't work?  Then we can try something else.  If we don't have a restricted
+		 * piece yet, loop through all pieces in this set, take each one off in turn, and
+		 * try again to come up with a legal position.
+		 */
 
-		/* all pieces in this set must be on legal squares, or unassigned */
-		for (local_piece2 = local_piece; local_piece2 != -1;
-		     local_piece2 = local_tb->next_identical_piece[local_piece2]) {
-		    if ((local_position->piece_position[local_piece2] != ILLEGAL_POSITION)
-			&& ! (local_tb->legal_squares[local_piece2] & BITVECTOR(local_position->piece_position[local_piece2]))) {
-			break;
-		    }
+		int saved_position;
+
+		for (local_piece3 = local_piece; local_piece3 != -1;
+		     local_piece3 = local_tb->next_identical_piece[local_piece3]) {
+
+		    saved_position = local_position->piece_position[local_piece3];
+		    local_position->piece_position[local_piece3] = ILLEGAL_POSITION;
+
+		    if (permute_semilegal_group_until_legal(local_tb, local_position, local_piece)) break;
+
+		    local_position->piece_position[local_piece3] = saved_position;
 		}
 
-		if (local_piece2 == -1) {
-		    /* we're legal */
-		    break;
-		}
+		if (local_piece3 != -1) {
 
-		/* permute */
-		transpose_array(local_position->piece_position,
-				local_tb->permutations[local_piece][perm] & 0xff,
-				local_tb->permutations[local_piece][perm] >> 8);
-		perm ++;
-	    }
+		    /* Whew!  That worked.  Reset our various bitvectors. */
 
-	    /* Did that work?  If not, we can try something else.  Take one of the pieces back off
-	     * the board and try again.  Maybe we can pick it up later as a restricted piece.
-	     */
+		    local_pieces_processed_bitvector &= ~(1 << local_piece3);
 
-	    for (local_piece2 = local_piece; local_piece2 != -1;
-		 local_piece2 = local_tb->next_identical_piece[local_piece2]) {
-		if ((local_position->piece_position[local_piece2] != ILLEGAL_POSITION)
-		    && ! (local_tb->legal_squares[local_piece2] & BITVECTOR(local_position->piece_position[local_piece2]))) {
-		    break;
-		}
-	    }
-
-	    if (local_piece2 == -1) {
-		/* we're legal */
-		break;
-	    }
-
-	    /* Not legal.  Loop through all positions in this set, take each one off in turn, and see if
-	     * we can come up with a legal position.
-	     *
-	     * What if there are multiple possibilities for this?  Can we take off two different positions
-	     * and come up with a legal position each time, but with a different restricted piece?
-	     */
-
-	    for (local_piece3 = local_piece; local_piece3 != -1;
-		 local_piece3 = local_tb->next_identical_piece[local_piece3]) {
-
-		saved_position = local_position->piece_position[local_piece3];
-		local_position->piece_position[local_piece3] = ILLEGAL_POSITION;
-
-		for (perm=0; local_tb->permutations[local_piece][perm] != 0; perm++) {
-
-		    int local_piece2;
-
-		    /* all pieces in this set must be on legal squares, or unassigned */
-		    for (local_piece2 = local_piece; local_piece2 != -1;
-			 local_piece2 = local_tb->next_identical_piece[local_piece2]) {
-			if ((local_position->piece_position[local_piece2] != ILLEGAL_POSITION)
-			    && ! (local_tb->legal_squares[local_piece2] & BITVECTOR(local_position->piece_position[local_piece2]))) {
-			    break;
+		    for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
+			if (foreign_position->piece_position[foreign_piece] == saved_position) {
+			    foreign_pieces_processed_bitvector &= ~(1 << foreign_piece);
 			}
-		    }
-
-		    if (local_piece2 == -1) {
-			/* we're legal */
-			break;
-		    }
-
-		    /* permute */
-		    transpose_array(local_position->piece_position,
-				    local_tb->permutations[local_piece][perm] & 0xff, local_tb->permutations[local_piece][perm] >> 8);
-		}
-
-		for (local_piece2 = local_piece; local_piece2 != -1;
-		     local_piece2 = local_tb->next_identical_piece[local_piece2]) {
-		    if ((local_position->piece_position[local_piece2] != ILLEGAL_POSITION)
-			&& ! (local_tb->legal_squares[local_piece2] & BITVECTOR(local_position->piece_position[local_piece2]))) {
-			break;
-		    }
-		}
-
-		if (local_piece2 == -1) {
-		    /* we're legal */
-		    break;
-		}
-
-		/* this final permutation should take us back to the original position */
-		transpose_array(local_position->piece_position,
-				local_piece, local_tb->next_identical_piece[local_piece]);
-
-		local_position->piece_position[local_piece3] = saved_position;
-	    }
-
-	    if (local_piece2 == -1) {
-
-		/* Whew!  That worked.  Reset our various bitvectors. */
-
-		local_pieces_processed_bitvector &= ~(1 << local_piece3);
-
-		for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
-		    if (foreign_position->piece_position[foreign_piece] == saved_position) {
-			foreign_pieces_processed_bitvector &= ~(1 << foreign_piece);
 		    }
 		}
 	    }
@@ -10185,12 +10176,12 @@ void propagate_moves_from_capture_futurebase(void)
 		     * it's not the only possible one, because it might be possible to swap it with
 		     * an identical piece that would put it on a semilegal square and put the other
 		     * piece on the restricted square.  The simplest way to understand this is in
-		     * terms of semilegal group - each square on the board can only have a single
+		     * terms of semilegal groups - each square on the board can only have a single
 		     * semilegal group for a given piece type and color.  A restricted piece is on a
-		     * square whose semilegal group is already full.  If the square's semilegal
-		     * group is in fact empty, then there's only one restricted piece we need to
-		     * consider.  Otherwise, we need to consider each piece in the semilegal group
-		     * as the possible restricted piece.
+		     * square whose semilegal group is either empty or already full.  If the
+		     * square's semilegal group is in fact empty, then there's only one restricted
+		     * piece we need to consider.  Otherwise, we need to consider each piece in the
+		     * semilegal group as the possible restricted piece.
 		     */
 
 		    int restricted_square = position.piece_position[restricted_piece];
@@ -14028,7 +14019,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.749 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.750 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
