@@ -5163,7 +5163,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.750 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.751 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13393,18 +13393,28 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 #endif /* USE_NALIMOV */
 
 
-/* Search an array of tablebases for a global position.  Array should be terminated with a nullptr ptr.
- *
- * XXX can't probe for a position in an inverted tablebase
+/* Search an array of tablebases for a global position, returns true if found and puts the results
+ * in tbptr and indexptr.  Array should be terminated with nullptr.  Also probes an inverted copy of
+ * the position, so we can find a kqkqq position in a kqqkq tablebase, for example.
  */
 
 bool search_tablebases_for_global_position(tablebase_t **tbs, global_position_t *global_position,
-					      tablebase_t **tbptr, index_t *indexptr)
+					   tablebase_t **tbptr, index_t *indexptr)
 {
+    global_position_t inverted_global_position = *global_position;
+    invert_colors_of_global_position(&inverted_global_position);
+
     index_t index;
 
     for (; *tbs; tbs++) {
 	index = global_position_to_index(*tbs, global_position);
+	if (index != INVALID_INDEX) {
+	    *tbptr = *tbs;
+	    *indexptr = index;
+	    return true;
+	}
+
+	index = global_position_to_index(*tbs, &inverted_global_position);
 	if (index != INVALID_INDEX) {
 	    *tbptr = *tbs;
 	    *indexptr = index;
@@ -13415,6 +13425,19 @@ bool search_tablebases_for_global_position(tablebase_t **tbs, global_position_t 
     return false;
 }
 
+/* Fetches a tablebase score for a given index and prints the results in English.  Also pass in
+ * string names ("black" and "white") for Player to Move and Player Not To Move, as well as an
+ * offset to add to PNTM results.  The offset is either 0 or 1, depending on whether we're printing
+ * the score for a single position, or printing the scores for a list of moves from a position.
+ *
+ * XXX Tablebases are becoming more complicated, so the result strings should be stored in the XML
+ * headers, like "wins", "draws", "queens", "queens and draws", "queens or draws", etc.
+ *
+ * XXX Since tablebases can be big, tablebase searches can be slow, so we should be able to queue up
+ * a set of positions that we want to search for, then search each tablebase once for all of them.
+ * Modify this function to take a list of positions.
+ */
+
 void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pntm, int pntm_offset)
 {
     if (tb->format.dtm_bits > 0) {
@@ -13424,7 +13447,7 @@ void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pn
 	if (dtm == 0) {
 	    printf("Draw\n");
 	} else if (dtm == 1) {
-	    printf("Illegal position\n");
+	    printf("Illegal position (%s mated)\n", ptm);
 	} else if (dtm > 1) {
 	    printf("%s wins in %d\n", ptm, dtm-1);
 	} else if (dtm < 0) {
@@ -14019,7 +14042,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.750 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.751 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
