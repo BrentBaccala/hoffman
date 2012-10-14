@@ -5163,7 +5163,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.752 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.753 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13435,7 +13435,8 @@ bool search_tablebases_for_global_position(tablebase_t **tbs, global_position_t 
  *
  * XXX Since tablebases can be big, tablebase searches can be slow, so we should be able to queue up
  * a set of indices that we want to score, then search each tablebase once for all of them.  Modify
- * this function to take a list of tablebase/indices.
+ * this function to take a list of tablebase/indices, or maybe add a wrapper function that takes the
+ * list, sorts the indices, and passes each one to this function.
  */
 
 void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pntm, int pntm_offset)
@@ -14042,7 +14043,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.752 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.753 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
