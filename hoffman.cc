@@ -185,7 +185,6 @@ typedef uint64_t index_t;
 
 unsigned int num_threads = 1;
 
-std::atomic<long> contended_locks(0);
 std::atomic<long> contended_indices(0);
 
 /***** GLOBAL CONSTANTS *****/
@@ -674,7 +673,7 @@ xmlNodePtr positive_passes_needed_text_node, negative_passes_needed_text_node;
 
 xmlNodePtr user_time, system_time, real_time;
 xmlNodePtr page_faults, page_reclaims;
-xmlNodePtr contended_locks_node, contended_indices_node;
+xmlNodePtr contended_indices_node;
 
 
 /* PROPTABLE_BITS for 16 byte entries:
@@ -5163,7 +5162,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.754 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.755 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5198,7 +5197,6 @@ tablebase_t * parse_XML_control_file(char *filename)
     page_reclaims = create_GenStats_node("page-reclaims");
 
     if (num_threads > 1) {
-	contended_locks_node = create_GenStats_node("contended-locks");
 	contended_indices_node = create_GenStats_node("contended-indices");
     }
 
@@ -5611,9 +5609,6 @@ void finalize_pass_statistics()
     xmlNodeSetContent(page_reclaims, BAD_CAST strbuf);
 
     if (num_threads > 1) {
-	snprintf(strbuf, sizeof(strbuf), "%ld", (long) contended_locks);
-	xmlNodeSetContent(contended_locks_node, BAD_CAST strbuf);
-
 	snprintf(strbuf, sizeof(strbuf), "%ld", (long) contended_indices);
 	xmlNodeSetContent(contended_indices_node, BAD_CAST strbuf);
     }
@@ -14043,7 +14038,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.754 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.755 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
