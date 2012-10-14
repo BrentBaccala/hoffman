@@ -520,10 +520,11 @@ const char * formats[] = {"fourbyte", "one-byte-dtm", nullptr};
 #define COMPACT_INDEX 3
 #define NO_EN_PASSANT_INDEX 4
 #define COMBINADIC3_INDEX 5
+#define COMBINADIC4_INDEX 6
 
-#define DEFAULT_INDEX COMBINADIC3_INDEX
+#define DEFAULT_INDEX COMBINADIC4_INDEX
 
-const char * index_types[] = {"naive", "naive2", "simple", "compact", "no-en-passant", "combinadic3"};
+const char * index_types[] = {"naive", "naive2", "simple", "compact", "no-en-passant", "combinadic3", "combinadic4"};
 
 const char * futurebase_types[] = {"capture", "promotion", "capture-promotion", "normal"};
 
@@ -634,6 +635,9 @@ typedef struct tablebase {
     int next_piece_in_encoding_group[MAX_PIECES];
 
     int last_overlapping_piece[MAX_PIECES];
+
+    bool encode_stm;
+    int color_symmetric_transpose[MAX_PIECES];
 
     int total_legal_piece_positions[MAX_PIECES];
     int total_legal_piece_values[MAX_PIECES];
@@ -2684,7 +2688,7 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
     return true;
 }
 
-/* "combinadic3" index
+/* "combinadic3/4" index
  *
  * The encoding of restricted pieces used in "simple", paired encoding of the kings so they can
  * never be adjacent, a combinatorial-based encoding of identical pieces, and later pieces wholly
@@ -2693,6 +2697,9 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
  * on the first rank.  When using a pawn to reduce the encoding value of a later piece, we ignore
  * the en-passant status of the pawn and use its board position.  When reducing the encoding value
  * of a pawn, we use the encoding value, with en-passant factored in.
+ *
+ * 'combinadic4' differs from 'combinadic3' in that it omits side-to-move if the position
+ * can be inverted.
  */
 
 void transpose_array(uint8_t *array, int index1, int index2)
@@ -2776,13 +2783,13 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
     /* Kings have their own encoding table */
 
     if (tb->white_king != -1) {
-	index += 2 * tb->king_index[pos->piece_position[tb->white_king]]
+	index += tb->king_index[pos->piece_position[tb->white_king]]
 	    [pos->piece_position[tb->black_king]];
     }
 
     /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
 
-    index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+    if (tb->encode_stm) index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
 
     return index;
 }
@@ -2812,7 +2819,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
     memset(p, 0, sizeof(local_position_t));
     p->en_passant_square = ILLEGAL_POSITION;
 
-    p->side_to_move = index % 2;
+    if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
 
     /* Binary search for the largest value in piece_index[] that is less than or equal to the
      * (running) index, subtract it out of the index, and store the encoding values.  This loop has
@@ -2854,7 +2861,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     }
 
-    index /= 2;
+    if (tb->encode_stm) index /= 2;
 
     if (tb->variant != VARIANT_SUICIDE) {
 
@@ -3069,6 +3076,33 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     int piece, piece2;
     uint8_t permutation[MAX_PIECES];
 
+    /* The 'combinadic4' index might not encode side-to-move at all.  In this case, if black is to
+     * move, then we have to invert the entire board.  We've precomputed how to exchange the pieces;
+     * that information is in the color_symmetric_transpose array.  We do this transformation first
+     * because it will change the king positions that are used next to compute reflections.
+     */
+
+    if ((! tb->encode_stm) && (position->side_to_move == BLACK)) {
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    permutation[piece] = tb->color_symmetric_transpose[piece];
+	    if (tb->color_symmetric_transpose[piece] > piece) {
+		position->piece_position[piece] = 63 - position->piece_position[piece];
+		transpose_array(position->piece_position, piece, tb->color_symmetric_transpose[piece]);
+		position->piece_position[piece] = 63 - position->piece_position[piece];
+	    }
+	}
+	if (position->en_passant_square != ILLEGAL_POSITION) {
+	    position->en_passant_square = 63 - position->en_passant_square;
+	}
+	position->side_to_move = WHITE;
+
+    } else {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    permutation[piece] = piece;
+	}
+    }
+
     /* Reflect the pieces around to get the white king where we want him for symmetry.
      *
      * 2-way symmetry: white king always on left side of board
@@ -3125,10 +3159,6 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 	    }
 	}
 #endif
-    }
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	permutation[piece] = piece;
     }
 
     /* Sort any identical pieces so that the lowest square number always comes first. */
@@ -3284,6 +3314,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	index = local_position_to_compact_index(tb, position);
 	break;
     case COMBINADIC3_INDEX:
+    case COMBINADIC4_INDEX:
 	index = local_position_to_combinadic3_index(tb, position);
 	break;
     default:
@@ -3359,6 +3390,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	ret = compact_index_to_local_position(tb, index, position);
 	break;
     case COMBINADIC3_INDEX:
+    case COMBINADIC4_INDEX:
 	ret = combinadic3_index_to_local_position(tb, index, position);
 	break;
     default:
@@ -3510,8 +3542,10 @@ int index_to_side_to_move(tablebase_t *tb, index_t index)
     if (tb->modulus != 0) {
 	if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) return -1;
 	else return position.side_to_move;
-    } else {
+    } else if (tb->encode_stm) {
 	return (index - tb->index_offset) & 1;
+    } else {
+	return WHITE;
     }
 }
 
@@ -3699,6 +3733,48 @@ int choose(int n, int k) {
     for (i=1; i<=k; i++) retval /= i;
 
     return retval;
+}
+
+/* Determine whether the tablebase is color symmetric, meaning that we can flip the colors of all of
+ * the pieces and get a position in the same tablebase.  kqkq is color symmetric (barring piece
+ * restrictions), while kqqkq is not (it would flip into kqkqq).  Color symmetric tablebases do not
+ * have to encode side-to-move, cutting their index space in half, a big win.  If the tablebase is
+ * color symmetric, we also set up the color_symmetric_transpose array for later use in doing the
+ * flips, using only transpositions.
+ *
+ * XXX we can enhance this function to handle piece restrictions.
+ */
+
+bool tablebase_is_color_symmetric(tablebase_t *tb)
+{
+    bool pieces_used[MAX_PIECES] = {false};
+
+    for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	if (pieces_used[piece]) continue;
+
+	if ((tb->legal_squares[piece] != ALL_ONES_BITVECTOR)
+	    && (tb->legal_squares[piece] != LEGAL_PAWN_BITVECTOR))
+	    return false;
+
+	for (int piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
+
+	    if (pieces_used[piece2]) continue;
+
+	    if ((tb->piece_color[piece] != tb->piece_color[piece2])
+		&& (tb->piece_type[piece] == tb->piece_type[piece2])
+		&& (tb->legal_squares[piece] == tb->legal_squares[piece2])) {
+
+		tb->color_symmetric_transpose[piece] = piece2;
+		tb->color_symmetric_transpose[piece2] = piece;
+		pieces_used[piece] = true;
+		pieces_used[piece2] = true;
+		break;
+	    }
+	}
+    }
+
+    return true;
 }
 
 tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
@@ -4243,8 +4319,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      */
 
     if ((tb->variant == VARIANT_SUICIDE) && (tb->index_type != NAIVE_INDEX)
-	&& (tb->index_type != SIMPLE_INDEX) && (tb->index_type != COMBINADIC3_INDEX)) {
-	fatal("Only 'naive', 'simple', and 'combinadic3' indices are compatible with 'suicide' variant\n");
+	&& (tb->index_type != SIMPLE_INDEX) && (tb->index_type != COMBINADIC3_INDEX)
+	&& (tb->index_type != COMBINADIC4_INDEX)) {
+	fatal("Only 'naive', 'simple', and 'combinadic3/4' indices are compatible with 'suicide' variant\n");
 	return nullptr;
     }
 
@@ -4509,6 +4586,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     /* Compute tb->max_index (but see next section of code where it might be modified) */
 
+    tb->encode_stm = true;
+
     switch (tb->index_type) {
     case NAIVE_INDEX:
 
@@ -4676,9 +4755,17 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	break;
 
     case COMBINADIC3_INDEX:
+    case COMBINADIC4_INDEX:
 
-	/* The "2" is because side-to-play is part of the position */
-	tb->max_index = 2;
+	if ((tb->index_type == COMBINADIC4_INDEX) && tablebase_is_color_symmetric(tb)) {
+	    /* Don't need side-to-play for a color symetric tablebase */
+	    tb->encode_stm = false;
+	    tb->max_index = 1;
+	} else {
+	    /* The "2" is because side-to-play is part of the position */
+	    tb->encode_stm = true;
+	    tb->max_index = 2;
+	}
 
 	if (tb->variant != VARIANT_SUICIDE) {
 	    for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
@@ -4696,7 +4783,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 		    tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
 		    tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
-		    tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
+		    tb->king_index[white_king_square][black_king_square] = tb->max_index * tb->total_legal_king_positions;
 		    tb->total_legal_king_positions ++;
 		}
 	    }
@@ -5162,7 +5249,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.755 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.756 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6735,7 +6822,7 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
     }
 
     if (n == num_threads) {
-	fatal("More threads than cache lines in fetch_entry_pointer()!");
+	fatal("More threads than cache lines in fetch_entry_pointer()!\n");
     }
 
     /* Check to see if we've got the requested index in the current thread's cache line */
@@ -14038,7 +14125,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.755 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.756 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
