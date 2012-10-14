@@ -4,8 +4,8 @@
  *
  * by Brent Baccala
  *
- * begun coding    August, 2006
- * last modified   September, 2012
+ * begun coding    August 2006
+ * last modified   October 2012
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
@@ -5163,7 +5163,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.753 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.754 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14043,7 +14043,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.753 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.754 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
