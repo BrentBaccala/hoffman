@@ -2903,32 +2903,47 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	if (tb->prev_piece_in_encoding_group[piece] != -1) {
-	    overlapping_pieces[piece] = overlapping_pieces[tb->prev_piece_in_encoding_group[piece]];
-	} else if (tb->last_overlapping_piece[piece] != -1) {
-	    overlapping_pieces[piece] = overlapping_pieces[tb->last_overlapping_piece[piece]];
-	}
+ 	int piece2;
+ 	uint8_t smallest_position, next_smallest_position;
+  
+ 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	/* Kings and en passant pawns have their own encoding schemes and have already been decoded */
+	/* En passant positions are never changed, since they are encoded using the first row,
+	 * which isn't part of a pawn's legal range, so skip en passant pawns.
+	 */
 
-	if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)) {
+	if (piece == en_passant_pawn) continue;
 
-	    p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
+	p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
+	smallest_position = ILLEGAL_POSITION;
 
-	    uint64_t increments = (overlapping_pieces[piece] & smaller_pieces[p->piece_position[piece]]);
+	do {
+	    next_smallest_position = ILLEGAL_POSITION;
 
-	    /* Loop once for each bit set in "increments".  Brian Kernighan's way of counting bits. */
+	    for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
 
-	    while (increments) {
-		increments &= increments - 1;
-		do {
-		    vals[piece] ++;
-		    p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
-		} while (overlapping_pieces[piece] & (1ULL << (p->piece_position[piece])));
+	    for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
+		if (p->piece_position[piece2] <= p->piece_position[piece]) {
+		    if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
+			if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
+			    next_smallest_position = p->piece_position[piece2];
+			}
+		    }
+		}
 	    }
-	}
 
-	overlapping_pieces[piece] |= (1ULL << (p->piece_position[piece]));
+	    if (next_smallest_position != ILLEGAL_POSITION) {
+		vals[piece] ++;
+
+		/* I suspect that this test never triggers */
+		if (vals[piece] >= tb->total_legal_piece_positions[piece]) return false;
+
+		p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
+		smallest_position = next_smallest_position;
+	    }
+
+	} while (next_smallest_position != ILLEGAL_POSITION);
+
     }
 
     /* En passant pawns always trail on a file, since they just moved from their starting positions.
@@ -4916,10 +4931,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		fatal("Combinadic3 index requires encoding groups to be adjacent in index\n");
 	    }
 
-	    /* We count semilegal and not legal squares here because the pair encoding used for
-	     * identical pieces assumes that both pieces occupy the same range of squares.  We also
-	     * assign squares for en passant capturable pawns by using square numbers in the first
-	     * row (i.e, less than 8), since pawns can never be there.
+	    /* Now number the squares in the piece's semilegal range, and construct tables to
+	     * translate back and forth between this numbering and the board squares.  We count
+	     * semilegal and not legal squares here because the pair encoding used for identical
+	     * pieces assumes that both pieces occupy the same range of squares.  We also assign
+	     * squares for en passant capturable pawns by using square numbers in the first row
+	     * (i.e, less than 8), since pawns can never be there.
 	     */
 
 	    for (square = 0; square < 64; square ++) {
@@ -4944,7 +4961,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    }
 
-	    /* Now back out any values that we saved because of any earlier overlapping pieces. */
+	    /* Now back out any values that we saved because of any earlier overlapping pieces.  If
+	     * we have a single earlier overlapping piece, for example, we'll never encode with the
+	     * last value because the presence of the other piece would force that value to be
+	     * decremented.
+	     */
 
 	    tb->total_legal_piece_values[piece] = tb->total_legal_piece_positions[piece];
 
@@ -5286,7 +5307,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.758 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.759 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14171,7 +14192,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.758 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.759 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
