@@ -5249,7 +5249,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.756 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.757 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11235,7 +11235,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     }
 
     info("%d possible WHITE futuremoves\n", num_futuremoves[WHITE]);
-    info("%d possible BLACK futuremoves\n", num_futuremoves[BLACK]);
+    if (tb->encode_stm) info("%d possible BLACK futuremoves\n", num_futuremoves[BLACK]);
 
     if (num_futuremoves[WHITE] > sizeof(futurevector_t)*8) {
 	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
@@ -11255,13 +11255,13 @@ void print_futuremoves(void)
     unsigned int i;
 
     info("%d unpruned WHITE futuremoves\n", num_futuremoves[WHITE]);
-    info("%d unpruned BLACK futuremoves\n", num_futuremoves[BLACK]);
+    if (current_tb->encode_stm) info("%d unpruned BLACK futuremoves\n", num_futuremoves[BLACK]);
 
     for (i=0; i < num_futuremoves[WHITE]; i ++) {
 	info("WHITE Futuremove %i: %s\n", i, movestr[WHITE][i]);
     }
     for (i=0; i < num_futuremoves[BLACK]; i ++) {
-	info("BLACK Futuremove %i: %s\n", i, movestr[BLACK][i]);
+	if (current_tb->encode_stm) info("BLACK Futuremove %i: %s\n", i, movestr[BLACK][i]);
     }
 }
 
@@ -11392,6 +11392,12 @@ bool check_pruning(tablebase_t *tb) {
 
 	    for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
+		/* If we're not encoding side-to-move, then all of the positions in the tablebase
+		 * are WHITE positions, so we don't care if the capturing piece is BLACK
+		 */
+
+		if ((! tb->encode_stm) && (tb->piece_color[capturing_piece] == BLACK)) continue;
+
 		if (futurecaptures[capturing_piece][captured_piece] >= 0) {
 
 		    if (! (pruned_futuremoves[tb->piece_color[capturing_piece]]
@@ -11425,6 +11431,8 @@ bool check_pruning(tablebase_t *tb) {
 	int promotion;
 
 	if (tb->piece_type[pawn] != PAWN) continue;
+
+	if ((! tb->encode_stm) && (tb->piece_color[pawn] == BLACK)) continue;
 
 	/* First, we're looking for promotion capture futurebases. */
 
@@ -11567,6 +11575,7 @@ bool check_pruning(tablebase_t *tb) {
 
     if (futurebase_cnt == 0) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if ((! tb->encode_stm) && (tb->piece_color[piece] == BLACK)) continue;
 	    for (sq = 0; sq < 64; sq ++) {
 		if (futuremoves[piece][sq] >= 0) {
 
@@ -14125,7 +14134,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.756 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.757 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
