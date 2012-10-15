@@ -11,7 +11,7 @@
 
 <!ELEMENT index EMPTY>
 <!ATTLIST index
-	type (naive|naive2|simple|standard|compact|no-en-passant|combinadic|combinadic2|combinadic3)	#REQUIRED
+	type (naive|naive2|simple|standard|compact|no-en-passant|combinadic3|combinadic4)	#REQUIRED
 	symmetry (1|2|2-way|4|8|8-way)			#IMPLIED
 	king-positions (all|no-frozen-checks)		#IMPLIED
 	offset CDATA					#IMPLIED
