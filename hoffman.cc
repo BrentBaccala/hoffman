@@ -548,6 +548,7 @@ typedef struct tablebase {
     index_t modulus;
     int positions_with_adjacent_kings_are_illegal;
     int symmetry;
+    uint8_t reflections[64][64];
 
     /* Kings are usually encoded together to take advantage of them never being adjacent.  Given a
      * pair of king positions, king_index[WHITE_KING_POSITION][BLACK_KING_POSITION] returns the
@@ -3076,6 +3077,9 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     int piece, piece2;
     uint8_t permutation[MAX_PIECES];
 
+    static uint8_t reflections[8][64];
+    static bool reflections_initialized = false;
+
     /* The 'combinadic4' index might not encode side-to-move at all.  In this case, if black is to
      * move, then we have to invert the entire board.  We've precomputed how to exchange the pieces;
      * that information is in the color_symmetric_transpose array.  We do this transformation first
@@ -3113,52 +3117,38 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
      * diagonal, then black king is on or below a1-h8 diagonal
      */
 
-    position->reflection = 0;
-
-    if (tb->symmetry >= 2) {
-	if (COL(position->piece_position[tb->white_king]) >= 4) {
-	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		position->piece_position[piece] = horizontal_reflection(position->piece_position[piece]);
+    if (! reflections_initialized) {
+	for (int reflect = 0; reflect < 8; reflect ++) {
+	    for (int square = 0; square < 64; square ++) {
+		reflections[reflect][square] = square;
+		if (reflect & 4)
+		    reflections[reflect][square]
+			= horizontal_reflection(reflections[reflect][square]);
+		if (reflect & 2)
+		    reflections[reflect][square]
+			= vertical_reflection(reflections[reflect][square]);
+		if (reflect & 1)
+		    reflections[reflect][square]
+			= diagonal_reflection(reflections[reflect][square]);
 	    }
-	    if (position->en_passant_square != ILLEGAL_POSITION) {
-		position->en_passant_square = horizontal_reflection(position->en_passant_square);
-	    }
-	    position->reflection |= 4;
 	}
+
+	reflections_initialized = true;
     }
 
-    if (tb->symmetry >= 4) {
-	if (ROW(position->piece_position[tb->white_king]) >= 4) {
-	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		position->piece_position[piece] = vertical_reflection(position->piece_position[piece]);
-	    }
-	    if (position->en_passant_square != ILLEGAL_POSITION) {
-		position->en_passant_square = vertical_reflection(position->en_passant_square);
-	    }
-	    position->reflection |= 2;
-	}
-    }
+    position->reflection = tb->reflections
+	[position->piece_position[tb->white_king]]
+	[position->piece_position[tb->black_king]];
 
-    if (tb->symmetry == 8) {
-	if (ROW(position->piece_position[tb->white_king]) > COL(position->piece_position[tb->white_king])) {
-	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
-	    }
-	    if (position->en_passant_square != ILLEGAL_POSITION) {
-		position->en_passant_square = diagonal_reflection(position->en_passant_square);
-	    }
-	    position->reflection |= 1;
+    if (position->reflection != 0) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    position->piece_position[piece]
+		= reflections[position->reflection][position->piece_position[piece]];
 	}
-#if 1
-	if (ROW(position->piece_position[tb->white_king]) == COL(position->piece_position[tb->white_king])) {
-	    if (ROW(position->piece_position[tb->black_king]) > COL(position->piece_position[tb->black_king])) {
-		for (piece = 0; piece < tb->num_pieces; piece ++) {
-		    position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
-		}
-		position->reflection |= 1;
-	    }
+	if (position->en_passant_square != ILLEGAL_POSITION) {
+	    position->en_passant_square
+		= reflections[position->reflection][position->en_passant_square];
 	}
-#endif
     }
 
     /* Sort any identical pieces so that the lowest square number always comes first. */
@@ -4546,6 +4536,53 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	}
     }
 
+    /* Compute reflections array
+     *
+     * 2-way symmetry: white king always on left side of board
+     *
+     * 4-way symmetry: white king always in lower left quarter of board
+     *
+     * 8-way symmetry: white king always in a1-a4-d4 triangle, and if white king is on a1-d4
+     * diagonal, then black king is on or below a1-h8 diagonal
+     */
+
+
+    for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
+	for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
+
+	    int reflected_white_king_square = white_king_square;
+	    int reflected_black_king_square = black_king_square;
+
+	    if (tb->symmetry >= 2) {
+		if (COL(reflected_white_king_square) >= 4) {
+		    tb->reflections[white_king_square][black_king_square] |= 4;
+		    reflected_white_king_square = horizontal_reflection(reflected_white_king_square);
+		    reflected_black_king_square = horizontal_reflection(reflected_black_king_square);
+		}
+	    }
+
+	    if (tb->symmetry >= 4) {
+		if (ROW(reflected_white_king_square) >= 4) {
+		    tb->reflections[white_king_square][black_king_square] |= 2;
+		    reflected_white_king_square = vertical_reflection(reflected_white_king_square);
+		    reflected_black_king_square = vertical_reflection(reflected_black_king_square);
+		}
+	    }
+
+	    if (tb->symmetry == 8) {
+		if (ROW(reflected_white_king_square) > COL(reflected_white_king_square)) {
+		    tb->reflections[white_king_square][black_king_square] |= 1;
+		}
+		if (ROW(reflected_white_king_square) == COL(reflected_white_king_square)) {
+		    if (ROW(reflected_black_king_square) > COL(reflected_black_king_square)) {
+			tb->reflections[white_king_square][black_king_square] |= 1;
+		    }
+		}
+	    }
+
+	}
+    }
+
     if ((tb->index_type != NO_EN_PASSANT_INDEX) && (tb->index_type != COMPACT_INDEX)) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->legal_squares[piece] != tb->semilegal_squares[piece]) {
@@ -5249,7 +5286,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.757 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.758 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14134,7 +14171,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.757 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.758 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
