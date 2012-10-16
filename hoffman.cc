@@ -5307,7 +5307,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.759 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.760 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8363,6 +8363,12 @@ extern "C++" {
 
 	void prepare_to_retrieve(void) {
 
+	    /* XXX What I'd really like here is to detect when we get to the point where we can
+	     * start retrieving, then alternate between filling the array from the front and from
+	     * the back on alternate passes.  Right now, I just comment out this code and alloc
+	     * a new array each time around.
+	     */
+#if 0
 	    /* If we never had to push anything to disk, just sort and retrieve in-memory.  The
 	     * problem with this code is that we might not be able to free much memory, something
 	     * that we can assure if we write everything out to disk.
@@ -8375,6 +8381,7 @@ extern "C++" {
 		}
 		return;
 	    }
+#endif
 
 	    /* We assume that we're locked, so remaining_space remains constant and indicates
 	     * whether other threads are dumping to disk.
@@ -14192,7 +14199,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.759 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.760 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
