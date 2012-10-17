@@ -370,7 +370,6 @@ typedef struct {
     uint8_t side_to_move;
     uint8_t en_passant_square;
     uint8_t multiplicity;
-    uint8_t reflection;
 } local_position_t;
 
 #define ILLEGAL_POSITION 0xff
@@ -3092,6 +3091,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     int piece, piece2;
     uint8_t permutation[MAX_PIECES];
 
+    int reflection;
     static uint8_t reflections[8][64];
     static bool reflections_initialized = false;
 
@@ -3151,18 +3151,18 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 	reflections_initialized = true;
     }
 
-    position->reflection = tb->reflections
+    reflection = tb->reflections
 	[position->piece_position[tb->white_king]]
 	[position->piece_position[tb->black_king]];
 
-    if (position->reflection != 0) {
+    if (reflection != 0) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    position->piece_position[piece]
-		= reflections[position->reflection][position->piece_position[piece]];
+		= reflections[reflection][position->piece_position[piece]];
 	}
 	if (position->en_passant_square != ILLEGAL_POSITION) {
 	    position->en_passant_square
-		= reflections[position->reflection][position->en_passant_square];
+		= reflections[reflection][position->en_passant_square];
 	}
     }
 
@@ -3517,7 +3517,6 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	position->permuted_piece[piece] = piece;
     }
-    position->reflection = 0;
 
 #if 0
     /* Maybe should do this here, instead of in the various reflection code above. */
@@ -3603,7 +3602,6 @@ int check_1000_positions(tablebase_t *tb)
 
 		position2.PTM_vector = 0;
 		position2.board_vector = position1.board_vector;
-		position2.reflection = position1.reflection;
 
 		if (memcmp(&position1, &position2, sizeof(position1))) {
 		    fatal("Mismatch in check_1000_positions()\n");
@@ -5304,7 +5302,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.761 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.762 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14196,7 +14194,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.761 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.762 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
