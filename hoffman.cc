@@ -546,7 +546,7 @@ typedef struct tablebase {
     index_t max_index;
     index_t max_uninverted_index;
     index_t modulus;
-    int positions_with_adjacent_kings_are_illegal;
+    bool positions_with_adjacent_kings_are_illegal;
     int symmetry;
     uint8_t reflections[64][64];
 
@@ -3423,10 +3423,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	}
     }
 
-    /* Some of the index types (like 'compact' and 'no-en-passant') never return adjacent kings
-     * because they detected the positions_with_adjacent_kings_are_illegal flag during
-     * initialization.  The other index types require this check.
-     */
+    /* Suicide analysis allows adjacent kings.  Otherwise, we require this check. */
 
     if (tb->positions_with_adjacent_kings_are_illegal
 	&& ! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
@@ -3835,11 +3832,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     switch (tb->variant) {
 
     case VARIANT_NORMAL:
-	tb->positions_with_adjacent_kings_are_illegal = 1;
+	tb->positions_with_adjacent_kings_are_illegal = true;
 	break;
 
     case VARIANT_SUICIDE:
-	tb->positions_with_adjacent_kings_are_illegal = 0;
+	tb->positions_with_adjacent_kings_are_illegal = false;
 	promotion_possibilities = 5;	/* A global var, but all futurebases have to use the same variant */
 	break;
 
@@ -5307,7 +5304,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.760 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.761 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14199,7 +14196,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.760 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.761 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
