@@ -1978,9 +1978,6 @@ bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_positio
 {
     int piece;
 
-    memset(p, 0, sizeof(local_position_t));
-    p->en_passant_square = ILLEGAL_POSITION;
-
     p->side_to_move = index & 1;
     index >>= 1;
 
@@ -2150,9 +2147,6 @@ bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_positi
     int piece;
     uint8_t vals[MAX_PIECES];
 
-    memset(p, 0, sizeof(local_position_t));
-    p->en_passant_square = ILLEGAL_POSITION;
-
     p->side_to_move = index & 1;
     index >>= 1;
 
@@ -2296,9 +2290,6 @@ index_t local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
 bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
 {
     int piece;
-
-    memset(p, 0, sizeof(local_position_t));
-    p->en_passant_square = ILLEGAL_POSITION;
 
     p->side_to_move = index % 2;
     index /= 2;
@@ -2510,9 +2501,6 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
     int piece;
     uint8_t vals[MAX_PIECES];
     int king_index = 0;
-
-    memset(p, 0, sizeof(local_position_t));
-    p->en_passant_square = ILLEGAL_POSITION;
 
     p->side_to_move = index % 2;
     index /= 2;
@@ -2816,9 +2804,6 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
     }
     bzero(overlapping_pieces, sizeof(overlapping_pieces));
 
-    memset(p, 0, sizeof(local_position_t));
-    p->en_passant_square = ILLEGAL_POSITION;
-
     if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
 
     /* Binary search for the largest value in piece_index[] that is less than or equal to the
@@ -3086,14 +3071,44 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
  * We also recompute the board vector, because the reflections can change it around.
  */
 
+uint8_t apply_reflection[8][64];
+uint8_t reverse_reflection[8][64];
+
+void init_apply_reflection(void)
+{
+    for (int reflect = 0; reflect < 8; reflect ++) {
+	for (int square = 0; square < 64; square ++) {
+	    apply_reflection[reflect][square] = square;
+	    if (reflect & 4)
+		apply_reflection[reflect][square]
+		    = horizontal_reflection(apply_reflection[reflect][square]);
+	    if (reflect & 2)
+		apply_reflection[reflect][square]
+		    = vertical_reflection(apply_reflection[reflect][square]);
+	    if (reflect & 1)
+		apply_reflection[reflect][square]
+		    = diagonal_reflection(apply_reflection[reflect][square]);
+
+	    reverse_reflection[reflect][square] = square;
+	    if (reflect & 1)
+		reverse_reflection[reflect][square]
+		    = diagonal_reflection(reverse_reflection[reflect][square]);
+	    if (reflect & 2)
+		reverse_reflection[reflect][square]
+		    = vertical_reflection(reverse_reflection[reflect][square]);
+	    if (reflect & 4)
+		reverse_reflection[reflect][square]
+		    = horizontal_reflection(reverse_reflection[reflect][square]);
+	}
+    }
+}
+
+
 void normalize_position(tablebase_t *tb, local_position_t *position)
 {
     int piece, piece2;
     uint8_t permutation[MAX_PIECES];
-
     int reflection;
-    static uint8_t reflections[8][64];
-    static bool reflections_initialized = false;
 
     /* The 'combinadic4' index might not encode side-to-move at all.  In this case, if black is to
      * move, then we have to invert the entire board.  We've precomputed how to exchange the pieces;
@@ -3132,25 +3147,6 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
      * diagonal, then black king is on or below a1-h8 diagonal
      */
 
-    if (! reflections_initialized) {
-	for (int reflect = 0; reflect < 8; reflect ++) {
-	    for (int square = 0; square < 64; square ++) {
-		reflections[reflect][square] = square;
-		if (reflect & 4)
-		    reflections[reflect][square]
-			= horizontal_reflection(reflections[reflect][square]);
-		if (reflect & 2)
-		    reflections[reflect][square]
-			= vertical_reflection(reflections[reflect][square]);
-		if (reflect & 1)
-		    reflections[reflect][square]
-			= diagonal_reflection(reflections[reflect][square]);
-	    }
-	}
-
-	reflections_initialized = true;
-    }
-
     reflection = tb->reflections
 	[position->piece_position[tb->white_king]]
 	[position->piece_position[tb->black_king]];
@@ -3158,11 +3154,11 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     if (reflection != 0) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    position->piece_position[piece]
-		= reflections[reflection][position->piece_position[piece]];
+		= apply_reflection[reflection][position->piece_position[piece]];
 	}
 	if (position->en_passant_square != ILLEGAL_POSITION) {
 	    position->en_passant_square
-		= reflections[reflection][position->en_passant_square];
+		= apply_reflection[reflection][position->en_passant_square];
 	}
     }
 
@@ -3380,6 +3376,9 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     if (index < tb->index_offset) return false;
     index -= tb->index_offset;
 
+    bzero(position, sizeof(local_position_t));
+    position->en_passant_square = ILLEGAL_POSITION;
+
     switch (tb->index_type) {
     case NAIVE_INDEX:
 	ret = naive_index_to_local_position(tb, index, position);
@@ -3444,48 +3443,19 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	position->multiplicity = 1;
     }
 
-    if (reflection & REFLECTION_DIAGONAL) {
-	if (position->multiplicity == 1) return false;
+    /* Apply reflections and compute bit vectors */
 
-	/* diagonal reflection */
-	position->board_vector = 0;
-	position->PTM_vector = 0;
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    position->piece_position[piece] = diagonal_reflection(position->piece_position[piece]);
-	    position->board_vector |= BITVECTOR(position->piece_position[piece]);
-	    if (tb->piece_color[piece] == position->side_to_move)
-		position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
+    if ((reflection & REFLECTION_DIAGONAL) && (position->multiplicity == 1)) return false;
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	position->piece_position[piece] = reverse_reflection[reflection][position->piece_position[piece]];
+	position->board_vector |= BITVECTOR(position->piece_position[piece]);
+	if (tb->piece_color[piece] == position->side_to_move) {
+	    position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
 	}
-	if (position->en_passant_square != ILLEGAL_POSITION)
-	    position->en_passant_square = diagonal_reflection(position->en_passant_square);
     }
-
-    if (reflection & REFLECTION_VERTICAL) {
-	/* vertical reflection */
-	position->board_vector = 0;
-	position->PTM_vector = 0;
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    position->piece_position[piece] = vertical_reflection(position->piece_position[piece]);
-	    position->board_vector |= BITVECTOR(position->piece_position[piece]);
-	    if (tb->piece_color[piece] == position->side_to_move)
-		position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
-	}
-	if (position->en_passant_square != ILLEGAL_POSITION)
-	    position->en_passant_square = vertical_reflection(position->en_passant_square);
-    }
-
-    if (reflection & REFLECTION_HORIZONTAL) {
-	/* horizontal reflection */
-	position->board_vector = 0;
-	position->PTM_vector = 0;
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    position->piece_position[piece] = horizontal_reflection(position->piece_position[piece]);
-	    position->board_vector |= BITVECTOR(position->piece_position[piece]);
-	    if (tb->piece_color[piece] == position->side_to_move)
-		position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
-	}
-	if (position->en_passant_square != ILLEGAL_POSITION)
-	    position->en_passant_square = horizontal_reflection(position->en_passant_square);
+    if (position->en_passant_square != ILLEGAL_POSITION) {
+	position->en_passant_square = reverse_reflection[reflection][position->en_passant_square];
     }
 
     /* Sort any identical pieces so that the lowest square number always comes first.
@@ -3517,16 +3487,6 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	position->permuted_piece[piece] = piece;
     }
-
-#if 0
-    /* Maybe should do this here, instead of in the various reflection code above. */
-
-    position->board_vector = 0;
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	position->board_vector |= BITVECTOR(position->piece_position[piece]);
-    }
-#endif
 
     return true;
 }
@@ -5302,7 +5262,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.762 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.763 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14194,7 +14154,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.762 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.763 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14208,8 +14168,10 @@ int main(int argc, char *argv[])
     }
     options_string[sizeof(options_string) - 1] = '\0';
 
+    /* Initialize various global data structures */
     init_movements();
     verify_movements();
+    init_apply_reflection();
 
 #ifdef DEBUG_MOVE
 #define DEBUG_FLAG "d:"
