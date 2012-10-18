@@ -3079,24 +3079,24 @@ void init_apply_reflection(void)
     for (int reflect = 0; reflect < 8; reflect ++) {
 	for (int square = 0; square < 64; square ++) {
 	    apply_reflection[reflect][square] = square;
-	    if (reflect & 4)
+	    if (reflect & REFLECTION_HORIZONTAL)
 		apply_reflection[reflect][square]
 		    = horizontal_reflection(apply_reflection[reflect][square]);
-	    if (reflect & 2)
+	    if (reflect & REFLECTION_VERTICAL)
 		apply_reflection[reflect][square]
 		    = vertical_reflection(apply_reflection[reflect][square]);
-	    if (reflect & 1)
+	    if (reflect & REFLECTION_DIAGONAL)
 		apply_reflection[reflect][square]
 		    = diagonal_reflection(apply_reflection[reflect][square]);
 
 	    reverse_reflection[reflect][square] = square;
-	    if (reflect & 1)
+	    if (reflect & REFLECTION_DIAGONAL)
 		reverse_reflection[reflect][square]
 		    = diagonal_reflection(reverse_reflection[reflect][square]);
-	    if (reflect & 2)
+	    if (reflect & REFLECTION_VERTICAL)
 		reverse_reflection[reflect][square]
 		    = vertical_reflection(reverse_reflection[reflect][square]);
-	    if (reflect & 4)
+	    if (reflect & REFLECTION_HORIZONTAL)
 		reverse_reflection[reflect][square]
 		    = horizontal_reflection(reverse_reflection[reflect][square]);
 	}
@@ -4525,7 +4525,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if (tb->symmetry >= 2) {
 		if (COL(reflected_white_king_square) >= 4) {
-		    tb->reflections[white_king_square][black_king_square] |= 4;
+		    tb->reflections[white_king_square][black_king_square] |= REFLECTION_HORIZONTAL;
 		    reflected_white_king_square = horizontal_reflection(reflected_white_king_square);
 		    reflected_black_king_square = horizontal_reflection(reflected_black_king_square);
 		}
@@ -4533,7 +4533,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if (tb->symmetry >= 4) {
 		if (ROW(reflected_white_king_square) >= 4) {
-		    tb->reflections[white_king_square][black_king_square] |= 2;
+		    tb->reflections[white_king_square][black_king_square] |= REFLECTION_VERTICAL;
 		    reflected_white_king_square = vertical_reflection(reflected_white_king_square);
 		    reflected_black_king_square = vertical_reflection(reflected_black_king_square);
 		}
@@ -4541,11 +4541,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if (tb->symmetry == 8) {
 		if (ROW(reflected_white_king_square) > COL(reflected_white_king_square)) {
-		    tb->reflections[white_king_square][black_king_square] |= 1;
+		    tb->reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
 		}
 		if (ROW(reflected_white_king_square) == COL(reflected_white_king_square)) {
 		    if (ROW(reflected_black_king_square) > COL(reflected_black_king_square)) {
-			tb->reflections[white_king_square][black_king_square] |= 1;
+			tb->reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
 		    }
 		}
 	    }
@@ -5262,7 +5262,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.763 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.764 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12794,7 +12794,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	     * Diagonal symmetry is more difficult to handle because the pieces along the diagonal
 	     * don't move when you reflect the board.  So we need to use position.multiplicity to
 	     * distinguish between the two kings being on the a1/h8 diagonal (multiplicity 1), and
-	     * one of them being off the diagnoal (multiplicity 2).
+	     * one of them being off the diagonal (multiplicity 2).
 	     */
 
 	    entriesTable->initialize_entry_with_movecnt(index, movecnt * position.multiplicity);
@@ -13559,7 +13559,7 @@ void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pn
 	if (dtm == 0) {
 	    printf("Draw\n");
 	} else if (dtm == 1) {
-	    printf("Illegal position (%s mated)\n", ptm);
+	    printf("Illegal position (%s mated)\n", pntm);
 	} else if (dtm > 1) {
 	    printf("%s wins in %d\n", ptm, dtm-1);
 	} else if (dtm < 0) {
@@ -14154,7 +14154,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.763 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.764 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
