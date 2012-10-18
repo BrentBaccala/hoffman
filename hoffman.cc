@@ -3079,34 +3079,22 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
  * XXX not sure if we need this distinction
  */
 
-uint8_t forward_reflection[8][64];
-uint8_t reverse_reflection[8][64];
+uint8_t apply_reflection[8][64];
 
-void init_reflections(void)
+void init_apply_reflection(void)
 {
     for (int reflect = 0; reflect < 8; reflect ++) {
 	for (int square = 0; square < 64; square ++) {
-	    forward_reflection[reflect][square] = square;
+	    apply_reflection[reflect][square] = square;
 	    if (reflect & REFLECTION_HORIZONTAL)
-		forward_reflection[reflect][square]
-		    = horizontal_reflection(forward_reflection[reflect][square]);
+		apply_reflection[reflect][square]
+		    = horizontal_reflection(apply_reflection[reflect][square]);
 	    if (reflect & REFLECTION_VERTICAL)
-		forward_reflection[reflect][square]
-		    = vertical_reflection(forward_reflection[reflect][square]);
+		apply_reflection[reflect][square]
+		    = vertical_reflection(apply_reflection[reflect][square]);
 	    if (reflect & REFLECTION_DIAGONAL)
-		forward_reflection[reflect][square]
-		    = diagonal_reflection(forward_reflection[reflect][square]);
-
-	    reverse_reflection[reflect][square] = square;
-	    if (reflect & REFLECTION_DIAGONAL)
-		reverse_reflection[reflect][square]
-		    = diagonal_reflection(reverse_reflection[reflect][square]);
-	    if (reflect & REFLECTION_VERTICAL)
-		reverse_reflection[reflect][square]
-		    = vertical_reflection(reverse_reflection[reflect][square]);
-	    if (reflect & REFLECTION_HORIZONTAL)
-		reverse_reflection[reflect][square]
-		    = horizontal_reflection(reverse_reflection[reflect][square]);
+		apply_reflection[reflect][square]
+		    = diagonal_reflection(apply_reflection[reflect][square]);
 	}
     }
 }
@@ -3162,11 +3150,11 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     if (reflection != 0) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    position->piece_position[piece]
-		= forward_reflection[reflection][position->piece_position[piece]];
+		= apply_reflection[reflection][position->piece_position[piece]];
 	}
 	if (position->en_passant_square != ILLEGAL_POSITION) {
 	    position->en_passant_square
-		= forward_reflection[reflection][position->en_passant_square];
+		= apply_reflection[reflection][position->en_passant_square];
 	}
     }
 
@@ -3467,14 +3455,14 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     position->PTM_vector = 0;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	position->piece_position[piece] = reverse_reflection[reflection][position->piece_position[piece]];
+	position->piece_position[piece] = apply_reflection[reflection][position->piece_position[piece]];
 	position->board_vector |= BITVECTOR(position->piece_position[piece]);
 	if (tb->piece_color[piece] == position->side_to_move) {
 	    position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
 	}
     }
     if (position->en_passant_square != ILLEGAL_POSITION) {
-	position->en_passant_square = reverse_reflection[reflection][position->en_passant_square];
+	position->en_passant_square = apply_reflection[reflection][position->en_passant_square];
     }
 
     /* Sort any identical pieces so that the lowest square number always comes first.
@@ -5279,7 +5267,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.766 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.767 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14178,7 +14166,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.766 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.767 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14195,7 +14183,7 @@ int main(int argc, char *argv[])
     /* Initialize various global data structures */
     init_movements();
     verify_movements();
-    init_reflections();
+    init_apply_reflection();
 
 #ifdef DEBUG_MOVE
 #define DEBUG_FLAG "d:"
