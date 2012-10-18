@@ -3071,23 +3071,31 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
  * We also recompute the board vector, because the reflections can change it around.
  */
 
-uint8_t apply_reflection[8][64];
+/* Forward reflections correspond to the ones returned by a lookup in the tablebase's reflections
+ * array, are used when converting a position to an index, and are applied in the order horizontal,
+ * vertical, diagonal.  Reverse reflections are used when converted an index to a position,
+ * and are applied in the order diagonal, vertical, horizontal.
+ *
+ * XXX not sure if we need this distinction
+ */
+
+uint8_t forward_reflection[8][64];
 uint8_t reverse_reflection[8][64];
 
-void init_apply_reflection(void)
+void init_reflections(void)
 {
     for (int reflect = 0; reflect < 8; reflect ++) {
 	for (int square = 0; square < 64; square ++) {
-	    apply_reflection[reflect][square] = square;
+	    forward_reflection[reflect][square] = square;
 	    if (reflect & REFLECTION_HORIZONTAL)
-		apply_reflection[reflect][square]
-		    = horizontal_reflection(apply_reflection[reflect][square]);
+		forward_reflection[reflect][square]
+		    = horizontal_reflection(forward_reflection[reflect][square]);
 	    if (reflect & REFLECTION_VERTICAL)
-		apply_reflection[reflect][square]
-		    = vertical_reflection(apply_reflection[reflect][square]);
+		forward_reflection[reflect][square]
+		    = vertical_reflection(forward_reflection[reflect][square]);
 	    if (reflect & REFLECTION_DIAGONAL)
-		apply_reflection[reflect][square]
-		    = diagonal_reflection(apply_reflection[reflect][square]);
+		forward_reflection[reflect][square]
+		    = diagonal_reflection(forward_reflection[reflect][square]);
 
 	    reverse_reflection[reflect][square] = square;
 	    if (reflect & REFLECTION_DIAGONAL)
@@ -3154,11 +3162,11 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     if (reflection != 0) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    position->piece_position[piece]
-		= apply_reflection[reflection][position->piece_position[piece]];
+		= forward_reflection[reflection][position->piece_position[piece]];
 	}
 	if (position->en_passant_square != ILLEGAL_POSITION) {
 	    position->en_passant_square
-		= apply_reflection[reflection][position->en_passant_square];
+		= forward_reflection[reflection][position->en_passant_square];
 	}
     }
 
@@ -3424,6 +3432,8 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 
     /* Suicide analysis allows adjacent kings.  Otherwise, we require this check. */
 
+    /* XXX these two checks, and the one before it, might not be needed for a combinadic index */
+
     if (tb->positions_with_adjacent_kings_are_illegal
 	&& ! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
 	return false;
@@ -3443,9 +3453,14 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	position->multiplicity = 1;
     }
 
-    /* Apply reflections and compute bit vectors */
+    /* If a position in an 8-way symmetric tablebase has multiplicity 1, then we don't want to
+     * diagonally reflect it, because there's another index that corresponds to the reflected
+     * position.  Only 8-way tablebases would request diagonal reflection anyway.
+     */
 
     if ((reflection & REFLECTION_DIAGONAL) && (position->multiplicity == 1)) return false;
+
+    /* Apply reflections and compute bit vectors */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	position->piece_position[piece] = reverse_reflection[reflection][position->piece_position[piece]];
@@ -4516,7 +4531,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      * diagonal, then black king is on or below a1-h8 diagonal
      */
 
-
     for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
 	for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
 
@@ -4549,7 +4563,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		    }
 		}
 	    }
-
 	}
     }
 
@@ -5262,7 +5275,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.764 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.765 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11808,11 +11821,18 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
     /* This can fail if the reflection isn't valid for this index */
 
-    if (! index_to_local_position(current_tb, index, reflection, &position)) return;
+    if (! index_to_local_position(current_tb, index, reflection, &position)) {
+#ifdef DEBUG_MOVE
+	if (index == DEBUG_MOVE)
+	    info("back_propagate_index_within_table; index=%" PRIindex "; reflection %d; INVALID\n",
+		 index, reflection);
+#endif
+	return;
+    }
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	info("back_propagate_index_within_table; index=%" PRIindex "\n", index);
+	info("back_propagate_index_within_table; index=%" PRIindex "; reflection %d\n", index, reflection);
 #endif
 
     flip_side_to_move_local(&position);
@@ -14154,7 +14174,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.764 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.765 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14171,7 +14191,7 @@ int main(int argc, char *argv[])
     /* Initialize various global data structures */
     init_movements();
     verify_movements();
-    init_apply_reflection();
+    init_reflections();
 
 #ifdef DEBUG_MOVE
 #define DEBUG_FLAG "d:"
