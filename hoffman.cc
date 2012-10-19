@@ -398,6 +398,7 @@ typedef struct {
 #define REFLECTION_HORIZONTAL 1
 #define REFLECTION_VERTICAL 2
 #define REFLECTION_DIAGONAL 4
+#define REFLECTION_COLOR 8
 
 /* tablebase - the data structure used to hold tablebases
  *
@@ -3468,14 +3469,28 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     position->PTM_vector = 0;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	position->piece_position[piece] = reverse_reflection[reflection][position->piece_position[piece]];
+	position->piece_position[piece] = reverse_reflection[reflection & 7][position->piece_position[piece]];
 	position->board_vector |= BITVECTOR(position->piece_position[piece]);
 	if (tb->piece_color[piece] == position->side_to_move) {
 	    position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
 	}
     }
     if (position->en_passant_square != ILLEGAL_POSITION) {
-	position->en_passant_square = reverse_reflection[reflection][position->en_passant_square];
+	position->en_passant_square = reverse_reflection[reflection & 7][position->en_passant_square];
+    }
+
+    if (reflection & REFLECTION_COLOR) {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->color_symmetric_transpose[piece] > piece) {
+		position->piece_position[piece] = 63 - position->piece_position[piece];
+		transpose_array(position->piece_position, piece, tb->color_symmetric_transpose[piece]);
+		position->piece_position[piece] = 63 - position->piece_position[piece];
+	    }
+	}
+	if (position->en_passant_square != ILLEGAL_POSITION) {
+	    position->en_passant_square = 63 - position->en_passant_square;
+	}
+	position->side_to_move = BLACK;
     }
 
     /* Sort any identical pieces so that the lowest square number always comes first.
@@ -5284,7 +5299,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.769 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.770 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9513,6 +9528,13 @@ int compute_reflections(tablebase_t *tb, tablebase_t *futurebase, int *reflectio
 	reflections[7] = reflections[3] | REFLECTION_HORIZONTAL;
     }
 
+    if (! futurebase->encode_stm) {
+	for (int r = 0; r < max_reflection; r ++) {
+	    reflections[max_reflection + r] = reflections[r] | REFLECTION_COLOR;
+	}
+	max_reflection *= 2;
+    }
+
     return max_reflection;
 }
 
@@ -9520,7 +9542,7 @@ int compute_reflections(tablebase_t *tb, tablebase_t *futurebase, int *reflectio
 /* Some variables common to many or all of the futurebase backprop routines */
 
 int max_reflection;
-int reflections[8];
+int reflections[16];
 
 int promotion_color;
 int first_back_rank_square;
@@ -14184,7 +14206,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.769 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.770 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
