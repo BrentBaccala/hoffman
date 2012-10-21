@@ -5299,7 +5299,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.770 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.771 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8923,8 +8923,7 @@ void proptable_pass_thread(int target_dtm)
 
     while (1) {
 
-	futurevector_t futurevector = 0;
-	futurevector_t possible_futuremoves = 0;
+	futurevector_t futurevector;
 
 	current_pt_entries.clear();
 
@@ -8952,7 +8951,7 @@ void proptable_pass_thread(int target_dtm)
 	}
 
 	if (target_dtm == 0) {
-	    possible_futuremoves = initialize_tablebase_entry(current_tb, index);
+	    futurevector = initialize_tablebase_entry(current_tb, index);
 	}
 
 	for (auto pt_entry = current_pt_entries.begin(); pt_entry != current_pt_entries.end(); pt_entry ++) {
@@ -8965,36 +8964,30 @@ void proptable_pass_thread(int target_dtm)
 
 	    if (target_dtm != 0) {
 
+		/* Intra-table case: always update */
+
 		finalize_update(pt_entry->index, target_dtm, 1, 0);
 
-	    } else if (FUTUREVECTOR(pt_entry->futuremove) & possible_futuremoves) {
+	    } else if (FUTUREVECTOR(pt_entry->futuremove) & futurevector) {
 
-		finalize_update(pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
-
-		/* XXX This code is commented out because double consideration of a futuremove can
-		 * happen for symmetric tablebases.  In this case, two different positions in the
-		 * futurebase (or maybe just two different reflections of the same position) can
-		 * indicate a result for this entry.  Of course, in this case the result should be
-		 * the same.
+		/* Futurebase case: only update if move is possible and hasn't been handled yet
+		 *
+		 * Double consideration of a futuremove can happen for symmetric tablebases.  In
+		 * this case, two different positions in the futurebase (or maybe just two different
+		 * reflections of the same position) can indicate a result for this entry.  Of
+		 * course, in this case the result should be the same.
 		 *
 		 * On the other hand, if we had two different tablebases indicating different
 		 * results for the same futuremove, that should trigger a warning.  We could add
-		 * that capability to the proptable code without too much trouble, but if we're just
-		 * keeping a bit vector in memory to make sure all the futuremoves have been handled
-		 * in some way, we don't have enough information to check all of that.  Right now,
-		 * we quietly ignore it.
+		 * that capability to the proptable code without too much trouble, but in the
+		 * non-proptable case, we're just keeping a bit vector in memory to make sure all
+		 * the futuremoves have been handled in some way and we don't have enough
+		 * information to check all of that.  Right now, we quietly ignore it.
 		 */
 
-#if 0
-		if (FUTUREVECTOR(pt_entry->futuremove) & futurevector) {
-		    global_position_t global;
-		    index_to_global_position(current_tb, pt_entry->index, &global);
-		    fatal("Futuremove %d multiply handled: % " PRIindex " %s\n",
-			  pt_entry->futuremove, pt_entry->index, global_position_to_FEN(&global));
-		}
-#endif
+		finalize_update(pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
 
-		futurevector |= FUTUREVECTOR(pt_entry->futuremove);
+		futurevector &= ~FUTUREVECTOR(pt_entry->futuremove);
 
 	    }
 
@@ -9014,20 +9007,10 @@ void proptable_pass_thread(int target_dtm)
 
 	    /* Don't track futuremoves for illegal (DTM 1) positions */
 	    if (entriesTable->get_DTM(index) != 1) {
-
-		if ((futurevector & possible_futuremoves) != futurevector) {
-		    /* Commented out because if we're not using DTM this code will run for illegal positions */
-#if 0
-		    global_position_t global;
-		    index_to_global_position(current_tb, index, &global);
-		    fprintf(stderr, "Futuremove discrepancy: %" PRIindex " %s\n", index, global_position_to_FEN(&global));
-#endif
-		} else {
-		    finalize_futuremove(current_tb, index, possible_futuremoves ^ futurevector);
-		}
-
+		finalize_futuremove(current_tb, index, futurevector);
 	    }
 
+	    /* XXX why not back_propagate_index(index, -1) now and save a pass? */
 	}
 
     }
@@ -14206,7 +14189,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.770 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.771 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
