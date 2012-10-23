@@ -14,6 +14,10 @@ DTM field to range from -10 to 5 and still fit into 4 bits.
 
 - fast movecnt generation with perfect hashing
 
+This might be more difficult because of the presence of futuremoves.
+Counting moves isn't enough; we have to identify futuremoves as well.
+
+
 - a testsuite
 
 Initially, I used the Nalimov tablebases to check Hoffman tablebases
@@ -72,15 +76,12 @@ disks/controllers can be exploited.
 
 - use an FPGA
 
-Use of a Field-Programmable Gate Array (FPGA) is perhaps the single
-best performance enhancement possible with Hoffman.  Using one of the
-knjn.com boards, for example - the PCI-attached Dragon or the
-USB-attached Xylo - we could offload the compute-intensive parts to a
-pipelined coprocessor.  Initialization (where we just need to spit out
-a stream of bytes) and backpropagation (where we need to back an index
-out) could both be pipelined effectively.  Moving up to something like
-the Digilent Virtex-5 development board could make six piece
-tablebases practical.
+Using one of the knjn.com boards, for example - the PCI-attached
+Dragon or the USB-attached Xylo - we could offload the
+compute-intensive parts to a pipelined coprocessor.  Initialization
+(where we just need to spit out a stream of bytes) and backpropagation
+(where we need to back an index out) could both be pipelined
+effectively.
 
 
 - improve compressibility of tablebases
@@ -155,6 +156,18 @@ verification, and keep a backup copy of the checkpoint file in case we
 crash during the checkpoint.  This seems like a lot of extra trouble,
 though.  Maybe we should restart without proptables, by making an
 extra pass to recreate the initial set of proptables.
+
+
+- Hadoop port
+
+Apache Hadoop is currently (2012) the state of the art for cluster
+computing.  To exploit Hadoop-type parallelism, we should allow for
+partial entries files that contain only a sub-range of indices.  A
+single program invocation applies a set of proptables to a partial
+entries file and produces an output partial entries file, along with
+output proptables segmented into sub-ranges.  Then the output
+proptables get shuffled around between the compute nodes before the
+next pass.
 
 
 - fix libcurl handling of FTP put transactions and use it exclusively
