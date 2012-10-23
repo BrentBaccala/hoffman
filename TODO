@@ -23,7 +23,8 @@ check a tablebase for integrity - Are all of its XML statistics
 correct?  Are all of the DTM values in its entries internally
 consistent?  Are they consistent with its futurebases?  This new
 feature should be used within a dejagnu framework to systematically
-verify program operation within as few runs as feasible.
+verify program operation within as few runs as feasible.  Use a code
+coverage tool.
 
 
 - verify futurebase format compatibility
@@ -110,38 +111,31 @@ information modulo some settable number.
 
 - ability to reformat tablebases
 
-Only once we're all done making a tablebase do we know stuff like the
-max DTM.  I've got several that I build with 16-bit dtm that I now
-know only need 8-bit.  It would be nice to reformat them.  It'd also
-be nice to play around with different piece orderings (see item above)
-to see which one gives the best compression without having to
-re-generate the entire tablebase.  Note that attempting to reformat a
-tablebase with finite field inversion into one without (it would be
-nice) presents the same problem that inversion was designed to avoid
-in the first place.
+It'd be nice to play around with different piece orderings (see item
+above) to see which one gives the best compression without having to
+re-generate the entire tablebase.
 
 
 - improved checkpointing ability
 
-Right now, we have a limited checkpointing ability if we're running
-with proptables (the most time consuming case anyway) - the program
-will write a checkpoint.xml file at the start of each pass which can
-be used to restart the last pass in the event of something like a
-system crash.  This could be really be cleaned up and improved upon.
+Right now, we have no checkpointing ability.  We used to have a
+limited checkpointing ability with proptables (the most time consuming
+case anyway) - the program would write a checkpoint.xml file at the
+start of each pass which can be used to restart the last pass in the
+event of something like a system crash.  This could be really be
+cleaned up and improved upon.  I'm thinking about writing an XML
+header on the entries file to enable it to be used to restart the
+program.
+
 With separate input and output entries files, I don't see any reason
 it can't restart right where it left off, though we do have to be
 careful to back up and reconstruct the last proptable that was in
 memory at the time of the crash.  Maybe write the checkpoint file with
 each proptable write, record the size of the proptables for
 verification, and keep a backup copy of the checkpoint file in case we
-crash during the checkpoint.  It will have to change significantly,
-however, if we switch to using a single entries file in read/write
-mode.  I've thought of putting an extra bit into the entries format
-that starts off as 0, gets flipped to 1 as we make one pass through
-the file, then gets flipped back to 0 on the next pass.  We would also
-like to deal with the case where we get well into a calculation and
-the dtm field overflows - just checkpoint, terminate, and use our
-(unimplemented) reformating ability.
+crash during the checkpoint.  This seems like a lot of extra trouble,
+though.  Maybe we should restart without proptables, by making an
+extra pass to recreate the initial set of proptables.
 
 
 - fix libcurl handling of FTP put transactions and use it exclusively
@@ -207,6 +201,16 @@ tablebases, and fully 1TB of storage is required for a full set of
 6-piece Nalimovs.
 
 
+- more sophisticated futurebase handling
+
+A current research target is to generate a full set of tablebases to
+handle all king-and-pawn endgames, at least up to a queening solution.
+We'd like to compute "white to queen and draw", which means that we
+only treat a promotion move as a win if we've already got a forced
+draw from that position.  So, we need to compute a drawing analysis,
+then augment that into a queening analysis.
+
+
 - restrict range of indices we look at during a backprop
 
 If we're backproping, say, from kqk into kpk, we need only consider
@@ -245,7 +249,8 @@ everything else.  Note that in this example, we can already achieve
 almost the same result by freezing the queen on the queening square
 and conceding any move by the queen as a win to black.  We'd probably
 run for several passes, though, checking lines where white can check
-black around for a few moves before taking the queen.
+black around for a few moves before taking the queen.  Could also be
+used to create faster test cases.
 
 
 - some kind of GUI
@@ -292,11 +297,7 @@ can't either capture it immediately or queen right after us.
 
 - improve probe mode's move parser
 
-Check illegal moves more aggressively; have a 'back' command; maybe a
-'board' command to print a diagram of the chess board.
-
-
-- warn of incompatibilities between tb and entries formats
+Check illegal moves more aggressively; have a 'back' command.
 
 
 - random access to tablebase files
@@ -312,6 +313,4 @@ literature search seems to be in order.
 
 - revisit all the XXXs
 
-  - check for movecnt overflow when merging proptable entries
-  - investigate proptable merge code in more detail
-  - check stalemate handling in general
+- check stalemate handling in general
