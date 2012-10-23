@@ -1,9 +1,6 @@
 
 - more clever encoding
 
-Black/white symmetric tablebases like kqkq don't require a side to
-move flag at all, and are currently twice as big as needed.
-
 En passant is what makes lasker1901 so ridiculously big with
 combinadic3 encoding.
 
