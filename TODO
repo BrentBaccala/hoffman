@@ -83,7 +83,7 @@ the Digilent Virtex-5 development board could make six piece
 tablebases practical.
 
 
-- improve compressibility
+- improve compressibility of tablebases
 
 Hoffman tablebases are significantly larger than Nalimovs.  Probably
 the biggest help would be to clump like positions together.  Right
@@ -107,6 +107,25 @@ their positions in the tablebase file would be filled with a common
 idea by splitting tablebases into two separate files depending on the
 side-to-move.  This idea could be expanded by only storing DTM
 information modulo some settable number.
+
+
+- improve compressibility of entries/proptable files
+
+Towards the end of a generation run, the program's time is dominated
+by compressing the entries file.  By that point, we have a pretty good
+idea what the entries file looks like, because we're only making a few
+changes to it on each pass.  We could probably improve both speed and
+compressibility by keeping a count of total entries of each type and
+using a statistical encoding scheme based on what the counts were at
+the start of each pass (they're not changing much).  Maybe start using
+zlib for initial compression, then switch to a statistical scheme at
+some point.
+
+We could probably improve proptable compressibility by storing offsets
+instead of individual proptable entries (remember, it's sorted).
+
+Maybe play around with compressibility by adding XML controls to set
+zlib compression/time tradeoff.
 
 
 - ability to reformat tablebases
