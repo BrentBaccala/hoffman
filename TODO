@@ -343,6 +343,15 @@ need to start decompressing.  Other people have looked at this; a
 literature search seems to be in order.
 
 
+- eliminate extra proptable passes
+
+We don't generate any output proptables when initializing the entries
+table, then make our first intratable pass without any input
+proptables.  Also, the final tablebase generation doesn't modify the
+entries table at all, so there's no need to re-write it to disk, with
+the corresponding slow encryption.
+
+
 - revisit all the XXXs
 
 - check stalemate handling in general
