@@ -5299,7 +5299,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.771 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.772 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5489,20 +5489,16 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 {
     int piece;
     int future_piece;
-    int piece_vector;
+    int local_piece_vector = 0;
+    int future_piece_vector = 0;
 
     futurebase->extra_piece = -1;
     futurebase->missing_pawn = -1;
     futurebase->missing_non_pawn = -1;
 
-    /* The futurebase can have different pieces than the current tablebase.  There can be a single
-     * extra piece, as well as a missing pawn and/or a missing non-pawn.  Find them.
-     */
-
-    /* piece_vector - set a bit for every piece in current tablebase */
-    piece_vector = (1 << tb->num_pieces) - 1;
-
     for (future_piece = 0; future_piece < futurebase->num_pieces; future_piece ++) {
+
+	bool found_matching_piece = false;
 
 	futurebase->matching_local_piece[future_piece] = -1;
 	for (int square = 0; square < 64; square ++) {
@@ -5521,23 +5517,26 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 		}
 
 		for (int square = 0; square < 64; square ++) {
-		    if (tb->legal_squares[piece] & BITVECTOR(square)) {
+		    if (tb->semilegal_squares[piece] & BITVECTOR(square)) {
 			if (futurebase->matching_local_piece_by_square[future_piece][square] == -1) {
 			    futurebase->matching_local_piece_by_square[future_piece][square] = piece;
 			}
 		    }
 		}
 
-		if (! (piece_vector & (1 << piece))) {
-		    continue;
-		} else {
-		    piece_vector ^= (1 << piece);
-		    break;
+		/* Have we found a unassigned matching pair of localbase/futurebase pieces? */
+		if (!(local_piece_vector & (1 << piece))
+		    && !(future_piece_vector & (1 << future_piece))) {
+
+		    local_piece_vector |= (1 << piece);
+		    future_piece_vector |= (1 << future_piece);
+
+		    found_matching_piece = true;
 		}
 	    }
 	}
 
-	if (piece == tb->num_pieces) {
+	if (! found_matching_piece) {
 	    if ((futurebase->extra_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
 		futurebase->extra_piece = future_piece;
 	    } else {
@@ -5547,25 +5546,22 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
     }
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->piece_type[piece] == PAWN) && (piece_vector & (1 << piece))) break;
+	if (!(local_piece_vector & (1 << piece))) {
+	    if (tb->piece_type[piece] == PAWN) {
+		if (futurebase->missing_pawn == -1) {
+		    futurebase->missing_pawn = piece;
+		} else {
+		    throw "Too many missing pieces in futurebase";
+		}
+	    } else {
+		if (futurebase->missing_non_pawn == -1) {
+		    futurebase->missing_non_pawn = piece;
+		} else {
+		    throw "Too many missing pieces in futurebase";
+		}
+	    }
+	}
     }
-    if (piece != tb->num_pieces) {
-	futurebase->missing_pawn = piece;
-	piece_vector ^= (1 << piece);
-    }
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->piece_type[piece] != PAWN) && (piece_vector & (1 << piece))) break;
-    }
-    if (piece != tb->num_pieces) {
-	futurebase->missing_non_pawn = piece;
-	piece_vector ^= (1 << piece);
-    }
-
-    if (piece_vector != 0) {
-	throw "Too many missing pieces in futurebase";
-    }
-
 }
 
 int autodetect_futurebase_type(tablebase_t *futurebase)
@@ -6129,7 +6125,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 	int sq = foreign_position->piece_position[foreign_piece];
 
-	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
+	if (invert_colors) sq = vertical_reflection(sq);
 
 	for (local_piece = foreign_tb->matching_local_piece_by_square[foreign_piece][sq];
 	     local_piece != -1; local_piece = local_tb->next_identical_piece[local_piece]) {
@@ -6182,6 +6178,8 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 		    local_pieces_processed_bitvector &= ~(1 << local_piece3);
 
+		    if (invert_colors) saved_position = vertical_reflection(saved_position);
+
 		    for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
 			if (foreign_position->piece_position[foreign_piece] == saved_position) {
 			    foreign_pieces_processed_bitvector &= ~(1 << foreign_piece);
@@ -6203,7 +6201,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 	if (foreign_pieces_processed_bitvector & (1 << foreign_piece)) continue;
 
-	if (invert_colors) sq = rowcol2square(7 - ROW(sq), COL(sq));
+	if (invert_colors) sq = vertical_reflection(sq);
 
 	if (restricted_piece != NONE) {
 	    /* more than one restricted piece in translation */
@@ -14189,7 +14187,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.771 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.772 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
