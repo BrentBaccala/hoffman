@@ -1027,6 +1027,8 @@ sub generate_control_file {
     $_->unbindNode() foreach ($XMLroot->findnodes('piece'), $XMLroot->findnodes('futurebase'), $XMLroot->findnodes('prune'));
 
     # Used to isort here to make sure a white queen came first... why?  I don't remember.
+    #
+    # XXX we'd get a more compact encoding if we moved the unrestricted pieces down after the pawns
 
     foreach my $white_piece (sort @white_pieces) {
 	&add_piece('white', $piece_names{$white_piece});
@@ -1036,16 +1038,27 @@ sub generate_control_file {
 	&add_piece('black', $piece_names{$black_piece});
     }
 
-    # Sort the pawns here to make sure that doubled pawns appear in "board order".  Also note that a
-    # value in the pawns array may be undefined to indicate an unrestricted pawn.  &add_piece
-    # handles this correctly.
+    # Sort the pawns here to make sure that doubled pawns appear in "board order" and that all pawns
+    # on a single file are grouped together, even if they are different colors.  This is required by
+    # the combinadic encoding schemes.  Note that a value in the pawns array may be undefined to
+    # indicate an unrestricted pawn, and these appear last.  &add_piece handles this correctly.
+
+    foreach my $pawn (sort @white_pawns, @black_pawns) {
+	if (defined $pawn) {
+	    if (grep /$pawn/, @white_pawns) {
+		&add_piece('white', 'pawn', $pawn);
+	    } else {
+		&add_piece('black', 'pawn', $pawn);
+	    }
+	}
+    }
 
     foreach my $white_pawn (sort @white_pawns) {
-	&add_piece('white', 'pawn', $white_pawn);
+	&add_piece('white', 'pawn', $white_pawn) if not defined $white_pawn;
     }
 
     foreach my $black_pawn (sort @black_pawns) {
-	&add_piece('black', 'pawn', $black_pawn);
+	&add_piece('black', 'pawn', $black_pawn) if not defined $black_pawn;
     }
 
     # Now we need to figure out which futurebases we'll need to build this tablebase and add a list
