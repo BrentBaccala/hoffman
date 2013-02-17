@@ -7,8 +7,7 @@
    <prune-enable color="white" type="discard"/>
    <prune-enable color="black" type="concede"/>
 
-   <index type="simple"/>
-   <format><dtm bits="8"/></format>
+   <dtm/>
    <piece color="white" type="king" location="e1 f1 g1 h1 e2 f2 g2 h2 e3 f3 g3 h3"/>
    <piece color="black" type="king"/>
    <piece color="black" type="queen"/>
@@ -37,7 +36,5 @@
    <prune color="black" move="QxP" type="concede"/>
    <prune color="black" move="Pg2" type="concede"/>
 
-   <generation-controls>
-      <output filename="fortress2.htb"/>
-   </generation-controls>
+   <output filename="fortress2.htb"/>
 </tablebase>
