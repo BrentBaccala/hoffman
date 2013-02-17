@@ -5299,7 +5299,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.772 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.773 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6102,7 +6102,6 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     int missing_piece1 = NONE;
     int missing_piece2 = NONE;
     int extra_piece = NONE;
-    short local_pieces_processed_bitvector = 0;
     short foreign_pieces_processed_bitvector = 0;
 
     memset(local_position, 0, sizeof(local_position_t));
@@ -6130,11 +6129,10 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	for (local_piece = foreign_tb->matching_local_piece_by_square[foreign_piece][sq];
 	     local_piece != -1; local_piece = local_tb->next_identical_piece[local_piece]) {
 
-	    if (!(local_pieces_processed_bitvector & (1 << local_piece))) {
+	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
 
 		local_position->piece_position[local_piece] = sq;
 
-		local_pieces_processed_bitvector |= (1 << local_piece);
 		foreign_pieces_processed_bitvector |= (1 << foreign_piece);
 
 		break;
@@ -6176,8 +6174,6 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 		    /* Whew!  That worked.  Reset our various bitvectors. */
 
-		    local_pieces_processed_bitvector &= ~(1 << local_piece3);
-
 		    if (invert_colors) saved_position = vertical_reflection(saved_position);
 
 		    for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
@@ -6211,14 +6207,13 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	for (local_piece = foreign_tb->matching_local_piece[foreign_piece];
 	     local_piece != -1; local_piece = local_tb->next_really_identical_piece[local_piece]) {
 
-	    if (!(local_pieces_processed_bitvector & (1 << local_piece))) {
+	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
 
 		local_position->piece_position[local_piece] = sq;
 		local_position->board_vector |= BITVECTOR(sq);
 		if (local_tb->piece_color[local_piece] == local_position->side_to_move)
 		    local_position->PTM_vector |= BITVECTOR(sq);
 
-		local_pieces_processed_bitvector |= (1 << local_piece);
 		foreign_pieces_processed_bitvector |= (1 << foreign_piece);
 
 		restricted_piece = local_piece;
@@ -6242,7 +6237,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
      */
 
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
-	if (local_pieces_processed_bitvector & (1 << local_piece)) {
+	if (local_position->piece_position[local_piece] != ILLEGAL_POSITION) {
 
 	    local_position->board_vector |= BITVECTOR(local_position->piece_position[local_piece]);
 	    if (local_tb->piece_color[local_piece] == local_position->side_to_move)
@@ -14187,7 +14182,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.772 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.773 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
