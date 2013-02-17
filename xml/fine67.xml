@@ -5,15 +5,14 @@
 <tablebase>
    <prune-enable color="white" type="concede"/>
    <prune-enable color="black" type="concede"/>
-   <index type="compact"/>
-   <format><dtm bits="8"/></format>
+   <dtm/>
    <piece color="white" type="king"/>
-   <piece color="white" type="pawn" location="b3+"/>
-   <piece color="white" type="pawn" location="c2+"/>
-   <piece color="white" type="pawn" location="d3+"/>
    <piece color="black" type="king"/>
+   <piece color="white" type="pawn" location="b3+"/>
    <piece color="black" type="pawn" location="b5+"/>
+   <piece color="white" type="pawn" location="c2+"/>
    <piece color="black" type="pawn" location="c7+"/>
+   <piece color="white" type="pawn" location="d3+"/>
    <piece color="black" type="pawn" location="d5+"/>
    <futurebase filename="kpk.htb"/>
    <futurebase filename="kpk.htb" colors="invert"/>
