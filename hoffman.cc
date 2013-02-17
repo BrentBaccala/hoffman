@@ -4590,7 +4590,12 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	}
     }
 
-    if ((tb->index_type != NO_EN_PASSANT_INDEX) && (tb->index_type != COMPACT_INDEX)) {
+    /* The naive, naive2 and simple index-to-position decoding routines make no attempt to permute
+     * semilegal groups to get the pieces onto legal squares.  Therefore, we can't use them
+     * if the semilegal and legal ranges of a piece differ.
+     */
+
+    if (tb->index_type <= SIMPLE_INDEX) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->legal_squares[piece] != tb->semilegal_squares[piece]) {
 		fatal("Non-identical overlapping piece restrictions not allowed with this index type\n");
@@ -5299,7 +5304,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.773 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.774 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14182,7 +14187,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.773 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.774 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
