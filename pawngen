@@ -45,7 +45,8 @@ foreach my $piece_char (keys %piece_names) { $piece_character{$piece_names{$piec
 # Our original XML control file
 
 my $XMLparser = XML::LibXML->new();
-$XMLparser->validation(1);
+#$XMLparser->validation(1);
+$XMLparser->load_ext_dtd(0);
 
 my $XMLtree;
 my $XMLcontrolFile;
