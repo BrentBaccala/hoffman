@@ -1,0 +1,32 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+
+<!-- if black takes white's pawn with his queen -->
+<!-- assume immediate recapture with white's king; everything else gets pruned -->
+
+<tablebase>
+   <prune-enable color="white" type="discard"/>
+   <prune-enable color="black" type="concede"/>
+
+   <index type="simple"/>
+   <format><dtm bits="8"/></format>
+   <piece color="white" type="king" location="e1 f1 g1 h1 e2 f2 g2 h2 e3 f3 g3 h3"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="rook" location="e3 g3"/>
+   <piece color="black" type="queen" location="f2"/>
+   <piece color="black" type="pawn" location="g6 g5 g4 g3"/>
+
+   <futurebase filename="krkp.htb"/>
+
+   <!-- due to piece restrictions, black's PxR can never happen -->
+   <prune color="black" move="Q*" type="concede"/>
+   <prune color="black" move="KxR" type="concede"/>
+   <prune color="black" move="Pg2" type="concede"/>
+
+   <prune color="white" move="K*" type="discard"/>
+   <prune color="white" move="R*" type="discard"/>
+
+   <generation-controls>
+      <output filename="fortress3.htb"/>
+   </generation-controls>
+</tablebase>

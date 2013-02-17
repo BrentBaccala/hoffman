@@ -1,0 +1,43 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+
+<!-- if black takes white's rook -->
+
+<tablebase>
+   <prune-enable color="white" type="discard"/>
+   <prune-enable color="black" type="concede"/>
+
+   <index type="simple"/>
+   <format><dtm bits="8"/></format>
+   <piece color="white" type="king" location="e1 f1 g1 h1 e2 f2 g2 h2 e3 f3 g3 h3"/>
+   <piece color="black" type="king"/>
+   <piece color="black" type="queen"/>
+   <piece color="white" type="pawn" location="f2"/>
+   <piece color="black" type="pawn" location="g6 g5 g4 g3"/>
+
+   <futurebase filename="kqkp.htb" colors="invert"/>
+   <futurebase filename="kpkp.htb"/>
+
+   <!-- Here's the shotgun approach to pruning the king moves -->
+   <!-- <prune color="white" move="K*" type="discard"/> -->
+
+   <!-- Here's the same result, but a little more specific -->
+   <!-- <prune color="white" move="Kd?" type="discard"/> -->
+   <!-- <prune color="white" move="K?4" type="discard"/> -->
+
+   <!-- No multiple statement warning from this king prune -->
+   <prune color="white" move="Kd[1-4]" type="discard"/>
+   <prune color="white" move="K[e-h]4" type="discard"/>
+
+   <prune color="white" move="Pf3" type="discard"/>
+   <prune color="white" move="Pf4" type="discard"/>
+
+   <prune color="black" move="PxP" type="concede"/>
+   <prune color="black" move="KxP" type="concede"/>
+   <prune color="black" move="QxP" type="concede"/>
+   <prune color="black" move="Pg2" type="concede"/>
+
+   <generation-controls>
+      <output filename="fortress2.htb"/>
+   </generation-controls>
+</tablebase>

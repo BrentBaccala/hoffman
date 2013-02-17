@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+
+<tablebase>
+   <prune-enable color="white" type="discard"/>
+   <!-- The entire analysis is done with black concede -->
+   <!--   but we don't actually need it for this part. -->
+   <!-- <prune-enable color="black" type="concede"/> -->
+
+   <index type="simple"/>
+   <format><dtm bits="8"/></format>
+   <piece color="white" type="king" location="e1 f1 g1 h1 e2 f2 g2 h2 e3 f3 g3 h3"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="rook" location="e3 g3"/>
+   <piece color="black" type="queen"/>
+   <piece color="white" type="pawn" location="f2"/>
+
+   <!-- if black takes the white pawn -->
+   <futurebase filename="kqkr.htb" colors="invert"/>
+   <!-- if black takes the white rook -->
+   <futurebase filename="kqkp.htb" colors="invert"/>
+   <!-- if white takes the black queen -->
+   <futurebase filename="krpk.htb"/>
+
+   <prune color="white" move="Pf3" type="discard"/>
+   <prune color="white" move="Pf4" type="discard"/>
+   <prune color="white" move="R*" type="discard"/>
+   <prune color="white" move="K*" type="discard"/>
+
+   <generation-controls>
+      <output filename="fortress1.htb"/>
+   </generation-controls>
+</tablebase>

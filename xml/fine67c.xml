@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Diagram 67 from Rubin Fine's "Basic Chess Endings" -->
+
+<tablebase>
+   <prune-enable color="white" type="discard"/>
+   <prune-enable color="black" type="concede"/>
+   <index type="compact"/>
+   <format><basic/></format>
+   <piece color="white" type="king"/>
+   <piece color="white" type="pawn" location="b3+"/>
+   <piece color="white" type="pawn" location="c2+"/>
+   <piece color="white" type="pawn" location="d3+"/>
+   <piece color="black" type="king"/>
+   <piece color="black" type="pawn" location="b5+"/>
+   <piece color="black" type="pawn" location="c7+"/>
+   <piece color="black" type="pawn" location="d5+"/>
+   <futurebase filename="kpk.htb"/>
+   <futurebase filename="kpk.htb" colors="invert"/>
+   <futurebase filename="kqk.htb"/>
+   <futurebase filename="kqkp.htb"/>
+   <futurebase filename="kqpk.htb"/>
+   <prune color="white" type="discard" move="P=Q" pawngen-condition="grep(/Q/,@white_pieces)==1"/>
+   <prune color="white" type="discard" move="P=[RNB]"/>
+   <prune color="black" type="concede" move="P*=?"/>
+   <prune color="black" type="concede" move="?xQ"/>
+   <prune color="black" type="concede" move="?xP" pawngen-condition="grep(/Q/,@white_pieces)==0 and $#white_pawns==0"/>
+   <generation-controls>
+      <entries-format>
+         <movecnt bits="8"/>
+      </entries-format>
+   </generation-controls>
+</tablebase>
