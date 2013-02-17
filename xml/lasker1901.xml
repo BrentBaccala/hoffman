@@ -1,12 +1,10 @@
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Problem position 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w -->
 
 <tablebase>
    <prune-enable color="white" type="concede"/>
    <prune-enable color="black" type="concede"/>
-
-   <index type="compact"/>
-   <format><dtm bits="8"/></format>
 
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
@@ -21,7 +19,5 @@
    <prune color="white" move="KxP" type="concede"/>
    <prune color="black" move="KxP" type="concede"/>
 
-   <generation-controls>
-      <output filename="lasker1901.htb"/>
-   </generation-controls>
+   <output filename="lasker1901.htb"/>
 </tablebase>
