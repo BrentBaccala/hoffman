@@ -5304,7 +5304,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.775 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.776 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5485,8 +5485,10 @@ void unload_futurebase(tablebase_t *tb)
  * - if there is a single missing piece in the futurebase, store its piece number along with an
  *   indication if it is a pawn or not
  *
- * If there is ambiguity because there are other pieces in the futurebase identical to the extra or
- * missings piece(s), the highest piece numbers will be returned.
+ * XXX If there is ambiguity because there are other pieces in the futurebase identical to the extra
+ * or missings piece(s), the highest piece numbers will be returned.  As the comments on
+ * translate_foreign_position_to_local_position() discuss, both that function and this one need to
+ * be modified to handle multiple extra or missing pieces.
  */
 
 void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
@@ -5522,21 +5524,24 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 		}
 
 		for (int square = 0; square < 64; square ++) {
+
 		    if (tb->semilegal_squares[piece] & BITVECTOR(square)) {
+
 			if (futurebase->matching_local_piece_by_square[future_piece][square] == -1) {
 			    futurebase->matching_local_piece_by_square[future_piece][square] = piece;
 			}
+
+			/* Have we found a unassigned matching pair of localbase/futurebase pieces? */
+			if (!(local_piece_vector & (1 << piece))
+			    && !(future_piece_vector & (1 << future_piece))
+			    && (futurebase->semilegal_squares[future_piece] & BITVECTOR(square))) {
+
+			    local_piece_vector |= (1 << piece);
+			    future_piece_vector |= (1 << future_piece);
+
+			    found_matching_piece = true;
+			}
 		    }
-		}
-
-		/* Have we found a unassigned matching pair of localbase/futurebase pieces? */
-		if (!(local_piece_vector & (1 << piece))
-		    && !(future_piece_vector & (1 << future_piece))) {
-
-		    local_piece_vector |= (1 << piece);
-		    future_piece_vector |= (1 << future_piece);
-
-		    found_matching_piece = true;
 		}
 	    }
 	}
@@ -6059,6 +6064,9 @@ void invert_colors_of_global_position(global_position_t *global)
  * XXX need to ASSERT that sizeof(..._pieces_processed_bitvector) is at least MAX_PIECES!!
  *
  * XXX the return value assumes that int holds at least 32 bits
+ *
+ * XXX need to modify the calling convention of this function to handle the multiple extra or
+ * missing pieces cases discussed in the comments above.
  */
 
 #define NONE 0x80
@@ -14199,7 +14207,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.775 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.776 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
