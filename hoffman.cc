@@ -5304,7 +5304,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.774 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.775 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -9630,9 +9630,21 @@ void propagate_moves_from_promotion_futurebase(void)
 		pawn = conversion_result & 0xff;                      /* missing_piece1 */
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece != futurebase->extra_piece) || (pawn != futurebase->missing_pawn) || (missing_piece2 != NONE)) {
-		    fatal("Conversion error during promotion back-prop (extra %d; missing1 %d, missing2 %d)\n",
-			  extra_piece, pawn, missing_piece2);
+		if ((extra_piece != futurebase->extra_piece)
+		    || (pawn != futurebase->missing_pawn)
+		    || (missing_piece2 != NONE)) {
+
+		    /* This is not necessarily fatal, since it can occur during normal processing.
+		     * Assume that the local tb has a pair of plus pawns on a file, we're back
+		     * propagating from a tablebase where the forward pawn has queened, and we're
+		     * considering a futurebase position with a pawn on the seventh rank.  That
+		     * can't actually happen, since the trailing pawn could be no further than the
+		     * sixth rank when the forward pawn queens.  But this will translate as the
+		     * futurebase pawn mapping to the forward pawn (the only legal pawn on the
+		     * seventh rank) and the trailing pawn will be labeled missing.  Just quietly
+		     * ignore it and keep going (it used to be a fatal error).
+		     */
+
 		    continue;
 		}
 
@@ -14187,7 +14199,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.774 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.775 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
