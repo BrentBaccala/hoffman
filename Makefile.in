@@ -12,6 +12,7 @@ hoffman_SCRIPTS = pawngen genctlfile.pl gensuicide.pl genalltb genalltb.bat hoff
 hoffman_DOCS = README COPYING ChangeLog TODO tutorial.pdf reference.pdf
 hoffman_DOCSRC = tutorial.tex reference.tex
 hoffman_XMLS = xml/*.xml
+hoffman_RCS = RCS xml/RCS
 
 hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPTS) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS)
 
@@ -28,7 +29,8 @@ tablebase_dtd.h: tablebase.dtd
 	echo "\";" >> $@
 
 tarball: docs
-	tar -czh -f hoffman-@PACKAGE_VERSION@.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST)
+	tar -czh -f hoffman.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST)
+	tar -czh -f hoffman-RCS.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST) $(hoffman_RCS)
 
 ChangeLog: RCS/hoffman.c,v
 	rlog hoffman.c > ChangeLog
