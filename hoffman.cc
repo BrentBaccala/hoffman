@@ -592,11 +592,13 @@ typedef struct tablebase {
     short piece_type[MAX_PIECES];
     short piece_color[MAX_PIECES];
 
+    int next_identical_piece[MAX_PIECES];
+
     /* Pieces can restricted according to which squares they are allowed to move on.
      *
-     * Legal squares are just that.
+     * Legal squares are just that - squares that a piece is allowed to be on.
      *
-     * "Semilegal" squares are squares that might be legal for a given piece, but we can't be sure
+     * Semilegal squares are squares that might be legal for a given piece, but we can't be sure
      * until we've considered other pieces in the position as well.  This becomes a factor when
      * we've got multiple identical pieces with overlapping, non-identical move restrictions.
      * Consider, for example, a tablebase with two rooks: one unrestricted, the other restricted to
@@ -606,17 +608,17 @@ typedef struct tablebase {
      * normally, and only when it's time to convert the entire position to an index in the tablebase
      * do we actually decide if the position is fully legal.
      *
-     * "Identical" pieces are, well, identical - same color, same type, though if two otherwise
-     * identical pieces have move restrictions that don't overlap (so they can't exchange places),
-     * they're not considered identical.
+     * Semilegal groups are groups of pieces with the same color and type, and the same semilegal
+     * squares.  For each piece type of each color, semilegal groups partition the board.  If two
+     * otherwise identical pieces have move restrictions that don't overlap (so they can't exchange
+     * places), then they're in different semilegal groups.
      *
-     * "Really identical" pieces are identical pieces, ignoring move restrictions.
-     *
-     * "Encoding groups" are encoded together into the index.  Only their positions are encoded, not
-     * their identities.  Thus, encoding groups are usually identical pieces, but in the
+     * Encoding groups are encoded together into the index.  Only their positions are encoded, not
+     * their identities.  Thus, encoding groups are usually semilegal pieces, but in the
      * 'no-en-passant' and 'combinadic3' schemes, pawns restricted to a single file using plus
      * syntax are grouped, even if they are not the same color.  They can't pass each other because
-     * there are no captures within a tablebase.
+     * there are no captures within a tablebase, so the color ordering of the pawns on the file
+     * can't change.
      *
      * Some of the combinadic indexing schemes use "overlapping" pieces, which happens when a
      * piece's semilegal range completely contains the semilegal range of a earlier piece.  We'll be
@@ -625,17 +627,17 @@ typedef struct tablebase {
 
     uint64_t legal_squares[MAX_PIECES];
     uint64_t semilegal_squares[MAX_PIECES];
-    uint64_t frozen_pieces_vector;
-    int blocking_piece[MAX_PIECES];
-    uint64_t illegal_white_king_squares;
-    uint64_t illegal_black_king_squares;
-    int last_identical_piece[MAX_PIECES];
-    int next_identical_piece[MAX_PIECES];
-    int next_really_identical_piece[MAX_PIECES];
+    int prev_piece_in_semilegal_group[MAX_PIECES];
+    int next_piece_in_semilegal_group[MAX_PIECES];
     int prev_piece_in_encoding_group[MAX_PIECES];
     int next_piece_in_encoding_group[MAX_PIECES];
 
     int last_overlapping_piece[MAX_PIECES];
+
+    uint64_t frozen_pieces_vector;
+    int blocking_piece[MAX_PIECES];
+    uint64_t illegal_white_king_squares;
+    uint64_t illegal_black_king_squares;
 
     bool encode_stm;
     int color_symmetric_transpose[MAX_PIECES];
@@ -2027,8 +2029,8 @@ bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_positio
 
 	/* Identical pieces have to appear in sorted order. */
 
-	if ((tb->last_identical_piece[piece] != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
+	if ((tb->prev_piece_in_semilegal_group[piece] != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->prev_piece_in_semilegal_group[piece]])) {
 	    return false;
 	}
 
@@ -2221,8 +2223,8 @@ bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 
 	/* Identical pieces have to appear in sorted order. */
 
-	if ((tb->last_identical_piece[piece] != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
+	if ((tb->prev_piece_in_semilegal_group[piece] != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->prev_piece_in_semilegal_group[piece]])) {
 	    return false;
 	}
 
@@ -2335,8 +2337,8 @@ bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_positi
     /* Identical pieces have to appear in sorted order. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->last_identical_piece[piece] != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
+	if ((tb->prev_piece_in_semilegal_group[piece] != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->prev_piece_in_semilegal_group[piece]])) {
 	    return false;
 	}
     }
@@ -2648,8 +2650,8 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
     /* Identical pieces have to appear in sorted order. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->last_identical_piece[piece] != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->last_identical_piece[piece]])) {
+	if ((tb->prev_piece_in_semilegal_group[piece] != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->prev_piece_in_semilegal_group[piece]])) {
 	    return false;
 	}
     }
@@ -3176,12 +3178,12 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
-	while ((tb->last_identical_piece[piece2] != -1)
+	while ((tb->prev_piece_in_semilegal_group[piece2] != -1)
 	       && (position->piece_position[piece2]
-		   < position->piece_position[tb->last_identical_piece[piece2]])) {
-	    transpose_array(position->piece_position, piece2, tb->last_identical_piece[piece2]);
-	    transpose_array(permutation, piece2, tb->last_identical_piece[piece2]);
-	    piece2 = tb->last_identical_piece[piece2];
+		   < position->piece_position[tb->prev_piece_in_semilegal_group[piece2]])) {
+	    transpose_array(position->piece_position, piece2, tb->prev_piece_in_semilegal_group[piece2]);
+	    transpose_array(permutation, piece2, tb->prev_piece_in_semilegal_group[piece2]);
+	    piece2 = tb->prev_piece_in_semilegal_group[piece2];
 	}
     }
 
@@ -3211,7 +3213,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 		int piece2;
 
 		/* check for legality of all pieces in this group */
-		for (piece2 = piece; piece2 != -1; piece2 = tb->next_identical_piece[piece2]) {
+		for (piece2 = piece; piece2 != -1; piece2 = tb->next_piece_in_semilegal_group[piece2]) {
 		    if (! (tb->legal_squares[piece2] & BITVECTOR(position->piece_position[piece2]))) {
 			break;
 		    }
@@ -3511,10 +3513,10 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     if (tb->symmetry > 1) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    piece2 = piece;
-	    while ((tb->last_identical_piece[piece2] != -1)
+	    while ((tb->prev_piece_in_semilegal_group[piece2] != -1)
 		   && (position->piece_position[piece2]
-		       < position->piece_position[tb->last_identical_piece[piece2]])) {
-		transpose_array(position->piece_position, piece2, tb->last_identical_piece[piece2]);
+		       < position->piece_position[tb->prev_piece_in_semilegal_group[piece2]])) {
+		transpose_array(position->piece_position, piece2, tb->prev_piece_in_semilegal_group[piece2]);
 	    }
 	}
     }
@@ -3571,9 +3573,9 @@ int check_1000_positions(tablebase_t *tb)
 	}
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if ((tb->last_identical_piece[piece] != -1) &&
+	    if ((tb->prev_piece_in_semilegal_group[piece] != -1) &&
 		(position1.piece_position[piece] <=
-		 position1.piece_position[tb->last_identical_piece[piece]])) goto retry;
+		 position1.piece_position[tb->prev_piece_in_semilegal_group[piece]])) goto retry;
 	}
 
 	normalize_position(tb, &position1);
@@ -4139,9 +4141,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	tb->last_identical_piece[piece] = -1;
+	tb->prev_piece_in_semilegal_group[piece] = -1;
+	tb->next_piece_in_semilegal_group[piece] = -1;
 	tb->next_identical_piece[piece] = -1;
-	tb->next_really_identical_piece[piece] = -1;
 
 	tb->semilegal_squares[piece] = tb->legal_squares[piece];
 
@@ -4150,19 +4152,19 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		&& (tb->piece_type[piece2] == tb->piece_type[piece])) {
 
 		if (tb->semilegal_squares[piece] & tb->semilegal_squares[piece2]) {
-		    tb->last_identical_piece[piece] = piece2;
+		    tb->prev_piece_in_semilegal_group[piece] = piece2;
 		    tb->semilegal_squares[piece2] |= tb->semilegal_squares[piece];
 		    tb->semilegal_squares[piece] |= tb->semilegal_squares[piece2];
 		}
 
-		if (tb->next_really_identical_piece[piece2] == -1) {
-		    tb->next_really_identical_piece[piece2] = piece;
+		if (tb->next_identical_piece[piece2] == -1) {
+		    tb->next_identical_piece[piece2] = piece;
 		}
 	    }
 	}
 
-	if (tb->last_identical_piece[piece] != -1) {
-	    tb->next_identical_piece[tb->last_identical_piece[piece]] = piece;
+	if (tb->prev_piece_in_semilegal_group[piece] != -1) {
+	    tb->next_piece_in_semilegal_group[tb->prev_piece_in_semilegal_group[piece]] = piece;
 	}
     }
 
@@ -4180,7 +4182,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	if (tb->last_identical_piece[piece] == -1 && tb->next_identical_piece[piece] != -1) {
+	if (tb->prev_piece_in_semilegal_group[piece] == -1 && tb->next_piece_in_semilegal_group[piece] != -1) {
 
 	    int identical_pieces = 0;
 	    int piece2;
@@ -4190,7 +4192,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    int i;
 	    int j;
 
-	    for (piece2 = piece; piece2 != -1; piece2 = tb->next_identical_piece[piece2]) {
+	    for (piece2 = piece; piece2 != -1; piece2 = tb->next_piece_in_semilegal_group[piece2]) {
 		position[identical_pieces] = piece2;
 		directions[identical_pieces] = -1;
 		identical_pieces ++;
@@ -4677,13 +4679,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	/* now do everything else */
 	for (piece = 1; piece < tb->num_pieces; piece ++) {
 
-	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
+	    if ((tb->prev_piece_in_semilegal_group[piece] != -1) && (tb->next_piece_in_semilegal_group[piece] != -1)) {
 		fatal("Can't have more than two identical pieces with 'naive2' index (yet)\n");
 		return nullptr;
 	    }
 
-	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
-	    tb->next_piece_in_encoding_group[piece] = tb->next_identical_piece[piece];
+	    tb->prev_piece_in_encoding_group[piece] = tb->prev_piece_in_semilegal_group[piece];
+	    tb->next_piece_in_encoding_group[piece] = tb->next_piece_in_semilegal_group[piece];
 
 	    if (tb->prev_piece_in_encoding_group[piece] == -1) tb->max_index <<= 6;
 	    else tb->max_index <<=5;
@@ -4757,13 +4759,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
+	    if ((tb->prev_piece_in_semilegal_group[piece] != -1) && (tb->next_piece_in_semilegal_group[piece] != -1)) {
 		fatal("Can't have more than two identical pieces with 'compact' index (yet)\n");
 		return nullptr;
 	    }
 
-	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
-	    tb->next_piece_in_encoding_group[piece] = tb->next_identical_piece[piece];
+	    tb->prev_piece_in_encoding_group[piece] = tb->prev_piece_in_semilegal_group[piece];
+	    tb->next_piece_in_encoding_group[piece] = tb->next_piece_in_semilegal_group[piece];
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
 	     * identical pieces assumes that both pieces occupy the same range of squares.
@@ -4850,8 +4852,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
-	    tb->next_piece_in_encoding_group[piece] = tb->next_identical_piece[piece];
+	    tb->prev_piece_in_encoding_group[piece] = tb->prev_piece_in_semilegal_group[piece];
+	    tb->next_piece_in_encoding_group[piece] = tb->next_piece_in_semilegal_group[piece];
 
 	    /* An important special case - handle two opposing plus-pawns by combining their
 	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
@@ -4870,7 +4872,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		}
 
 		if (tb->blocking_piece[piece] > piece) {
-		    if (tb->next_identical_piece[piece] != -1) {
+		    if (tb->next_piece_in_semilegal_group[piece] != -1) {
 			/* should never happen, we should be blocked by a pawn of opposite color */
 			fatal("BUG: not blocked right\n");
 		    } else {
@@ -4881,7 +4883,7 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 			}
 		    }
 		} else {
-		    if (tb->last_identical_piece[piece] != -1) {
+		    if (tb->prev_piece_in_semilegal_group[piece] != -1) {
 			/* should never happen, we should be blocked by a pawn of opposite color */
 			fatal("BUG: not blocked right\n");
 		    } else {
@@ -5040,13 +5042,13 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if ((tb->last_identical_piece[piece] != -1) && (tb->next_identical_piece[piece] != -1)) {
+	    if ((tb->prev_piece_in_semilegal_group[piece] != -1) && (tb->next_piece_in_semilegal_group[piece] != -1)) {
 		fatal("Can't have more than two identical pieces with 'no-en-passant' index (yet)\n");
 		return nullptr;
 	    }
 
-	    tb->prev_piece_in_encoding_group[piece] = tb->last_identical_piece[piece];
-	    tb->next_piece_in_encoding_group[piece] = tb->next_identical_piece[piece];
+	    tb->prev_piece_in_encoding_group[piece] = tb->prev_piece_in_semilegal_group[piece];
+	    tb->next_piece_in_encoding_group[piece] = tb->next_piece_in_semilegal_group[piece];
 
 	    /* Note that we only set blocking_piece for plus-pawns, so if two pieces are mutually
 	     * blocking, they must be opposing plus-pawns.
@@ -5304,7 +5306,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.776 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.777 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6031,13 +6033,6 @@ void invert_colors_of_global_position(global_position_t *global)
  * back-prop into multiple local positions with different missing pieces, depending on the piece
  * numbering.
  *
- * If there are multiple identical missing pieces due to capture, it'll be like Q in the futurebase
- * and we've got QQ in the local tb.  If only one queen can be captured in a given position, then
- * that's the missing piece.  But there are positions in which two different queen captures are both
- * possible, and then it's unclear which is the missing piece.  There are futurebase positions which
- * back-prop into multiple local positions with different missing pieces, depending on the piece
- * numbering.
- *
  * 3. There can be one piece (the "restricted" piece) that matches up, but is on a square flagged
  * illegal for it in the local tablebase (it will move onto a legal square).
  *
@@ -6073,7 +6068,7 @@ void invert_colors_of_global_position(global_position_t *global)
 
 bool semilegal_group_is_legal(tablebase_t *tb, local_position_t *position, int first_piece_in_group)
 {
-    for (int piece = first_piece_in_group; piece != -1; piece = tb->next_identical_piece[piece]) {
+    for (int piece = first_piece_in_group; piece != -1; piece = tb->next_piece_in_semilegal_group[piece]) {
 	if ((position->piece_position[piece] != ILLEGAL_POSITION)
 	    && ! (tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece]))) {
 	    return false;
@@ -6101,7 +6096,7 @@ bool permute_semilegal_group_until_legal(tablebase_t *tb, local_position_t *posi
      */
 
     transpose_array(position->piece_position,
-		    first_piece_in_group, tb->next_identical_piece[first_piece_in_group]);
+		    first_piece_in_group, tb->next_piece_in_semilegal_group[first_piece_in_group]);
     return false;
 }
 
@@ -6140,7 +6135,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	if (invert_colors) sq = vertical_reflection(sq);
 
 	for (local_piece = foreign_tb->matching_local_piece_by_square[foreign_piece][sq];
-	     local_piece != -1; local_piece = local_tb->next_identical_piece[local_piece]) {
+	     local_piece != -1; local_piece = local_tb->next_piece_in_semilegal_group[local_piece]) {
 
 	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
 
@@ -6173,7 +6168,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 		int saved_position;
 
 		for (local_piece3 = local_piece; local_piece3 != -1;
-		     local_piece3 = local_tb->next_identical_piece[local_piece3]) {
+		     local_piece3 = local_tb->next_piece_in_semilegal_group[local_piece3]) {
 
 		    saved_position = local_position->piece_position[local_piece3];
 		    local_position->piece_position[local_piece3] = ILLEGAL_POSITION;
@@ -6218,7 +6213,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	}
 
 	for (local_piece = foreign_tb->matching_local_piece[foreign_piece];
-	     local_piece != -1; local_piece = local_tb->next_really_identical_piece[local_piece]) {
+	     local_piece != -1; local_piece = local_tb->next_identical_piece[local_piece]) {
 
 	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
 
@@ -9686,7 +9681,7 @@ void propagate_moves_from_promotion_futurebase(void)
 		 * identical pieces, and with that caveat we're OK.  If the move restrictions don't
 		 * overlap, then there's no way the pieces can swap with each other.  And if the
 		 * move restrictions are identical, then that will be noted in the
-		 * last_identical_piece array that we use below.
+		 * prev_piece_in_semilegal_group array that we use below.
 		 */
 
 		do {
@@ -9749,12 +9744,12 @@ void propagate_moves_from_promotion_futurebase(void)
 		     * and try again.
 		     */
 
-		    if (futurebase->last_identical_piece[extra_piece] != -1) {
+		    if (futurebase->prev_piece_in_semilegal_group[extra_piece] != -1) {
 
 			int piece;
 
 			int new_promotion_sq
-			    = foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]];
+			    = foreign_position.piece_position[futurebase->prev_piece_in_semilegal_group[extra_piece]];
 
 			if (futurebase->invert_colors)
 			    new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
@@ -9772,7 +9767,7 @@ void propagate_moves_from_promotion_futurebase(void)
 			}
 		    }
 
-		    extra_piece = futurebase->last_identical_piece[extra_piece];
+		    extra_piece = futurebase->prev_piece_in_semilegal_group[extra_piece];
 
 		} while (extra_piece != -1);
 	    }
@@ -9893,7 +9888,7 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 		 * identical pieces, and with that caveat we're OK.  If the move restrictions don't
 		 * overlap, then there's no way the pieces can swap with each other.  And if the
 		 * move restrictions are identical, then that will be noted in the
-		 * last_identical_piece array that we use below.
+		 * prev_piece_in_semilegal_group array that we use below.
 		 */
 
 		do {
@@ -9995,12 +9990,12 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 		     * and try again.
 		     */
 
-		    if (futurebase->last_identical_piece[extra_piece] != -1) {
+		    if (futurebase->prev_piece_in_semilegal_group[extra_piece] != -1) {
 
 			int piece;
 
 			int new_promotion_sq
-			    = foreign_position.piece_position[futurebase->last_identical_piece[extra_piece]];
+			    = foreign_position.piece_position[futurebase->prev_piece_in_semilegal_group[extra_piece]];
 
 			if (futurebase->invert_colors)
 			    new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
@@ -10018,7 +10013,7 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 			}
 		    }
 
-		    extra_piece = futurebase->last_identical_piece[extra_piece];
+		    extra_piece = futurebase->prev_piece_in_semilegal_group[extra_piece];
 
 		} while (extra_piece != -1);
 	    }
@@ -11432,7 +11427,7 @@ bool check_pruning(tablebase_t *tb) {
 	/* I've made this a bit more liberal now, because if we're dealing with move restrictions,
 	 * then we might have a missing piece in the futurebase line up with one of our pieces that
 	 * is identical to captured_piece in the sense that it's the same color and type, but not
-	 * identical in the sense of next_identical_piece.
+	 * identical in the sense of next_piece_in_semilegal_group.
 	 */
 
 	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
@@ -14207,7 +14202,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.776 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.777 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
