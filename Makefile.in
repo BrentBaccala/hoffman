@@ -46,15 +46,12 @@ reference.pdf: reference.tex
 	dvipdf reference
 
 %.htb: %.xml
-	$(HOFFMAN) -g -o $@ $<
+	$(HOFFMAN) -g $<
 
-# %.htb.gz: %.xml
-#	./hoffman -g -o $*.htb $<
-#	./hoffman -v -n Nalimov $*.htb
-#	gzip $*.htb
-
-#%.gz: %
-#	gzip -f $<
+kqk.htb: kk.htb
+krk.htb: kk.htb
+kbk.htb: kk.htb
+knk.htb: kk.htb
 
 kpk.htb: kqk.htb krk.htb knk.htb kbk.htb
 
@@ -64,7 +61,7 @@ kqkr.htb: kqk.htb krk.htb
 kqkn.htb: kqk.htb knk.htb
 kqkb.htb: kqk.htb kbk.htb
 
-kqkp.htb: kqkq.htb kqkr.htb kqkn.htb kqkb.htb
+kqkp.htb: kqkq.htb kqkr.htb kqkn.htb kqkb.htb kqk.htb kpk.htb
 
 krkr.htb: krk.htb
 krkn.htb: krk.htb knk.htb
