@@ -5306,7 +5306,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.777 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.778 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7374,15 +7374,18 @@ class MemoryEntriesTable: public EntriesTable {
 
  public:
     MemoryEntriesTable(void) {
-	long long bytes = (((long long) current_tb->max_index + 1) * bits + 7) / 8 + 2*sizeof(int);
+	size_t bytes = (((long long) current_tb->max_index + 1) * bits + 7) / 8 + 2*sizeof(int);
 	entries = malloc(bytes);
+
+	/* XXX get format right for size_t */
+
 	if (entries == nullptr) {
-	    fatal("Can't malloc %dMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
+	    fatal("Can't malloc %lldMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
 	} else {
 	    if (bytes < 1024*1024) {
-		info("Malloced %dKB for tablebase entries\n", bytes/1024);
+		info("Malloced %lldKB for tablebase entries\n", bytes/1024);
 	    } else {
-		info("Malloced %dMB for tablebase entries\n", bytes/(1024*1024));
+		info("Malloced %lldMB for tablebase entries\n", bytes/(1024*1024));
 	    }
 	}
 	/* Don't really need this, since they will all get initialized anyway */
@@ -9564,7 +9567,6 @@ void propagate_moves_from_promotion_futurebase(void)
     local_position_t position;
     local_position_t normalized_position;
     int conversion_result;
-    int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_pawn;
     int reflection;
     int promotion;
@@ -9590,7 +9592,7 @@ void propagate_moves_from_promotion_futurebase(void)
     }
 
     /* XXX We could limit the range of future_index here to only those positions where the promoted
-     * piece appears on the back rank.
+     * piece appears on the back rank, but watch out for reflection.
      */
 
     while (1) {
@@ -9628,32 +9630,13 @@ void propagate_moves_from_promotion_futurebase(void)
 
 	    if (conversion_result != -1) {
 
-		extra_piece = (conversion_result >> 16) & 0xff;
-		restricted_piece = (conversion_result >> 8) & 0xff;
-		pawn = conversion_result & 0xff;                      /* missing_piece1 */
-		missing_piece2 = (conversion_result >> 24) & 0xff;
+		int extra_piece = (conversion_result >> 16) & 0xff;
+		int restricted_piece = (conversion_result >> 8) & 0xff;
+		int pawn = conversion_result & 0xff;                      /* missing_piece1 */
+		int missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece != futurebase->extra_piece)
-		    || (pawn != futurebase->missing_pawn)
-		    || (missing_piece2 != NONE)) {
-
-		    /* This is not necessarily fatal, since it can occur during normal processing.
-		     * Assume that the local tb has a pair of plus pawns on a file, we're back
-		     * propagating from a tablebase where the forward pawn has queened, and we're
-		     * considering a futurebase position with a pawn on the seventh rank.  That
-		     * can't actually happen, since the trailing pawn could be no further than the
-		     * sixth rank when the forward pawn queens.  But this will translate as the
-		     * futurebase pawn mapping to the forward pawn (the only legal pawn on the
-		     * seventh rank) and the trailing pawn will be labeled missing.  Just quietly
-		     * ignore it and keep going (it used to be a fatal error).
-		     */
-
-		    continue;
-		}
-
-		/* This can happen if the futurebase is more liberal than the current tablebase. */
-
-		if (restricted_piece != NONE) continue;
+		if ((extra_piece == NONE) || (pawn == NONE)
+		    || (missing_piece2 != NONE) || (restricted_piece != NONE)) continue;
 
 		/* Since the last move had to have been a promotion move, there is absolutely no way
 		 * we could have en passant capturable pawns in the futurebase position.
@@ -9675,21 +9658,16 @@ void propagate_moves_from_promotion_futurebase(void)
 		 * Let's say we're back propagating from a Q+Q endgame into a Q+P endgame.  If we've got
 		 * a futurebase position with both queens on the back rank, then we have to consider the
 		 * possibility that the pawn could promote into either of them.
-		 *
-		 * Move restrictions can really mess with this, but right now we don't compute
-		 * tablebases with non-identical overlapping move restrictions on otherwise
-		 * identical pieces, and with that caveat we're OK.  If the move restrictions don't
-		 * overlap, then there's no way the pieces can swap with each other.  And if the
-		 * move restrictions are identical, then that will be noted in the
-		 * prev_piece_in_semilegal_group array that we use below.
 		 */
 
-		do {
+		int promotion_sq = foreign_position.piece_position[extra_piece];
 
-		    int promotion_sq = foreign_position.piece_position[extra_piece];
+		if (futurebase->invert_colors)
+		    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-		    if (futurebase->invert_colors)
-			promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
+		int local_piece = futurebase->matching_local_piece_by_square[extra_piece][promotion_sq];
+
+		while (true) {
 
 		    /* The extra piece has to be on the back rank.
 		     *
@@ -9739,37 +9717,20 @@ void propagate_moves_from_promotion_futurebase(void)
 
 		    }
 
-		    /* If there's an piece identical to the extra piece in the futurebase's
-		     * position, then figure out which of our pieces it was mapped to, swap them,
-		     * and try again.
+
+		    /* If the extra piece mapped into a non-empty semilegal group, then swap it with
+		     * the next piece in the group and try again.
 		     */
 
-		    if (futurebase->prev_piece_in_semilegal_group[extra_piece] != -1) {
+		    if (local_piece == -1) break;
 
-			int piece;
+		    int new_promotion_sq = position.piece_position[local_piece];
 
-			int new_promotion_sq
-			    = foreign_position.piece_position[futurebase->prev_piece_in_semilegal_group[extra_piece]];
+		    position.piece_position[local_piece] = promotion_sq;
+		    promotion_sq = new_promotion_sq;
 
-			if (futurebase->invert_colors)
-			    new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
-
-			for (piece = 0; piece < current_tb->num_pieces; piece ++) {
-			    if (position.piece_position[piece] == new_promotion_sq) {
-				position.piece_position[piece] = promotion_sq;
-				break;
-			    }
-			}
-
-			if (piece == current_tb->num_pieces) {
-			    fatal("Couldn't back up to an identical piece in promotion back prop\n");
-			    break;
-			}
-		    }
-
-		    extra_piece = futurebase->prev_piece_in_semilegal_group[extra_piece];
-
-		} while (extra_piece != -1);
+		    local_piece = current_tb->next_piece_in_semilegal_group[local_piece];
+		}
 	    }
 	}
     }
@@ -14202,7 +14163,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.777 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.778 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
