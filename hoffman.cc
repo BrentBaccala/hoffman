@@ -5306,7 +5306,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.781 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.782 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6041,6 +6041,9 @@ void invert_colors_of_global_position(global_position_t *global)
  *
  * 3. There can be one piece (the "restricted" piece) that matches up, but is on a square flagged
  * illegal for it in the local tablebase (it moved from a legal square).
+ *
+ * A restricted piece will be the last piece in a semilegal group, but its square will not be legal
+ * for that group.
  *
  * If there are additional differences not covered in this list (more than one extra piece, for
  * example), the function returns -1.  Otherwise, the return value is a 32 bit integer split into
@@ -10195,15 +10198,11 @@ void propagate_moves_from_capture_futurebase(void)
 		} else {
 
 		    /* One piece was on a restricted square.  It's the obvious capturing piece, but
-		     * it's not the only possible one, because it might be possible to swap it with
-		     * an identical piece that would put it on a semilegal square and put the other
-		     * piece on the restricted square.  The simplest way to understand this is in
-		     * terms of semilegal groups - each square on the board can only have a single
-		     * semilegal group for a given piece type and color.  A restricted piece is on a
-		     * square whose semilegal group is either empty or already full.  If the
-		     * square's semilegal group is in fact empty, then there's only one restricted
-		     * piece we need to consider.  Otherwise, we need to consider each piece in the
-		     * semilegal group as the possible restricted piece.
+		     * it's not the only possible one.  A restricted piece is on a square whose
+		     * semilegal group is either empty or already full.  If the square's semilegal
+		     * group is in fact empty, then there's only one restricted piece we need to
+		     * consider.  Otherwise, we need to consider each piece in the semilegal group
+		     * as the possible restricted piece.
 		     */
 
 		    int restricted_square = position.piece_position[restricted_piece];
@@ -14078,7 +14077,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.781 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.782 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
