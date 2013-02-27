@@ -5306,7 +5306,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.778 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.779 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6015,16 +6015,20 @@ void invert_colors_of_global_position(global_position_t *global)
  * 1. There can be an "extra" piece in the foreign tablebase that doesn't appear in the
  * local tablebase (a pawn will promote into it).
  *
- * If there are multiple identical extra pieces, it'll be like QQQ in the futurebase, while we've
- * got QQP in the local tablebase.  If the futurebase position has only one queen on the back rank,
- * then it must be the extra piece, even if it's numbered differently (because of restrictions) than
- * the piece number we detect here.  If the futurebase position has multiple queens on the back
- * rank, then one queen might be "extra" back-proping into one position, while another queen might
- * be "extra" back-proping into a different position, but from the same futurebase position.
+ * If there are multiple identical extra pieces, it'll be like QQ in the futurebase, while we've got
+ * QP in the local tablebase.  If the futurebase position has multiple queens on the back rank, then
+ * one queen might be "extra" back-proping into one position, while another queen might be "extra"
+ * back-proping into a different position, but from the same futurebase position.  We can narrow it
+ * down to a single semilegal group in the local tablebase with the extra piece in it.  If the
+ * semilegal group is not empty, then we need to consider each piece in the semilegal group as the
+ * extra piece.  This function will identify a single extra piece, the calling function is
+ * responsible for swapping it with the other pieces in the semilegal group.
+ *
+ * Example: both Q7/7P/8/8/8/8/8/4k2K and 7Q/P7/8/8/8/8/8/4k2K promote into Q6Q/8/8/8/8/8/8/4k2K
  *
  * 2. There can be up to two "missing" pieces in the local tablebase that don't appear in the
- * foreign tablebase (one will either be captured, or will be a pawn that promotes, and two will be
- * a pawn that captures and promotes).
+ * foreign tablebase (one will either be a captured piece, or a pawn that promotes, and two will
+ * indicate that a pawn captures and promotes).
  *
  * If there are multiple identical missing pieces due to capture, it'll be like QQ in the futurebase
  * and we've got QQQ in the local tb.  If only one queen can be captured in a given position, then
@@ -6033,8 +6037,10 @@ void invert_colors_of_global_position(global_position_t *global)
  * back-prop into multiple local positions with different missing pieces, depending on the piece
  * numbering.
  *
+ * A missing piece will be the last piece in a semilegal group.
+ *
  * 3. There can be one piece (the "restricted" piece) that matches up, but is on a square flagged
- * illegal for it in the local tablebase (it will move onto a legal square).
+ * illegal for it in the local tablebase (it moved from a legal square).
  *
  * If there are additional differences not covered in this list (more than one extra piece, for
  * example), the function returns -1.  Otherwise, the return value is a 32 bit integer split into
@@ -9717,7 +9723,6 @@ void propagate_moves_from_promotion_futurebase(void)
 
 		    }
 
-
 		    /* If the extra piece mapped into a non-empty semilegal group, then swap it with
 		     * the next piece in the group and try again.
 		     */
@@ -9813,15 +9818,8 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 		pawn = conversion_result & 0xff;                      /* missing_piece1 */
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece != futurebase->extra_piece) || (pawn != futurebase->missing_pawn)
-		    || (missing_piece2 != futurebase->missing_non_pawn)) {
-		    fatal("Conversion error during promotion capture back-prop\n");
-		    continue;
-		}
-
-		/* This can happen if the futurebase is more liberal than the current tablebase. */
-
-		if (restricted_piece != NONE) continue;
+		if ((extra_piece == NONE) || (pawn == NONE)
+		    || (missing_piece2 == NONE) || (restricted_piece != NONE)) continue;
 
 		/* Since the last move had to have been a promotion move, there is absolutely no way
 		 * we could have en passant capturable pawns in the futurebase position.
@@ -9843,21 +9841,16 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 		 * pieces.  Let's say we're back propagating from a Q+Q endgame into a Q+P endgame.
 		 * If we've got a futurebase position with both queens on the back rank, then we
 		 * have to consider the possibility that the pawn could promote into either of them.
-		 *
-		 * Move restrictions can really mess with this, but right now we don't compute
-		 * tablebases with non-identical overlapping move restrictions on otherwise
-		 * identical pieces, and with that caveat we're OK.  If the move restrictions don't
-		 * overlap, then there's no way the pieces can swap with each other.  And if the
-		 * move restrictions are identical, then that will be noted in the
-		 * prev_piece_in_semilegal_group array that we use below.
 		 */
 
-		do {
+		int promotion_sq = foreign_position.piece_position[extra_piece];
 
-		    int promotion_sq = foreign_position.piece_position[extra_piece];
+		if (futurebase->invert_colors)
+		    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-		    if (futurebase->invert_colors)
-			promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
+		int local_piece = futurebase->matching_local_piece_by_square[extra_piece][promotion_sq];
+
+		while (true) {
 
 		    /* The extra piece has to be on the back rank.
 		     *
@@ -9946,37 +9939,20 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 
 		    }
 
-		    /* If there's an piece identical to the extra piece in the futurebase's
-		     * position, then figure out which of our pieces it was mapped to, swap them,
-		     * and try again.
+		    /* If the extra piece mapped into a non-empty semilegal group, then swap it with
+		     * the next piece in the group and try again.
 		     */
 
-		    if (futurebase->prev_piece_in_semilegal_group[extra_piece] != -1) {
+		    if (local_piece == -1) break;
 
-			int piece;
+		    int new_promotion_sq = position.piece_position[local_piece];
 
-			int new_promotion_sq
-			    = foreign_position.piece_position[futurebase->prev_piece_in_semilegal_group[extra_piece]];
+		    position.piece_position[local_piece] = promotion_sq;
+		    promotion_sq = new_promotion_sq;
 
-			if (futurebase->invert_colors)
-			    new_promotion_sq = rowcol2square(7 - ROW(new_promotion_sq), COL(new_promotion_sq));
+		    local_piece = current_tb->next_piece_in_semilegal_group[local_piece];
 
-			for (piece = 0; piece < current_tb->num_pieces; piece ++) {
-			    if (position.piece_position[piece] == new_promotion_sq) {
-				position.piece_position[piece] = promotion_sq;
-				break;
-			    }
-			}
-
-			if (piece == current_tb->num_pieces) {
-			    fatal("Couldn't back up to an identical piece in promotion back prop\n");
-			    break;
-			}
-		    }
-
-		    extra_piece = futurebase->prev_piece_in_semilegal_group[extra_piece];
-
-		} while (extra_piece != -1);
+		}
 	    }
 	}
     }
@@ -10240,9 +10216,6 @@ void propagate_moves_from_capture_futurebase(void)
 		missing_piece2 = (conversion_result >> 24) & 0xff;
 
 		if ((extra_piece != NONE) || (captured_piece == NONE) || (missing_piece2 != NONE)) {
-#if 0
-		    fatal("Conversion error during capture back-prop (extra piece %d; missing_piece1 %d, missing_piece2 %d\n", extra_piece, missing_piece1, missing_piece2);
-#endif
 		    continue;
 		}
 
@@ -10370,8 +10343,6 @@ void propagate_moves_from_normal_futurebase(void)
 	    missing_piece2 = (conversion_result >> 24) & 0xff;
 
 	    if ((missing_piece1 != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
-		fatal("Conversion error during normal back-prop; extra %d, restricted %d, missing1 %d, missing2 %d\n",
-		      extra_piece, restricted_piece, missing_piece1, missing_piece2);
 		continue;
 	    }
 
@@ -14163,7 +14134,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.778 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.779 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
