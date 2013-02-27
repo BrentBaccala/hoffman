@@ -5306,7 +5306,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.780 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.781 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7327,18 +7327,16 @@ class MemoryEntriesTable: public EntriesTable {
 
  public:
     MemoryEntriesTable(void) {
-	size_t bytes = (((long long) current_tb->max_index + 1) * bits + 7) / 8 + 2*sizeof(int);
+	size_t bytes = (((size_t) current_tb->max_index + 1) * bits + 7) / 8 + 2*sizeof(int);
 	entries = malloc(bytes);
 
-	/* XXX get format right for size_t */
-
 	if (entries == nullptr) {
-	    fatal("Can't malloc %lldMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
+	    fatal("Can't malloc %zdMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
 	} else {
 	    if (bytes < 1024*1024) {
-		info("Malloced %lldKB for tablebase entries\n", bytes/1024);
+		info("Malloced %zdKB for tablebase entries\n", bytes/1024);
 	    } else {
-		info("Malloced %lldMB for tablebase entries\n", bytes/(1024*1024));
+		info("Malloced %zdMB for tablebase entries\n", bytes/(1024*1024));
 	    }
 	}
 	/* Don't really need this, since they will all get initialized anyway */
@@ -7353,18 +7351,18 @@ class MemoryEntriesTable: public EntriesTable {
 	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
 	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
 
-	    unsigned int bytes = ((current_tb->max_index + 1) * (bits + 1) + 7) / 8;
+	    size_t bytes = (((size_t) current_tb->max_index + 1) * (bits + 1) + 7) / 8;
 
 	    /* resize */
 	    entries = realloc(entries, bytes);
 	    if (entries == nullptr) {
-		fatal("Can't realloc %dMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
+		fatal("Can't realloc %zdMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
 		return;
 	    } else {
 		if (bytes < 1024*1024) {
-		    info("Realloced %dKB for tablebase entries: ", bytes/1024);
+		    info("Realloced %zdKB for tablebase entries: ", bytes/1024);
 		} else {
-		    info("Realloced %dMB for tablebase entries: ", bytes/(1024*1024));
+		    info("Realloced %zdMB for tablebase entries: ", bytes/(1024*1024));
 		}
 	    }
 
@@ -13040,7 +13038,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     tablebase_t *tb;
     xmlXPathContextPtr context;
     xmlXPathObjectPtr result;
-    long long futurevector_bytes;
+    size_t futurevector_bytes;
     bool output_filename_needs_xmlFree = false;
 
 #if defined(RLIMIT_MEMLOCK) && LOCK_MEMORY
@@ -13131,18 +13129,17 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	else
 	    tb->futurevector_bits = num_futuremoves[BLACK];
 
-	futurevector_bytes = (((long long)(tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3;
+	futurevector_bytes = (((size_t)(tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3;
 	tb->futurevectors = (char *) malloc(futurevector_bytes);
 	if (tb->futurevectors == nullptr) {
-	    fatal("Can't malloc %dMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
+	    fatal("Can't malloc %zdMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
 		  strerror(errno));
 	    return false;
 	} else {
-	    int kilobytes = futurevector_bytes/1024;
-	    if (kilobytes < 1024) {
-		info("Malloced %dKB for tablebase futurevectors\n", kilobytes);
+	    if (futurevector_bytes < 1024*1024) {
+		info("Malloced %zdKB for tablebase futurevectors\n", futurevector_bytes/1024);
 	    } else {
-		info("Malloced %dMB for tablebase futurevectors\n", kilobytes/1024);
+		info("Malloced %zdMB for tablebase futurevectors\n", futurevector_bytes/(1024*1024));
 	    }
 	}
 	/* Don't really need this, since they will all get initialized anyway */
@@ -14081,7 +14078,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.780 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.781 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
