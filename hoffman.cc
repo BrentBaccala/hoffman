@@ -5306,7 +5306,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.779 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.780 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6065,9 +6065,6 @@ void invert_colors_of_global_position(global_position_t *global)
  * XXX need to ASSERT that sizeof(..._pieces_processed_bitvector) is at least MAX_PIECES!!
  *
  * XXX the return value assumes that int holds at least 32 bits
- *
- * XXX need to modify the calling convention of this function to handle the multiple extra or
- * missing pieces cases discussed in the comments above.
  */
 
 #define NONE 0x80
@@ -6126,13 +6123,13 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     }
 
     local_position->en_passant_square = foreign_position->en_passant_square;
-    local_position->side_to_move = foreign_position->side_to_move;
+    if (invert_colors)
+	local_position->en_passant_square = vertical_reflection(local_position->en_passant_square);
 
+    local_position->side_to_move = foreign_position->side_to_move;
     if (invert_colors) flip_side_to_move_local(local_position);
 
-    /* First, see if we can slot foreign pieces into the local tablebase on legal squares.  We start
-     * by slotting them onto semilegal squares.
-     */
+    /* First, see if we can slot foreign pieces into the local tablebase on semilegal squares. */
 
     for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
 
@@ -6154,55 +6151,10 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	}
     }
 
-    /* Now permute pieces in the local tablebase to try and get them onto legal squares.
-     *
-     * XXX does the order of permutations in this function have to match up with normalize_position()?
-     */
-
-    for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
-
-	/* run this loop once for each set of identical pieces (i.e, each semilegal set) */
-	if (local_tb->permutations[local_piece]) {
-
-	    if (! permute_semilegal_group_until_legal(local_tb, local_position, local_piece)) {
-
-		/* That didn't work?  Then we can try something else.  If we don't have a restricted
-		 * piece yet, loop through all pieces in this set, take each one off in turn, and
-		 * try again to come up with a legal position.
-		 */
-
-		int saved_position;
-
-		for (local_piece3 = local_piece; local_piece3 != -1;
-		     local_piece3 = local_tb->next_piece_in_semilegal_group[local_piece3]) {
-
-		    saved_position = local_position->piece_position[local_piece3];
-		    local_position->piece_position[local_piece3] = ILLEGAL_POSITION;
-
-		    if (permute_semilegal_group_until_legal(local_tb, local_position, local_piece)) break;
-
-		    local_position->piece_position[local_piece3] = saved_position;
-		}
-
-		if (local_piece3 != -1) {
-
-		    /* Whew!  That worked.  Reset our various bitvectors. */
-
-		    if (invert_colors) saved_position = vertical_reflection(saved_position);
-
-		    for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
-			if (foreign_position->piece_position[foreign_piece] == saved_position) {
-			    foreign_pieces_processed_bitvector &= ~(1 << foreign_piece);
-			}
-		    }
-		}
-	    }
-	}
-    }
-
-    /* If that didn't work for a foreign piece, see if we can slip it in on an illegal square.  We
-     * waited until we ran those first loops so we could tell which pieces are unassigned and thus
-     * available for a restricted piece.
+    /* If that didn't work for a foreign piece, see if we can assign it as a restricted piece
+     * (matching local piece) or an extra piece (no matching local piece).  We waited until we ran
+     * those first loops so we could tell which pieces are unassigned and thus available for a
+     * restricted piece.
      */
 
     for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
@@ -6213,22 +6165,17 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 	if (invert_colors) sq = vertical_reflection(sq);
 
-	if (restricted_piece != NONE) {
-	    /* more than one restricted piece in translation */
-	    return -1;
-	}
-
 	for (local_piece = foreign_tb->matching_local_piece[foreign_piece];
 	     local_piece != -1; local_piece = local_tb->next_identical_piece[local_piece]) {
 
 	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
 
-		local_position->piece_position[local_piece] = sq;
-		local_position->board_vector |= BITVECTOR(sq);
-		if (local_tb->piece_color[local_piece] == local_position->side_to_move)
-		    local_position->PTM_vector |= BITVECTOR(sq);
+		if (restricted_piece != NONE) {
+		    /* more than one restricted piece in translation */
+		    return -1;
+		}
 
-		foreign_pieces_processed_bitvector |= (1 << foreign_piece);
+		local_position->piece_position[local_piece] = sq;
 
 		restricted_piece = local_piece;
 
@@ -6269,7 +6216,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 		    missing_piece2 = local_piece;
 		}
 	    } else {
-		/* More than one missing piece in translation */
+		/* More than two missing pieces in translation */
 		return -1;
 	    }
 
@@ -14134,7 +14081,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.779 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.780 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
