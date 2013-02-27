@@ -5306,7 +5306,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.782 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.783 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6126,7 +6126,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     }
 
     local_position->en_passant_square = foreign_position->en_passant_square;
-    if (invert_colors)
+    if (invert_colors && (local_position->en_passant_square != ILLEGAL_POSITION))
 	local_position->en_passant_square = vertical_reflection(local_position->en_passant_square);
 
     local_position->side_to_move = foreign_position->side_to_move;
@@ -14077,7 +14077,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.782 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.783 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
