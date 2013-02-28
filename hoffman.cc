@@ -5306,7 +5306,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.783 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.784 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6276,6 +6276,7 @@ int global_position_to_local_position(tablebase_t *tb, global_position_t *global
 		    if (global->board[square] == global_pieces[color][type]) {
 			fake_tb.piece_color[fake_tb.num_pieces] = color;
 			fake_tb.piece_type[fake_tb.num_pieces] = type;
+			fake_tb.semilegal_squares[fake_tb.num_pieces] = ALL_ONES_BITVECTOR;
 			fake_position.piece_position[fake_tb.num_pieces] = square;
 			fake_tb.num_pieces ++;
 		    }
@@ -14077,7 +14078,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.783 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.784 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
