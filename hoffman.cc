@@ -5306,7 +5306,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.784 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.785 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5525,6 +5525,16 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 		    futurebase->matching_local_piece[future_piece] = piece;
 		}
 
+		/* Have we found a unassigned matching pair of localbase/futurebase pieces? */
+		if (!(local_piece_vector & (1 << piece))
+		    && !(future_piece_vector & (1 << future_piece))) {
+
+		    local_piece_vector |= (1 << piece);
+		    future_piece_vector |= (1 << future_piece);
+
+		    found_matching_piece = true;
+		}
+
 		for (int square = 0; square < 64; square ++) {
 
 		    if (tb->semilegal_squares[piece] & BITVECTOR(square)) {
@@ -5533,16 +5543,6 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 			    futurebase->matching_local_piece_by_square[future_piece][square] = piece;
 			}
 
-			/* Have we found a unassigned matching pair of localbase/futurebase pieces? */
-			if (!(local_piece_vector & (1 << piece))
-			    && !(future_piece_vector & (1 << future_piece))
-			    && (futurebase->semilegal_squares[future_piece] & BITVECTOR(square))) {
-
-			    local_piece_vector |= (1 << piece);
-			    future_piece_vector |= (1 << future_piece);
-
-			    found_matching_piece = true;
-			}
 		    }
 		}
 	    }
@@ -14078,7 +14078,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.784 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.785 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
