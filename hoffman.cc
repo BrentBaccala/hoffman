@@ -3115,6 +3115,42 @@ void init_reflections(void)
     }
 }
 
+bool semilegal_group_is_legal(tablebase_t *tb, local_position_t *position, int first_piece_in_group)
+{
+    for (int piece = first_piece_in_group; piece != -1; piece = tb->next_piece_in_semilegal_group[piece]) {
+	if (tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece])) {
+	    return false;
+	}
+    }
+    return true;
+}
+
+bool permute_semilegal_group_until_legal(tablebase_t *tb, local_position_t *position,
+					 int first_piece_in_group, uint8_t *permutation)
+{
+    for (int perm = 0; tb->permutations[first_piece_in_group][perm] != 0; perm ++) {
+
+	if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
+
+	transpose_array(position->piece_position,
+			tb->permutations[first_piece_in_group][perm] & 0xff,
+			tb->permutations[first_piece_in_group][perm] >> 8);
+	transpose_array(permutation,
+			tb->permutations[first_piece_in_group][perm] & 0xff,
+			tb->permutations[first_piece_in_group][perm] >> 8);
+    }
+
+    if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
+
+    /* If none of the permutations result in a legal position, then the permutation list is
+     * structured so that this final transposition takes us back to the original position and we
+     * return false.
+     */
+
+    transpose_array(position->piece_position,
+		    first_piece_in_group, tb->next_piece_in_semilegal_group[first_piece_in_group]);
+    return false;
+}
 
 void normalize_position(tablebase_t *tb, local_position_t *position)
 {
@@ -3200,44 +3236,16 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
      * in each transposition to update the count.  Keep going until the count reaches zero.
      * Only improves speed if we have a lot of pieces in the group, though, so the current
      * code is definitely better for two pieces in the group.
+     *
+     * We don't check the return value from permut_semilegal_group_until_legal().  Why?  Well, this
+     * function returns void, so what should it do if the position isn't legal?  On the other hand,
+     * normalized_position_to_index (the next step after this one in local_position_to_index) will
+     * check the position for legality and return INVALID_INDEX if it isn't.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	/* run this loop once for each semilegal group */
 	if (tb->permutations[piece]) {
-	    int perm = 0;
-
-	    while (tb->permutations[piece][perm] != 0) {
-
-		int piece2;
-
-		/* check for legality of all pieces in this group */
-		for (piece2 = piece; piece2 != -1; piece2 = tb->next_piece_in_semilegal_group[piece2]) {
-		    if (! (tb->legal_squares[piece2] & BITVECTOR(position->piece_position[piece2]))) {
-			break;
-		    }
-		}
-
-		if (piece2 == -1) {
-		    /* we're legal */
-		    break;
-		}
-
-		/* permute */
-		transpose_array(position->piece_position,
-				 tb->permutations[piece][perm] & 0xff, tb->permutations[piece][perm] >> 8);
-		transpose_array(permutation,
-				 tb->permutations[piece][perm] & 0xff, tb->permutations[piece][perm] >> 8);
-		perm ++;
-	    }
-
-	    /* We don't check the final permutation for legality, just leave it alone.  Why?  Well,
-	     * this function returns void, so what should it do if the position isn't legal?  On the
-	     * other hand, normalized_position_to_index (the next step after this one in
-	     * local_position_to_index) will check the position for legality and return
-	     * INVALID_INDEX if it isn't.
-	     */
+	    permute_semilegal_group_until_legal(tb, position, piece, permutation);
 	}
     }
 
@@ -4172,12 +4180,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      * squares, we permute them and see if we can get them onto legal squares that way.  Now,
      * construct the full set of possible permutations, using an algorithm that generates a series
      * of transpositions that walks the entire set of permutations, and store this as a list
-     * attached to the first piece in the set.  We'll also use these permutations when we're
-     * translating a foreign position (from a futurebase) into a local position.
+     * attached to the first piece in the set.
      *
      * XXX probably don't need to do this during normalization at all if the semilegal and legal
-     * squares are the same, because permuting wouldn't do anything for us then.  Still need
-     * it for futurebase translation.
+     * squares are the same, because permuting wouldn't do anything for us then.
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -5306,7 +5312,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.785 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.786 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5484,13 +5490,11 @@ void unload_futurebase(tablebase_t *tb)
  *
  * - if there is a single extra piece in the futurebase, store its piece number
  *
- * - if there is a single missing piece in the futurebase, store its piece number along with an
- *   indication if it is a pawn or not
+ * - if there are one or two missing pieces that don't appear in the futurebase, store the piece
+ *   number(s) along with an indication if it's a pawn or not
  *
- * XXX If there is ambiguity because there are other pieces in the futurebase identical to the extra
- * or missings piece(s), the highest piece numbers will be returned.  As the comments on
- * translate_foreign_position_to_local_position() discuss, both that function and this one need to
- * be modified to handle multiple extra or missing pieces.
+ * If there is ambiguity because there are other pieces in the futurebase identical to the extra or
+ * missings piece(s), the highest piece numbers will be returned.
  */
 
 void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
@@ -6039,11 +6043,12 @@ void invert_colors_of_global_position(global_position_t *global)
  *
  * A missing piece will be the last piece in a semilegal group.
  *
- * 3. There can be one piece (the "restricted" piece) that matches up, but is on a square flagged
- * illegal for it in the local tablebase (it moved from a legal square).
+ * 3. There can be one "restricted" piece that matches up, but is on a square flagged illegal for it
+ * in the local tablebase (it moved from a legal square).  This function no longer checks for
+ * legality, only semilegality, so a position can be returned with no restricted pieces indicated
+ * even if the position can not be normalized.
  *
- * A restricted piece will be the last piece in a semilegal group, but its square will not be legal
- * for that group.
+ * A restricted piece will be the last piece in a semilegal group.
  *
  * If there are additional differences not covered in this list (more than one extra piece, for
  * example), the function returns -1.  Otherwise, the return value is a 32 bit integer split into
@@ -6059,7 +6064,7 @@ void invert_colors_of_global_position(global_position_t *global)
  * as missing piece #1.  If there are multiple identical missing pieces, the last one will always be
  * returned as the missing piece(s).
  *
- * To speed this function, we precomputed missing/extra/restricted pieces along with
+ * To speed this function, we precomputed missing and extra pieces along with
  * piece-and-square-to-piece and piece-to-piece mapping tables.
  *
  * In addition to back-progagation, this function is also used while probing a set of tablebases to
@@ -6068,43 +6073,11 @@ void invert_colors_of_global_position(global_position_t *global)
  * XXX need to ASSERT that sizeof(..._pieces_processed_bitvector) is at least MAX_PIECES!!
  *
  * XXX the return value assumes that int holds at least 32 bits
+ *
+ * XXX we can probably eliminate some of these loops with more clever logic
  */
 
 #define NONE 0x80
-
-bool semilegal_group_is_legal(tablebase_t *tb, local_position_t *position, int first_piece_in_group)
-{
-    for (int piece = first_piece_in_group; piece != -1; piece = tb->next_piece_in_semilegal_group[piece]) {
-	if ((position->piece_position[piece] != ILLEGAL_POSITION)
-	    && ! (tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece]))) {
-	    return false;
-	}
-    }
-    return true;
-}
-
-bool permute_semilegal_group_until_legal(tablebase_t *tb, local_position_t *position, int first_piece_in_group)
-{
-    for (int perm = 0; tb->permutations[first_piece_in_group][perm] != 0; perm ++) {
-
-	if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
-
-	transpose_array(position->piece_position,
-			tb->permutations[first_piece_in_group][perm] & 0xff,
-			tb->permutations[first_piece_in_group][perm] >> 8);
-    }
-
-    if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
-
-    /* If none of the permutations result in a legal position, then the permutation list is
-     * structured so that this final transposition takes us back to the original position and we
-     * return false.
-     */
-
-    transpose_array(position->piece_position,
-		    first_piece_in_group, tb->next_piece_in_semilegal_group[first_piece_in_group]);
-    return false;
-}
 
 int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_position_t *foreign_position,
 						 tablebase_t *local_tb, local_position_t *local_position,
@@ -6246,12 +6219,6 @@ int translate_foreign_index_to_local_position(tablebase_t *foreign_tb, index_t i
 
     return translate_foreign_position_to_local_position(foreign_tb, &foreign_position, local_tb, local_position, invert_colors);
 }
-
-/* This function works just like previous one.  So much so that I've considered wrapping them
- * together, but since this one is already written, I'll just leave it alone for now.
- *
- * It's only use now is by the probing code (see next function).
- */
 
 int global_position_to_local_position(tablebase_t *tb, global_position_t *global, local_position_t *local)
 {
@@ -14078,7 +14045,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.785 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.786 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
