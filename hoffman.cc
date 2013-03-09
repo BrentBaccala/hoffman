@@ -5312,7 +5312,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.786 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.787 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6073,8 +6073,6 @@ void invert_colors_of_global_position(global_position_t *global)
  * XXX need to ASSERT that sizeof(..._pieces_processed_bitvector) is at least MAX_PIECES!!
  *
  * XXX the return value assumes that int holds at least 32 bits
- *
- * XXX we can probably eliminate some of these loops with more clever logic
  */
 
 #define NONE 0x80
@@ -6084,12 +6082,12 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 						 int invert_colors)
 {
     int foreign_piece;
-    int local_piece, local_piece2, local_piece3;
+    int local_piece;
     int restricted_piece = NONE;
     int missing_piece1 = NONE;
     int missing_piece2 = NONE;
     int extra_piece = NONE;
-    short foreign_pieces_processed_bitvector = 0;
+    int extra_sq;
 
     memset(local_position, 0, sizeof(local_position_t));
 
@@ -6117,60 +6115,29 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	     local_piece != -1; local_piece = local_tb->next_piece_in_semilegal_group[local_piece]) {
 
 	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
-
 		local_position->piece_position[local_piece] = sq;
-
-		foreign_pieces_processed_bitvector |= (1 << foreign_piece);
-
 		break;
 	    }
 	}
-    }
 
-    /* If that didn't work for a foreign piece, see if we can assign it as a restricted piece
-     * (matching local piece) or an extra piece (no matching local piece).  We waited until we ran
-     * those first loops so we could tell which pieces are unassigned and thus available for a
-     * restricted piece.
-     */
-
-    for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
-
-	int sq = foreign_position->piece_position[foreign_piece];
-
-	if (foreign_pieces_processed_bitvector & (1 << foreign_piece)) continue;
-
-	if (invert_colors) sq = vertical_reflection(sq);
-
-	for (local_piece = foreign_tb->matching_local_piece[foreign_piece];
-	     local_piece != -1; local_piece = local_tb->next_identical_piece[local_piece]) {
-
-	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
-
-		if (restricted_piece != NONE) {
-		    /* more than one restricted piece in translation */
-		    return -1;
-		}
-
-		local_position->piece_position[local_piece] = sq;
-
-		restricted_piece = local_piece;
-
-		break;
-	    }
-	}
+	/* If that didn't work for a foreign piece, see if we can assign it as a restricted piece
+	 * (matching local piece) or an extra piece (no matching local piece).  Right now, we'll
+	 * just flag it extra, then check below in this function to see if a local piece matches.
+	 */
 
 	if (local_piece == -1) {
 	    if (extra_piece != NONE) {
-		/* More than one extra piece in translation */
+		/* More than one extra/restricted piece in translation */
 		return -1;
 	    }
 	    extra_piece = foreign_piece;
+	    extra_sq = sq;
 	}
+
     }
 
-
-    /* Make sure all the local pieces but one or two have been accounted for,
-     * and set up our bitboard vectors.
+    /* Make sure all the local pieces but one or two have been accounted for, see if the extra piece
+     * is actually a restricted piece, and set up our bitboard vectors.
      */
 
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
@@ -6182,7 +6149,18 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 	} else {
 
-	    if (missing_piece1 == NONE) {
+	    if ((extra_piece != NONE)
+		&& (local_tb->piece_type[local_piece] == foreign_tb->piece_type[extra_piece])
+		&& ((!invert_colors
+		     && (local_tb->piece_color[local_piece] == foreign_tb->piece_color[extra_piece]))
+		    || (invert_colors
+			&& (local_tb->piece_color[local_piece] != foreign_tb->piece_color[extra_piece])))) {
+
+		local_position->piece_position[local_piece] = extra_sq;
+		restricted_piece = local_piece;
+		extra_piece = NONE;
+
+	    } else if (missing_piece1 == NONE) {
 		missing_piece1 = local_piece;
 	    } else if (missing_piece2 == NONE) {
 		if (local_tb->piece_type[local_piece] == PAWN) {
@@ -14045,7 +14023,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.786 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.787 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
