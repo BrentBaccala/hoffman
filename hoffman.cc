@@ -5312,7 +5312,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.788 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.789 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6318,6 +6318,8 @@ bool parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_positi
 	pos->permuted_piece[piece] = piece;
     }
 
+    while (*FEN_string == ' ') FEN_string ++;
+
     for (row=7; row>=0; row--) {
 	for (col=0; col<=7; col++) {
 	    switch (*FEN_string) {
@@ -6375,6 +6377,9 @@ bool parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_positi
 	    case 'P':
 		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, PAWN)) return false;
 		break;
+
+	    default:
+		return false;
 	    }
 	    FEN_string++;
 	}
@@ -6421,6 +6426,8 @@ bool parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 
     memset(&localpos, 0, sizeof(global_position_t));
     localpos.en_passant_square = ILLEGAL_POSITION;
+
+    while (*FEN_string == ' ') FEN_string ++;
 
     for (row=7; row>=0; row--) {
 	for (col=0; col<=7; col++) {
@@ -6479,6 +6486,9 @@ bool parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 	    case 'P':
 		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, PAWN)) return false;
 		break;
+
+	    default:
+		return false;
 	    }
 	    FEN_string++;
 	}
@@ -13838,7 +13848,8 @@ void probe_tablebases(tablebase_t **tbs) {
 #endif
 
     while (true) {
-	index_t index = 0;
+	index_t index;
+	bool index_valid = false;
 #ifdef USE_NALIMOV
 	int score;
 #endif
@@ -13862,6 +13873,8 @@ void probe_tablebases(tablebase_t **tbs) {
 
 	/* Loop until we've read a valid input string */
 	while (true) {
+
+	    char *endptr;
 
 #ifdef HAVE_LIBREADLINE
 	    char *buffer;
@@ -13888,9 +13901,16 @@ void probe_tablebases(tablebase_t **tbs) {
 		break;
 	    if (parse_FEN_to_global_position(buffer, &global_position))
 		break;
-	    // XXX can't parse "0" as an index
-	    if ((index = strtol(buffer, nullptr, 10)) != 0)
+
+	    /* Check to see if the entire string parses as an integer.  Otherwise, a corrupt FEN
+	     * might parse as something like "8", and that's very confusing.
+	     */
+
+	    index = strtol(buffer, &endptr, 10);
+	    if (*endptr == '\0') {
+		index_valid = true;
 		break;
+	    }
 
 	    printf("Bad input\n\n");
 	}
@@ -13898,7 +13918,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	global_position.variant = tbs[0]->variant;
 	global_position_valid = true;
 
-	if (index == 0) {
+	if (! index_valid) {
 	    search_tablebases_for_global_position(tbs, &global_position, &tb, &index);
 	} else {
 	    tb = tbs[0];
@@ -14021,7 +14041,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.788 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.789 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
