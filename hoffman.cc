@@ -5312,7 +5312,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.789 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.790 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7284,7 +7284,7 @@ class MemoryEntriesTable: public EntriesTable {
 
  public:
     MemoryEntriesTable(void) {
-	size_t bytes = (((size_t) current_tb->max_index + 1) * bits + 7) / 8 + 2*sizeof(int);
+	size_t bytes = ((current_tb->max_index + 1) * bits + 7) / 8 + 2*sizeof(int);
 	entries = malloc(bytes);
 
 	if (entries == nullptr) {
@@ -7308,7 +7308,7 @@ class MemoryEntriesTable: public EntriesTable {
 	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
 	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
 
-	    size_t bytes = (((size_t) current_tb->max_index + 1) * (bits + 1) + 7) / 8;
+	    size_t bytes = ((current_tb->max_index + 1) * (bits + 1) + 7) / 8;
 
 	    /* resize */
 	    entries = realloc(entries, bytes);
@@ -13082,7 +13082,7 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	else
 	    tb->futurevector_bits = num_futuremoves[BLACK];
 
-	futurevector_bytes = (((size_t)(tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3;
+	futurevector_bytes = (((tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3;
 	tb->futurevectors = (char *) malloc(futurevector_bytes);
 	if (tb->futurevectors == nullptr) {
 	    fatal("Can't malloc %zdMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
@@ -14041,7 +14041,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.789 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.790 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
