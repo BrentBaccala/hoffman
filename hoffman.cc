@@ -3118,7 +3118,7 @@ void init_reflections(void)
 bool semilegal_group_is_legal(tablebase_t *tb, local_position_t *position, int first_piece_in_group)
 {
     for (int piece = first_piece_in_group; piece != -1; piece = tb->next_piece_in_semilegal_group[piece]) {
-	if (tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece])) {
+	if (! (tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece]))) {
 	    return false;
 	}
     }
@@ -5312,7 +5312,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.790 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.791 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14041,7 +14041,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.790 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.791 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
