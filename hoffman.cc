@@ -827,11 +827,21 @@ void info (const char * format, ...)
     va_end(va);
 }
 
+/* We aim to print progress_dots progress dots as we move through a tablebase.  That means one
+ * progress dot every tb->max_index/progress_dots indices.  Since we're using integer arithmetic,
+ * that result is rounded DOWN, so the result of dividing by it gets shifted UP.  That could result
+ * in an extra dot or two getting printed, so we limit ourselves to progress_dot dots.
+ */
+
 void print_progress_dot(tablebase_t *tb, index_t index)
 {
+    static std::mutex mutex;
+
     if (progress_dots > 0) {
 	if ((index + 1) % (tb->max_index / progress_dots) == 0) {
 	    if ((index + 1) / (tb->max_index / progress_dots) <= progress_dots) {
+		std::unique_lock<std::mutex> _(mutex);
+
 		if (! printing_progress_dots) {
 		    for (int i=1; i < (index + 1) / (tb->max_index / progress_dots); i++) {
 			fputc(' ', stderr);
@@ -5351,7 +5361,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.792 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.793 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13215,10 +13225,176 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
     if (output_filename_needs_xmlFree) xmlFree(output_filename);
 
-    delete entriesTable;
+    // XXX we alloced it in this routine, but we might still use it to verify itself internally
+    // delete entriesTable;
 
     return true;
 }
+
+/***** VERIFYING TABLEBASES *****/
+
+/* A tablebase can be checked for internal consistency to see if all moves from PNTM won positions
+ * lead to PTM won positions.  This test will be run at the end of a generation run if the '-v' flag
+ * is specified in addition to the '-g' flag.  Doesn't work on proptable runs; the tablebase has to
+ * be in memory.  This is only used for software testing, since properly generated tablebases are
+ * always internally consistent!
+ */
+
+std::atomic<index_t> next_verify_index;
+
+void verify_tablebase_internally_thread(void)
+{
+    while (1) {
+	index_t index = (next_verify_index ++);
+	index_t next_index;
+	local_position_t position;
+	int piece;
+	int dir;
+	int origin_square;
+	struct movement *movementptr;
+
+	if (index > current_tb->max_index) break;
+
+	print_progress_dot(current_tb, index);
+
+	if (!index_to_local_position(current_tb, index, REFLECTION_NONE, &position)) continue;
+
+	flip_side_to_move_local(&position);
+	position.en_passant_square = ILLEGAL_POSITION;
+
+	for (piece = 0; piece < current_tb->num_pieces; piece++) {
+
+	    /* We only want to consider pieces of the side which is to move, but we flipped it... */
+
+	    if (current_tb->piece_color[piece] == position.side_to_move) continue;
+
+	    origin_square = position.piece_position[piece];
+	    position.board_vector &= ~BITVECTOR(origin_square);
+
+	    if (current_tb->piece_type[piece] != PAWN) {
+
+		for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[piece]]; dir++) {
+
+		    for (movementptr = movements[current_tb->piece_type[piece]][origin_square][dir];
+			 (movementptr->vector & position.board_vector) == 0;
+			 movementptr++) {
+
+			/* Completely discard king moves into check by frozen pieces */
+
+			if ((piece == current_tb->white_king)
+			    && (current_tb->illegal_white_king_squares & BITVECTOR(movementptr->square))) continue;
+			if ((piece == current_tb->black_king)
+			    && (current_tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
+
+			/* Move the piece, so we can test the new position for check */
+
+			position.piece_position[piece] = movementptr->square;
+			position.board_vector |= BITVECTOR(movementptr->square);
+
+			/* We could just check if local_position_to_index() returns a valid index,
+			 * but checking the legal_squares bitvector first makes this a little
+			 * faster.
+			 */
+
+			if (! PNTM_in_check(current_tb, &position)
+			    && (current_tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+			    && ((next_index = local_position_to_index(current_tb, &position)) != INVALID_INDEX)) {
+
+			    /* check this position */
+			    int n = entriesTable->get_DTM(index);
+			    if (n < 0) {
+				/* PNTM mates in (-n)-1 after this move, so next_index must be a PTM wins
+				 * in -n moves or less.
+				 */
+				if ((entriesTable->get_DTM(next_index) <= 0)
+				    || (entriesTable->get_DTM(next_index) > -n)) {
+
+				    fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
+					  index, n, next_index, entriesTable->get_DTM(next_index));
+				}
+			    }
+			}
+
+			position.board_vector &= ~BITVECTOR(movementptr->square);
+
+		    }
+		}
+
+	    } else {
+
+		/* Pawns, as always, are special */
+
+		for (movementptr = normal_pawn_movements[origin_square][current_tb->piece_color[piece]];
+		     (movementptr->vector & position.board_vector) == 0;
+		     movementptr++) {
+
+		    /* Move the piece.  The in-check test below require this. */
+
+		    position.piece_position[piece] = movementptr->square;
+		    position.board_vector |= BITVECTOR(movementptr->square);
+
+		    if (abs(movementptr->square - origin_square) == 16) {
+			position.en_passant_square = (movementptr->square + origin_square) / 2;
+		    }
+
+		    if (! PNTM_in_check(current_tb, &position)
+			&& (ROW(movementptr->square) != 7) && (ROW(movementptr->square) != 0)
+			&& (current_tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+			&& ((next_index = local_position_to_index(current_tb, &position)) != INVALID_INDEX)) {
+
+			/* check this position */
+			int n = entriesTable->get_DTM(index);
+			if (n < 0) {
+			    /* PNTM mates in (-n)-1 after this move, so next_index must be a PTM wins
+			     * in -n moves or less.
+			     */
+			    if ((entriesTable->get_DTM(next_index) <= 0)
+				|| (entriesTable->get_DTM(next_index) > -n)) {
+
+				fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
+				      index, n, next_index, entriesTable->get_DTM(next_index));
+			    }
+			}
+		    }
+
+		    position.board_vector &= ~BITVECTOR(movementptr->square);
+		    position.en_passant_square = ILLEGAL_POSITION;
+
+		}
+	    }
+
+	    position.piece_position[piece] = origin_square;
+	    position.board_vector |= BITVECTOR(origin_square);
+
+	}
+    }
+}
+
+bool verify_tablebase_internally(void)
+{
+    std::thread t[num_threads];
+    unsigned int thread;
+
+    info("Verifying internal consistency of tablebase\n");
+
+    entriesTable->set_threads(num_threads);
+    next_verify_index = 0;
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	t[thread] = std::thread(verify_tablebase_internally_thread);
+    }
+
+    for (thread = 0; thread < num_threads; thread ++) {
+	t[thread].join();
+    }
+
+    entriesTable->set_threads(1);
+
+    info("");
+    
+    return (fatal_errors == 0);
+}
+
 
 /***** PROBING NALIMOV TABLEBASES *****/
 
@@ -14043,7 +14219,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.792 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.793 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14148,7 +14324,7 @@ int main(int argc, char *argv[])
     }
 
 #if !USE_NALIMOV
-    if (verify) {
+    if (!generating && verify) {
 	fatal("Can't verify - program compiled without Nalimov support\n");
 	usage(argv[0]);
 	terminate();
@@ -14159,6 +14335,7 @@ int main(int argc, char *argv[])
 
     if (generating) {
 	generate_tablebase_from_control_file(argv[optind], output_filename);
+	if (verify && !using_proptables) verify_tablebase_internally();
 	terminate();
     }
 
