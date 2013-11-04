@@ -5361,7 +5361,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.793 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.794 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13234,10 +13234,13 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 /***** VERIFYING TABLEBASES *****/
 
 /* A tablebase can be checked for internal consistency to see if all moves from PNTM won positions
- * lead to PTM won positions.  This test will be run at the end of a generation run if the '-v' flag
- * is specified in addition to the '-g' flag.  Doesn't work on proptable runs; the tablebase has to
- * be in memory.  This is only used for software testing, since properly generated tablebases are
- * always internally consistent!
+ * lead to PTM won positions.  We can also check drawn positions, to make sure that none of their
+ * moves lead to PNTM won positions.  We can't make a similar check for PTM won positions, because
+ * these only require a single move to win, and that move might be in a futurebase.
+ *
+ * This test will be run at the end of a generation run if the '-v' flag is specified in addition to
+ * the '-g' flag.  Doesn't work on proptable runs; the tablebase has to be in memory.  This is only
+ * used for software testing, since properly generated tablebases are always internally consistent!
  */
 
 std::atomic<index_t> next_verify_index;
@@ -13312,6 +13315,12 @@ void verify_tablebase_internally_thread(void)
 				    fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
 					  index, n, next_index, entriesTable->get_DTM(next_index));
 				}
+			    } else if (n == 0) {
+				if (entriesTable->get_DTM(next_index) < 0) {
+
+				    fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
+					  index, n, next_index, entriesTable->get_DTM(next_index));
+				}
 			    }
 			}
 
@@ -13350,6 +13359,12 @@ void verify_tablebase_internally_thread(void)
 			     */
 			    if ((entriesTable->get_DTM(next_index) <= 0)
 				|| (entriesTable->get_DTM(next_index) > -n)) {
+
+				fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
+				      index, n, next_index, entriesTable->get_DTM(next_index));
+			    }
+			} else if (n == 0) {
+			    if (entriesTable->get_DTM(next_index) < 0) {
 
 				fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
 				      index, n, next_index, entriesTable->get_DTM(next_index));
@@ -14219,7 +14234,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.793 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.794 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
