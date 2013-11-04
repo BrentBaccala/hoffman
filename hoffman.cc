@@ -710,7 +710,13 @@ index_t debug_futuremove = INVALID_INDEX;
 
 /***** UTILITY FUNCTIONS *****/
 
+/* printing_progress_dots is used to indicate that we're in the middle of printing a line of progress
+ * dots, so a text message of any kind should be prefixed with a newline.
+ */
+
 int fatal_errors = 0;
+
+bool printing_progress_dots = false;
 
 char * error_report_url = nullptr;
 char * completion_report_url = nullptr;
@@ -762,6 +768,11 @@ void fatal (const char * format, ...)
     /* BREAKPOINT */
     if (index(format, '\n')) fatal_errors ++;
 
+    if (printing_progress_dots) {
+	fputc('\n', stderr);
+	printing_progress_dots = false;
+    }
+
     va_start(va, format);
     vfprintf(stderr, format, va);
     va_end(va);
@@ -791,6 +802,11 @@ void warning (const char * format, ...)
 {
     va_list va;
 
+    if (printing_progress_dots) {
+	fputc('\n', stderr);
+	printing_progress_dots = false;
+    }
+
     va_start(va, format);
     fputs("WARNING: ", stderr);
     vfprintf(stderr, format, va);
@@ -801,9 +817,32 @@ void info (const char * format, ...)
 {
     va_list va;
 
+    if (printing_progress_dots) {
+	fputc('\n', stderr);
+	printing_progress_dots = false;
+    }
+
     va_start(va, format);
     if (verbose) vfprintf(stderr, format, va);
     va_end(va);
+}
+
+void print_progress_dot(tablebase_t *tb, index_t index)
+{
+    if (progress_dots > 0) {
+	if ((index + 1) % (tb->max_index / progress_dots) == 0) {
+	    if ((index + 1) / (tb->max_index / progress_dots) <= progress_dots) {
+		if (! printing_progress_dots) {
+		    for (int i=1; i < (index + 1) / (tb->max_index / progress_dots); i++) {
+			fputc(' ', stderr);
+		    }
+		}
+		fputc('.', stderr);
+		printing_progress_dots = true;
+	    }
+	}
+    }
+
 }
 
 void sigaction_user_interrupt (int signal, siginfo_t * siginfo, void * ucontext)
@@ -4274,9 +4313,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 #if DEBUG
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	fprintf(stderr, "Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
-		piece, piece_name[tb->piece_type[piece]], colors[tb->piece_color[piece]],
-		tb->legal_squares[piece], tb->semilegal_squares[piece]);
+	info("Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
+	     piece, piece_name[tb->piece_type[piece]], colors[tb->piece_color[piece]],
+	     tb->legal_squares[piece], tb->semilegal_squares[piece]);
     }
 #endif
 
@@ -5312,7 +5351,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.791 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.792 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7152,8 +7191,8 @@ class EntriesTable {
     void initialize_entry(index_t index, int movecnt, int dtm) {
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE) {
-	    fprintf(stderr, "initialize index %" PRIindex " %s movecnt %d; dtm %d\n",
-		    index, index_to_FEN(current_tb, index), movecnt, dtm);
+	    info("initialize index %" PRIindex " %s movecnt %d; dtm %d\n",
+		 index, index_to_FEN(current_tb, index), movecnt, dtm);
 	}
 #endif
 
@@ -7676,7 +7715,8 @@ inline void PTM_wins(index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("PTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n", index, dtm, entriesTable->get_raw_DTM(index));
+	info("PTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
+	     index, dtm, entriesTable->get_raw_DTM(index));
 #endif
 
     if (dtm < 0) {
@@ -7713,7 +7753,8 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("add_one_to_PNTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n", index, dtm, entriesTable->get_raw_DTM(index));
+	info("add_one_to_PNTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
+	     index, dtm, entriesTable->get_raw_DTM(index));
 #endif
 
     if (dtm > 0) {
@@ -7768,11 +7809,7 @@ void back_propagate_index(index_t index, int target_dtm)
      * assumed like the horizontal or vertical cases.
      */
 
-    if (progress_dots > 0) {
-	if ((index + 1) % (current_tb->max_index / progress_dots) == 0) {
-	    if ((index + 1) / (current_tb->max_index / progress_dots) <= progress_dots) info(".");
-	}
-    }
+    print_progress_dot(current_tb, index);
 
     if (((! tracking_dtm) && entriesTable->is_unpropagated(index))
 	|| (entriesTable->get_DTM(index) == target_dtm)) {
@@ -7804,11 +7841,15 @@ void back_propagate_index(index_t index, int target_dtm)
  * through the entries table, intra-table backpropagating to a single target DTM.
  */
 
-void back_propagate_section(index_t start_index, index_t end_index, int target_dtm)
-{
-    index_t index;
+std::atomic<index_t> next_backprop_index;
 
-    for (index = start_index; index <= end_index; index ++) {
+void non_proptable_thread(int target_dtm)
+{
+    while (1) {
+	index_t index = (next_backprop_index ++);
+
+	if (index > current_tb->max_index) break;
+
 	back_propagate_index(index, target_dtm);
     }
 }
@@ -7817,21 +7858,12 @@ void non_proptable_pass(int target_dtm)
 {
     std::thread t[num_threads];
     unsigned int thread;
-    index_t block_size = (current_tb->max_index+1)/num_threads;
 
     entriesTable->set_threads(num_threads);
+    next_backprop_index = 0;
 
     for (thread = 0; thread < num_threads; thread ++) {
-	index_t start_index = thread*block_size;
-	index_t end_index;
-
-        if (thread != num_threads-1) {
-            end_index = (thread+1)*block_size - 1;
-        } else {
-            end_index = current_tb->max_index;
-        }
-
-	t[thread] = std::thread(back_propagate_section, start_index, end_index, target_dtm);
+	t[thread] = std::thread(non_proptable_thread, target_dtm);
     }
 
     for (thread = 0; thread < num_threads; thread ++) {
@@ -7840,6 +7872,7 @@ void non_proptable_pass(int target_dtm)
 
     entriesTable->set_threads(1);
 }
+
 
 /***** PROPTABLES *****
  *
@@ -8870,8 +8903,8 @@ void proptable_pass_thread(int target_dtm)
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE)
-		fprintf(stderr, "Commiting proptable entry: index %" PRIindex ", dtm %d, movecnt %u, futuremove %d\n",
-			pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
+		info("Commiting proptable entry: index %" PRIindex ", dtm %d, movecnt %u, futuremove %d\n",
+		     pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
 #endif
 
 	    if (target_dtm != 0) {
@@ -9034,8 +9067,8 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	printf("commit_update; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
-	       index, dtm, movecnt, futuremove);
+	info("commit_update; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
+	     index, dtm, movecnt, futuremove);
 #endif
 
     backproped_moves_this_pass ++;
@@ -9097,8 +9130,6 @@ int propagation_pass(int target_dtm)
     } else {
 	non_proptable_pass(target_dtm);
     }
-
-    if (progress_dots > 0) info("\n");
 
     positions_finalized[total_passes] = positions_finalized_this_pass;
     backproped_moves[total_passes] = backproped_moves_this_pass;
@@ -9509,11 +9540,7 @@ void propagate_moves_from_promotion_futurebase(void)
 
 	if (future_index > futurebase->max_index) break;
 
-	if (progress_dots > 0) {
-	    if ((future_index + 1) % (futurebase->max_index / progress_dots) == 0) {
-		if ((future_index + 1) / (futurebase->max_index / progress_dots) <= progress_dots) info(".");
-	    }
-	}
+	print_progress_dot(futurebase, future_index);
 
 	/* It's tempting to break out the loop here if the position isn't a win, but we want to
 	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
@@ -9686,11 +9713,7 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 
 	if (future_index > futurebase->max_index) break;
 
-	if (progress_dots > 0) {
-	    if ((future_index + 1) % (futurebase->max_index / progress_dots) == 0) {
-		if ((future_index + 1) / (futurebase->max_index / progress_dots) <= progress_dots) info(".");
-	    }
-	}
+	print_progress_dot(futurebase, future_index);
 
 	/* It's tempting to break out the loop here if the position isn't a win, but we want to
 	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
@@ -10074,11 +10097,7 @@ void propagate_moves_from_capture_futurebase(void)
 
 	if (future_index > futurebase->max_index) break;
 
-	if (progress_dots > 0) {
-	    if ((future_index + 1) % (futurebase->max_index / progress_dots) == 0) {
-		if ((future_index + 1) / (futurebase->max_index / progress_dots) <= progress_dots) info(".");
-	    }
-	}
+	print_progress_dot(futurebase, future_index);
 
 	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
 	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
@@ -10208,11 +10227,7 @@ void propagate_moves_from_normal_futurebase(void)
 
 	if (future_index > futurebase->max_index) break;
 
-	if (progress_dots > 0) {
-	    if ((future_index + 1) % (futurebase->max_index / progress_dots) == 0) {
-		if ((future_index + 1) / (futurebase->max_index / progress_dots) <= progress_dots) info(".");
-	    }
-	}
+	print_progress_dot(futurebase, future_index);
 
 	/* Translate the futurebase index into a local position.  We have exactly the same number
 	 * and type of pieces here, but exactly one of them is on a restricted square (according to
@@ -10518,8 +10533,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    for (thread = 0; thread < num_threads; thread ++) {
 		t[thread].join();
 	    }
-
-	    if (progress_dots > 0) info("\n");
 	}
 
 	close_futurebase(futurebase);
@@ -11578,9 +11591,9 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 #endif
 #ifdef DEBUG_MOVE
 	if (future_index == DEBUG_MOVE) {
-	    printf("propagate_one_minimove_within_table:  current_index=INVALID"
-		   "; future_index=%" PRIindex "; dtm=%d\n",
-		   future_index, dtm);
+	    info("propagate_one_minimove_within_table:  current_index=INVALID"
+		 "; future_index=%" PRIindex "; dtm=%d\n",
+		 future_index, dtm);
 	}
 #endif
 	return;
@@ -11588,9 +11601,9 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 
 #ifdef DEBUG_MOVE
     if ((current_index == DEBUG_MOVE) || (future_index == DEBUG_MOVE))
-	printf("propagate_one_minimove_within_table:  current_index=%"
-	       PRIindex "; future_index=%" PRIindex "; dtm=%d\n",
-	       current_index, future_index, dtm);
+	info("propagate_one_minimove_within_table:  current_index=%"
+	     PRIindex "; future_index=%" PRIindex "; dtm=%d\n",
+	     current_index, future_index, dtm);
 #endif
 
     /* Parent position is the FUTURE position.  We now back-propagate to
@@ -12177,14 +12190,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
-	fprintf(stderr, "Initializing %" PRIindex "\n", index);
+	info("Initializing %" PRIindex "\n", index);
 #endif
 
-    if (progress_dots > 0) {
-	if ((index + 1) % (current_tb->max_index / progress_dots) == 0) {
-	    if ((index + 1) / (current_tb->max_index / progress_dots) <= progress_dots) info(".");
-	}
-    }
+    print_progress_dot(current_tb, index);
 
     if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 
@@ -12691,16 +12700,19 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 /* Tablebase initialization is the first important place where we can use threads to speed things up
  * on a multi-processor machine, though my experience is that actual gains are highly architecture
- * specific.  We break the tablebase up into sections, and assign each section to its own thread.
- * Since initialization only touches single entries in the tablebase (no propagation at this point),
- * thread synchronization is trivial.
+ * specific.  Since initialization only touches single entries in the tablebase (no propagation at
+ * this point), thread synchronization is trivial.
  */
 
-void initialize_tablebase_section(index_t start_index, index_t end_index)
-{
-    index_t index;
+std::atomic<index_t> next_initialization_index(0);
 
-    for (index=start_index; index <= end_index; index++) {
+void initialize_tablebase_thread(void)
+{
+    while (1) {
+
+	index_t index = (next_initialization_index ++);
+
+	if (index > current_tb->max_index) break;
 
 	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 
@@ -12713,19 +12725,9 @@ void initialize_tablebase(void)
 {
     std::thread t[num_threads];
     unsigned int thread;
-    index_t block_size = (current_tb->max_index+1)/num_threads;
 
     for (thread = 0; thread < num_threads; thread ++) {
-	index_t start_index = thread*block_size;
-	index_t end_index;
-
-	if (thread != num_threads-1) {
-	    end_index = (thread+1)*block_size - 1;
-	} else {
-	    end_index = current_tb->max_index;
-	}
-
-	t[thread] = std::thread(initialize_tablebase_section, start_index, end_index);
+	t[thread] = std::thread(initialize_tablebase_thread);
     }
 
     for (thread = 0; thread < num_threads; thread ++) {
@@ -12914,8 +12916,8 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE) {
-	    fprintf(stderr, "Writing %" PRIindex ": DTM %d; movecnt %d\n", index,
-		    entriesTable->get_DTM(index), entriesTable->get_movecnt(index));
+	    info("Writing %" PRIindex ": DTM %d; movecnt %d\n", index,
+		 entriesTable->get_DTM(index), entriesTable->get_movecnt(index));
 	}
 #endif
 
@@ -13129,7 +13131,6 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
 	info("Initializing tablebase\n");
 	initialize_tablebase();
-	if (progress_dots > 0) info("\n");
 
 	finalize_pass_statistics();
 	total_passes ++;
@@ -13429,6 +13430,7 @@ bool search_tablebases_for_global_position(tablebase_t **tbs, global_position_t 
 
 void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pntm, int pntm_offset)
 {
+    if (pntm_offset == 1) printf("(%" PRIindex ") ", index);
     if (tb->format.dtm_bits > 0) {
 
 	int dtm = tb->get_DTM(index);
@@ -14041,7 +14043,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.791 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.792 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
