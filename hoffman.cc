@@ -840,7 +840,7 @@ void print_progress_dot(tablebase_t *tb, index_t index)
     if (progress_dots > 0) {
 	if ((index + 1) % (tb->max_index / progress_dots) == 0) {
 	    if ((index + 1) / (tb->max_index / progress_dots) <= progress_dots) {
-		std::unique_lock<std::mutex> _(mutex);
+		std::lock_guard<std::mutex> _(mutex);
 
 		if (! printing_progress_dots) {
 		    for (int i=1; i < (index + 1) / (tb->max_index / progress_dots); i++) {
@@ -5361,7 +5361,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.794 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.795 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7357,7 +7357,7 @@ class MemoryEntriesTable: public EntriesTable {
 	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
 	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
 
-	    size_t bytes = ((current_tb->max_index + 1) * (bits + 1) + 7) / 8;
+	    size_t bytes = ((current_tb->max_index + 1) * (bits + 1) + 7) / 8 + 2*sizeof(int);
 
 	    /* resize */
 	    entries = realloc(entries, bytes);
@@ -12219,6 +12219,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	futurevector_t futurevector = 0;
 	futurevector_t capture_futurevector = 0;
 
+	bool concede_prune = false;
+	bool resign_prune = false;
+
 	/* En passant:
 	 *
 	 * We're just counting moves here.  In particular, we don't compute the indices of the
@@ -12276,13 +12279,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    /* it's a discard - decrement movecnt so net change is zero */
 				    movecnt --;
 				} else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
-				    /* it's a concede - PTM wins */
-				    entriesTable->initialize_entry_with_DTM(index, 2);
-				    return 0;
+				    concede_prune = true;
 				} else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
-				    /* it's a resign - PTM loses */
-				    entriesTable->initialize_entry_with_DTM(index, -2);
-				    return 0;
+				    resign_prune = true;
 				} else if (futuremoves[piece][movementptr->square] < 0) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
@@ -12341,13 +12340,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
 					/* discard prune - do nothing */
 				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
-					/* concede prune */
-					entriesTable->initialize_entry_with_DTM(index, 2);
-					return 0;
+					concede_prune = true;
 				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
-					/* resign prune (or an actual suicide loss if capturing last piece) */
-					entriesTable->initialize_entry_with_DTM(index, -2);
-					return 0;
+					resign_prune = true;
 				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
@@ -12414,13 +12409,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				if (promotions[piece][promotion] == DISCARD_FUTUREMOVE) {
 				    /* discard prune - do nothing */
 				} else if (promotions[piece][promotion] == CONCEDE_FUTUREMOVE) {
-				    /* concede prune */
-				    entriesTable->initialize_entry_with_DTM(index, 2);
-				    return 0;
+				    concede_prune = true;
 				} else if (promotions[piece][promotion] == RESIGN_FUTUREMOVE) {
-				    /* resign prune */
-				    entriesTable->initialize_entry_with_DTM(index, -2);
-				    return 0;
+				    resign_prune = true;
 				} else if (promotions[piece][promotion] < 0) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
@@ -12452,13 +12443,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    /* discard prune */
 				    movecnt --;
 				} else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
-				    /* concede prune */
-				    entriesTable->initialize_entry_with_DTM(index, 2);
-				    return 0;
+				    concede_prune = true;
 				} else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
-				    /* resign prune */
-				    entriesTable->initialize_entry_with_DTM(index, -2);
-				    return 0;
+				    resign_prune = true;
 				} else if (futuremoves[piece][movementptr->square] < 0) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
@@ -12519,13 +12506,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
 					/* discard prune - do nothing */
 				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
-					/* concede prune */
-					entriesTable->initialize_entry_with_DTM(index, 2);
-					return 0;
+					concede_prune = true;
 				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
-					/* resign prune (or an actual suicide loss if capturing last piece) */
-					entriesTable->initialize_entry_with_DTM(index, -2);
-					return 0;
+					resign_prune = true;
 				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
@@ -12572,13 +12555,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
 					/* discard prune - do nothing */
 				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
-					/* concede prune */
-					entriesTable->initialize_entry_with_DTM(index, 2);
-					return 0;
+					concede_prune = true;
 				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
-					/* resign prune (or an actual suicide loss if capturing last piece) */
-					entriesTable->initialize_entry_with_DTM(index, -2);
-					return 0;
+					resign_prune = true;
 				    } else if (futurecaptures[piece][i] < 0) {
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
@@ -12602,13 +12581,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					if (promotion_captures[piece][i][promotion] == DISCARD_FUTUREMOVE) {
 					    /* discard prune - do nothing */
 					} else if (promotion_captures[piece][i][promotion] == CONCEDE_FUTUREMOVE) {
-					    /* concede prune */
-					    entriesTable->initialize_entry_with_DTM(index, 2);
-					    return 0;
+					    concede_prune = true;
 					} else if (promotion_captures[piece][i][promotion] == RESIGN_FUTUREMOVE) {
-					    /* resign prune (or an actual suicide loss if capturing last piece) */
-					    entriesTable->initialize_entry_with_DTM(index, -2);
-					    return 0;
+					    resign_prune = true;
 					} else if (promotion_captures[piece][i][promotion] < 0) {
 					    global_position_t global;
 					    index_to_global_position(tb, index, &global);
@@ -12646,6 +12621,16 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	    position.board_vector |= BITVECTOR(origin_square);
 	    position.piece_position[piece] = origin_square;
 
+	}
+
+	if (concede_prune) {
+	    entriesTable->initialize_entry_with_DTM(index, 2);
+	    return 0;
+	}
+
+	if (resign_prune) {
+	    entriesTable->initialize_entry_with_DTM(index, -2);
+	    return 0;
 	}
 
 	/* Finally, if every possible moves leads us into check, we determine if we're in check,
@@ -13094,8 +13079,8 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 	else
 	    tb->futurevector_bits = num_futuremoves[BLACK];
 
-	futurevector_bytes = (((tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3;
-	tb->futurevectors = (char *) malloc(futurevector_bytes);
+	futurevector_bytes = ((((tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3) + 2*sizeof(int));
+	tb->futurevectors = (char *) malloc(futurevector_bytes;
 	if (tb->futurevectors == nullptr) {
 	    fatal("Can't malloc %zdMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
 		  strerror(errno));
@@ -14234,7 +14219,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.794 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.795 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
