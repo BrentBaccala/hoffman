@@ -5361,7 +5361,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.796 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.797 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6879,7 +6879,7 @@ int tablebase::get_DTM(index_t index)
 bool tablebase::get_flag(index_t index)
 {
     return get_bit_field(fetch_entry_pointer(this, index),
-			 format.flag_offset + ((index % 8 ) * format.bits));
+			 format.flag_offset + ((index % 8) * format.bits));
 }
 
 unsigned int tablebase::get_basic(index_t index)
@@ -12862,7 +12862,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
     info("Writing '%s'\n", filename);
 
-    if (tb->format.dtm_bits == 0) {
+    if ((tb->format.dtm_offset != -1) && (tb->format.dtm_bits == 0)) {
 	tb->format.dtm_bits = entriesTable->get_DTM_field_size();
 	tb->format.bits += tb->format.dtm_bits;
     }
@@ -12961,7 +12961,10 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    break;
 	}
 
-	/* If the next index will be aligned on a byte boundary, write out what we've buffered */
+	/* If the next index will be aligned on a byte boundary, write out what we've buffered.  The
+	 * logic here is that if each index requires 'bits' bits, we write eight indices at a time
+	 * and that requires exactly 'bits' bytes.
+	 */
 
 	if ((index % 8 == 7) || (index == tb->max_index)) {
 	    if (zlib_write(file, (char *) entry, tb->format.bits) != tb->format.bits) {
@@ -13282,6 +13285,8 @@ void verify_tablebase_internally_thread(void)
 			/* We could just check if local_position_to_index() returns a valid index,
 			 * but checking the legal_squares bitvector first makes this a little
 			 * faster.
+			 *
+			 * XXX what really should we use here?
 			 */
 
 			if (! PNTM_in_check(current_tb, &position)
@@ -14219,7 +14224,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.796 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.797 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
