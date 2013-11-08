@@ -117,6 +117,8 @@ extern "C" {
 #include <time.h>		/* for putting timestamps on the output tablebases */
 #include <fcntl.h>		/* for O_RDONLY */
 #include <netdb.h>		/* for gethostbyname() */
+
+#define __STDC_FORMAT_MACROS
 #include <inttypes.h>		/* C99 integer types */
 
 #include <fnmatch.h>		/* for glob matching of pruning statements */
@@ -164,13 +166,6 @@ extern "C" {
 
 #ifndef O_LARGEFILE
 #define O_LARGEFILE 0
-#endif
-
-#ifndef PRIu32
-#define PRIu32 "u"
-#define PRIx32 "x"
-#define PRIu64 "llu"
-#define PRIx64 "llx"
 #endif
 
 #ifdef USE_SMALL_INDICES
@@ -946,7 +941,7 @@ off_t lseek_ptr(void * ptr, off_t offset, int whence)
     return lseek(fd, offset, whence);
 }
 
-ssize_t close_ptr(void * ptr)
+int close_ptr(void * ptr)
 {
     int fd = (size_t) ptr;
     return close(fd);
@@ -5361,7 +5356,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.797 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.798 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14224,7 +14219,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.797 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.798 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
