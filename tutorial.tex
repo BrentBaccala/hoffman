@@ -1,6 +1,6 @@
 \documentclass[11pt]{article}
 
-\usepackage[ps,mover]{skak}
+\usepackage{skak}
 
 \usepackage{vmargin}
 \setmarginsrb{0.5in}{0.75in}{0.5in}{0.5in}{20pt}{20pt}{20pt}{20pt}
@@ -207,7 +207,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.10 $ $Locker: baccala $
+Hoffman $Revision: 1.11 $ $Locker: root $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -232,7 +232,7 @@ Hoffman $Revision: 1.10 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.10 $ $Locker: baccala $</program>
+      <program>Hoffman $Revision: 1.11 $ $Locker: root $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -304,7 +304,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.10 $ $Locker: baccala $
+Hoffman $Revision: 1.11 $ $Locker: root $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -462,7 +462,7 @@ available for Hoffman.  For example, here is a 1901 composition by
 Lasker and Reichhelm, used as a demo on the Freezer website:
 
 \fenboard{8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w - - 0 1}
-$$\showboard$$
+\showboard
 
 \begin{figure}
 \hrule\ 
@@ -534,7 +534,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.10 $ $Locker: baccala $
+Hoffman $Revision: 1.11 $ $Locker: root $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
@@ -576,7 +576,7 @@ move="stalemate" type="concede"/>}
 Here's another example, also from the Freezer website:
 
 \fenboard{8/6k1/6p1/8/q7/4R3/5PK1/8 w - - 0 1}
-$$\showboard$$
+\showboard
 
 It's a fortress.  We're White, and we're out to show that we can draw
 this position.  My Hoffman analysis is in the ``{\tt fortress*.xml}''
@@ -597,7 +597,7 @@ captures are too complicated for Freezer.  This is position 67 from
 Reuben Fine's book ``Basic Chess Endings'':
 
 \fenboard{8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8 w - - 0 1}
-$$\showboard$$
+\showboard
 
 \begin{figure}
 \hrule\ 
@@ -640,7 +640,7 @@ generate an error:
 
 \begin{verbatim}
 C> ./hoffman -o fine67.htb -g fine67.xml
-Hoffman $Revision: 1.10 $ $Locker: baccala $
+Hoffman $Revision: 1.11 $ $Locker: root $
 Malloced 40MB for tablebase entries
 'kpk.htb': Too many missing pieces in futurebase
 Futurebase preload failed: 'kpk.htb'
@@ -669,7 +669,7 @@ tablebases.  Once this is done, we use Hoffman to probe the tablebases:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.10 $ $Locker: baccala $
+Hoffman $Revision: 1.11 $ $Locker: root $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
@@ -777,7 +777,7 @@ output tablebases can be queried for the original position:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.10 $ $Locker: baccala $
+Hoffman $Revision: 1.11 $ $Locker: root $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
