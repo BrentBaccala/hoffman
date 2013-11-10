@@ -5356,7 +5356,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.798 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.799 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13558,42 +13558,17 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 #endif /* USE_NALIMOV */
 
 
-/* Search an array of tablebases for a global position, returns true if found and puts the results
- * in tbptr and indexptr.  Array should be terminated with nullptr.  Also probes an inverted copy of
+/***** SEARCHING TABLEBASES *****/
+
+/* search_tablebases_for_global_position() searches an array of tablebases for a global position,
+ * returning a search_result, which can be evaluated as a boolean and is true if the search
+ * succeeded.  Tablebase array should be terminated with nullptr.  Also probes an inverted copy of
  * the position, so we can find a kqkqq position in a kqqkq tablebase, for example.
- */
-
-bool search_tablebases_for_global_position(tablebase_t **tbs, global_position_t *global_position,
-					   tablebase_t **tbptr, index_t *indexptr)
-{
-    global_position_t inverted_global_position = *global_position;
-    invert_colors_of_global_position(&inverted_global_position);
-
-    index_t index;
-
-    for (; *tbs; tbs++) {
-	index = global_position_to_index(*tbs, global_position);
-	if (index != INVALID_INDEX) {
-	    *tbptr = *tbs;
-	    *indexptr = index;
-	    return true;
-	}
-
-	index = global_position_to_index(*tbs, &inverted_global_position);
-	if (index != INVALID_INDEX) {
-	    *tbptr = *tbs;
-	    *indexptr = index;
-	    return true;
-	}
-    }
-
-    return false;
-}
-
-/* Fetches a tablebase score for a given index and prints the results in English.  Also pass in
- * string names ("black" and "white") for Player to Move and Player Not To Move, as well as an
- * offset to add to PNTM results.  The offset is either 0 or 1, depending on whether we're printing
- * the score for a single position, or printing the scores for a list of moves from a position.
+ *
+ * search_result provides a print_score() method that fetches a tablebase score for a given index
+ * and prints the results in English.  Pass it an offset to add to PNTM results.  The offset is
+ * either 0 or 1, depending on whether we're printing the score for a single position, or printing
+ * the scores for a list of moves from a position.
  *
  * XXX Tablebases are becoming more complicated, so the result strings should be stored in the XML
  * headers, like "wins", "draws", "queens", "queens and draws", "queens or draws", etc.
@@ -13604,58 +13579,120 @@ bool search_tablebases_for_global_position(tablebase_t **tbs, global_position_t 
  * list, sorts the indices, and passes each one to this function.
  */
 
-void print_score(tablebase_t *tb, index_t index, const char *ptm, const char *pntm, int pntm_offset)
-{
-    if (pntm_offset == 1) printf("(%" PRIindex ") ", index);
-    if (tb->format.dtm_bits > 0) {
+class search_result {
 
-	int dtm = tb->get_DTM(index);
+public:
+    tablebase_t *tb;
+    index_t index;
+    bool inverted;
 
-	if (dtm == 0) {
-	    printf("Draw\n");
-	} else if (dtm == 1) {
-	    printf("Illegal position (%s mated)\n", pntm);
-	} else if (dtm > 1) {
-	    printf("%s wins in %d\n", ptm, dtm-1);
-	} else if (dtm < 0) {
-	    printf("%s wins in %d\n", pntm, pntm_offset-dtm-1);
-	}
+    search_result():
+	tb(nullptr), index(INVALID_INDEX), inverted(false)
+    { }
 
-    } else if (tb->format.basic_offset != -1) {
+    search_result(tablebase_t *tb, index_t index, bool inverted):
+	tb(tb), index(index), inverted(inverted)
+    { }
 
-	int basic = tb->get_basic(index);
-
-	if (basic == 1) {
-	    printf("%s wins\n", ptm);
-	} else if (basic == 2) {
-	    printf("%s wins\n", pntm);
-	} else {
-	    printf("Draw\n");
-	}
-
-    } else if (tb->format.flag_type != FORMAT_FLAG_NONE) {
-	bool flag = tb->get_flag(index);
-
-	if (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) {
-	    if (flag) printf("White wins\n");
-	    else printf("Black wins or draws\n");
-	} else {
-	    if (flag) printf("White wins or draws\n");
-	    else printf("Black wins\n");
-	}
-
-    } else {
-	printf("NO SCORE AVAILABLE\n");
+    operator bool() {
+	return tb != nullptr;
     }
+
+    void print_score(int pntm_offset) {
+
+	const char *white;
+	const char *black;
+	const char *ptm;
+	const char *pntm;
+
+	if (! inverted) {
+	    white = "White";
+	    black = "Black";
+	} else {
+	    white = "Black";
+	    black = "White";
+	}
+
+	if (index_to_side_to_move(tb, index) == WHITE) {
+	    ptm = white;
+	    pntm = black;
+	} else {
+	    ptm = black;
+	    pntm = white;
+	}
+
+	if (pntm_offset == 1) printf("(%" PRIindex ") ", index);
+
+	if (tb->format.dtm_bits > 0) {
+
+	    int dtm = tb->get_DTM(index);
+
+	    if (dtm == 0) {
+		printf("Draw\n");
+	    } else if (dtm == 1) {
+		printf("Illegal position (%s mated)\n", pntm);
+	    } else if (dtm > 1) {
+		printf("%s wins in %d\n", ptm, dtm-1);
+	    } else if (dtm < 0) {
+		printf("%s wins in %d\n", pntm, pntm_offset-dtm-1);
+	    }
+
+	} else if (tb->format.basic_offset != -1) {
+
+	    int basic = tb->get_basic(index);
+
+	    if (basic == 1) {
+		printf("%s wins\n", ptm);
+	    } else if (basic == 2) {
+		printf("%s wins\n", pntm);
+	    } else {
+		printf("Draw\n");
+	    }
+
+	} else if (tb->format.flag_type != FORMAT_FLAG_NONE) {
+
+	    bool flag = tb->get_flag(index);
+
+	    if (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) {
+		if (flag) printf("%s wins\n", white);
+		else printf("%s wins or draws\n", black);
+	    } else {
+		if (flag) printf("%s wins or draws\n", white);
+		else printf("%s wins\n", black);
+	    }
+
+	} else {
+	    printf("NO SCORE AVAILABLE\n");
+	}
+    }
+};
+
+search_result search_tablebases_for_global_position(tablebase_t **tbs, global_position_t *global_position)
+{
+    global_position_t inverted_global_position = *global_position;
+    invert_colors_of_global_position(&inverted_global_position);
+
+    index_t index;
+
+    for (; *tbs; tbs++) {
+	index = global_position_to_index(*tbs, global_position);
+	if (index != INVALID_INDEX) {
+	    return search_result(*tbs, index, global_position->side_to_move != index_to_side_to_move(*tbs, index));
+	}
+
+	index = global_position_to_index(*tbs, &inverted_global_position);
+	if (index != INVALID_INDEX) {
+	    return search_result(*tbs, index, inverted_global_position.side_to_move == index_to_side_to_move(*tbs, index));
+	}
+    }
+
+    return search_result();
 }
 
 int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *global_position_ptr,
-		    const char *ptm, const char *pntm,
-		    int print_non_captures, int print_captures)
+		    bool print_non_captures, bool print_captures)
 {
     global_position_t global_position, saved_global_position;
-    tablebase_t *tb2;
-    index_t index2;
     int dir, square;
     int piece_color;
     int piece_type;
@@ -13697,13 +13734,12 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 			= global_pieces[piece_color][piece_type];
 
 		    if (! global_PNTM_in_check(&global_position) && print_non_captures) {
-			if (search_tablebases_for_global_position(tbs, &global_position,
-								  &tb2, &index2)){
-
+			search_result result = search_tablebases_for_global_position(tbs, &global_position);
+			if (result) {
 			    printf("   %c%s%s    ", piece_char[piece_type],
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square]);
-			    print_score(tb2, index2, pntm, ptm, 1);
+			    result.print_score(1);
 			} else {
 			    printf("   %c%s%s    NO DATA\n", piece_char[piece_type],
 				   algebraic_notation[square],
@@ -13740,13 +13776,12 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 						       piece_color, piece_type);
 
 			if (! global_PNTM_in_check(&global_position) && print_captures) {
-			    if (search_tablebases_for_global_position(tbs, &global_position,
-								      &tb2, &index2)) {
-
+			    search_result result = search_tablebases_for_global_position(tbs, &global_position);
+			    if (result) {
 				printf ("   %c%sx%s   ", piece_char[piece_type],
 					algebraic_notation[square],
 					algebraic_notation[movementptr->square]);
-				print_score(tb2, index2, pntm, ptm, 1);
+				result.print_score(1);
 			    } else if ((tb->variant == VARIANT_SUICIDE)
 				       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
 				printf("   %c%sx%s   %s WINS\n", piece_char[piece_type],
@@ -13801,13 +13836,12 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 		    }
 
 		    if (! global_PNTM_in_check(&global_position) && print_non_captures) {
-			if (search_tablebases_for_global_position(tbs, &global_position,
-								  &tb2, &index2)){
-
+			search_result result = search_tablebases_for_global_position(tbs, &global_position);
+			if (result) {
 			    printf("   P%s%s    ",
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square]);
-			    print_score(tb, index2, pntm, ptm, 1);
+			    result.print_score(1);
 			} else {
 			    printf("   P%s%s    NO DATA\n",
 				   algebraic_notation[square],
@@ -13830,13 +13864,13 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 
 
 			if (! global_PNTM_in_check(&global_position) && print_non_captures) {
-			    if (search_tablebases_for_global_position(tbs, &global_position,
-								      &tb2, &index2)){
+			    search_result result = search_tablebases_for_global_position(tbs, &global_position);
+			    if (result) {
 				printf ("   P%s%s=%c  ",
 					algebraic_notation[square],
 					algebraic_notation[movementptr->square],
 					piece_char[promoted_pieces[promotion]]);
-				print_score(tb2, index2, pntm, ptm, 1);
+				result.print_score(1);
 			    } else {
 				printf("   P%s%s=%c  NO DATA\n",
 				       algebraic_notation[square],
@@ -13871,13 +13905,12 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 		    }
 
 		    if (! global_PNTM_in_check(&global_position) && print_captures) {
-			if (search_tablebases_for_global_position(tbs, &global_position,
-								  &tb2, &index2)) {
-
+			search_result result = search_tablebases_for_global_position(tbs, &global_position);
+			if (result) {
 			    printf ("   P%sx%s   ",
 				    algebraic_notation[square],
 				    algebraic_notation[movementptr->square]);
-			    print_score(tb2, index2, pntm, ptm, 1);
+			    result.print_score(1);
 			} else if ((tb->variant == VARIANT_SUICIDE)
 				   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
 			    printf("   P%sx%s   %s WINS\n",
@@ -13933,14 +13966,13 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 						       piece_color, promoted_pieces[promotion]);
 
 			if (! global_PNTM_in_check(&global_position) && print_captures) {
-			    if (search_tablebases_for_global_position(tbs, &global_position,
-								      &tb2, &index2)) {
-
+			    search_result result = search_tablebases_for_global_position(tbs, &global_position);
+			    if (result) {
 				printf ("   P%sx%s=%c ",
 					algebraic_notation[square],
 					algebraic_notation[movementptr->square],
 					piece_char[promoted_pieces[promotion]]);
-				print_score(tb2, index2, pntm, ptm, 1);
+				result.print_score(1);
 			    } else if ((tb->variant == VARIANT_SUICIDE)
 				       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
 				printf("   P%sx%s=%c %s WINS\n",
@@ -13971,13 +14003,12 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 						   piece_color, PAWN);
 
 		    if (! global_PNTM_in_check(&global_position) && print_captures) {
-			if (search_tablebases_for_global_position(tbs, &global_position,
-								  &tb2, &index2)) {
-
+			search_result result = search_tablebases_for_global_position(tbs, &global_position);
+			if (result) {
 			    printf ("   P%sx%s   ",
 				    algebraic_notation[square],
 				    algebraic_notation[movementptr->square]);
-			    print_score(tb2, index2, pntm, ptm, 1);
+			    result.print_score(1);
 			} else if ((tb->variant == VARIANT_SUICIDE)
 				   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
 			    printf("   P%sx%s   %s WINS\n",
@@ -14028,6 +14059,7 @@ void probe_tablebases(tablebase_t **tbs) {
     while (true) {
 	index_t index;
 	bool index_valid = false;
+	search_result result;
 #ifdef USE_NALIMOV
 	int score;
 #endif
@@ -14097,21 +14129,18 @@ void probe_tablebases(tablebase_t **tbs) {
 	global_position_valid = true;
 
 	if (! index_valid) {
-	    search_tablebases_for_global_position(tbs, &global_position, &tb, &index);
+	    result = search_tablebases_for_global_position(tbs, &global_position);
 	} else {
-	    tb = tbs[0];
-	    index_to_global_position(tb, index, &global_position);
+	    result = search_result(tbs[0], index, false);
+	    index_to_global_position(tbs[0], index, &global_position);
 	}
 
-	if (tb && (index != 0)) {
+	if (result) {
 
-	    const char *ptm, *pntm;
+	    const char *ptm;
+	    const char *pntm;
 
-	    /* 'index' is the index of the current position; 'index2' will be the index
-	     * of the various next positions that we'll consider
-	     */
-
-	    printf("Index %" PRIindex " (%s)\n", index, tb->filename);
+	    printf("Index %" PRIindex " (%s)\n", result.index, result.tb->filename);
 
 	    if (global_position.side_to_move == WHITE) {
 		ptm = "White";
@@ -14121,7 +14150,7 @@ void probe_tablebases(tablebase_t **tbs) {
 		pntm = "White";
 	    }
 
-	    print_score(tb, index, ptm, pntm, 0);
+	    result.print_score(0);
 
 #ifdef USE_NALIMOV
 	    if ((global_position.variant == VARIANT_NORMAL) && (nalimov_num > 0)
@@ -14140,10 +14169,10 @@ void probe_tablebases(tablebase_t **tbs) {
 	    /* In suicide, capture moves are forced, so if any exist they are the only moves. */
 
 	    if (global_position.variant != VARIANT_SUICIDE) {
-		print_move_list(tbs, tb, &global_position, ptm, pntm, 1, 1);
+		print_move_list(tbs, result.tb, &global_position, true, true);
 	    } else {
-		if (print_move_list(tbs, tb, &global_position, ptm, pntm, 0, 1) == 0) {
-		    print_move_list(tbs, tb, &global_position, ptm, pntm, 1, 0);
+		if (print_move_list(tbs, result.tb, &global_position, false, true) == 0) {
+		    print_move_list(tbs, result.tb, &global_position, true, false);
 		}
 	    }
 	}
@@ -14219,7 +14248,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.798 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.799 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
