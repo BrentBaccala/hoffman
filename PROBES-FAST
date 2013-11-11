@@ -1,0 +1,59 @@
+# Tablebase probe tests
+#
+# Each line starts with the MD5 hash of the expected output, then a string
+# that will be fed to hoffman (escape spaces as '\ ' and newlines as '\\n'),
+# then a list of tablebases to be probed, which can include wildcards.
+
+# Probe an index
+80ffb5db2bcfd5e9cf437958c63b9a43 258856\\nc1xd2 kqkq.htb kqk.htb
+
+# Some basic probes
+0f56531789bae988ab35ce39d58be26c 8/8/K6k/8/3pP3/8/8/8\ w kpkp.htb kpk.htb kqk.htb
+3e668b9c57c8b82f54210058e9ee51a9 8/8/K6k/8/4Q3/8/8/8\ w kqk.htb
+
+# Probe an en passant position and capture
+3bfd755a85246c8394e7cf59c4e07707 8/8/K6k/8/3pP3/8/8/8\ b\ -\ e3\\nd4xe3 kpkp.htb kpk.htb
+
+# Illegal FEN with side-to-move missing
+0093ce71430f8531b344b59c1e67c234 8/8/K6k/8/4Q3/8/8/8 kqk.htb
+
+# Illegal FEN with too few rows
+048b8eeb3b0cb529e4666c833d3c1eda 8/8/K6k/8/4Q3/8/8\ w kqk.htb
+
+# Illegal FEN with too many rows
+5acfc681ce203a252cb93aa773120eb1 8/8/K6k/8/4Q3/8/8/8/8\ w kqk.htb
+
+# Illegal FEN with two white kings
+# 5acfc681ce203a252cb93aa773120eb1 8/K7/K6k/8/4Q3/8/8/8\ w kqk.htb
+
+# Attempt an illegal en passant capture from a non-en passant position
+dc78713397a6a970934d4af59aa863f6 8/8/K6k/8/3pP3/8/8/8\ b\\nd4xe3 kpkp.htb kpk.htb
+
+# Check probing bitbases
+fa27698ab86d803937a45c33e916d736 8/8/K6k/8/4Q3/8/8/8\ w kqk-basic.htb
+cc05a37b7f6c0b7f9992d6fd8611d0b3 8/8/K6k/8/4Q3/8/8/8\ w kqk-whitewins.htb
+
+# Check probing inverted bitbases
+a75473f6df21f08a2c92028056dcfe45 8/8/K6k/8/4q3/8/8/8\ w kqk-basic.htb
+4141a8d3f16a723121ca540d05713681 8/8/K6k/8/4q3/8/8/8\ w kqk-whitewins.htb
+
+# Check for a position that requires inverting the tablebase
+455d9a506066fa2d13ff5928a1b0dac1 8/8/K6k/8/4q3/8/8/8\ b kqk.htb
+
+# Check for various white promotion posibilities
+e7c40bc8874924378080c8786a9f5d66 8/P7/K6k/8/8/8/8/8\ w\\na7a8=Q k?k.htb
+a88b825cc66cb3dd661186a4039c20f2 8/P7/K6k/8/8/8/8/8\ w\\na7a8=R k?k.htb
+e31b3e33a4e83e64fc4a435dd706ec0d 8/P7/K6k/8/8/8/8/8\ w\\na7a8=B k?k.htb
+9d9b96bcfbf9734c75876c3711e2139e 8/P7/K6k/8/8/8/8/8\ w\\na7a8=N k?k.htb
+
+# Check for various black promotion posibilities
+8356cb736e3bde1a1873756e0948c1b2 8/8/K6k/8/8/8/3p4/8\ b\\nd2d1=q k?k.htb
+0d9449f34f0232cfb764e860f052a0ff 8/8/K6k/8/8/8/4p3/8\ b\\ne2e1=r k?k.htb
+dc6593ec0a6ab7b06315b8372a86698d 8/8/K6k/8/8/8/5p2/8\ b\\nf2f1=b k?k.htb
+0f46ea75fef13b45c382c4857080f758 8/8/K6k/8/8/8/6p1/8\ b\\ng2g1=n k?k.htb
+
+# Check for a space before the FEN
+0ec1f952940fdf9d629f8080e9c694dc \\n\ 8/8/K6k/8/4Q3/8/8/8\ w kqk.htb
+
+# Check a capture promotion move
+c301a041297d70291106c9efad735fb5 1q6/P7/K6k/8/8/8/8/8\ w\\na7xb8=Q kqk?.htb k?k.htb
