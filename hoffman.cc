@@ -5356,7 +5356,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.799 $ $Locker: root $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.800 $ $Locker: root $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6313,6 +6313,7 @@ bool index_to_global_position(tablebase_t *tb, index_t index, global_position_t 
 
     global->side_to_move = local.side_to_move;
     global->en_passant_square = local.en_passant_square;
+    global->variant = tb->variant;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
 	global->board[local.piece_position[piece]]
@@ -13375,6 +13376,9 @@ bool verify_tablebase_internally(void)
     std::thread t[num_threads];
     unsigned int thread;
 
+    /* XXX this routine doesn't work on suicide */
+    if (current_tb->variant != VARIANT_NORMAL) return false;
+
     info("Verifying internal consistency of tablebase\n");
 
     entriesTable->set_threads(num_threads);
@@ -14248,7 +14252,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.799 $ $Locker: root $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.800 $ $Locker: root $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
