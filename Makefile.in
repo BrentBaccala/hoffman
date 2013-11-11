@@ -62,44 +62,10 @@ check-probes:
 %.htb: %.xml
 	$(HOFFMAN) -g $<
 
-kqk.htb: kk.htb
-krk.htb: kk.htb
-kbk.htb: kk.htb
-knk.htb: kk.htb
+depends: *.xml
+	for xmlfile in *.xml; do									\
+		echo -n "$$xmlfile: " | sed 's/\.xml:/.htb:/';						\
+		grep futurebase $$xmlfile | cut -d \" -f 2 | xargs;					\
+	done > depends
 
-kpk.htb: kqk.htb krk.htb knk.htb kbk.htb
-
-kqkq.htb: kqk.htb
-
-kqkr.htb: kqk.htb krk.htb
-kqkn.htb: kqk.htb knk.htb
-kqkb.htb: kqk.htb kbk.htb
-
-kqkp.htb: kqkq.htb kqkr.htb kqkn.htb kqkb.htb kqk.htb kpk.htb
-
-krkr.htb: krk.htb
-krkn.htb: krk.htb knk.htb
-krkb.htb: krk.htb kbk.htb
-
-krkp.htb: kqkr.htb krkr.htb krkb.htb krkn.htb
-
-kbkb.htb: kbk.htb
-kbkn.htb: kbk.htb knk.htb
-
-kbkp.htb: kqkb.htb krkb.htb kbkb.htb kbkn.htb
-
-knkn.htb: knk.htb
-
-knkp.htb: kqkn.htb krkn.htb kbkn.htb knkn.htb
-
-kpkp.htb: kqkp.htb krkp.htb kbkp.htb knkp.htb
-
-kqpk.htb: kqk.htb kpk.htb kqqk.htb kqrk.htb kqbk.htb kqnk.htb
-
-krpk.htb: krk.htb kpk.htb kqrk.htb krrk.htb krnk.htb krbk.htb
-
-kbpk.htb: kbk.htb kpk.htb kqbk.htb krbk.htb kbbk.htb kbnk.htb
-
-knpk.htb: knk.htb kpk.htb kqnk.htb krnk.htb kbnk.htb knnk.htb
-
-kppk.htb: kpk.htb kqpk.htb krpk.htb kbpk.htb knpk.htb
+include depends
