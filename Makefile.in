@@ -46,10 +46,17 @@ reference.pdf: reference.tex
 	dvipdf reference
 
 check-probes:
-	@cat PROBES | while read md5expected input files; do \
-		echo $$input | $(HOFFMAN) -p $$files 2>&1 | tee /dev/stderr | tail -n +2 | md5sum | while read md5actual junk; do \
-			if [ "$$md5expected" != "$$md5actual" ]; then echo $$md5expected != $$md5actual; exit 1; fi \
-		done || exit 1; \
+	@cat PROBES | while read md5expected input files; do						\
+		if [ "$$md5expected" != "" -a "$$md5expected" != "#" ]; then				\
+			echo $$input									\
+				| $(HOFFMAN) -p $$files 2>&1 | tee /dev/stderr				\
+				| tail -n +2								\
+				| md5sum | ( read md5actual junk;					\
+					if [ "$$md5expected" != "$$md5actual" ]; then			\
+						echo $$md5expected != $$md5actual; exit 1;		\
+					fi								\
+				) || exit 1;								\
+		fi;											\
 	done
 
 %.htb: %.xml
