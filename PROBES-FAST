@@ -41,19 +41,29 @@ a75473f6df21f08a2c92028056dcfe45 8/8/K6k/8/4q3/8/8/8\ w kqk-basic.htb
 455d9a506066fa2d13ff5928a1b0dac1 8/8/K6k/8/4q3/8/8/8\ b kqk.htb
 
 # Check for various white promotion posibilities
-e7c40bc8874924378080c8786a9f5d66 8/P7/K6k/8/8/8/8/8\ w\\na7a8=Q k?k.htb
-a88b825cc66cb3dd661186a4039c20f2 8/P7/K6k/8/8/8/8/8\ w\\na7a8=R k?k.htb
-e31b3e33a4e83e64fc4a435dd706ec0d 8/P7/K6k/8/8/8/8/8\ w\\na7a8=B k?k.htb
-9d9b96bcfbf9734c75876c3711e2139e 8/P7/K6k/8/8/8/8/8\ w\\na7a8=N k?k.htb
+e7c40bc8874924378080c8786a9f5d66 8/P7/K6k/8/8/8/8/8\ w\\na7a8=Q k[qrbnp]k.htb
+a88b825cc66cb3dd661186a4039c20f2 8/P7/K6k/8/8/8/8/8\ w\\na7a8=R k[qrbnp]k.htb
+e31b3e33a4e83e64fc4a435dd706ec0d 8/P7/K6k/8/8/8/8/8\ w\\na7a8=B k[qrbnp]k.htb
+9d9b96bcfbf9734c75876c3711e2139e 8/P7/K6k/8/8/8/8/8\ w\\na7a8=N k[qrbnp]k.htb
 
 # Check for various black promotion posibilities
-8356cb736e3bde1a1873756e0948c1b2 8/8/K6k/8/8/8/3p4/8\ b\\nd2d1=q k?k.htb
-0d9449f34f0232cfb764e860f052a0ff 8/8/K6k/8/8/8/4p3/8\ b\\ne2e1=r k?k.htb
-dc6593ec0a6ab7b06315b8372a86698d 8/8/K6k/8/8/8/5p2/8\ b\\nf2f1=b k?k.htb
-0f46ea75fef13b45c382c4857080f758 8/8/K6k/8/8/8/6p1/8\ b\\ng2g1=n k?k.htb
+8356cb736e3bde1a1873756e0948c1b2 8/8/K6k/8/8/8/3p4/8\ b\\nd2d1=q k[qrbnp]k.htb
+0d9449f34f0232cfb764e860f052a0ff 8/8/K6k/8/8/8/4p3/8\ b\\ne2e1=r k[qrbnp]k.htb
+dc6593ec0a6ab7b06315b8372a86698d 8/8/K6k/8/8/8/5p2/8\ b\\nf2f1=b k[qrbnp]k.htb
+0f46ea75fef13b45c382c4857080f758 8/8/K6k/8/8/8/6p1/8\ b\\ng2g1=n k[qrbnp]k.htb
 
 # Check for a space before the FEN
 0ec1f952940fdf9d629f8080e9c694dc \\n\ 8/8/K6k/8/4Q3/8/8/8\ w kqk.htb
 
 # Check a capture promotion move
-c301a041297d70291106c9efad735fb5 1q6/P7/K6k/8/8/8/8/8\ w\\na7xb8=Q kqk?.htb k?k.htb
+c301a041297d70291106c9efad735fb5 1q6/P7/K6k/8/8/8/8/8\ w\\na7xb8=Q kqk?.htb k[qrbnp]k.htb
+
+# Probe a suicide tablebase
+f1b03d7bedb122391df12f2f48858f43 KRq5/8/8/8/8/8/8/8\ w krvq.htb
+03da94741406062e0535d55f7e6e4f7e KRq5/8/8/8/8/8/8/8\ b krvq.htb kvq.htb
+
+# Illegally attempt to probe suicide and normal tablebases together
+41540d597c127e959ac99ed604ce3260 ignored krvq.htb kqk.htb
+
+# Check error return if no tablebases specified
+059249cae1c1afe0d9d8e7d27c4a9277 ignored
