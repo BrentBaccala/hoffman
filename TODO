@@ -136,7 +136,7 @@ above) to see which one gives the best compression without having to
 re-generate the entire tablebase.
 
 
-- improved checkpointing ability
+- checkpointing ability
 
 Right now, we have no checkpointing ability.  We used to have a
 limited checkpointing ability with proptables (the most time consuming
@@ -145,18 +145,15 @@ start of each pass which can be used to restart the last pass in the
 event of something like a system crash.  This could be really be
 cleaned up and improved upon.  I'm thinking about writing an XML
 header on the entries file to enable it to be used to restart the
-program.
+program.  We need to verify the file size, but if we know the formats,
+then we know the (uncompressed) file sizes, so that shouldn't be too
+hard.
 
-With separate input and output entries files, I don't see any reason
-it can't restart right where it left off, though we do have to be
-careful to back up and reconstruct the last proptable that was in
-memory at the time of the crash.  Maybe write the checkpoint file with
-each proptable write, record the size of the proptables for
-verification, and keep a backup copy of the checkpoint file in case we
-crash during the checkpoint.  This seems like a lot of extra trouble,
-though.  Maybe we should restart without proptables, by making an
-extra pass to recreate the initial set of proptables.
-
+Restarting in the middle of a pass requires using a partially
+constructed entries file, which seems dicey.  Better, I think, would
+be to back up and start by reruning the pass that generated the last
+complete entries file, but with no input proptables, so it just
+generates a new set of output proptables.
 
 - Hadoop port
 
