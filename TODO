@@ -16,6 +16,11 @@ DTM field to range from -10 to 5 and still fit into 4 bits.
 
 This might be more difficult because of the presence of futuremoves.
 Counting moves isn't enough; we have to identify futuremoves as well.
+Nevertheless, I think it can be done and should produce a big speedup.
+Use a different hash function / magic number for each square a piece
+can be on.  Then hash the board vector to move the relevent bits down
+to the LSBs and lookup in a table to get movecnt along with flags
+to indicate if has the piece moved to a restricted square.
 
 
 - a testsuite
