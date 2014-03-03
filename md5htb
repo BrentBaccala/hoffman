@@ -58,6 +58,11 @@ $LIST_SEPARATOR = undef;
 }
 
 my $XMLparser = XML::LibXML->new();
+
+# If we don't have an Internet connection, the program will die when it tries to validate against
+# the DTD, unless loading external DTDs are turned off.
+
+$XMLparser->load_ext_dtd(0);
 $XMLparser->validation(0);
 
 for my $filename (@ARGV) {
