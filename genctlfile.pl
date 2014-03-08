@@ -3,6 +3,12 @@
 # This script writes control files for 'standard' tablebases (i.e, no
 # pruning or move restrictions) into the current directory.
 #
+# Pass in the XML filenames you wish to generate.  All dependencies
+# will be generated as well.
+#
+# To get the older behavior (write all 5-piece control files and their
+# dependencies), call it as 'genctlfile.pl kppkp.xml'
+#
 # by Brent Baccala; no rights reserved
 
 my $pieces = "qrbnp";
@@ -87,8 +93,11 @@ sub mkfuturebase {
     }
 }
 
-sub print_cntl_file {
-    my ($white_pieces, $black_pieces) = @_;
+sub write_cntl_file {
+    my ($cntl_filename) = @_;
+
+    die "Invalid control filename $cntl_filename\n" unless ($cntl_filename =~ m/k([^k]*)k([^k.]*).xml/);
+    my ($white_pieces, $black_pieces) = ($1, $2);
 
     @normal_futurebases = ();
     @inverse_futurebases = ();
@@ -162,6 +171,8 @@ sub print_cntl_file {
 
     printnl '</tablebase>';
     close XMLFILE;
+
+    return (@normal_futurebases, @inverse_futurebases);
 }
 
 sub all_combos_of_n_pieces {
@@ -191,21 +202,26 @@ sub gen {
 
     for my $white_pieces (&all_combos_of_n_pieces($white_n - 1)) {
 	for my $black_pieces (&all_combos_of_n_pieces($black_m - 1)) {
-	    &print_cntl_file($white_pieces, $black_pieces);
+	    &write_cntl_file($white_pieces, $black_pieces);
 	}
     }
 }
 
-# kk
-&gen(1,1);
 
-# 3-piece TBs
-&gen(2,1);
+# Write all control files passed in as a list of filenames, recursing
+# to write all dependencies as well.
 
-# 4-piece TBs
-&gen(3,1);
-&gen(2,2);
+sub write_cntl_files {
+    my @cntl_files = @_;
 
-# 5-piece TBs
-&gen(3,2);
-# &gen(4,1);
+    while ($#cntl_files >= 0) {
+	my $cntl_filename = pop @cntl_files;
+	if (-r $cntl_filename) {
+	    # print "$cntl_filename exists, skipping\n";
+	} else {
+	    push @cntl_files, map { $_ . '.xml' } write_cntl_file($cntl_filename);
+	}
+    }
+}
+
+&write_cntl_files(@ARGV);
