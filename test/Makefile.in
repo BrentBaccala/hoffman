@@ -1,0 +1,52 @@
+
+# EXTRA_DIST = \
+#   build-sparse-tests.sh \
+#   build-bc-overload-tests.sh \
+#   bc-overloads-expected \
+#   build_bc_overloads_expected.m \
+#   $(FCN_FILES)
+# 
+# CLEANFILES = \
+#   sparse.tst \
+#   bc-overload-tests.stamp \
+#   $(GENERATED_BC_OVERLOADS_FILES)
+# 
+# DISTCLEANFILES = \
+#   .gdbinit \
+#   fntests.log
+
+HOFFMAN=../hoffman
+
+REQUIRED_HTBs= kpkp.htb
+#REQUIRED_HTBs= kpkp.htb kqk-basic.htb kqk-whitewins.htb krvq.htb
+
+check: $(REQUIRED_HTBs)
+	@cat PROBES | while read md5expected input files; do						\
+		if [ "$$md5expected" != "" -a "$$md5expected" != "#" ]; then				\
+			echo $$input									\
+				| $(HOFFMAN) -p $$files 2>&1 | tee /dev/stderr				\
+				| tail -n +2								\
+				| md5sum | ( read md5actual junk;					\
+					if [ "$$md5expected" != "$$md5actual" ]; then			\
+						echo $$md5expected != $$md5actual; exit 1;		\
+					fi								\
+				) || exit 1;								\
+		fi;											\
+	done
+
+-include $(REQUIRED_HTBs:.htb=.d)
+
+%.htb: %.xml
+	$(HOFFMAN) -g $<
+%.d: %.xml
+	( echo -n "$<: " | sed 's/\.xml:/.htb:/';							\
+	  grep futurebase $< | cut -d \" -f 2 | xargs; ) > $@
+
+
+kpkp.xml kqk-basic.xml kqk-whitewins.xml krvq.xml:
+	../genctlfile.pl $@
+%.xml: always
+	../genctlfile.pl $@
+
+clean-local:
+	-rm -rf $(GENERATED_BC_OVERLOADS_DIRS)
