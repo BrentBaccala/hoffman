@@ -48,11 +48,13 @@ my @normal_futurebases;
 my @inverse_futurebases;
 
 # Make an unordered pair of piece listings into a properly ordered
-# filename (that might be color inverted, i.e, kkq to kqk).  Return
-# the filename along with a flag indicating if we inverted.
+# filename (that might be color inverted, i.e, kkq to kqk), but with
+# no suffix (.xml or .htb).  In a list context, return the filename
+# along with a flag indicating if we inverted.
 
 sub mkfilename {
     my ($white_pieces, $black_pieces) = @_;
+    my ($invert, $filename);
 
     $white_pieces = join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $white_pieces));
     $black_pieces = join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $black_pieces));
@@ -69,10 +71,14 @@ sub mkfilename {
 
     if ((length($black_pieces) > length($white_pieces)) or
 	((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value))) {
-	return (1, "k" . $black_pieces . "k" . $white_pieces);
+	$invert = 1;
+	$filename = "k" . $black_pieces . "k" . $white_pieces;
     } else {
-	return (0, "k" . $white_pieces . "k" . $black_pieces);
+	$invert = 1;
+	$filename = "k" . $white_pieces . "k" . $black_pieces;
     }
+
+    return (wantarray ? ($invert, $filename) : $filename);
 }
 
 sub mkfuturebase {
@@ -99,12 +105,9 @@ sub write_cntl_file {
     die "Invalid control filename $cntl_filename\n" unless ($cntl_filename =~ m/k([^k]*)k([^k.]*).xml/);
     my ($white_pieces, $black_pieces) = ($1, $2);
 
-    @normal_futurebases = ();
-    @inverse_futurebases = ();
+    my $filename = &mkfilename($white_pieces, $black_pieces);
 
-    my ($invert, $filename) = &mkfilename($white_pieces, $black_pieces);
-
-    return if $invert or $filename ne "k" . $white_pieces . "k" . $black_pieces;
+    die "Improper control filename $cntl_filename\n" if $cntl_filename ne "$filename.xml";
 
     print "Writing $filename.xml\n";
     open (XMLFILE, ">$filename.xml");
@@ -124,6 +127,12 @@ sub write_cntl_file {
     for my $piece (split(//, $black_pieces)) {
 	printnl '   <piece color="black" type="' . $pieces{$piece} . '"/>';
     }
+
+    # These are global variables that will updated by the various
+    # calls to &mkfuturebase().
+
+    @normal_futurebases = ();
+    @inverse_futurebases = ();
 
     for my $captured_white_index (1 .. length($white_pieces)) {
 	my $remaining_white_pieces = $white_pieces;
@@ -175,6 +184,14 @@ sub write_cntl_file {
     return (@normal_futurebases, @inverse_futurebases);
 }
 
+# Generate all tablebases with n white pieces and m black ones
+#
+# These routines are no longer used.  If you want all 3/2 five piece
+# tablebases, for example, request this script to generate "kppkp.xml"
+# You'll also get all of the four, three, and two piece tablebases
+# that "kppkp.xml" depends on, which is a little different from what
+# &gen(3,2) does.
+
 sub all_combos_of_n_pieces {
     my ($n) = @_;
 
@@ -195,14 +212,12 @@ sub all_combos_of_n_pieces {
     }
 }
 
-# Generate all tablebases with n white pieces and m black ones
-
 sub gen {
     my ($white_n, $black_m) = @_;
 
     for my $white_pieces (&all_combos_of_n_pieces($white_n - 1)) {
 	for my $black_pieces (&all_combos_of_n_pieces($black_m - 1)) {
-	    &write_cntl_file($white_pieces, $black_pieces);
+	    &write_cntl_file(&mkfilename($white_pieces, $black_pieces));
 	}
     }
 }
@@ -212,12 +227,15 @@ sub gen {
 # to write all dependencies as well.
 
 sub write_cntl_files {
+    my @original_cntl_files = @_;
     my @cntl_files = @_;
 
     while ($#cntl_files >= 0) {
 	my $cntl_filename = pop @cntl_files;
 	if (-r $cntl_filename) {
-	    # print "$cntl_filename exists, skipping\n";
+	    # Print this message only if file was explicitly requested on command line
+	    print "$cntl_filename exists, skipping\n"
+		if grep($_ eq $cntl_filename, @original_cntl_files);
 	} else {
 	    push @cntl_files, map { $_ . '.xml' } write_cntl_file($cntl_filename);
 	}
