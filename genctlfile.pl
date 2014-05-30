@@ -11,24 +11,23 @@
 #
 # by Brent Baccala; no rights reserved
 
-my $pieces = "qrbnp";
+my %pieces = (q => 'queen',
+	      r => 'rook',
+	      b => 'bishop',
+	      n => 'knight',
+	      p => 'pawn');
+
+# @pieces is kept in a certain order that doesn't affect anything
+# except the order in which futurebase elements are generated.
 
 my @pieces = ('q', 'r', 'b', 'n', 'p');
-my @non_pawn_pieces = ('q', 'r', 'b', 'n');
+my @non_pawn_pieces = grep($_ ne 'p', @pieces);
 
-my %pieces;
-$pieces{q} = 'queen';
-$pieces{r} = 'rook';
-$pieces{b} = 'bishop';
-$pieces{n} = 'knight';
-$pieces{p} = 'pawn';
-
-my %sortorder;
-$sortorder{q} = 1;
-$sortorder{r} = 2;
-$sortorder{b} = 3;
-$sortorder{n} = 4;
-$sortorder{p} = 5;
+my %sortorder = (q => 1,
+		 r => 2,
+		 b => 3,
+		 n => 4,
+		 p => 5);
 
 # bishop is given a slightly higher value than knight here to ensure
 # that kbkn is definitely preferred over knkb
@@ -74,7 +73,7 @@ sub mkfilename {
 	$invert = 1;
 	$filename = "k" . $black_pieces . "k" . $white_pieces;
     } else {
-	$invert = 1;
+	$invert = 0;
 	$filename = "k" . $white_pieces . "k" . $black_pieces;
     }
 
