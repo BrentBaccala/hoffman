@@ -1,27 +1,16 @@
 
-# EXTRA_DIST = \
-#   build-sparse-tests.sh \
-#   build-bc-overload-tests.sh \
-#   bc-overloads-expected \
-#   build_bc_overloads_expected.m \
-#   $(FCN_FILES)
-# 
-# CLEANFILES = \
-#   sparse.tst \
-#   bc-overload-tests.stamp \
-#   $(GENERATED_BC_OVERLOADS_FILES)
-# 
-# DISTCLEANFILES = \
-#   .gdbinit \
-#   fntests.log
+# GNU Make is required to process this makefile, along with xmllint
+# (part of libxml2) to extract dependencies from the control files.
 
 HOFFMAN=../hoffman
+
+PROBES=../PROBES
 
 REQUIRED_HTBs= kpkp.htb
 #REQUIRED_HTBs= kpkp.htb kqk-basic.htb kqk-whitewins.htb krvq.htb
 
-check: $(REQUIRED_HTBs)
-	@cat PROBES | while read md5expected input files; do						\
+check: $(REQUIRED_HTBs) $(PROBES)
+	@cat $(PROBES) | while read md5expected input files; do						\
 		if [ "$$md5expected" != "" -a "$$md5expected" != "#" ]; then				\
 			echo $$input									\
 				| $(HOFFMAN) -p $$files 2>&1 | tee /dev/stderr				\
@@ -34,19 +23,46 @@ check: $(REQUIRED_HTBs)
 		fi;											\
 	done
 
--include $(REQUIRED_HTBs:.htb=.d)
+
+# $(call futurebases, XMLFILE)
+#    returns a list of futurebases that this XMLFILE depends on
+#
+# Example: $(call futurebases, kpkp.xml) might return
+#    "kk.htb kqk.htb krk.htb kbk.htb knk.htb"
+#
+# This next version doesn't work because XPath 'string' only uses the
+# first item in the node set and xmllint doesn't support XPath 2.0's
+# 'string-join'
+#
+# define futurebases
+#    $(shell xmllint --xpath "string(//futurebase/@filename)" $(1))
+# endef
+#
+# If you don't have xmllint you can use this version:
+#
+# define futurebases
+#    $(shell grep futurebase $(1) | cut -d \" -f 2)
+# endef
+
+define futurebases
+   $(shell xmllint --xpath "//futurebase/@filename" $(1) | sed -e 's/[^"]*"//' -e ':a' -e 's/"[^"]*"/ /' -e 'ta' -e 's/".*/\n/')
+endef
+
+# This next idea doesn't work because make won't use implicit rules
+# multiple times in a chain.  So we recursively call make instead.
+#
+# .SECONDEXPANSION:
+#
+# %.htb: %.xml $$(call futurebases, %.xml)
+# 	$(HOFFMAN) -g $<
+
+%.xml:
+	../genctlfile.pl $@
 
 %.htb: %.xml
+	@echo Making $@
+	@$(if $(strip $(call futurebases, $<)), $(MAKE) $(call futurebases, $<))
 	$(HOFFMAN) -g $<
-%.d: %.xml
-	( echo -n "$<: " | sed 's/\.xml:/.htb:/';							\
-	  grep futurebase $< | cut -d \" -f 2 | xargs; ) > $@
 
-
-kpkp.xml kqk-basic.xml kqk-whitewins.xml krvq.xml:
-	../genctlfile.pl $@
-%.xml: always
-	../genctlfile.pl $@
-
-clean-local:
-	-rm -rf $(GENERATED_BC_OVERLOADS_DIRS)
+clean:
+	-rm $(wildcard *.xml) $(wildcard *.htb)
