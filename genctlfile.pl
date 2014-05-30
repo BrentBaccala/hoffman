@@ -23,21 +23,17 @@ my %pieces = (q => 'queen',
 my @pieces = ('q', 'r', 'b', 'n', 'p');
 my @non_pawn_pieces = grep($_ ne 'p', @pieces);
 
-my %sortorder = (q => 1,
-		 r => 2,
-		 b => 3,
-		 n => 4,
-		 p => 5);
+# %values is used in &mkfilename both to sort the pieces on one side
+# into a definite order and to compare the pieces on opposite sides to
+# decide when to invert a tablebase.  Bishop is given a slightly
+# higher value than knight here to ensure that kbnk is preferred over
+# knbk and that kbkn is preferred over knkb.
 
-# bishop is given a slightly higher value than knight here to ensure
-# that kbkn is definitely preferred over knkb
-
-my %values;
-$values{q} = 9;
-$values{r} = 5;
-$values{b} = 3.1;
-$values{n} = 3;
-$values{p} = 1;
+my %values = (q => 9,
+	      r => 5,
+	      b => 3.1,
+	      n => 3,
+	      p => 1);
 
 sub printnl {
     print XMLFILE @_, "\n";
@@ -55,8 +51,8 @@ sub mkfilename {
     my ($white_pieces, $black_pieces) = @_;
     my ($invert, $filename);
 
-    $white_pieces = join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $white_pieces));
-    $black_pieces = join('', sort { $sortorder{$a} <=> $sortorder{$b} } split(//, $black_pieces));
+    $white_pieces = join('', sort { $values{$b} <=> $values{$a} } split(//, $white_pieces));
+    $black_pieces = join('', sort { $values{$b} <=> $values{$a} } split(//, $black_pieces));
 
     my $white_value = 0;
     for my $white_piece (split(//, $white_pieces)) {
