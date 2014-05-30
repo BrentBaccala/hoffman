@@ -1,39 +1,39 @@
 #!/usr/bin/perl
 #
-# This script writes control files for 'standard' tablebases (i.e, no
-# pruning or move restrictions) into the current directory.
+# This script writes control files for both standard and suicide
+# tablebases with no pruning or move restrictions.
 #
 # Pass in the XML filenames you wish to generate.  All dependencies
-# will be generated as well.
+# will be generated as well.  Files are written in the current
+# directory.
 #
 # To get the older behavior (write all 5-piece control files and their
 # dependencies), call it as 'genctlfile.pl kppkp.xml'
 #
 # by Brent Baccala; no rights reserved
 
-my %pieces = (q => 'queen',
+my %pieces = (k => 'king',
+	      q => 'queen',
 	      r => 'rook',
 	      b => 'bishop',
 	      n => 'knight',
 	      p => 'pawn');
 
+# %values is used in &mkfilename both to sort the pieces on one side
+# into a definite order and to compare the pieces on opposite sides to
+# decide when to invert a tablebase.
+
+my %values = (k => 100000,
+	      q => 10000,
+	      r => 1000,
+	      b => 100,
+	      n => 10,
+	      p => 1);
+
 # @pieces is kept in a certain order that doesn't affect anything
 # except the order in which futurebase elements are generated.
 
-my @pieces = ('q', 'r', 'b', 'n', 'p');
-my @non_pawn_pieces = grep($_ ne 'p', @pieces);
-
-# %values is used in &mkfilename both to sort the pieces on one side
-# into a definite order and to compare the pieces on opposite sides to
-# decide when to invert a tablebase.  Bishop is given a slightly
-# higher value than knight here to ensure that kbnk is preferred over
-# knbk and that kbkn is preferred over knkb.
-
-my %values = (q => 9,
-	      r => 5,
-	      b => 3.1,
-	      n => 3,
-	      p => 1);
+my @pieces = sort { $values{$b} <=> $values{$a} } keys(%pieces);
 
 sub printnl {
     print XMLFILE @_, "\n";
@@ -41,6 +41,9 @@ sub printnl {
 
 my @normal_futurebases;
 my @inverse_futurebases;
+
+my $suicide;
+my @promotion_pieces;
 
 # Make an unordered pair of piece listings into a properly ordered
 # filename (that might be color inverted, i.e, kkq to kqk), but with
@@ -67,10 +70,18 @@ sub mkfilename {
     if ((length($black_pieces) > length($white_pieces)) or
 	((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value))) {
 	$invert = 1;
-	$filename = "k" . $black_pieces . "k" . $white_pieces;
+	if ($suicide) {
+	    $filename = $black_pieces . "v" . $white_pieces;
+	} else {
+	    $filename = "k" . $black_pieces . "k" . $white_pieces;
+	}
     } else {
 	$invert = 0;
-	$filename = "k" . $white_pieces . "k" . $black_pieces;
+	if ($suicide) {
+	    $filename = $white_pieces . "v" . $black_pieces;
+	} else {
+	    $filename = "k" . $white_pieces . "k" . $black_pieces;
+	}
     }
 
     return (wantarray ? ($invert, $filename) : $filename);
@@ -78,6 +89,8 @@ sub mkfilename {
 
 sub mkfuturebase {
     my ($white_pieces, $black_pieces) = @_;
+
+    return if $suicide and ($white_pieces eq '' or $black_pieces eq '');
 
     my ($invert, $filename) = &mkfilename($white_pieces, $black_pieces);
 
@@ -97,8 +110,12 @@ sub mkfuturebase {
 sub write_cntl_file {
     my ($cntl_filename) = @_;
 
-    die "Invalid control filename $cntl_filename\n" unless ($cntl_filename =~ m/k([^k]*)k([^k.]*).xml/);
-    my ($white_pieces, $black_pieces) = ($1, $2);
+    die "Invalid control filename $cntl_filename\n"
+	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*).xml$/
+		or $cntl_filename =~ m/^([kqrbnp]*)(v)([kqrbnp.]*).xml$/);
+
+    my ($white_pieces, $black_pieces) = ($1, $3);
+    $suicide = ($2 eq 'v');
 
     my $filename = &mkfilename($white_pieces, $black_pieces);
 
@@ -113,9 +130,13 @@ sub write_cntl_file {
     printnl '';
     printnl '<tablebase>';
 
+    printnl '   <variant name="suicide"/>' if $suicide;
     printnl '   <dtm/>';
-    printnl '   <piece color="white" type="king"/>';
-    printnl '   <piece color="black" type="king"/>';
+
+    if (not $suicide) {
+	printnl '   <piece color="white" type="king"/>';
+	printnl '   <piece color="black" type="king"/>';
+    }
     for my $piece (split(//, $white_pieces)) {
 	printnl '   <piece color="white" type="' . $pieces{$piece} . '"/>';
     }
@@ -128,6 +149,7 @@ sub write_cntl_file {
 
     @normal_futurebases = ();
     @inverse_futurebases = ();
+    @promotion_pieces = grep { $_ ne 'p' and ($_ ne 'k' or $suicide) } @pieces;
 
     for my $captured_white_index (1 .. length($white_pieces)) {
 	my $remaining_white_pieces = $white_pieces;
@@ -144,7 +166,7 @@ sub write_cntl_file {
     if (index($white_pieces, 'p') != -1) {
 	my $remaining_white_pieces = $white_pieces;
 	substr($remaining_white_pieces, index($white_pieces, 'p'), 1) = "";
-	for my $white_promotion (@non_pawn_pieces) {
+	for my $white_promotion (@promotion_pieces) {
 	    &mkfuturebase($remaining_white_pieces . $white_promotion, $black_pieces);
 	    for my $captured_black_index (1 .. length($black_pieces)) {
 		if (substr($black_pieces, $captured_black_index-1, 1) ne "p") {
@@ -159,7 +181,7 @@ sub write_cntl_file {
     if (index($black_pieces, 'p') != -1) {
 	my $remaining_black_pieces = $black_pieces;
 	substr($remaining_black_pieces, index($black_pieces, 'p'), 1) = "";
-	for my $black_promotion (@non_pawn_pieces) {
+	for my $black_promotion (@promotion_pieces) {
 	    &mkfuturebase($white_pieces, $remaining_black_pieces . $black_promotion);
 	    for my $captured_white_index (1 .. length($white_pieces)) {
 		if (substr($white_pieces, $captured_white_index-1, 1) ne "p") {
