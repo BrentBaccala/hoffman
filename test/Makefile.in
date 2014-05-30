@@ -2,12 +2,10 @@
 # GNU Make is required to process this makefile, along with xmllint
 # (part of libxml2) to extract dependencies from the control files.
 
-HOFFMAN=../hoffman
+HOFFMAN ?= ../hoffman
 
-PROBES=../PROBES
-
-REQUIRED_HTBs= kpkp.htb
-#REQUIRED_HTBs= kpkp.htb kqk-basic.htb kqk-whitewins.htb krvq.htb
+PROBES = ../PROBES
+REQUIRED_HTBs = kpkp.htb kqk-basic.htb kqk-whitewins.htb krvq.htb
 
 check: $(REQUIRED_HTBs) $(PROBES)
 	@cat $(PROBES) | while read md5expected input files; do						\
@@ -22,6 +20,8 @@ check: $(REQUIRED_HTBs) $(PROBES)
 				) || exit 1;								\
 		fi;											\
 	done
+	@echo
+	@echo All tests completed successfully
 
 
 # $(call futurebases, XMLFILE)
@@ -55,6 +55,8 @@ endef
 #
 # %.htb: %.xml $$(call futurebases, %.xml)
 # 	$(HOFFMAN) -g $<
+
+.SECONDARY: $(patsubst %.htb, %.xml, $(REQUIRED_HTBs))
 
 %.xml:
 	../genctlfile.pl $@
