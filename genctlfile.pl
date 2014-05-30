@@ -43,6 +43,7 @@ my @normal_futurebases;
 my @inverse_futurebases;
 
 my $suicide;
+my $option;
 my @promotion_pieces;
 
 # Make an unordered pair of piece listings into a properly ordered
@@ -71,16 +72,16 @@ sub mkfilename {
 	((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value))) {
 	$invert = 1;
 	if ($suicide) {
-	    $filename = $black_pieces . "v" . $white_pieces;
+	    $filename = $black_pieces . "v" . $white_pieces . $option;
 	} else {
-	    $filename = "k" . $black_pieces . "k" . $white_pieces;
+	    $filename = "k" . $black_pieces . "k" . $white_pieces . $option;
 	}
     } else {
 	$invert = 0;
 	if ($suicide) {
-	    $filename = $white_pieces . "v" . $black_pieces;
+	    $filename = $white_pieces . "v" . $black_pieces . $option;
 	} else {
-	    $filename = "k" . $white_pieces . "k" . $black_pieces;
+	    $filename = "k" . $white_pieces . "k" . $black_pieces . $option;
 	}
     }
 
@@ -111,11 +112,12 @@ sub write_cntl_file {
     my ($cntl_filename) = @_;
 
     die "Invalid control filename $cntl_filename\n"
-	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*).xml$/
+	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)(-basic|-whitewins|).xml$/
 		or $cntl_filename =~ m/^([kqrbnp]*)(v)([kqrbnp.]*).xml$/);
 
     my ($white_pieces, $black_pieces) = ($1, $3);
     $suicide = ($2 eq 'v');
+    $option = $4;
 
     my $filename = &mkfilename($white_pieces, $black_pieces);
 
@@ -131,7 +133,10 @@ sub write_cntl_file {
     printnl '<tablebase>';
 
     printnl '   <variant name="suicide"/>' if $suicide;
-    printnl '   <dtm/>';
+
+    printnl '   <dtm/>' if ($option eq "");
+    printnl '   <basic/>' if ($option eq "-basic");
+    printnl '   <flag type="white-wins"/>' if ($option eq "-whitewins");
 
     if (not $suicide) {
 	printnl '   <piece color="white" type="king"/>';
