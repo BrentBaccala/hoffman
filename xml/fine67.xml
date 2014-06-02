@@ -20,4 +20,5 @@
    <futurebase filename="kppk.htb" colors="invert"/>
    <prune color="white" type="concede" move="P=?"/>
    <prune color="black" type="concede" move="P=?"/>
+   <output filename="fine67.htb"/>
 </tablebase>
