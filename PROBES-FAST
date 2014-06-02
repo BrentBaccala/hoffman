@@ -70,3 +70,9 @@ f1b03d7bedb122391df12f2f48858f43 KRq5/8/8/8/8/8/8/8\ w krvq.htb
 
 # Check error return if no tablebases specified
 059249cae1c1afe0d9d8e7d27c4a9277 ignored
+
+# problem position in Lasker's 1901 construction
+27a7c23e02add3fb00db7c16be353d6d 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7\ w lasker1901.htb
+
+# problem position in Freezer fortress construction
+c21a2a5a49963fdf0d274300762c4c20 8/6k1/6p1/8/q7/4R3/5PK1/8\ w fortress.htb
