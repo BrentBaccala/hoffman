@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Diagram 68 from Rubin Fine's "Basic Chess Endings" -->
+
+<tablebase>
+   <prune-enable color="white" type="concede"/>
+   <prune-enable color="black" type="concede"/>
+   <dtm/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="pawn" location="a2+"/>
+   <piece color="white" type="pawn" location="b2+"/>
+   <piece color="white" type="pawn" location="c2+"/>
+   <piece color="black" type="pawn" location="f7+"/>
+   <piece color="black" type="pawn" location="g7+"/>
+   <piece color="black" type="pawn" location="h7+"/>
+   <futurebase filename="kpkp.htb"/>
+   <futurebase filename="kpkp.htb" colors="invert"/>
+   <prune color="white" type="concede" move="P=?"/>
+   <prune color="black" type="concede" move="P=?"/>
+   <output filename="fine68.htb"/>
+</tablebase>
