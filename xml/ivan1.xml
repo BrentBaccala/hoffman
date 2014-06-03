@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<tablebase offset="0xaa44">
+   <prune-enable color="black" type="concede"/>
+
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="black" type="pawn"/>
+   <piece color="white" type="queen"/>
+   <piece color="black" type="queen"/>
+
+   <futurebase filename="kqkp.htb"/>
+   <futurebase filename="kqkq.htb"/>
+   <futurebase filename="kqpk.htb" colors="invert"/>
+
+   <prune color="black" move="PxQ*" type="concede"/>
+<!--black win if they get second queen:  -->
+   <prune color="black" move="P=?" type="concede"/>
+
+   <generation-controls>
+      <output filename="ivan1.htb"/>
+   </generation-controls>
+</tablebase>
