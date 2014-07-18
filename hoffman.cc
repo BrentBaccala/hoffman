@@ -3761,15 +3761,6 @@ bool parse_format(xmlNodePtr formatNode, struct format *format, bool expl)
     return (format->dtm_offset != -1) || (format->bits != 0);
 }
 
-/* Parses XML, creates a tablebase structure corresponding to it, and returns it.
- *
- * I use a DTD and validate the XML input, so there's very little error checking here.  The idea is
- * that the validation provides most of the error checks.
- *
- * There's very little difference between the futurebase and generation control file cases, but the
- * second argument is a flag to distinguish between them.
- */
-
 int factorial(int n) {
     return (n <= 2) ? n : (n * factorial(n-1));
 }
@@ -3829,6 +3820,17 @@ bool tablebase_is_color_symmetric(tablebase_t *tb)
 
     return true;
 }
+
+/* Parses XML, creates a tablebase structure corresponding to it, and returns it.
+ *
+ * I use a DTD and validate the XML input, so there's very little error checking here.  The idea is
+ * that the validation provides most of the error checks.
+ *
+ * There are two types of XML files - control files, which are pure XML files controlling a program
+ * run, and futurebases, which are computed tablebases with an XML prefix followed by data.  There's
+ * very little difference between the two for XML parsing, but the second argument is a flag to
+ * distinguish between them.
+ */
 
 tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 {
@@ -5223,9 +5225,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     return (fatal_errors == starting_fatal_errors) ? tb : nullptr;
 }
 
-/* Parses an XML control file.
- */
-
 xmlNodePtr create_GenStats_node(const char *name)
 {
     xmlNodePtr node;
@@ -5236,6 +5235,9 @@ xmlNodePtr create_GenStats_node(const char *name)
 
     return node;
 }
+
+/* Parses an XML control file.
+ */
 
 tablebase_t * parse_XML_control_file(char *filename)
 {
@@ -5356,7 +5358,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.801 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.802 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5397,11 +5399,12 @@ tablebase_t * parse_XML_control_file(char *filename)
     return tb;
 }
 
-/* preload_futurebase_from_file() reads a tablebase's XML header and parses it, leaving the file
- * open and ready to begin reading the first entry with fetch_next_DTM_from_disk().
+/* preload_futurebase_from_file() reads a tablebase's XML header and parses it, closing the file
+ * when done.
  *
- * XXX I save the 'filename' and xmlFree it when I unload the futurebase, but that isn't quite right
- * if we're probing!  Fortunately, if we're probing, we never unload the futurebases...
+ * XXX I save the 'filename' and xmlFree it when I unload the futurebase, but that assumes that the
+ * filename came from an XML attribute, which isn't the case if we're probing!  Fortunately, if
+ * we're probing, we never unload the futurebases...
  */
 
 tablebase_t * preload_futurebase_from_file(char *filename)
@@ -5462,6 +5465,10 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 
     return tb;
 }
+
+/* open_futurebase() reopens a preloaded futurebase, seeks to the start of the data, and leaves the
+ * file open and ready to read the first entry with fetch_entry_pointer().
+ */
 
 void open_futurebase(tablebase_t * tb)
 {
@@ -14252,7 +14259,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.801 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.802 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
