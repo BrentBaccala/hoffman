@@ -575,8 +575,11 @@ typedef struct tablebase {
     int extra_piece;
     int missing_pawn;
     int missing_non_pawn;
-    int matching_local_piece[MAX_PIECES];
-    int matching_local_piece_by_square[MAX_PIECES][64];
+
+    /* For each square on the board and piece in the futurebase, record the first piece in the
+     * corresponding local semilegal group.
+     */
+    int matching_local_semilegal_group[MAX_PIECES][64];
 
     xmlDocPtr xml;
 
@@ -5358,7 +5361,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.803 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.804 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5564,9 +5567,8 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 
 	bool found_matching_piece = false;
 
-	futurebase->matching_local_piece[future_piece] = -1;
 	for (int square = 0; square < 64; square ++) {
-	    futurebase->matching_local_piece_by_square[future_piece][square] = -1;
+	    futurebase->matching_local_semilegal_group[future_piece][square] = -1;
 	}
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -5575,10 +5577,6 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 		     (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
 		    || (futurebase->invert_colors &&
 			(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
-
-		if (futurebase->matching_local_piece[future_piece] == -1) {
-		    futurebase->matching_local_piece[future_piece] = piece;
-		}
 
 		/* Have we found a unassigned matching pair of localbase/futurebase pieces? */
 		if (!(local_piece_vector & (1 << piece))
@@ -5594,8 +5592,8 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 
 		    if (tb->semilegal_squares[piece] & BITVECTOR(square)) {
 
-			if (futurebase->matching_local_piece_by_square[future_piece][square] == -1) {
-			    futurebase->matching_local_piece_by_square[future_piece][square] = piece;
+			if (futurebase->matching_local_semilegal_group[future_piece][square] == -1) {
+			    futurebase->matching_local_semilegal_group[future_piece][square] = piece;
 			}
 
 		    }
@@ -6160,7 +6158,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 	if (invert_colors) sq = vertical_reflection(sq);
 
-	for (local_piece = foreign_tb->matching_local_piece_by_square[foreign_piece][sq];
+	for (local_piece = foreign_tb->matching_local_semilegal_group[foreign_piece][sq];
 	     local_piece != -1; local_piece = local_tb->next_piece_in_semilegal_group[local_piece]) {
 
 	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
@@ -9512,6 +9510,31 @@ std::atomic<index_t> next_future_index;
  * futurebase, so all we really do is blunder check.
  */
 
+/* NORMAL PAWN PROMOTION
+ *
+ * We can easily identify what we're promoting into, since there's a single type and color of piece
+ * in the futurebase of which there are one more than in the current tablebase.  Assume, without
+ * loss of generality, that it's a queen.  There are also pawns in the current tablebase.  To a
+ * first approximation, we have to consider all pairs of local pawns and foreign queens.
+ *
+ * Actually, we can limit things further.  Let's just consider each foreign queen in turn.  The only
+ * possible local pawn that could promote into it is located one square directly behind it.  So in a
+ * given futurebase position, we only need to consider all foreign queens, with the local position
+ * that leads to it uniquely determined.
+ *
+ * Furthermore, in a given position, each foreign piece will map into a local semilegal group.  One
+ * of those local semilegal groups will have one more piece (the extra piece) map into it; all of
+ * the others must have the same number of pieces map into them as they contain.  Once a local
+ * position has been setup for back propagation, that special semilegal group will be fully
+ * populated and will contain the promotion square, too.  We just cycle the promotion square among
+ * all of the n pieces in this group, creating n+1 total positions.  None of pieces that map into
+ * other semilegal groups could be the promotion piece, because that would create an imbalance among
+ * the semilegal groups - one would have one piece too many, another would have one piece too few.
+ *
+ * Prior to 1.779, we cycled among semilegal groups in the FUTUREBASE, but that was a bug.
+ * Futurebase semilegal groups don't matter, only the local semilegal group matters.
+ */
+
 void propagate_moves_from_promotion_futurebase(void)
 {
     index_t future_index;
@@ -9613,7 +9636,7 @@ void propagate_moves_from_promotion_futurebase(void)
 		if (futurebase->invert_colors)
 		    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-		int local_piece = futurebase->matching_local_piece_by_square[extra_piece][promotion_sq];
+		int local_piece = futurebase->matching_local_semilegal_group[extra_piece][promotion_sq];
 
 		while (true) {
 
@@ -9786,7 +9809,7 @@ void propagate_moves_from_promotion_capture_futurebase(void)
 		if (futurebase->invert_colors)
 		    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-		int local_piece = futurebase->matching_local_piece_by_square[extra_piece][promotion_sq];
+		int local_piece = futurebase->matching_local_semilegal_group[extra_piece][promotion_sq];
 
 		while (true) {
 
@@ -14259,7 +14282,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.803 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.804 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
