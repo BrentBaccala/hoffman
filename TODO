@@ -357,3 +357,6 @@ the corresponding slow encryption.
 - revisit all the XXXs
 
 - check stalemate handling in general
+
+- print warning if a prune statement doesn't do anything
+  (like "Pe4"  if P isn't restricted)
