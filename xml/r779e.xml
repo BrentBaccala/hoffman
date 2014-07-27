@@ -1,0 +1,22 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Futurebase has two semilegal groups that span a local semilegal group -->
+<!-- the two semilegal groups are the a-d files and the e-h files -->
+<!-- three futurebases: one with one queen in each group, two with both queens in one group -->
+<tablebase>
+  <prune-enable color="white" type="discard"/>
+  <dtm/>
+  <!-- this index element is required to prevent an symmetry error -->
+  <index type="combinadic4" symmetry="1"/>
+  <piece color="white" type="king"/>
+  <piece color="black" type="king"/>
+  <piece color="white" type="queen"/>
+  <piece color="white" type="pawn"/>
+  <futurebase url="kqk.htb"/>
+  <futurebase url="kpk.htb"/>
+  <futurebase url="r779b.htb"/>
+  <futurebase url="r779c.htb"/>
+  <futurebase url="r779d.htb"/>
+  <prune color="white" type="discard" move="P=[RNB]"/>
+  <output filename="r779e.htb"/>
+</tablebase>

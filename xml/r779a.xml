@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Bug reported by Ivan Konobeev on 10/29/13 -->
+<!-- Futurebase has a semilegal group that spans two local semilegal groups -->
+<tablebase>
+  <prune-enable color="white" type="discard"/>
+  <index type="compact"/>
+  <piece color="white" type="king"/>
+  <piece color="black" type="king"/>
+  <piece color="white" type="pawn" location="f7+"/>
+  <piece color="white" type="pawn" location="g7+"/>
+  <futurebase url="kqpk.htb"/>
+  <futurebase url="kpk.htb"/>
+  <prune color="white" type="discard" move="P=[RNB]"/>
+  <output filename="r779a.htb"/>
+</tablebase>

@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!-- test 1.796 -->
+<tablebase>
+   <prune-enable color="black" type="concede"/>
+
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="black" type="pawn"/>
+
+   <futurebase filename="kk.htb"/>
+
+   <prune color="black" move="P=*" type="concede"/>
+
+   <output filename="r796.htb"/>
+</tablebase>

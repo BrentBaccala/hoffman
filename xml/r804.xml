@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Modified version of kbk.xml to test 1.804 -->
+
+<tablebase offset="0x1234">
+   <dtm/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="bishop"/>
+   <futurebase filename="kk.htb"/>
+   <output filename ="r804.htb"/>
+</tablebase>
