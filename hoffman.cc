@@ -5361,7 +5361,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.804 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.805 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -11977,14 +11977,7 @@ void initialize_board_masks(void)
 
 bool PTM_in_check(tablebase_t *tb, local_position_t *position)
 {
-    static bool initialized = false;
-
     int king_position = position->piece_position[(position->side_to_move == WHITE) ? tb->white_king : tb->black_king];
-
-    if (!initialized) {
-	initialize_board_masks();
-	initialized = true;
-    }
 
     /* The concept of check doesn't exist in suicide - kings are normal pieces */
 
@@ -14282,7 +14275,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.804 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.805 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14300,6 +14293,7 @@ int main(int argc, char *argv[])
     init_movements();
     verify_movements();
     init_reflections();
+    initialize_board_masks();
 
 #ifdef DEBUG_MOVE
 #define DEBUG_FLAG "d:"
