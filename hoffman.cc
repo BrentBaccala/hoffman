@@ -130,6 +130,8 @@ extern "C" {
 
 #include <errno.h>		/* for errno and strerror() */
 
+#include <valgrind/helgrind.h>
+
 #ifdef HAVE_LIBREADLINE
 #include <readline.h>		/* The GNU readline library (optional) */
 #include <history.h>
@@ -5361,7 +5363,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.805 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.806 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6812,6 +6814,8 @@ inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	cached_entries = malloc(tb->format.bits * num_threads + 2*sizeof(int));
 
+	VALGRIND_HG_DISABLE_CHECKING(cached_entries, tb->format.bits * num_threads + 2*sizeof(int));
+
 	cached_indices = (index_t *) malloc(sizeof(index_t) * num_threads);
 	memset(cached_indices, 0xff, sizeof(index_t) * num_threads);
 
@@ -7346,6 +7350,9 @@ class MemoryEntriesTable: public EntriesTable {
 		info("Malloced %zdMB for tablebase entries\n", bytes/(1024*1024));
 	    }
 	}
+
+	VALGRIND_HG_DISABLE_CHECKING(entries, bytes);
+
 	/* Don't really need this, since they will all get initialized anyway */
 	/* XXX actually do this need right now, because initialization isn't complete */
 	memset(entries, 0, bytes);
@@ -13086,6 +13093,9 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     positive_passes_needed = new bool[max_tracked_dtm + 1] ();
     negative_passes_needed = new bool[-min_tracked_dtm + 1] ();
 
+    VALGRIND_HG_DISABLE_CHECKING(positive_passes_needed, (max_tracked_dtm + 1)*sizeof(bool));
+    VALGRIND_HG_DISABLE_CHECKING(negative_passes_needed, (-min_tracked_dtm + 1)*sizeof(bool));
+
     if (!using_proptables) {
 
 	/* No proptables.  Allocate a futurevectors array, initialize the tablebase, back propagate
@@ -14275,7 +14285,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.805 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.806 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
