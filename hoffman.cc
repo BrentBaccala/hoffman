@@ -5363,7 +5363,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.807 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.808 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7729,6 +7729,16 @@ class DiskEntriesTable: public EntriesTable {
 
 EntriesTable * entriesTable;
 
+/* finalize_update()
+ *
+ * starting with PTM_wins() and add_one_to_PNTM_wins()
+ *
+ * finalize_update() is called once we've labeled a position won for either one player or the other,
+ * backed out its moves, figured out a position that leads to it in one move, and are ready to
+ * update that other postion with the knowledge that either PTM can win, or that some of the moves
+ * that lead out of it result in PNTM wins.
+ */
+
 inline void PTM_wins(index_t index, int dtm)
 {
 #ifdef DEBUG_MOVE
@@ -7806,40 +7816,107 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
     }
 }
 
+void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
+{
+    int i;
+
+#if 0
+    /* Skip everything if the position isn't valid.  In particular, we don't track futuremove
+     * propagation for illegal positions.
+     */
+
+    if (get_entry_raw_DTM(index) == 1) return;
+#endif
+
+    /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
+     * non-capture move into a position where a capture was possible.  For futurebase
+     * back-propagation into such a position, the only futuremoves listed as possible correspond to
+     * capture moves, so the code that called us should have already rejected non-capture
+     * futuremoves into such a position.  Now we check the intra-tablebase case and return if the
+     * capture-possible-flag is set.
+     */
+
+    if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
+	&& entriesTable->get_capture_possible_flag(index)) {
+	return;
+    }
+
+    /* The guts of committing an update into the entries table. */
+
+    entriesTable->lock_entry(index);
+
+    if (dtm > 0) {
+	PTM_wins(index, dtm);
+    } else if (dtm < 0) {
+	for (i=0; i<movecnt; i++) {
+	    add_one_to_PNTM_wins(index, dtm);
+	}
+    }
+
+    entriesTable->unlock_entry(index);
+}
+
+/* back_propagate_index()
+ *
+ * As we make a single, normal, generation pass through the table, this is what we do to each entry.
+ * Check to see if it's unpropagated and its DTM matches the target DTM for this pass.  If so, flag
+ * it as propagated and hand it off to a routine, back_propagate_index_within_table(), defined later
+ * in the code, that will back out every possible move from this position, do all sorts of subtle things,
+ * and finally "adjust" the positions that lead here by calling finalize_update()!
+ *
+ * Note: if we're using proptables, the call to finalize_update() will be buffered until the next pass.
+ */
+
 void back_propagate_index_within_table(index_t index, int reflection);
 
 void back_propagate_index(index_t index, int target_dtm)
 {
-    /* Symmetry.
-     *
-     * The only case we really have to worry about here is diagonal symmetry, because in both
-     * horizontal and vertical symmetry all of the positions neatly double up, so anytime we'd have
-     * a move backprop into our symmetry restriction from outside it, a matching move will backprop
-     * from inside out.
-     *
-     * For diagonal symmetry however, things aren't so neat, because squares along the diagonal map
-     * to themselves.  So positions where both kings are on the diagonal don't have a matching
-     * double, while the other positions do.  We deal with this here by backproping both the
-     * position itself and its matching pair (if one exists).  If one doesn't exist, then
-     * back_propagate_index_within_table() will quickly detect this case (when index_to_position
-     * returns false).  We also doubled the movecnt of "paired" positions during initialization,
-     * because moves will be backproped twice from doubled positions to doubled positions, not just
-     * assumed like the horizontal or vertical cases.
-     */
+    bool back_propagate = false;
+    bool does_PTM_win;
 
     print_progress_dot(current_tb, index);
+
+    /* Keep the entry locked for as short a time as possible.  Just update it.  Do the actual
+     * back propagating after we've released the lock.
+     */
 
     entriesTable->lock_entry(index);
 
     if (((! tracking_dtm) && entriesTable->is_unpropagated(index))
 	|| (entriesTable->get_DTM(index) == target_dtm)) {
 
+	back_propagate = true;
+
+	does_PTM_win = entriesTable->does_PTM_win(index);
+
+	entriesTable->flag_as_propagated(index);
+    }
+
+    entriesTable->unlock_entry(index);
+
+    if (back_propagate) {
+
+	/* Symmetry.
+	 *
+	 * The only case we really have to worry about here is diagonal symmetry, because in both
+	 * horizontal and vertical symmetry all of the positions neatly double up, so anytime we'd
+	 * have a move backprop into our symmetry restriction from outside it, a matching move will
+	 * backprop from inside out.
+	 *
+	 * For diagonal symmetry however, things aren't so neat, because squares along the diagonal
+	 * map to themselves.  So positions where both kings are on the diagonal don't have a
+	 * matching double, while the other positions do.  We deal with this here by backproping
+	 * both the position itself and its matching pair (if one exists).  If one doesn't exist,
+	 * then back_propagate_index_within_table() will quickly detect this case (when
+	 * index_to_position returns false).  We also doubled the movecnt of "paired" positions
+	 * during initialization, because moves will be backproped twice from doubled positions to
+	 * doubled positions, not just assumed like the horizontal or vertical cases.
+	 */
+
 	back_propagate_index_within_table(index, REFLECTION_NONE);
 	if (current_tb->symmetry == 8) {
 	    back_propagate_index_within_table(index, REFLECTION_DIAGONAL);
 	}
-
-	entriesTable->flag_as_propagated(index);
 
 	/* Track statistics.  For the "player wins" statistics, we don't want to count illegal (PNTM
 	 * mated) positions, so we don't increment anything if DTM is 1.
@@ -7847,15 +7924,12 @@ void back_propagate_index(index_t index, int target_dtm)
 
 	positions_finalized_this_pass ++;
 
-	if (entriesTable->does_PTM_win(index)) {
+	if (does_PTM_win) {
 	    if (target_dtm > 1) player_wins[index_to_side_to_move(current_tb, index)] ++;
 	} else {
 	    player_wins[1 - index_to_side_to_move(current_tb, index)] ++;
 	}
-
     }
-
-    entriesTable->unlock_entry(index);
 }
 
 /* If we're not using proptables, then this section of code spawns off a number of threads to run
@@ -7918,49 +7992,8 @@ void non_proptable_pass(int target_dtm)
  * futurebase.  In that case, we need to look at the sense of the bitbase (white-wins or
  * white-draws), as well as which player is PTM to decide if we should set or clear the propentry's
  * flag.  I took this code out (for now).
- */
-
-void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
-{
-    int i;
-
-#if 0
-    /* Skip everything if the position isn't valid.  In particular, we don't track futuremove
-     * propagation for illegal positions.
-     */
-
-    if (get_entry_raw_DTM(index) == 1) return;
-#endif
-
-    /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
-     * non-capture move into a position where a capture was possible.  For futurebase
-     * back-propagation into such a position, the only futuremoves listed as possible correspond to
-     * capture moves, so the code that called us should have already rejected non-capture
-     * futuremoves into such a position.  Now we check the intra-tablebase case and return if the
-     * capture-possible-flag is set.
-     */
-
-    if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
-	&& entriesTable->get_capture_possible_flag(index)) {
-	return;
-    }
-
-    /* The guts of committing an update into the entries table. */
-
-    entriesTable->lock_entry(index);
-
-    if (dtm > 0) {
-	PTM_wins(index, dtm);
-    } else if (dtm < 0) {
-	for (i=0; i<movecnt; i++) {
-	    add_one_to_PNTM_wins(index, dtm);
-	}
-    }
-
-    entriesTable->unlock_entry(index);
-}
-
-/* THE PRIORITY QUEUE
+ *
+ * THE PRIORITY QUEUE
  *
  * I crafted my own priority_queue because I'm not happy with any of the existing options.
  *
@@ -14288,7 +14321,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.807 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.808 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
