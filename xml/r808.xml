@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Bug reported by Ivan Konobeev on 11/7/13 -->
+<!-- caused by the lack of a mutex lock prior to 1.808 -->
+<!-- need at least two processors for this test to fail -->
+<!-- this test case rarely, but sometimes, works correctly -->
+
+<tablebase>
+<prune-enable color="white" type="concede"/>
+
+<piece color="white" type="king"/>
+<piece color="white" type="queen"/>
+<piece color="white" type="pawn" location="b7+"/>
+
+<piece color="black" type="king"/>
+<piece color="black" type="queen"/>
+<futurebase filename="kqkp.htb" colors="invert"/>
+<futurebase filename="kqkq.htb"/>
+<futurebase filename="kqpk.htb"/>
+
+<prune color="white" move="PxQ*" type="concede"/>
+<prune color="white" move="P=?" type="concede"/>
+
+<generation-controls>
+<output filename="r808.htb"/>
+</generation-controls>
+</tablebase>
