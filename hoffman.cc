@@ -5363,7 +5363,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.806 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.807 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7829,6 +7829,8 @@ void back_propagate_index(index_t index, int target_dtm)
 
     print_progress_dot(current_tb, index);
 
+    entriesTable->lock_entry(index);
+
     if (((! tracking_dtm) && entriesTable->is_unpropagated(index))
 	|| (entriesTable->get_DTM(index) == target_dtm)) {
 
@@ -7853,6 +7855,7 @@ void back_propagate_index(index_t index, int target_dtm)
 
     }
 
+    entriesTable->unlock_entry(index);
 }
 
 /* If we're not using proptables, then this section of code spawns off a number of threads to run
@@ -14285,7 +14288,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.806 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.807 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
