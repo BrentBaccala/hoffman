@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<tablebase>
+<prune-enable color="white" type="concede"/>
+<prune-enable color="black" type="concede"/> <!-- for krkrp_.htb-->
+
+<prune-enable color="black" type="discard"/>
+<piece color="white" type="king"/>
+<piece color="white" type="queen" location="g8 h8"/>
+
+
+<piece color="white" type="rook"/>
+<piece color="black" type="king"/>
+<piece color="black" type="rook"/>
+<piece color="black" type="pawn" location="d4+"/>
+
+<futurebase filename="krkrp_.htb"/> <!-- kxQ rxQ-->
+<prune color="white" move="R*" type="concede"/>
+<prune color="white" move="Q*" type="concede"/>
+<prune color="white" move="K*" type="concede"/>
+
+<prune color="black" move="K*" type="discard"/>
+<prune color="black" move="R*" type="discard"/>
+<prune color="black" move="P*" type="discard"/>
+
+<output filename ="kqrkrp_.htb"/>
+</tablebase>

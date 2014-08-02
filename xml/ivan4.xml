@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+
+<tablebase>
+<prune-enable color="white" type="concede"/>
+<index type="compact" symmetry="1"/>
+
+
+
+<piece color="white" type="king"/>
+<piece color="white" type="pawn" location="b7+"/>
+<piece color="white" type="queen"/>
+
+<piece color="black" type="king"/>
+<piece color="black" type="queen"/>
+<futurebase filename="kqkp.htb" colors="invert"/>
+<futurebase filename="kqkq.htb"/>
+<futurebase filename="kqpk.htb"/>
+
+<prune color="white" move="PxQ*" type="concede"/>
+<!--black win if they get second queen: -->
+<prune color="white" move="P=?" type="concede"/>
+
+<generation-controls>
+<output filename="ivan4.htb"/>
+</generation-controls>
+</tablebase>

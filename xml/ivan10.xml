@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- submitted by Ivan Konobeev on 11/12/13 -->
+<!-- report was a seg fault with hoffman 1.800 invoked with "-t 2 -g -v -P 100" -->
+<!-- unable to reproduce -->
+<tablebase>
+<prune-enable color="white" type="concede"/>
+<prune-enable color="white" type="discard"/>
+<prune-enable color="black" type="discard"/>
+<flag type="white-wins"/>
+
+
+<piece color="white" type="king"/>
+<piece color="black" type="king"/>
+<piece color="white" type="pawn" location="e2+"/>
+<futurebase filename="kk.htb"/>
+
+
+
+<prune color="white" move="P=?" type="concede"/>
+<generation-controls>
+<output filename="ivan10.htb"/>
+</generation-controls>
+</tablebase>

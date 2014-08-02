@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- FEN: 8/8/4r3/3k1K2/3p3P/8/6P1/7R b - - -->
+<!-- We want to know if black can draw or not; analysys by FinalGen shows that the only chance for black is move Re8. But FinalGen cannot handle with move Re8 and marks it as "White wins or Draw" -->
+<tablebase>
+
+
+<prune-enable color="white" type="concede"/>
+<prune-enable color="black" type="concede"/>
+<prune-enable color="white" type="discard"/>
+<prune-enable color="black" type="discard"/>
+<piece color="white" type="king" location="b1 b2 b3 b4 b5 c1 c2 c3 c4 c5 c6 d1 d2 d3 d4 d5 d6 d7 e1 e2 e3 e4 e5 e6 e7 e8 f1 f2 f3 f4 f5 f6 f7 f8 g3 g4 g5 g6 g7 g8 h3 h4 h5 h6 h7 h8"/>
+<piece color="white" type="rook"/>
+<piece color="white" type="pawn" location="g2+"/>
+<piece color="white" type="pawn" location="h4+"/>
+
+<piece color="black" type="king" location="b1 b2 b3 b4 b5 c1 c2 c3 c4 c5 c6 d1 d2 d3 d4 d5 d6 d7 e1 e2 e3 e4 e5 e6 e7 e8 f1 f2 f3 f4 f5 f6 f7 f8 g3 g4 g5 g6 g7 g8 h3 h4 h5 h6 h7 h8"/>
+<piece color="black" type="rook"/>
+<piece color="black" type="pawn" location="d4+"/>
+
+<futurebase filename="kqrpkrp_.htb"/> <!-- P=Q; isn't a win for white yet, we need to be sure that white queen can't be captured immediately-->
+<futurebase filename="krppkqr_.htb"/> <!-- P=q; isn't a win for black yet, we need to be sure that black queen can't be captured immediately-->
+<futurebase filename="krppkr_.htb"/> <!-- Kxp Rxp-->
+<futurebase filename="krppkp_.htb"/> <!-- Kxr Rxr-->
+<futurebase filename="kppkrp_.htb"/> <!-- kxR rxR; move pxR (as pxR=q;) should be conceded so black pawn continues to be at "d" line only-->
+<futurebase filename="krpkrp_.htb"/> <!-- kxP rxP-->
+<prune color="white" move="PxR*" type="concede"/>
+<prune color="black" move="PxR*" type="concede"/>
+<prune color="white" move="P=[RNB]" type="discard"/>
+<prune color="black" move="P=[RNB]" type="discard"/>
+
+<prune color="white" move="Ka?" type="discard"/>
+<prune color="white" move="Kb?" type="discard"/>
+<prune color="white" move="Kc?" type="discard"/>
+<prune color="white" move="Kd?" type="discard"/>
+<prune color="white" move="Kg?" type="discard"/>
+<prune color="white" move="Kh?" type="discard"/>
+
+<prune color="black" move="Ka?" type="discard"/>
+<prune color="black" move="Kb?" type="discard"/>
+<prune color="black" move="Kc?" type="discard"/>
+<prune color="black" move="Kd?" type="discard"/>
+<prune color="black" move="Kg?" type="discard"/>
+<prune color="black" move="Kh?" type="discard"/>
+
+<output filename ="krppkrp_FINAL.htb"/>
+</tablebase>
