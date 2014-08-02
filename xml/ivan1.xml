@@ -1,4 +1,7 @@
 <?xml version="1.0"?>
+<!-- submitted by Ivan Konobeev on 3/31/13 -->
+<!-- fixed in 1.779 -->
+<!-- tested by r779a.xml -->
 <tablebase offset="0xaa44">
    <prune-enable color="black" type="concede"/>
 
@@ -16,7 +19,5 @@
 <!--black win if they get second queen:  -->
    <prune color="black" move="P=?" type="concede"/>
 
-   <generation-controls>
-      <output filename="ivan1.htb"/>
-   </generation-controls>
+   <output filename="ivan1.htb"/>
 </tablebase>
