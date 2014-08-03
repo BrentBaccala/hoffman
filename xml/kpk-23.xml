@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- basic test of a 'normal' futurebase -->
+
+<tablebase>
+   <dtm/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="pawn" location="a2 a3 b2 b3 c2 c3 d2 d3 e2 e3 f2 f3 g2 g3 h2 h3"/>
+   <futurebase filename="kk.htb"/>
+   <futurebase filename="kpk-4+.htb"/>
+   <output filename ="kpk-23.htb"/>
+</tablebase>

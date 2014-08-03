@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+
+<tablebase>
+   <dtm/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="pawn" location="a4 a5 a6 a7 b4 b5 b6 b7 c4 c5 c6 c7 d4 d5 d6 d7 e4 e5 e6 e7 f4 f5 f6 f7 g4 g5 g6 g7 h4 h5 h6 h7"/>
+   <futurebase filename="kk.htb"/>
+   <futurebase filename="kqk.htb"/>
+   <futurebase filename="krk.htb"/>
+   <futurebase filename="kbk.htb"/>
+   <futurebase filename="knk.htb"/>
+   <output filename ="kpk-4+.htb"/>
+</tablebase>
