@@ -577,6 +577,7 @@ typedef struct tablebase {
     int extra_piece;
     int missing_pawn;
     int missing_non_pawn;
+    int promotion;
 
     /* For each square on the board and piece in the futurebase, record the first piece in the
      * corresponding local semilegal group.
@@ -5363,7 +5364,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.809 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.810 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5560,6 +5561,7 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
     int future_piece;
     int local_piece_vector = 0;
     int future_piece_vector = 0;
+    int promotion;
 
     futurebase->extra_piece = -1;
     futurebase->missing_pawn = -1;
@@ -5628,6 +5630,19 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 		}
 	    }
 	}
+    }
+
+    if (futurebase->extra_piece != -1) {
+
+	for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
+	    if (futurebase->piece_type[futurebase->extra_piece] == promoted_pieces[promotion]) break;
+	}
+
+	if (promotion == promotion_possibilities) {
+	    throw "Couldn't find futurebase's extra piece in promoted_pieces list";
+	}
+
+	futurebase->promotion = promotion;
     }
 }
 
@@ -9578,180 +9593,134 @@ std::atomic<index_t> next_future_index;
  * Futurebase semilegal groups don't matter, only the local semilegal group matters.
  */
 
-void propagate_moves_from_promotion_futurebase(void)
+void propagate_moves_from_promotion_futurebase(index_t future_index, int reflection)
 {
-    index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
     local_position_t normalized_position;
     int conversion_result;
     int true_pawn;
-    int reflection;
-    int promotion;
 
-    /* Shouldn't really need this silly blunder check, but it's outside the loop and has been here a long time. */
-
-    if ((current_tb->piece_type[futurebase->missing_pawn] != PAWN)
-	|| (futurebase->piece_type[futurebase->extra_piece] == PAWN)
-	|| (!futurebase->invert_colors
-	    && (current_tb->piece_color[futurebase->missing_pawn] != futurebase->piece_color[futurebase->extra_piece]))
-	|| (futurebase->invert_colors
-	    && (current_tb->piece_color[futurebase->missing_pawn] == futurebase->piece_color[futurebase->extra_piece]))) {
-	fatal("Conversion error during promotion back-prop\n");
-	return;
-    }
-
-    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-	if (futurebase->piece_type[futurebase->extra_piece] == promoted_pieces[promotion]) break;
-    }
-    if (promotion == promotion_possibilities) {
-	fatal("Couldn't find futurebase's extra piece in promoted_pieces list\n");
-	return;
-    }
-
-    /* XXX We could limit the range of future_index here to only those positions where the promoted
-     * piece appears on the back rank, but watch out for reflection.
+    /* Take the position from the futurebase and translate it into a local position for the current
+     * tablebase.  If the futurebase index was illegal, the function will return -1.  Otherwise,
+     * there should be one piece missing from the local position (the pawn that promoted) and one
+     * piece extra (what it promoted into).  There can be no pieces on restricted squares.
      */
 
-    while (1) {
+    if (! index_to_local_position(futurebase, future_index, reflections[reflection],
+				  &foreign_position)) return;
 
-	future_index = (next_future_index ++);
+    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
+								     current_tb, &position,
+								     futurebase->invert_colors);
 
-	if (future_index > futurebase->max_index) break;
+    if (conversion_result != -1) {
 
-	print_progress_dot(futurebase, future_index);
+	int extra_piece = (conversion_result >> 16) & 0xff;
+	int restricted_piece = (conversion_result >> 8) & 0xff;
+	int pawn = conversion_result & 0xff;                      /* missing_piece1 */
+	int missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	/* It's tempting to break out the loop here if the position isn't a win, but we want to
-	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
-	 * is to run this loop even for draws.
+	if ((extra_piece == NONE) || (pawn == NONE)
+	    || (missing_piece2 != NONE) || (restricted_piece != NONE)) return;
+
+	/* Since the last move had to have been a promotion move, there is absolutely no way we
+	 * could have en passant capturable pawns in the futurebase position.
 	 */
 
-	for (reflection = 0; reflection < max_reflection; reflection ++) {
+	if (position.en_passant_square != ILLEGAL_POSITION) return;
 
-	    /* Take the position from the futurebase and translate it into a local position for the
-	     * current tablebase.  If the futurebase index was illegal, the function will return -1.
-	     * Otherwise, there should be one piece missing from the local position (the pawn that
-	     * promoted) and one piece extra (what it promoted into).  There can be no pieces on
-	     * restricted squares.
+	/* Whatever color the promoted piece is, after the promotion it must be the other side to
+	 * move.
+	 */
+
+	if (position.side_to_move == promotion_color) return;
+
+	/* We're going to back step a half move now */
+
+	flip_side_to_move_local(&position);
+
+	/* We need an extra loop in here to handle futurebases with multiple identical pieces.
+	 * Let's say we're back propagating from a Q+Q endgame into a Q+P endgame.  If we've got a
+	 * futurebase position with both queens on the back rank, then we have to consider the
+	 * possibility that the pawn could promote into either of them.
+	 */
+
+	int promotion_sq = foreign_position.piece_position[extra_piece];
+
+	if (futurebase->invert_colors)
+	    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
+
+	int local_piece = futurebase->matching_local_semilegal_group[extra_piece][promotion_sq];
+
+	while (true) {
+
+	    /* The extra piece has to be on the back rank.
+	     *
+	     * I used to (pre 1.547) 'break' here if it wasn't, figuring that since identical pieces
+	     * are sorted into ascending square numbers, if we'd backed up to an extra piece that
+	     * wasn't on the back rank, then there couldn't be any more identical pieces on the back
+	     * rank.
+	     *
+	     * But Laurent Bartholdi exposed that as a bug.  If black is promoting, then we start
+	     * with the piece with the highest square number - that isn't on the back rank - and
+	     * have to back up to find one that is.
+	     *
+	     * We could invert the whole piece processing order to make the original optimization
+	     * work, but then when you consider what can happen if there are movement restrictions
+	     * in the futurebase, maybe the pieces aren't even going to show up in the right order.
+	     * Better to ditch that whole idea, I think.
 	     */
 
-	    if (! index_to_local_position(futurebase, future_index, reflections[reflection],
-					  &foreign_position)) continue;
+	    if ((promotion_sq >= first_back_rank_square) && (promotion_sq <= last_back_rank_square)) {
 
-	    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
-									     current_tb, &position,
-									     futurebase->invert_colors);
-
-	    if (conversion_result != -1) {
-
-		int extra_piece = (conversion_result >> 16) & 0xff;
-		int restricted_piece = (conversion_result >> 8) & 0xff;
-		int pawn = conversion_result & 0xff;                      /* missing_piece1 */
-		int missing_piece2 = (conversion_result >> 24) & 0xff;
-
-		if ((extra_piece == NONE) || (pawn == NONE)
-		    || (missing_piece2 != NONE) || (restricted_piece != NONE)) continue;
-
-		/* Since the last move had to have been a promotion move, there is absolutely no way
-		 * we could have en passant capturable pawns in the futurebase position.
+		/* There has to be an empty square right behind where the pawn came from, and it has
+		 * to be at least semilegal for the pawn.
 		 */
 
-		if (position.en_passant_square != ILLEGAL_POSITION) continue;
+		if (!(position.board_vector & BITVECTOR(promotion_sq - promotion_move))
+		    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
 
-		/* Whatever color the promoted piece is, after the promotion it must be the other
-		 * side to move.
-		 */
-
-		if (position.side_to_move == promotion_color) continue;
-
-		/* We're going to back step a half move now */
-
-		flip_side_to_move_local(&position);
-
-		/* We need an extra loop in here to handle futurebases with multiple identical pieces.
-		 * Let's say we're back propagating from a Q+Q endgame into a Q+P endgame.  If we've got
-		 * a futurebase position with both queens on the back rank, then we have to consider the
-		 * possibility that the pawn could promote into either of them.
-		 */
-
-		int promotion_sq = foreign_position.piece_position[extra_piece];
-
-		if (futurebase->invert_colors)
-		    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
-
-		int local_piece = futurebase->matching_local_semilegal_group[extra_piece][promotion_sq];
-
-		while (true) {
-
-		    /* The extra piece has to be on the back rank.
-		     *
-		     * I used to (pre 1.547) 'break' here if it wasn't, figuring that since
-		     * identical pieces are sorted into ascending square numbers, if we'd backed up
-		     * to an extra piece that wasn't on the back rank, then there couldn't be any
-		     * more identical pieces on the back rank.
-		     *
-		     * But Laurent Bartholdi exposed that as a bug.  If black is promoting, then we
-		     * start with the piece with the highest square number - that isn't on the back
-		     * rank - and have to back up to find one that is.
-		     *
-		     * We could invert the whole piece processing order to make the original
-		     * optimization work, but then when you consider what can happen if there are
-		     * movement restrictions in the futurebase, maybe the pieces aren't even going
-		     * to show up in the right order.  Better to ditch that whole idea, I think.
+		    /* Because the promoted piece was 'extra' it doesn't appear in the local
+		     * position, so we don't have to worry about taking it off the board.  Put the
+		     * missing pawn on the seventh (or second).
 		     */
 
-		    if ((promotion_sq >= first_back_rank_square) && (promotion_sq <= last_back_rank_square)) {
+		    position.piece_position[pawn] = promotion_sq - promotion_move;
 
-			/* There has to be an empty square right behind where the pawn came from, and it
-			 * has to be at least semilegal for the pawn.
-			 */
+		    /* Normalize the position, and back prop it. */
 
-			if (!(position.board_vector & BITVECTOR(promotion_sq - promotion_move))
-			    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
+		    normalized_position = position;
 
-			    /* Because the promoted piece was 'extra' it doesn't appear in the local
-			     * position, so we don't have to worry about taking it off the board.  Put
-			     * the missing pawn on the seventh (or second).
-			     */
+		    normalize_position(current_tb, &normalized_position);
 
-			    position.piece_position[pawn] = promotion_sq - promotion_move;
+		    true_pawn = normalized_position.permuted_piece[pawn];
 
-			    /* Normalize the position, and back prop it. */
-
-			    normalized_position = position;
-
-			    normalize_position(current_tb, &normalized_position);
-
-			    true_pawn = normalized_position.permuted_piece[pawn];
-
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotions[true_pawn][promotion],
-									  &normalized_position);
-			}
-
-		    }
-
-		    /* If the extra piece mapped into a non-empty semilegal group, then swap it with
-		     * the next piece in the group and try again.
-		     */
-
-		    if (local_piece == -1) break;
-
-		    int new_promotion_sq = position.piece_position[local_piece];
-
-		    position.piece_position[local_piece] = promotion_sq;
-		    promotion_sq = new_promotion_sq;
-
-		    local_piece = current_tb->next_piece_in_semilegal_group[local_piece];
+		    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
+								  promotions[true_pawn][futurebase->promotion],
+								  &normalized_position);
 		}
+
 	    }
+
+	    /* If the extra piece mapped into a non-empty semilegal group, then swap it with
+	     * the next piece in the group and try again.
+	     */
+
+	    if (local_piece == -1) return;
+
+	    int new_promotion_sq = position.piece_position[local_piece];
+
+	    position.piece_position[local_piece] = promotion_sq;
+	    promotion_sq = new_promotion_sq;
+
+	    local_piece = current_tb->next_piece_in_semilegal_group[local_piece];
 	}
     }
 }
 
-void propagate_moves_from_promotion_capture_futurebase(void)
+void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int reflection)
 {
-    index_t future_index;
     local_position_t foreign_position;
     local_position_t position;
     local_position_t normalized_position;
@@ -9759,205 +9728,162 @@ void propagate_moves_from_promotion_capture_futurebase(void)
     int pawn, extra_piece, restricted_piece, missing_piece2;
     int true_captured_piece;
     int true_pawn;
-    int reflection;
-    int promotion;
 
-    /* Shouldn't really need this silly blunder check, but it's outside the loop and has been here a long time. */
-
-    if ((current_tb->piece_type[futurebase->missing_pawn] != PAWN)
-	|| (futurebase->piece_type[futurebase->extra_piece] == PAWN)
-	|| (!futurebase->invert_colors
-	    && (current_tb->piece_color[futurebase->missing_pawn] != futurebase->piece_color[futurebase->extra_piece]))
-	|| (futurebase->invert_colors
-	    && (current_tb->piece_color[futurebase->missing_pawn] == futurebase->piece_color[futurebase->extra_piece]))) {
-	fatal("Conversion error during promotion capture back-prop\n");
-	return;
-    }
-
-    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-	if (futurebase->piece_type[futurebase->extra_piece] == promoted_pieces[promotion]) break;
-    }
-    if (promotion == promotion_possibilities) {
-	fatal("Couldn't find futurebase's extra piece in promoted_pieces list\n");
-	return;
-    }
-
-    /* XXX We could limit the range of future_index here to only those positions where the promoted
-     * piece appears on the back rank.
+    /* Take the position from the futurebase and translate it into a local position for the current
+     * tablebase.  If the futurebase index was illegal, the function will return -1.  Otherwise,
+     * there should be two pieces missing from the local position (the pawn that promoted and the
+     * piece it captured) and one piece extra (what it promoted into).  There can be no pieces on
+     * restricted squares.
      */
 
-    while (1) {
+    if (! index_to_local_position(futurebase, future_index, reflections[reflection],
+				  &foreign_position)) return;
 
-	future_index = (next_future_index ++);
+    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
+								     current_tb, &position,
+								     futurebase->invert_colors);
 
-	if (future_index > futurebase->max_index) break;
+    if (conversion_result != -1) {
 
-	print_progress_dot(futurebase, future_index);
+	extra_piece = (conversion_result >> 16) & 0xff;
+	restricted_piece = (conversion_result >> 8) & 0xff;
+	pawn = conversion_result & 0xff;                      /* missing_piece1 */
+	missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	/* It's tempting to break out the loop here if the position isn't a win, but we want to
-	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
-	 * is to run this loop even for draws.
+	if ((extra_piece == NONE) || (pawn == NONE)
+	    || (missing_piece2 == NONE) || (restricted_piece != NONE)) return;
+
+	/* Since the last move had to have been a promotion move, there is absolutely no way
+	 * we could have en passant capturable pawns in the futurebase position.
 	 */
 
-	for (reflection = 0; reflection < max_reflection; reflection ++) {
+	if (position.en_passant_square != ILLEGAL_POSITION) return;
 
-	    /* Take the position from the futurebase and translate it into a local position for the
-	     * current tablebase.  If the futurebase index was illegal, the function will return -1.
-	     * Otherwise, there should be two pieces missing from the local position (the pawn that
-	     * promoted and the piece it captured) and one piece extra (what it promoted into).
-	     * There can be no pieces on restricted squares.
+	/* Whatever color the promoted piece is, after the promotion it must be the other
+	 * side to move.
+	 */
+
+	if (position.side_to_move == promotion_color) return;
+
+	/* We're going to back step a half move now */
+
+	flip_side_to_move_local(&position);
+
+	/* We need an extra loop in here to handle futurebases with multiple identical pieces.
+	 * Let's say we're back propagating from a Q+Q endgame into a Q+P endgame.  If we've got a
+	 * futurebase position with both queens on the back rank, then we have to consider the
+	 * possibility that the pawn could promote into either of them.
+	 */
+
+	int promotion_sq = foreign_position.piece_position[extra_piece];
+
+	if (futurebase->invert_colors)
+	    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
+
+	int local_piece = futurebase->matching_local_semilegal_group[extra_piece][promotion_sq];
+
+	while (true) {
+
+	    /* The extra piece has to be on the back rank.
+	     *
+	     * I used to (pre 1.547) 'break' here if it wasn't, figuring that since identical pieces
+	     * are sorted into ascending square numbers, if we'd backed up to an extra piece that
+	     * wasn't on the back rank, then there couldn't be any more identical pieces on the back
+	     * rank.
+	     *
+	     * But Laurent Bartholdi exposed that as a bug.  If black is promoting, then we start
+	     * with the piece with the highest square number - that isn't on the back rank - and
+	     * have to back up to find one that is.
+	     *
+	     * We could invert the whole piece processing order to make the original optimization
+	     * work, but then when you consider what can happen if there are movement restrictions
+	     * in the futurebase, maybe the pieces aren't even going to show up in the right order.
+	     * Better to ditch that whole idea, I think.
 	     */
 
-	    if (! index_to_local_position(futurebase, future_index, reflections[reflection],
-					  &foreign_position)) continue;
+	    if ((promotion_sq >= first_back_rank_square) && (promotion_sq <= last_back_rank_square)) {
 
-	    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
-									     current_tb, &position,
-									     futurebase->invert_colors);
+		/* Put the piece that was captured onto the board on the promotion square. */
 
-	    if (conversion_result != -1) {
+		position.piece_position[missing_piece2] = promotion_sq;
 
-		extra_piece = (conversion_result >> 16) & 0xff;
-		restricted_piece = (conversion_result >> 8) & 0xff;
-		pawn = conversion_result & 0xff;                      /* missing_piece1 */
-		missing_piece2 = (conversion_result >> 24) & 0xff;
-
-		if ((extra_piece == NONE) || (pawn == NONE)
-		    || (missing_piece2 == NONE) || (restricted_piece != NONE)) continue;
-
-		/* Since the last move had to have been a promotion move, there is absolutely no way
-		 * we could have en passant capturable pawns in the futurebase position.
+		/* Consider first a capture to the left (white's left).  There has to be an empty
+		 * square where the pawn came from, and it has to be at least semilegal.
 		 */
 
-		if (position.en_passant_square != ILLEGAL_POSITION) continue;
+		if ((COL(promotion_sq) != 0)
+		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
+		    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
 
-		/* Whatever color the promoted piece is, after the promotion it must be the other
-		 * side to move.
-		 */
-
-		if (position.side_to_move == promotion_color) continue;
-
-		/* We're going to back step a half move now */
-
-		flip_side_to_move_local(&position);
-
-		/* We need an extra loop in here to handle futurebases with multiple identical
-		 * pieces.  Let's say we're back propagating from a Q+Q endgame into a Q+P endgame.
-		 * If we've got a futurebase position with both queens on the back rank, then we
-		 * have to consider the possibility that the pawn could promote into either of them.
-		 */
-
-		int promotion_sq = foreign_position.piece_position[extra_piece];
-
-		if (futurebase->invert_colors)
-		    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
-
-		int local_piece = futurebase->matching_local_semilegal_group[extra_piece][promotion_sq];
-
-		while (true) {
-
-		    /* The extra piece has to be on the back rank.
-		     *
-		     * I used to (pre 1.547) 'break' here if it wasn't, figuring that since
-		     * identical pieces are sorted into ascending square numbers, if we'd backed up
-		     * to an extra piece that wasn't on the back rank, then there couldn't be any
-		     * more identical pieces on the back rank.
-		     *
-		     * But Laurent Bartholdi exposed that as a bug.  If black is promoting, then we
-		     * start with the piece with the highest square number - that isn't on the back
-		     * rank - and have to back up to find one that is.
-		     *
-		     * We could invert the whole piece processing order to make the original
-		     * optimization work, but then when you consider what can happen if there are
-		     * movement restrictions in the futurebase, maybe the pieces aren't even going
-		     * to show up in the right order.  Better to ditch that whole idea, I think.
+		    /* Because the promoted piece was 'extra' it doesn't appear in the local
+		     * position, so we don't have to worry about taking it off the board.  Put the
+		     * missing pawn on the seventh (or second).
 		     */
 
-		    if ((promotion_sq >= first_back_rank_square) && (promotion_sq <= last_back_rank_square)) {
+		    position.piece_position[pawn] = promotion_sq - promotion_move - 1;
 
-			/* Put the piece that was captured onto the board on the promotion square. */
+		    /* Back propagate the resulting position */
 
-			position.piece_position[missing_piece2] = promotion_sq;
+		    normalized_position = position;
 
-			/* Consider first a capture to the left (white's left).  There has to be an
-			 * empty square where the pawn came from, and it has to be at least semilegal.
-			 */
+		    normalize_position(current_tb, &normalized_position);
 
-			if ((COL(promotion_sq) != 0)
-			    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
-			    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
+		    true_captured_piece = normalized_position.permuted_piece[missing_piece2];
+		    true_pawn = normalized_position.permuted_piece[pawn];
 
-			    /* Because the promoted piece was 'extra' it doesn't appear in the local
-			     * position, so we don't have to worry about taking it off the board.  Put
-			     * the missing pawn on the seventh (or second).
-			     */
-
-			    position.piece_position[pawn] = promotion_sq - promotion_move - 1;
-
-			    /* Back propagate the resulting position */
-
-			    normalized_position = position;
-
-			    normalize_position(current_tb, &normalized_position);
-
-			    true_captured_piece = normalized_position.permuted_piece[missing_piece2];
-			    true_pawn = normalized_position.permuted_piece[pawn];
-
-			    /* This function also back props any similar positions with one of the pawns
-			     * from the side that didn't promote in an en passant state.
-			     */
-
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece][promotion],
-									  &normalized_position);
-
-			}
-
-			/* Now consider a capture to the right (white's right).  Again, there has to be
-			 * an empty square where the pawn came from, and it has to be semilegal.
-			 */
-
-			if ((COL(promotion_sq) != 7)
-			    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
-			    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
-
-			    /* Because the promoted piece was 'extra' it doesn't appear in the local
-			     * position, so we don't have to worry about taking it off the board.  Put
-			     * the missing pawn on the seventh (or second).
-			     */
-
-			    position.piece_position[pawn] = promotion_sq - promotion_move + 1;
-
-			    normalized_position = position;
-
-			    normalize_position(current_tb, &normalized_position);
-
-			    true_captured_piece = normalized_position.permuted_piece[missing_piece2];
-			    true_pawn = normalized_position.permuted_piece[pawn];
-
-			    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
-									  promotion_captures[true_pawn][true_captured_piece][promotion],
-									  &normalized_position);
-
-			}
-
-		    }
-
-		    /* If the extra piece mapped into a non-empty semilegal group, then swap it with
-		     * the next piece in the group and try again.
+		    /* This function also back props any similar positions with one of the pawns
+		     * from the side that didn't promote in an en passant state.
 		     */
 
-		    if (local_piece == -1) break;
-
-		    int new_promotion_sq = position.piece_position[local_piece];
-
-		    position.piece_position[local_piece] = promotion_sq;
-		    promotion_sq = new_promotion_sq;
-
-		    local_piece = current_tb->next_piece_in_semilegal_group[local_piece];
+		    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
+								  promotion_captures[true_pawn][true_captured_piece][futurebase->promotion],
+								  &normalized_position);
 
 		}
+
+		/* Now consider a capture to the right (white's right).  Again, there has to be an
+		 * empty square where the pawn came from, and it has to be semilegal.
+		 */
+
+		if ((COL(promotion_sq) != 7)
+		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
+		    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
+
+		    /* Because the promoted piece was 'extra' it doesn't appear in the local
+		     * position, so we don't have to worry about taking it off the board.  Put
+		     * the missing pawn on the seventh (or second).
+		     */
+
+		    position.piece_position[pawn] = promotion_sq - promotion_move + 1;
+
+		    normalized_position = position;
+
+		    normalize_position(current_tb, &normalized_position);
+
+		    true_captured_piece = normalized_position.permuted_piece[missing_piece2];
+		    true_pawn = normalized_position.permuted_piece[pawn];
+
+		    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
+								  promotion_captures[true_pawn][true_captured_piece][futurebase->promotion],
+								  &normalized_position);
+
+		}
+
 	    }
+
+	    /* If the extra piece mapped into a non-empty semilegal group, then swap it with the
+	     * next piece in the group and try again.
+	     */
+
+	    if (local_piece == -1) return;
+
+	    int new_promotion_sq = position.piece_position[local_piece];
+
+	    position.piece_position[local_piece] = promotion_sq;
+	    promotion_sq = new_promotion_sq;
+
+	    local_piece = current_tb->next_piece_in_semilegal_group[local_piece];
+
 	}
     }
 }
@@ -10161,120 +10087,99 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 }
 
-void propagate_moves_from_capture_futurebase(void)
+void propagate_moves_from_capture_futurebase(index_t future_index, int reflection)
 {
-    index_t future_index;
     local_position_t position;
     int piece;
     int conversion_result;
     int extra_piece, restricted_piece, captured_piece, missing_piece2;
-    int reflection;
 
-    while (1) {
+    /* Take the position from the futurebase and translate it into a local position for the current
+     * tablebase.  If the futurebase index was illegal, the function will return -1.  Otherwise,
+     * there should be one piece missing from the local position: the piece that was captured.
+     * There could possibly be one piece on a restricted square, as well.  If so, then it must be
+     * the piece that moved in order to capture.
+     */
 
-	future_index = (next_future_index ++);
+    /* XXX If the futurebase is more liberal than the tablebase, then there will be
+     * positions with multiple restricted pieces that should be quietly ignored.
+     */
 
-	if (future_index > futurebase->max_index) break;
-
-	print_progress_dot(futurebase, future_index);
-
-	/* It's tempting to break out the loop here if the position isn't a win, but if we want to
-	 * track futuremoves in order to make sure we don't miss one (probably a good idea), then
-	 * the simplest way to do that is to run this loop even for draws.
-	 */
-
-	for (reflection = 0; reflection < max_reflection; reflection ++) {
-
-	    /* Take the position from the futurebase and translate it into a local position for the
-	     * current tablebase.  If the futurebase index was illegal, the function will return -1.
-	     * Otherwise, there should be one piece missing from the local position: the piece that
-	     * was captured.  There could possibly be one piece on a restricted square, as well.  If
-	     * so, then it must be the piece that moved in order to capture.
-	     */
-
-	    /* XXX If the futurebase is more liberal than the tablebase, then there will be
-	     * positions with multiple restricted pieces that should be quietly ignored.
-	     */
-
-	    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
-									  reflections[reflection],
-									  current_tb, &position,
-									  futurebase->invert_colors);
+    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
+								  reflections[reflection],
+								  current_tb, &position,
+								  futurebase->invert_colors);
 
 #ifdef DEBUG_FUTUREMOVE
-	    if (future_index == DEBUG_FUTUREMOVE) {
-		info("capture backprop; reflection=%d; conversion_result=%x\n",
-		     reflections[reflection], conversion_result);
-	    }
+    if (future_index == DEBUG_FUTUREMOVE) {
+	info("capture backprop; reflection=%d; conversion_result=%x\n",
+	     reflections[reflection], conversion_result);
+    }
 #endif
 
-	    if (conversion_result != -1) {
+    if (conversion_result != -1) {
 
-		extra_piece = (conversion_result >> 16) & 0xff;
-		restricted_piece = (conversion_result >> 8) & 0xff;
-		captured_piece = conversion_result & 0xff;           /* missing_piece1 */
-		missing_piece2 = (conversion_result >> 24) & 0xff;
+	extra_piece = (conversion_result >> 16) & 0xff;
+	restricted_piece = (conversion_result >> 8) & 0xff;
+	captured_piece = conversion_result & 0xff;           /* missing_piece1 */
+	missing_piece2 = (conversion_result >> 24) & 0xff;
 
-		if ((extra_piece != NONE) || (captured_piece == NONE) || (missing_piece2 != NONE)) {
-		    continue;
-		}
+	if ((extra_piece != NONE) || (captured_piece == NONE) || (missing_piece2 != NONE)) {
+	    return;
+	}
 
-		/* Since the last move had to have been a capture move, there is absolutely no way
-		 * we could have en passant capturable pawns in the futurebase position.
-		 */
+	/* Since the last move had to have been a capture move, there is absolutely no way
+	 * we could have en passant capturable pawns in the futurebase position.
+	 */
 
-		if (position.en_passant_square != ILLEGAL_POSITION) continue;
+	if (position.en_passant_square != ILLEGAL_POSITION) return;
 
-		/* Since the position resulted from a capture, we only want to consider future
-		 * positions where the side to move is not the side that captured.
-		 */
+	/* Since the position resulted from a capture, we only want to consider future
+	 * positions where the side to move is not the side that captured.
+	 */
 
-		if (position.side_to_move != current_tb->piece_color[captured_piece])
-		    continue;
+	if (position.side_to_move != current_tb->piece_color[captured_piece]) return;
 
-		/* We're going to back step a half move now */
+	/* We're going to back step a half move now */
 
-		flip_side_to_move_local(&position);
+	flip_side_to_move_local(&position);
 
-		if (restricted_piece == NONE) {
+	if (restricted_piece == NONE) {
 
-		    /* No pieces were on restricted squares.  Consider them all as the possible
-		     * capturing piece.
-		     */
+	    /* No pieces were on restricted squares.  Consider them all as the possible
+	     * capturing piece.
+	     */
 
-		    for (piece = 0; piece < current_tb->num_pieces; piece++) {
+	    for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
-			consider_possible_captures(future_index, &position, piece, captured_piece);
-		    }
+		consider_possible_captures(future_index, &position, piece, captured_piece);
+	    }
 
-		} else {
+	} else {
 
-		    /* One piece was on a restricted square.  It's the obvious capturing piece, but
-		     * it's not the only possible one.  A restricted piece is on a square whose
-		     * semilegal group is either empty or already full.  If the square's semilegal
-		     * group is in fact empty, then there's only one restricted piece we need to
-		     * consider.  Otherwise, we need to consider each piece in the semilegal group
-		     * as the possible restricted piece.
-		     */
+	    /* One piece was on a restricted square.  It's the obvious capturing piece, but it's not
+	     * the only possible one.  A restricted piece is on a square whose semilegal group is
+	     * either empty or already full.  If the square's semilegal group is in fact empty, then
+	     * there's only one restricted piece we need to consider.  Otherwise, we need to
+	     * consider each piece in the semilegal group as the possible restricted piece.
+	     */
 
-		    int restricted_square = position.piece_position[restricted_piece];
+	    int restricted_square = position.piece_position[restricted_piece];
+
+	    consider_possible_captures(future_index, &position, restricted_piece, captured_piece);
+
+	    for (piece = 0; piece < current_tb->num_pieces; piece++) {
+
+		if ((current_tb->piece_color[piece] == current_tb->piece_color[restricted_piece])
+		    && (current_tb->piece_type[piece] == current_tb->piece_type[restricted_piece])
+		    && (current_tb->semilegal_squares[piece] & BITVECTOR(restricted_square))) {
+
+		    position.piece_position[restricted_piece] = position.piece_position[piece];
+		    position.piece_position[piece] = restricted_square;
 
 		    consider_possible_captures(future_index, &position, restricted_piece, captured_piece);
 
-		    for (piece = 0; piece < current_tb->num_pieces; piece++) {
-
-			if ((current_tb->piece_color[piece] == current_tb->piece_color[restricted_piece])
-			    && (current_tb->piece_type[piece] == current_tb->piece_type[restricted_piece])
-			    && (current_tb->semilegal_squares[piece] & BITVECTOR(restricted_square))) {
-
-			    position.piece_position[restricted_piece] = position.piece_position[piece];
-			    position.piece_position[piece] = restricted_square;
-
-			    consider_possible_captures(future_index, &position, restricted_piece, captured_piece);
-
-			    position.piece_position[piece] = position.piece_position[restricted_piece];
-			}
-		    }
+		    position.piece_position[piece] = position.piece_position[restricted_piece];
 		}
 	    }
 	}
@@ -10288,9 +10193,8 @@ void propagate_moves_from_capture_futurebase(void)
  * don't allow frozen pieces in symmetric tablebases.
  */
 
-void propagate_moves_from_normal_futurebase(void)
+void propagate_moves_from_normal_futurebase(index_t future_index, int reflection)
 {
-    index_t future_index;
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
     int conversion_result;
@@ -10300,168 +10204,113 @@ void propagate_moves_from_normal_futurebase(void)
     struct movement *movementptr;
     int origin_square;
 
-    while (1) {
+    /* Translate the futurebase index into a local position.  We have exactly the same number and
+     * type of pieces here, but exactly one of them is on a restricted square (according to the
+     * current tablebase).  If more than one of them was on a restricted square, then there'd be no
+     * way we could get to this futurebase with a single move.  On the other hand, if none of them
+     * were on restricted squares, then this would be a position in the current tablebase.
+     */
 
-	future_index = (next_future_index ++);
+    /* XXX we need to permute the restricted piece around in its semilegal set */
 
-	if (future_index > futurebase->max_index) break;
+    /* XXX If the futurebase is more liberal than the tablebase, then there will be positions with
+     * multiple restricted pieces that should be quietly ignored.
+     */
 
-	print_progress_dot(futurebase, future_index);
+    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index, reflection,
+								  current_tb, &current_position,
+								  futurebase->invert_colors);
 
-	/* Translate the futurebase index into a local position.  We have exactly the same number
-	 * and type of pieces here, but exactly one of them is on a restricted square (according to
-	 * the current tablebase).  If more than one of them was on a restricted square, then
-	 * there'd be no way we could get to this futurebase with a single move.  On the other hand,
-	 * if none of them were on restricted squares, then this would be a position in the current
-	 * tablebase.
+    if (conversion_result != -1) {
+
+	extra_piece = (conversion_result >> 16) & 0xff;
+	restricted_piece = (conversion_result >> 8) & 0xff;
+	missing_piece1 = conversion_result & 0xff;
+	missing_piece2 = (conversion_result >> 24) & 0xff;
+
+	if ((missing_piece1 != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
+	    return;
+	}
+
+	piece = restricted_piece;
+
+	origin_square = current_position.piece_position[piece];
+
+	/* We've moving BACKWARDS in the game, so this has to be a piece of the player who is NOT TO
+	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	/* XXX we need to permute the restricted piece around in its semilegal set */
+	if (current_tb->piece_color[piece] == current_position.side_to_move) return;
 
-	/* XXX If the futurebase is more liberal than the tablebase, then there will be positions
-	 * with multiple restricted pieces that should be quietly ignored.
+	/* If there are any en passant capturable pawns in the position, then the last move had to
+	 * have been a pawn move.  In fact, in this case, we already know exactly what the last move
+	 * had to have been.
 	 */
 
-	conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
-								      REFLECTION_NONE,
-								      current_tb, &current_position,
-								      futurebase->invert_colors);
+	if (current_position.en_passant_square != ILLEGAL_POSITION) {
 
-	if (conversion_result != -1) {
+	    if (current_tb->piece_type[piece] != PAWN) return;
 
-	    extra_piece = (conversion_result >> 16) & 0xff;
-	    restricted_piece = (conversion_result >> 8) & 0xff;
-	    missing_piece1 = conversion_result & 0xff;
-	    missing_piece2 = (conversion_result >> 24) & 0xff;
+	    if (((current_tb->piece_color[piece] == WHITE)
+		 && (current_position.piece_position[piece] != current_position.en_passant_square + 8))
+		|| ((current_tb->piece_color[piece] == BLACK)
+		    && (current_position.piece_position[piece] != current_position.en_passant_square - 8))) {
 
-	    if ((missing_piece1 != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
-		continue;
+		/* No reason to complain here.  Maybe some other pawn was the en passant pawn. */
+		return;
 	    }
 
-	    piece = restricted_piece;
+	    flip_side_to_move_local(&current_position);
+	    current_position.en_passant_square = ILLEGAL_POSITION;
 
-	    origin_square = current_position.piece_position[piece];
-
-	    /* We've moving BACKWARDS in the game, so this has to be a piece of the player who is
-	     * NOT TO PLAY here - this is the LAST move we're considering, not the next move.
+	    /* I go to the trouble to update board_vector here so we can check en passant
+	     * legality in propagate_one_move_within_table().
 	     */
 
-	    if (current_tb->piece_color[piece] == current_position.side_to_move)
-		continue;
+	    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
+	    if (current_tb->piece_color[piece] == WHITE)
+		current_position.piece_position[piece] -= 16;
+	    else
+		current_position.piece_position[piece] += 16;
 
+	    current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
 
-	    /* If there are any en passant capturable pawns in the position, then the last move had
-	     * to have been a pawn move.  In fact, in this case, we already know exactly what the
-	     * last move had to have been.
+	    /* We never back out into a restricted position.  Since we've already decided that this
+	     * is the only possible back-move from this point, well...
 	     */
 
-	    if (current_position.en_passant_square != ILLEGAL_POSITION) {
-
-		if (current_tb->piece_type[piece] != PAWN) continue;
-
-		if (((current_tb->piece_color[piece] == WHITE)
-		     && (current_position.piece_position[piece] != current_position.en_passant_square + 8))
-		    || ((current_tb->piece_color[piece] == BLACK)
-			&& (current_position.piece_position[piece] != current_position.en_passant_square - 8))) {
-
-		    /* No reason to complain here.  Maybe some other pawn was the en passant pawn. */
-		    continue;
-		}
-
-		flip_side_to_move_local(&current_position);
-		current_position.en_passant_square = ILLEGAL_POSITION;
-
-		/* I go to the trouble to update board_vector here so we can check en passant
-		 * legality in propagate_one_move_within_table().
-		 */
-
-		current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
-		if (current_tb->piece_color[piece] == WHITE)
-		    current_position.piece_position[piece] -= 16;
-		else
-		    current_position.piece_position[piece] += 16;
-
-		current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
-
-		/* We never back out into a restricted position.  Since we've already decided
-		 * that this is the only possible back-move from this point, well...
-		 */
-
-		if (! (current_tb->semilegal_squares[piece]
-		       & BITVECTOR(current_position.piece_position[piece]))) {
-		    continue;
-		}
-
-		propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
-							 futuremoves[piece][origin_square],
-							 &current_position);
-
-		continue;
-
+	    if (! (current_tb->semilegal_squares[piece]
+		   & BITVECTOR(current_position.piece_position[piece]))) {
+		return;
 	    }
 
-	    /* Abuse of notation here.  We just want to keep a copy of current_position because we
-	     * change it around a lot during the loops below.
-	     */
+	    propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
+						     futuremoves[piece][origin_square],
+						     &current_position);
 
-	    parent_position = current_position;
+	    return;
+	}
 
-	    if (current_tb->piece_type[piece] != PAWN) {
+	/* Abuse of notation here.  We just want to keep a copy of current_position because we
+	 * change it around a lot during the loops below.
+	 */
 
-		for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[piece]]; dir++) {
+	parent_position = current_position;
 
-		    /* What about captures?  Well, first of all, there are no captures here!  We're
-		     * moving BACKWARDS in the game... and pieces don't appear out of thin air.
-		     * Captures are handled by back-propagation from futurebases, not here in the
-		     * movement code.  The piece moving had to come from somewhere, and that
-		     * somewhere will now be an empty square, so once we've hit another piece along
-		     * a movement vector, there's absolutely no need to consider anything further.
-		     */
+	if (current_tb->piece_type[piece] != PAWN) {
 
-		    for (movementptr
-			     = movements[current_tb->piece_type[piece]][parent_position.piece_position[piece]][dir];
-			 (movementptr->vector & parent_position.board_vector) == 0;
-			 movementptr++) {
+	    for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[piece]]; dir++) {
 
-			/* We never back out into a restricted position (obviously) */
+		/* What about captures?  Well, first of all, there are no captures here!  We're
+		 * moving BACKWARDS in the game... and pieces don't appear out of thin air.
+		 * Captures are handled by back-propagation from futurebases, not here in the
+		 * movement code.  The piece moving had to come from somewhere, and that somewhere
+		 * will now be an empty square, so once we've hit another piece along a movement
+		 * vector, there's absolutely no need to consider anything further.
+		 */
 
-			if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
-
-			/* Back stepping a half move here involves several things: flipping the
-			 * side-to-move flag, clearing any en passant pawns into regular pawns, moving
-			 * the piece (backwards), and considering a bunch of additional positions
-			 * identical to the base position except that a single one of the pawns on the
-			 * fourth or fifth ranks was capturable en passant.
-			 *
-			 * Of course, the only way we could have gotten an en passant pawn is if THIS
-			 * MOVE created it.  Since this isn't a pawn move, that can't happen.  Checking
-			 * additional en passant positions is taken care of in
-			 * propagate_one_move_within_table()
-			 */
-
-			flip_side_to_move_local(&current_position);
-
-			/* I go to the trouble to update board_vector here so we can check en passant
-			 * legality in propagate_one_move_within_table().
-			 */
-
-			current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
-
-			current_position.piece_position[piece] = movementptr->square;
-
-			current_position.board_vector |= BITVECTOR(movementptr->square);
-
-			propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
-								 futuremoves[piece][origin_square],
-								 &current_position);
-		    }
-		}
-
-	    } else {
-
-		/* Usual special case for pawns */
-
-		for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][current_tb->piece_color[piece]];
+		for (movementptr
+			 = movements[current_tb->piece_type[piece]][parent_position.piece_position[piece]][dir];
 		     (movementptr->vector & parent_position.board_vector) == 0;
 		     movementptr++) {
 
@@ -10469,31 +10318,17 @@ void propagate_moves_from_normal_futurebase(void)
 
 		    if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
 
-		    /* Do we have a backwards pawn move here?
-		     *
-		     * Back stepping a half move here involves several things: flipping the
+		    /* Back stepping a half move here involves several things: flipping the
 		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
 		     * the piece (backwards), and considering a bunch of additional positions
 		     * identical to the base position except that a single one of the pawns on the
 		     * fourth or fifth ranks was capturable en passant.
 		     *
-		     * Of course, the only way we could have gotten an en passant pawn is if THIS MOVE
-		     * created it.  We handle that as a special case above, so we shouldn't have to
-		     * worry about clearing en passant pawns here - there should be none.  Checking
+		     * Of course, the only way we could have gotten an en passant pawn is if THIS
+		     * MOVE created it.  Since this isn't a pawn move, that can't happen.  Checking
 		     * additional en passant positions is taken care of in
 		     * propagate_one_move_within_table()
-		     *
-		     * But we start with an extra check to make sure this isn't a double pawn move, it
-		     * which case it would result in an en passant position, not the non-en passant
-		     * position we are in now (en passant got taken care of in the special case above).
 		     */
-
-		    if (((movementptr->square - parent_position.piece_position[piece]) == 16)
-			|| ((movementptr->square - parent_position.piece_position[piece]) == -16)) {
-			continue;
-		    }
-
-		    current_position = parent_position;
 
 		    flip_side_to_move_local(&current_position);
 
@@ -10505,13 +10340,67 @@ void propagate_moves_from_normal_futurebase(void)
 
 		    current_position.piece_position[piece] = movementptr->square;
 
-		    current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
+		    current_position.board_vector |= BITVECTOR(movementptr->square);
 
 		    propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
 							     futuremoves[piece][origin_square],
 							     &current_position);
-
 		}
+	    }
+
+	} else {
+
+	    /* Usual special case for pawns */
+
+	    for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][current_tb->piece_color[piece]];
+		 (movementptr->vector & parent_position.board_vector) == 0;
+		 movementptr++) {
+
+		/* We never back out into a restricted position (obviously) */
+
+		if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
+
+		/* Do we have a backwards pawn move here?
+		 *
+		 * Back stepping a half move here involves several things: flipping the side-to-move
+		 * flag, clearing any en passant pawns into regular pawns, moving the piece
+		 * (backwards), and considering a bunch of additional positions identical to the
+		 * base position except that a single one of the pawns on the fourth or fifth ranks
+		 * was capturable en passant.
+		 *
+		 * Of course, the only way we could have gotten an en passant pawn is if THIS MOVE
+		 * created it.  We handle that as a special case above, so we shouldn't have to
+		 * worry about clearing en passant pawns here - there should be none.  Checking
+		 * additional en passant positions is taken care of in
+		 * propagate_one_move_within_table()
+		 *
+		 * But we start with an extra check to make sure this isn't a double pawn move, it
+		 * which case it would result in an en passant position, not the non-en passant
+		 * position we are in now (en passant got taken care of in the special case above).
+		 */
+
+		if (((movementptr->square - parent_position.piece_position[piece]) == 16)
+		    || ((movementptr->square - parent_position.piece_position[piece]) == -16)) {
+		    continue;
+		}
+
+		current_position = parent_position;
+
+		flip_side_to_move_local(&current_position);
+
+		/* I go to the trouble to update board_vector here so we can check en passant
+		 * legality in propagate_one_move_within_table().
+		 */
+
+		current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
+
+		current_position.piece_position[piece] = movementptr->square;
+
+		current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
+
+		propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
+							 futuremoves[piece][origin_square],
+							 &current_position);
 	    }
 	}
     }
@@ -10527,10 +10416,35 @@ void propagate_moves_from_normal_futurebase(void)
  * Returns true, or false if something went wrong
  */
 
+void back_propagate_futurebase_thread(void (* backprop_function)(index_t, int))
+{
+    index_t future_index;
+    int reflection;
+
+    /* XXX We could limit the range of future_index here to only those positions where the promoted
+     * piece appears on the back rank, but watch out for reflection.
+     */
+
+    while ((future_index = (next_future_index ++)) <= futurebase->max_index) {
+
+	/* It's tempting to break out the loop here if the position isn't a win, but we want to
+	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
+	 * is to run this loop even for draws.
+	 */
+
+	print_progress_dot(futurebase, future_index);
+
+	for (reflection = 0; reflection < max_reflection; reflection ++) {
+	    (*backprop_function)(future_index, reflection);
+	}
+
+    }
+}
+
 bool back_propagate_all_futurebases(tablebase_t *tb) {
 
     int fbnum;
-    void (* backprop_function)(void);
+    void (* backprop_function)(index_t, int);
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 
@@ -10606,7 +10520,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    unsigned int thread;
 
 	    for (thread = 0; thread < num_threads; thread ++) {
-		t[thread] = std::thread(backprop_function);
+		t[thread] = std::thread(back_propagate_futurebase_thread, backprop_function);
 	    }
 
 	    for (thread = 0; thread < num_threads; thread ++) {
@@ -14321,7 +14235,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.809 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.810 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
