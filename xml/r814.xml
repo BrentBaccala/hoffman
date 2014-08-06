@@ -1,6 +1,8 @@
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
-<!-- Created by genctlfile.pl -->
+<!-- Try to generate a tablebase with a DTM field too small -->
+<!-- Should fail with a fatal error -->
+<!-- Prior to 1.814, would write a corrupt tablebase with apparent success -->
 
 <tablebase>
    <dtm bits="4"/>
