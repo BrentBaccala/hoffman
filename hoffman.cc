@@ -5364,7 +5364,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.813 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.814 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7097,14 +7097,6 @@ class EntriesTable {
 	    fatal("DTM entry field size exceeded\n");
 	    terminate();
 	}
-    }
-
-    /* We only retreive the DTM field size at the very end, so we know how many bits we need to
-     * write out to disk in the final result.
-     */
-
-    uint8_t get_DTM_field_size(void) {
-	return dtm_bits;
     }
 
     /* If we do need to lock, I use spinlocks.  They're a bit dangerous because a bug can cause them
@@ -12805,6 +12797,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     xmlDocPtr doc;
     index_t index;
     void *file = nullptr;
+    int dtm_bits;
     xmlNodePtr tablebase;
     xmlChar *buf;
     int size;
@@ -12837,11 +12830,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
     info("Writing '%s'\n", filename);
 
+    for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) && (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
+
     if ((tb->format.dtm_offset != -1) && (tb->format.dtm_bits == 0)) {
-	tb->format.dtm_bits = entriesTable->get_DTM_field_size();
-	tb->format.bits += tb->format.dtm_bits;
+	tb->format.dtm_bits = dtm_bits;
+	tb->format.bits += dtm_bits;
     } else if (tb->format.dtm_bits > 0) {
-	if (tb->format.dtm_bits < entriesTable->get_DTM_field_size()) {
+	if (tb->format.dtm_bits < dtm_bits) {
 	    fatal("Requested DTM field size too small\n");
 	    terminate();
 	}
@@ -14243,7 +14238,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.813 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.814 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
