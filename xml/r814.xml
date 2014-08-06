@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Created by genctlfile.pl -->
+
+<tablebase>
+   <dtm bits="4"/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="pawn"/>
+   <futurebase filename="kk.htb"/>
+   <futurebase filename="kqk.htb"/>
+   <futurebase filename="krk.htb"/>
+   <futurebase filename="kbk.htb"/>
+   <futurebase filename="knk.htb"/>
+   <output filename ="r814.htb"/>
+</tablebase>
