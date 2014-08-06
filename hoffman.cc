@@ -5364,7 +5364,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.811 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.812 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7210,11 +7210,13 @@ class EntriesTable {
 	return (does_PTM_win(index) || does_PNTM_win(index)) ? get_raw_DTM(index) : 0;
     }
 
-    /* Five possible ways we can initialize a tablebase entry for a position:
+    /* Seven possible ways we can initialize a tablebase entry for a position:
      *  - it's illegal
      *  - PNTM's mated
      *  - PTM's mated
      *  - stalemate
+     *  - conceded as a win by a pruning statement
+     *  - resigned as a loss by a pruing statement
      *  - any other position, with 'movecnt' possible moves out the position
      */
 
@@ -7315,6 +7317,20 @@ class EntriesTable {
 	total_legal_positions ++;
     }
 
+    void initialize_entry_with_concede(index_t index) {
+
+	initialize_entry(index, MOVECNT_PTM_WINS_UNPROPED, 2);
+
+	total_legal_positions ++;
+    }
+
+    void initialize_entry_with_resign(index_t index) {
+
+	initialize_entry(index, MOVECNT_PNTM_WINS_UNPROPED, -2);
+
+	total_legal_positions ++;
+    }
+
     void initialize_entry_with_movecnt(index_t index, unsigned int movecnt) {
 
 	if (movecnt > MOVECNT_MAX) {
@@ -7322,23 +7338,6 @@ class EntriesTable {
 	}
 
 	initialize_entry(index, movecnt, 0);
-
-	total_legal_positions ++;
-    }
-
-    void initialize_entry_with_DTM(index_t index, int dtm) {
-
-#if 0
-	if (movecnt > MOVECNT_MAX) {
-	    fatal("Attempting to initialize position with a movecnt that won't fit in field!\n");
-	}
-#endif
-
-	if (dtm > 0) {
-	    initialize_entry(index, MOVECNT_PTM_WINS_UNPROPED, dtm);
-	} else {
-	    initialize_entry(index, MOVECNT_PNTM_WINS_UNPROPED, dtm);
-	}
 
 	total_legal_positions ++;
     }
@@ -12600,12 +12599,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	}
 
 	if (concede_prune) {
-	    entriesTable->initialize_entry_with_DTM(index, 2);
+	    entriesTable->initialize_entry_with_concede(index);
 	    return 0;
 	}
 
 	if (resign_prune) {
-	    entriesTable->initialize_entry_with_DTM(index, -2);
+	    entriesTable->initialize_entry_with_resign(index);
 	    return 0;
 	}
 
@@ -14239,7 +14238,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.811 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.812 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
