@@ -470,8 +470,6 @@ const char * format_flag_types[] = {"", "white-wins", "white-draws", nullptr};
 struct format one_byte_dtm_format = {8, 0,8, -1,FORMAT_FLAG_NONE, -1};
 struct format dtm_format = {0, 0,0, -1,FORMAT_FLAG_NONE, -1};
 
-typedef void entry_t;
-
 
 /* tablebase_t
  *
@@ -5364,7 +5362,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.814 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.815 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6792,7 +6790,7 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
     tb->next_read_index += 8;
 }
 
-inline entry_t * fetch_entry_pointer(tablebase_t *tb, index_t index)
+inline void * fetch_entry_pointer(tablebase_t *tb, index_t index)
 {
     static tablebase_t *cached_tb = nullptr;
     static void *cached_entries = nullptr;
@@ -6923,25 +6921,13 @@ unsigned int tablebase::get_basic(index_t index)
  *
  */
 
-class EntriesTable {
+/* The individual entries are formed from bit fields.  Here we specify their sizes and offsets. */
 
- protected:
-
-    /* Subclasses are responsible for returning pointers and bit offsets to individual indices */
-    virtual void * pointer(index_t index) = 0;
-    virtual bitoffset offset(index_t index) = 0;
-
-    uint8_t bits;				/* Bits (not bytes) per entry */
-    uint8_t threads;				/* number of threads accessing the table */
-
-    /* The individual entries are formed from bit fields.  Here we specify their sizes and offsets. */
-
-    int dtm_offset;
-    uint8_t dtm_bits;
-    int movecnt_offset;
-    uint8_t movecnt_bits;
-    int locking_bit_offset;
-    int capture_possible_flag_offset;
+int dtm_offset;
+uint8_t dtm_bits;
+int movecnt_offset;
+uint8_t movecnt_bits;
+int capture_possible_flag_offset;
 
 #define MOVECNT_MASK ((1 << movecnt_bits) - 1)
 
@@ -6952,10 +6938,145 @@ class EntriesTable {
 #define MOVECNT_MAX (MOVECNT_MASK - 4)
 #define MOVECNT_PNTM_WINS_UNPROPED (0)
 
+typedef uint16_t entry_t;
+
+class atomic_unsigned_bitfield {
+protected:
+    std::atomic<entry_t> * ptr;
+    int offset;
+    int length;
+    uint bitmask;
+
+public:
+    atomic_unsigned_bitfield(std::atomic<entry_t> *ptr, int offset, int length) : ptr(ptr), offset(offset), length(length) {
+	bitmask = (1 << length) - 1;
+    }
+
+    atomic_unsigned_bitfield & operator=(entry_t val) {
+	*ptr &= ~(bitmask << offset);
+	*ptr |= (val & bitmask) << offset;
+	return *this;
+    }
+    operator entry_t () {
+	return (*ptr >> offset) & bitmask;
+    }
+};
+
+class atomic_signed_bitfield : public atomic_unsigned_bitfield {
+public:
+    atomic_signed_bitfield(std::atomic<entry_t> *ptr, int offset, int length) : atomic_unsigned_bitfield(ptr, offset, length) {
+    }
+
+    atomic_signed_bitfield & operator=(int val) {
+	*ptr &= ~(bitmask << offset);
+	*ptr |= (val & bitmask) << offset;
+	return *this;
+    }
+    operator int () {
+	//	return atomic_unsigned_bitfield::operator entry_t();
+	// int val = (entry_t) *this;
+	int val = (*ptr >> offset) & bitmask;
+	if (val > (bitmask >> 1)) val |= (~ (bitmask >> 1));
+	return val;
+    }
+};
+
+class atomic_entry {
+private:
+    std::atomic<entry_t> e;
+
+public:
+    atomic_signed_bitfield dtm;
+    atomic_unsigned_bitfield movecnt;
+    atomic_unsigned_bitfield capture_possible;
+
+    atomic_entry(entry_t e = 0):
+	e(e), dtm(&(this->e), dtm_offset, dtm_bits),
+	movecnt(&(this->e), movecnt_offset, movecnt_bits),
+	capture_possible(&(this->e), capture_possible_flag_offset, 1) {
+    }
+
+    atomic_entry(int movecnt, int dtm): atomic_entry(0) {
+	this->movecnt = movecnt;
+	this->dtm = dtm;
+    }
+
+    atomic_entry (const atomic_entry & val): atomic_entry(val.e) {
+    }
+
+    atomic_entry & operator=(atomic_entry &&val) {
+	e = (entry_t) val.e;
+	return *this;
+    }
+
+    atomic_entry & operator=(const atomic_entry &val) {
+	e = (entry_t) val.e;
+	return *this;
+    }
+
+    operator entry_t () { return e; }
+
+    bool does_PTM_win(void) {
+	return (movecnt == MOVECNT_PTM_WINS_PROPED) || (movecnt == MOVECNT_PTM_WINS_UNPROPED);
+    }
+
+    bool does_PNTM_win(void) {
+	return (movecnt == MOVECNT_PNTM_WINS_PROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
+    }
+
+    bool is_unpropagated(void) {
+	return (movecnt == MOVECNT_PTM_WINS_UNPROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
+    }
+
+    bool is_normal_movecnt(void) {
+	return (movecnt > MOVECNT_PNTM_WINS_UNPROPED) && (movecnt <= MOVECNT_MAX);
+    }
+
+    void set_PTM_wins_unpropagated(void) {
+	movecnt = MOVECNT_PTM_WINS_UNPROPED;
+    }
+
+    void flag_as_propagated(void) {
+	if (does_PTM_win()) {
+	    movecnt = MOVECNT_PTM_WINS_PROPED;
+	} else {
+	    movecnt = MOVECNT_PNTM_WINS_PROPED;
+	}
+    }
+
+    /* Get DTM in a more suitable format
+     *
+     * 0 = draw
+     * 1 = PNTM in check (illegal position)
+     * N = mate in N-1
+     * -1 = PTM checkmated
+     * -N = PNTM will have a mate in N-1 after this move
+     *
+     * The difference between get_DTM (here) and dtm (above) is that if the DTM value is
+     * less than zero (PNTM wins), but movecnt is still greater than zero, then there are still
+     * moves that might let PTM slip off the hook, so in that case we indicate draw.
+     *
+     * There's also a tablebase member function called get_DTM() that retrieves this value from a
+     * computed tablebase, while this function works on the tablebase under construction.
+     */
+
+    int get_DTM(void) {
+	return (does_PTM_win() || does_PNTM_win()) ? dtm : 0;
+    }
+};
+
+class EntriesTable {
+
+ protected:
+
+    atomic_entry zero;
+
+    uint8_t bits;
+    uint8_t threads;				/* number of threads accessing the table */
+
     /* Here we compute the sizes of the bit fields.
      *
      * capture possible flag - 1 bit, only if we're doing a suicide analysis
-     * locking bit - 1 bit for spinlocking if needed (see below)
      * distance to mate - not sure, but our first pass only needs to copy dtm values
      *    from futurebases, and we know their dtm ranges
      * move count - the simple calculation here could be improved upon
@@ -7020,41 +7141,18 @@ class EntriesTable {
 	    movecnt_offset = 1;
 	}
 
-	locking_bit_offset = -1;
+	/* The DTM field is deliberately last */
 
-	/* We include a locking bit on the entries if
-	 *    1) we're actually running with multiple threads, and
-	 *    2) we're not using proptables, because they group all operations on a single entry to
-	 *       a single thread
-	 */
-	if ((num_threads > 1) && !using_proptables) {
-	    locking_bit_offset = movecnt_offset;
-	    movecnt_offset ++;
-	}
-
-	/* The DTM field is deliberately last, so that it can be easily expanded */
 	dtm_offset = movecnt_offset + movecnt_bits;
 
-	bits = dtm_offset + dtm_bits;
-
-	/* If we're using proptables and the entries table is compressed on disk, then round up to a
-	 * byte boundary if we've only got to burn a bit or two to do it, since we'll probably
-	 * get better compression from zlib with everything on a byte boundary anyway.
-	 */
-
-	if (using_proptables && compress_entries_table && ((bits % 8) == 6 || (bits % 8) == 7)) {
-	    while ((bits % 8) != 0) {
-		dtm_bits ++;
-		bits ++;
-	    }
-	}
+	bits = 8 * sizeof(entry_t);
+	dtm_bits = bits - dtm_offset;
     }
 
     void print_current_format(void) {
 	info("%d bits movecnt", movecnt_bits);
 	if (dtm_bits > 0) info("; %d bits dtm", dtm_bits);
 	if (capture_possible_flag_offset != -1) info("; capture possible flag");
-	if (locking_bit_offset != -1) info("; locking bit");
 	info("\n");
     }
 
@@ -7072,6 +7170,14 @@ class EntriesTable {
     /* DiskEntriesTable will want to delete some files, so this destructor has to be virtual. */
 
     virtual ~EntriesTable() { }
+
+    /* The main thing we want to do with an EntriesTable is to access the entries!  This function is
+     * virtual because DiskEntriesTable may need to access the disk in order to produce an entry.
+     */
+
+    virtual atomic_entry & operator[](index_t index) {
+	return zero;
+    }
 
     /* Sets the number of threads accessing the table.
      *
@@ -7099,6 +7205,7 @@ class EntriesTable {
 	}
     }
 
+#if 0
     /* If we do need to lock, I use spinlocks.  They're a bit dangerous because a bug can cause them
      * to lock forever, but bugs are dangerous anyway.  They only require a single bit.
      */
@@ -7201,6 +7308,7 @@ class EntriesTable {
     int get_DTM(index_t index) {
 	return (does_PTM_win(index) || does_PNTM_win(index)) ? get_raw_DTM(index) : 0;
     }
+#endif
 
     /* Seven possible ways we can initialize a tablebase entry for a position:
      *  - it's illegal
@@ -7232,8 +7340,10 @@ class EntriesTable {
 	 * so much about efficiency.  ;-)
 	 */
 
-	set_movecnt(index, movecnt);
-	if (tracking_dtm) set_raw_DTM(index, dtm);
+	// set_movecnt(index, movecnt);
+	// if (tracking_dtm) set_raw_DTM(index, dtm);
+	(*this)[index].movecnt = movecnt;
+	if (tracking_dtm) (*this)[index].dtm = dtm;
     }
 
     void initialize_entry_as_illegal(index_t index) {
@@ -7335,18 +7445,38 @@ class EntriesTable {
     }
 };
 
+class EntriesTablePtr {
+    EntriesTable * entriesTable;
+
+public:
+    EntriesTablePtr(void) {
+	entriesTable = nullptr;
+    }
+
+    EntriesTablePtr & operator=(EntriesTable * table) {
+	entriesTable = table;
+    }
+    atomic_entry & operator[](index_t index) {
+	return (*entriesTable)[index];
+    }
+
+    EntriesTable * operator->() {
+	return entriesTable;
+    }
+};
+
 /* MemoryEntriesTable - an EntriesTable held completely in memory */
 
 class MemoryEntriesTable: public EntriesTable {
 
  private:
-    void * entries;
+    atomic_entry * entries;
 
  public:
     MemoryEntriesTable(void) {
-	size_t bytes = ((current_tb->max_index + 1) * bits + 7) / 8 + 2*sizeof(int);
-	entries = malloc(bytes);
-
+	entries = new atomic_entry [current_tb->max_index + 1];
+	// XXX catch an exception here
+#if 0
 	if (entries == nullptr) {
 	    fatal("Can't malloc %zdMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
 	} else {
@@ -7356,60 +7486,16 @@ class MemoryEntriesTable: public EntriesTable {
 		info("Malloced %zdMB for tablebase entries\n", bytes/(1024*1024));
 	    }
 	}
-
-	VALGRIND_HG_DISABLE_CHECKING(entries, bytes);
+#endif
 
 	/* Don't really need this, since they will all get initialized anyway */
 	/* XXX actually do this need right now, because initialization isn't complete */
-	memset(entries, 0, bytes);
+	/* XXX C++ - do we need this? */
+	// memset(entries, 0, bytes);
     }
 
-    /* If our DTM field is about to overflow, resize the entire table one bit per entry larger */
-
-    void verify_DTM_field_size(int dtm) {
-
-	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
-	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
-
-	    size_t bytes = ((current_tb->max_index + 1) * (bits + 1) + 7) / 8 + 2*sizeof(int);
-
-	    /* resize */
-	    entries = realloc(entries, bytes);
-	    if (entries == nullptr) {
-		fatal("Can't realloc %zdMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
-		return;
-	    } else {
-		if (bytes < 1024*1024) {
-		    info("Realloced %zdKB for tablebase entries: ", bytes/1024);
-		} else {
-		    info("Realloced %zdMB for tablebase entries: ", bytes/(1024*1024));
-		}
-	    }
-
-	    /* copy */
-	    for (index_t index = current_tb->max_index; index >= 0; index --) {
-		unsigned int field = get_unsigned_int_field(entries, index * bits, bits);
-		int dtm = get_int_field(entries, index * bits + dtm_offset, dtm_bits);
-		set_unsigned_int_field(entries, index * (bits+1), bits+1, field);
-		set_int_field(entries, index * (bits+1) + dtm_offset, dtm_bits+1, dtm);
-		if (index == 0) break;
-	    }
-
-	    dtm_bits ++;
-	    bits ++;
-
-	    print_current_format();
-	}
-    }
-
-    void * pointer(index_t index) {
-	/* entries array exists in memory - so just return a pointer into it */
-	return entries;
-    }
-
-    bitoffset offset(index_t index) {
-	/* entries array exists in memory - so just bit index into it */
-	return index * bits;
+    atomic_entry & operator[](index_t index) {
+	return entries[index];
     }
 };
 
@@ -7733,7 +7819,7 @@ class DiskEntriesTable: public EntriesTable {
 /***** INTRA-TABLE BACK PROPAGATION *****/
 
 
-EntriesTable * entriesTable;
+EntriesTablePtr entriesTable;
 
 /* finalize_update()
  *
@@ -7750,14 +7836,14 @@ inline void PTM_wins(index_t index, int dtm)
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	info("PTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
-	     index, dtm, entriesTable->get_raw_DTM(index));
+	     index, dtm, entriesTable[index].dtm);
 #endif
 
     if (dtm < 0) {
 
 	fatal("Negative distance to mate in PTM_wins!?\n");
 
-    } else if (entriesTable->is_normal_movecnt(index)) {
+    } else if (entriesTable[index].is_normal_movecnt()) {
 
 	/* In ordinary chess, we should never get here with MOVECNT_PNTM_WINS_UNPROPED (or PROPED)
 	 * because we have to have decremented the movecnt already to zero to have gotten either of
@@ -7766,19 +7852,19 @@ inline void PTM_wins(index_t index, int dtm)
 	 * only runs for a "normal" movecnt field - none of the five special cases.
 	 */
 
-	entriesTable->set_PTM_wins_unpropagated(index);
-	entriesTable->set_raw_DTM(index, dtm);
+	entriesTable[index].set_PTM_wins_unpropagated();
+	entriesTable[index].dtm = dtm;
 	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
 
-    } else if ((dtm < entriesTable->get_raw_DTM(index))
-	       && (entriesTable->does_PTM_win(index))
-	       && (entriesTable->is_unpropagated(index))) {
+    } else if ((dtm < entriesTable[index].dtm)
+	       && (entriesTable[index].does_PTM_win())
+	       && (entriesTable[index].is_unpropagated())) {
 
 	/* This can happen if we get a PTM mate during futurebase back prop, then, later during
 	 * futurebase back prop or during intra-table back prop, improve upon the mate.
 	 */
 
-	entriesTable->set_raw_DTM(index, dtm);
+	entriesTable[index].dtm = dtm;
 	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
     }
 }
@@ -7788,27 +7874,28 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	info("add_one_to_PNTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
-	     index, dtm, entriesTable->get_raw_DTM(index));
+	     index, dtm, entriesTable[index].dtm);
 #endif
 
     if (dtm > 0) {
 	fatal("Positive distance to mate in PNTM_wins!?\n");
-    } else if (entriesTable->is_normal_movecnt(index)) {
+    } else if (entriesTable[index].is_normal_movecnt()) {
 
 	/* Again, this is the code for a "normal" movecnt field. */
 
-	entriesTable->set_movecnt(index, entriesTable->get_movecnt(index) - 1);
+	// XXX entriesTable[index].movecnt --;
+	entriesTable[index].movecnt = entriesTable[index].movecnt - 1;
 
-	if ((dtm < entriesTable->get_raw_DTM(index)) && (entriesTable->get_raw_DTM(index) <= 0)) {
+	if ((dtm < entriesTable[index].dtm) && (entriesTable[index].dtm <= 0)) {
 	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
-	    entriesTable->set_raw_DTM(index, dtm);
+	    entriesTable[index].dtm = dtm;
 	}
 
-	if (entriesTable->does_PNTM_win(index)) {
+	if (entriesTable[index].does_PNTM_win()) {
 	    /* This call pushed movecnt to zero, but the passed-in DTM might not be the best line,
 	     * so that's why we fetch entry DTM here.
 	     */
-	    dtm = entriesTable->get_raw_DTM(index);
+	    dtm = entriesTable[index].dtm;
 #ifdef DEBUG_PASS_DEPENDANCIES
 	    if ((dtm >= min_tracked_dtm) && (! negative_passes_needed[-dtm])) {
 		global_position_t global;
@@ -7843,13 +7930,13 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
      */
 
     if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
-	&& entriesTable->get_capture_possible_flag(index)) {
+	&& entriesTable[index].capture_possible) {
 	return;
     }
 
     /* The guts of committing an update into the entries table. */
 
-    entriesTable->lock_entry(index);
+    // entriesTable->lock_entry(index);
 
     if (dtm > 0) {
 	PTM_wins(index, dtm);
@@ -7859,7 +7946,7 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 	}
     }
 
-    entriesTable->unlock_entry(index);
+    // entriesTable->unlock_entry(index);
 }
 
 /* back_propagate_index()
@@ -7886,19 +7973,19 @@ void back_propagate_index(index_t index, int target_dtm)
      * back propagating after we've released the lock.
      */
 
-    entriesTable->lock_entry(index);
+    // entriesTable->lock_entry(index);
 
-    if (((! tracking_dtm) && entriesTable->is_unpropagated(index))
-	|| (entriesTable->get_DTM(index) == target_dtm)) {
+    if (((! tracking_dtm) && entriesTable[index].is_unpropagated())
+	|| (entriesTable[index].get_DTM() == target_dtm)) {
 
 	back_propagate = true;
 
-	does_PTM_win = entriesTable->does_PTM_win(index);
+	does_PTM_win = entriesTable[index].does_PTM_win();
 
-	entriesTable->flag_as_propagated(index);
+	entriesTable[index].flag_as_propagated();
     }
 
-    entriesTable->unlock_entry(index);
+    // entriesTable->unlock_entry(index);
 
     if (back_propagate) {
 
@@ -9011,7 +9098,7 @@ void proptable_pass_thread(int target_dtm)
 	} else {
 
 	    /* Don't track futuremoves for illegal (DTM 1) positions */
-	    if (entriesTable->get_DTM(index) != 1) {
+	    if (entriesTable[index].get_DTM() != 1) {
 		finalize_futuremove(current_tb, index, futurevector);
 	    }
 
@@ -10610,7 +10697,7 @@ bool have_all_futuremoves_been_handled(tablebase_t *tb) {
      */
 
     for (index = 0; index <= tb->max_index; index ++) {
-	if (entriesTable->get_DTM(index) != 1) {
+	if (entriesTable[index].get_DTM() != 1) {
 	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 	    futurevector_t futurevector = *((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
 
@@ -11564,7 +11651,7 @@ void optimize_futuremoves(tablebase_t *tb)
 void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, local_position_t *current_position)
 {
     index_t current_index;
-    int dtm = entriesTable->get_DTM(future_index);
+    int dtm = entriesTable[future_index].get_DTM();
 
     current_index = local_position_to_index(tb, current_position);
 
@@ -11603,9 +11690,9 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
 	commit_update(current_index, -dtm, 1, NO_FUTUREMOVE);
     } else if (dtm < 0) {
 	commit_update(current_index, -dtm+1, 1, NO_FUTUREMOVE);
-    } else if (entriesTable->does_PTM_win(future_index)) {
+    } else if (entriesTable[future_index].does_PTM_win()) {
 	commit_update(current_index, -2, 1, NO_FUTUREMOVE);
-    } else if (entriesTable->does_PNTM_win(future_index)) {
+    } else if (entriesTable[future_index].does_PNTM_win()) {
 	commit_update(current_index, 2, 1, NO_FUTUREMOVE);
     } else {
 	fatal("Intra-table back prop doesn't match dtm or movecnt\n");
@@ -12630,7 +12717,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		futurevector = capture_futurevector;
 	    }
 
-	    entriesTable->set_capture_possible_flag(index, capturecnt != 0);
+	    entriesTable[index].capture_possible = (capturecnt != 0);
 
 	    /* Symmetry and multiplicity.  If we're using a symmetric index, then there might be more
 	     * than one actual board position that corresponds to a given index value.  The number
@@ -12887,7 +12974,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE) {
 	    info("Writing %" PRIindex ": DTM %d; movecnt %d\n", index,
-		 entriesTable->get_DTM(index), entriesTable->get_movecnt(index));
+		 entriesTable[index].get_DTM(), entriesTable[index].movecnt);
 	}
 #endif
 
@@ -12899,7 +12986,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    set_int_field(entry,
 			  tb->format.dtm_offset + ((index % 8) * tb->format.bits),
 			  tb->format.dtm_bits,
-			  entriesTable->get_DTM(index));
+			  entriesTable[index].get_DTM());
 	}
 
 	if (tb->format.basic_offset != -1) {
@@ -12909,9 +12996,9 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	     * don't distinguish illegal positions from draws - see initialize_entry_as_illegal()
 	     */
 
-	    if (entriesTable->does_PTM_win(index)) {
+	    if (entriesTable[index].does_PTM_win()) {
 		basic = 1;
-	    } else if (entriesTable->does_PNTM_win(index)) {
+	    } else if (entriesTable[index].does_PNTM_win()) {
 		basic = 2;
 	    } else {
 		basic = 0;
@@ -12926,13 +13013,13 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    set_bit_field(entry,
 			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
 			  (index_to_side_to_move(tb, index) == WHITE)
-			  ? entriesTable->does_PTM_win(index) : entriesTable->does_PNTM_win(index));
+			  ? entriesTable[index].does_PTM_win() : entriesTable[index].does_PNTM_win());
 	    break;
 	case FORMAT_FLAG_WHITE_DRAWS:
 	    set_bit_field(entry,
 			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
 			  (index_to_side_to_move(tb, index) == WHITE)
-			  ? ! entriesTable->does_PNTM_win(index) : ! entriesTable->does_PTM_win(index));
+			  ? ! entriesTable[index].does_PNTM_win() : ! entriesTable[index].does_PTM_win());
 	    break;
 	}
 
@@ -13272,22 +13359,22 @@ void verify_tablebase_internally_thread(void)
 			    && ((next_index = local_position_to_index(current_tb, &position)) != INVALID_INDEX)) {
 
 			    /* check this position */
-			    int n = entriesTable->get_DTM(index);
+			    int n = entriesTable[index].get_DTM();
 			    if (n < 0) {
 				/* PNTM mates in (-n)-1 after this move, so next_index must be a PTM wins
 				 * in -n moves or less.
 				 */
-				if ((entriesTable->get_DTM(next_index) <= 0)
-				    || (entriesTable->get_DTM(next_index) > -n)) {
+				if ((entriesTable[next_index].get_DTM() <= 0)
+				    || (entriesTable[next_index].get_DTM() > -n)) {
 
 				    fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
-					  index, n, next_index, entriesTable->get_DTM(next_index));
+					  index, n, next_index, entriesTable[next_index].get_DTM());
 				}
 			    } else if (n == 0) {
-				if (entriesTable->get_DTM(next_index) < 0) {
+				if (entriesTable[next_index].get_DTM() < 0) {
 
 				    fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
-					  index, n, next_index, entriesTable->get_DTM(next_index));
+					  index, n, next_index, entriesTable[next_index].get_DTM());
 				}
 			    }
 			}
@@ -13320,22 +13407,22 @@ void verify_tablebase_internally_thread(void)
 			&& ((next_index = local_position_to_index(current_tb, &position)) != INVALID_INDEX)) {
 
 			/* check this position */
-			int n = entriesTable->get_DTM(index);
+			int n = entriesTable[index].get_DTM();
 			if (n < 0) {
 			    /* PNTM mates in (-n)-1 after this move, so next_index must be a PTM wins
 			     * in -n moves or less.
 			     */
-			    if ((entriesTable->get_DTM(next_index) <= 0)
-				|| (entriesTable->get_DTM(next_index) > -n)) {
+			    if ((entriesTable[next_index].get_DTM() <= 0)
+				|| (entriesTable[next_index].get_DTM() > -n)) {
 
 				fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
-				      index, n, next_index, entriesTable->get_DTM(next_index));
+				      index, n, next_index, entriesTable[next_index].get_DTM());
 			    }
 			} else if (n == 0) {
-			    if (entriesTable->get_DTM(next_index) < 0) {
+			    if (entriesTable[next_index].get_DTM() < 0) {
 
 				fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
-				      index, n, next_index, entriesTable->get_DTM(next_index));
+				      index, n, next_index, entriesTable[next_index].get_DTM());
 			    }
 			}
 		    }
@@ -14238,7 +14325,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.814 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.815 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
