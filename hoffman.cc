@@ -5362,7 +5362,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.817 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.818 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7017,6 +7017,22 @@ public:
 
     operator entry_t () { return e; }
 
+    void set_raw_DTM(int dtm) {
+	this->dtm = dtm;
+    }
+
+    int get_raw_DTM(void) {
+	return this->dtm;
+    }
+
+    void set_movecnt(unsigned int movecnt) {
+	this->movecnt = movecnt;
+    }
+
+    unsigned int get_movecnt(void) {
+	return this->movecnt;
+    }
+
     bool does_PTM_win(void) {
 	return (movecnt == MOVECNT_PTM_WINS_PROPED) || (movecnt == MOVECNT_PTM_WINS_UNPROPED);
     }
@@ -7142,6 +7158,38 @@ public:
 	return e.compare_exchange_weak(expected.e, desired.e);
     }
 
+#if 0
+    void set_raw_DTM(int dtm) {
+	this->dtm = dtm;
+    }
+#endif
+
+    int get_raw_DTM(void) {
+	return this->dtm;
+    }
+
+#if 0
+    void set_movecnt(unsigned int movecnt) {
+	this->movecnt = movecnt;
+    }
+#endif
+
+    unsigned int get_movecnt(void) {
+	return this->movecnt;
+    }
+
+    bool get_capture_possible_flag(void) {
+	//if (capture_possible_flag_offset == -1) return false;
+	//return get_bit_field(pointer(index), offset(index) + capture_possible_flag_offset);
+	return capture_possible;
+    }
+
+    void set_capture_possible_flag(bool flag) {
+	//if (capture_possible_flag_offset == -1) return;
+	//set_bit_field(pointer(index), offset(index) + capture_possible_flag_offset, flag);
+	capture_possible = flag;
+    }
+
     bool does_PTM_win(void) {
 	return (movecnt == MOVECNT_PTM_WINS_PROPED) || (movecnt == MOVECNT_PTM_WINS_UNPROPED);
     }
@@ -7166,9 +7214,9 @@ public:
      * -1 = PTM checkmated
      * -N = PNTM will have a mate in N-1 after this move
      *
-     * The difference between get_DTM (here) and reading the dtm bitfield directly is that if the
-     * DTM value is less than zero (PNTM wins), but movecnt is still greater than zero, then there
-     * are still moves that might let PTM slip off the hook, so in that case we indicate draw.
+     * The difference between get_DTM (here) and get_raw_DTM (above) is that if the DTM value is
+     * less than zero (PNTM wins), but movecnt is still greater than zero, then there are still
+     * moves that might let PTM slip off the hook, so in that case we indicate draw.
      *
      * There's also a tablebase member function called get_DTM() that retrieves this value from a
      * computed tablebase, while this function works on the tablebase under construction.
@@ -7960,7 +8008,7 @@ inline void PTM_wins(index_t index, int dtm)
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	info("PTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
-	     index, dtm, expected.dtm);
+	     index, dtm, expected.get_raw_DTM());
 #endif
 
     do {
@@ -7981,10 +8029,10 @@ inline void PTM_wins(index_t index, int dtm)
 	     */
 
 	    desired.set_PTM_wins_unpropagated();
-	    desired.dtm = dtm;
+	    desired.set_raw_DTM(dtm);
 	    if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
 
-	} else if ((dtm < desired.dtm)
+	} else if ((dtm < desired.get_raw_DTM())
 		   && (desired.does_PTM_win())
 		   && (desired.is_unpropagated())) {
 
@@ -7992,7 +8040,7 @@ inline void PTM_wins(index_t index, int dtm)
 	     * futurebase back prop or during intra-table back prop, improve upon the mate.
 	     */
 
-	    desired.dtm = dtm;
+	    desired.set_raw_DTM(dtm);
 	    if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
 	}
     } while (!entriesTable[index].compare_exchange_weak(expected, desired));
@@ -8006,7 +8054,7 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	info("add_one_to_PNTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
-	     index, dtm, expected.dtm);
+	     index, dtm, expected.get_raw_DTM());
 #endif
 
     do {
@@ -8019,18 +8067,18 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 	    /* Again, this is the code for a "normal" movecnt field. */
 
 	    // XXX entriesTable[index].movecnt --;
-	    desired.movecnt = desired.movecnt - 1;
+	    desired.set_movecnt(desired.get_movecnt() - 1);
 
-	    if ((dtm < desired.dtm) && (desired.dtm <= 0)) {
+	    if ((dtm < desired.get_raw_DTM()) && (desired.get_raw_DTM() <= 0)) {
 		/* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
-		desired.dtm = dtm;
+		desired.set_raw_DTM(dtm);
 	    }
 
 	    if (desired.does_PNTM_win()) {
 		/* This call pushed movecnt to zero, but the passed-in DTM might not be the best line,
 		 * so that's why we fetch entry DTM here.
 		 */
-		dtm = desired.dtm;
+		dtm = desired.get_raw_DTM();
 #ifdef DEBUG_PASS_DEPENDANCIES
 		if ((dtm >= min_tracked_dtm) && (! negative_passes_needed[-dtm])) {
 		    global_position_t global;
@@ -8066,7 +8114,7 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
      */
 
     if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
-	&& entriesTable[index].capture_possible) {
+	&& entriesTable[index].get_capture_possible_flag()) {
 	return;
     }
 
@@ -12861,7 +12909,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	    entriesTable->initialize_entry_with_movecnt(index, movecnt * position.multiplicity);
 
-	    entriesTable[index].capture_possible = (capturecnt != 0);
+	    entriesTable[index].set_capture_possible_flag((capturecnt != 0));
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE) {
@@ -13102,7 +13150,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE) {
 	    info("Writing %" PRIindex ": DTM %d; movecnt %d\n", index,
-		 entriesTable[index].get_DTM(), entriesTable[index].movecnt);
+		 entriesTable[index].get_DTM(), entriesTable[index].get_movecnt());
 	}
 #endif
 
@@ -14453,7 +14501,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.817 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.818 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
