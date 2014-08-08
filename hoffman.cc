@@ -5362,7 +5362,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.816 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.817 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6940,19 +6940,19 @@ int capture_possible_flag_offset;
 
 typedef uint16_t entry_t;
 
-class atomic_unsigned_bitfield {
+class unsigned_bitfield {
 protected:
-    std::atomic<entry_t> * ptr;
+    entry_t * ptr;
     int offset;
     int length;
     uint bitmask;
 
 public:
-    atomic_unsigned_bitfield(std::atomic<entry_t> *ptr, int offset, int length) : ptr(ptr), offset(offset), length(length) {
+    unsigned_bitfield(entry_t *ptr, int offset, int length) : ptr(ptr), offset(offset), length(length) {
 	bitmask = (1 << length) - 1;
     }
 
-    atomic_unsigned_bitfield & operator=(entry_t val) {
+    unsigned_bitfield & operator=(entry_t val) {
 	*ptr &= ~(bitmask << offset);
 	*ptr |= (val & bitmask) << offset;
 	return *this;
@@ -6962,18 +6962,18 @@ public:
     }
 };
 
-class atomic_signed_bitfield : public atomic_unsigned_bitfield {
+class signed_bitfield : public unsigned_bitfield {
 public:
-    atomic_signed_bitfield(std::atomic<entry_t> *ptr, int offset, int length) : atomic_unsigned_bitfield(ptr, offset, length) {
+    signed_bitfield(entry_t *ptr, int offset, int length) : unsigned_bitfield(ptr, offset, length) {
     }
 
-    atomic_signed_bitfield & operator=(int val) {
+    signed_bitfield & operator=(int val) {
 	*ptr &= ~(bitmask << offset);
 	*ptr |= (val & bitmask) << offset;
 	return *this;
     }
     operator int () {
-	//	return atomic_unsigned_bitfield::operator entry_t();
+	//	return unsigned_bitfield::operator entry_t();
 	// int val = (entry_t) *this;
 	int val = (*ptr >> offset) & bitmask;
 	if (val > (bitmask >> 1)) val |= (~ (bitmask >> 1));
@@ -6981,35 +6981,36 @@ public:
     }
 };
 
-class atomic_entry {
+class entry {
+    friend class atomic_entry;
 private:
-    std::atomic<entry_t> e;
+    entry_t e;
 
 public:
-    atomic_signed_bitfield dtm;
-    atomic_unsigned_bitfield movecnt;
-    atomic_unsigned_bitfield capture_possible;
+    signed_bitfield dtm;
+    unsigned_bitfield movecnt;
+    unsigned_bitfield capture_possible;
 
-    atomic_entry(entry_t e = 0):
+    entry(entry_t e = 0):
 	e(e), dtm(&(this->e), dtm_offset, dtm_bits),
 	movecnt(&(this->e), movecnt_offset, movecnt_bits),
 	capture_possible(&(this->e), capture_possible_flag_offset, 1) {
     }
 
-    atomic_entry(int movecnt, int dtm): atomic_entry(0) {
+    entry(int movecnt, int dtm): entry(0) {
 	this->movecnt = movecnt;
 	this->dtm = dtm;
     }
 
-    atomic_entry (const atomic_entry & val): atomic_entry(val.e) {
+    entry (const entry & val): entry(val.e) {
     }
 
-    atomic_entry & operator=(atomic_entry &&val) {
+    entry & operator=(entry &&val) {
 	e = (entry_t) val.e;
 	return *this;
     }
 
-    atomic_entry & operator=(const atomic_entry &val) {
+    entry & operator=(const entry &val) {
 	e = (entry_t) val.e;
 	return *this;
     }
@@ -7042,6 +7043,119 @@ public:
 	} else {
 	    movecnt = MOVECNT_PNTM_WINS_PROPED;
 	}
+    }
+
+    /* Get DTM in a more suitable format
+     *
+     * 0 = draw
+     * 1 = PNTM in check (illegal position)
+     * N = mate in N-1
+     * -1 = PTM checkmated
+     * -N = PNTM will have a mate in N-1 after this move
+     *
+     * The difference between get_DTM (here) and reading the dtm bitfield directly is that if the
+     * DTM value is less than zero (PNTM wins), but movecnt is still greater than zero, then there
+     * are still moves that might let PTM slip off the hook, so in that case we indicate draw.
+     *
+     * There's also a tablebase member function called get_DTM() that retrieves this value from a
+     * computed tablebase, while this function works on the tablebase under construction.
+     */
+
+    int get_DTM(void) {
+	return (does_PTM_win() || does_PNTM_win()) ? dtm : 0;
+    }
+};
+
+class unsigned_atomic_bitfield {
+protected:
+    std::atomic<entry_t> * ptr;
+    int offset;
+    int length;
+    uint bitmask;
+
+public:
+    unsigned_atomic_bitfield(std::atomic<entry_t> *ptr, int offset, int length) : ptr(ptr), offset(offset), length(length) {
+	bitmask = (1 << length) - 1;
+    }
+
+    unsigned_atomic_bitfield & operator=(entry_t val) {
+
+	entry_t expected = *ptr;
+	entry_t desired;
+
+	do {
+	    desired = expected;
+	    desired &= ~(bitmask << offset);
+	    desired |= (val & bitmask) << offset;
+	} while (! ptr->compare_exchange_weak(expected, desired));
+
+	return *this;
+    }
+    operator entry_t () {
+	return (*ptr >> offset) & bitmask;
+    }
+};
+
+class signed_atomic_bitfield : public unsigned_atomic_bitfield {
+public:
+    signed_atomic_bitfield(std::atomic<entry_t> *ptr, int offset, int length) : unsigned_atomic_bitfield(ptr, offset, length) {
+    }
+
+    operator int () {
+	int val = (*ptr >> offset) & bitmask;
+	if (val > (bitmask >> 1)) val |= (~ (bitmask >> 1));
+	return val;
+    }
+};
+
+class atomic_entry {
+private:
+    std::atomic<entry_t> e;
+
+public:
+
+    signed_atomic_bitfield dtm;
+    unsigned_atomic_bitfield movecnt;
+    unsigned_atomic_bitfield capture_possible;
+
+    atomic_entry(entry_t e = 0):
+	e(e), dtm(&(this->e), dtm_offset, dtm_bits),
+	movecnt(&(this->e), movecnt_offset, movecnt_bits),
+	capture_possible(&(this->e), capture_possible_flag_offset, 1) {
+    }
+
+    atomic_entry & operator=(entry_t &&val) {
+	e = val;
+	return *this;
+    }
+
+    atomic_entry & operator=(const entry_t &val) {
+	e = val;
+	return *this;
+    }
+
+    operator entry_t () { return e; }
+
+    operator entry () { return entry(e); }
+
+    bool compare_exchange_weak(entry expected, entry desired) {
+	return e.compare_exchange_weak(expected.e, desired.e);
+    }
+
+    bool does_PTM_win(void) {
+	return (movecnt == MOVECNT_PTM_WINS_PROPED) || (movecnt == MOVECNT_PTM_WINS_UNPROPED);
+    }
+
+    bool does_PNTM_win(void) {
+	return (movecnt == MOVECNT_PNTM_WINS_PROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
+    }
+
+    bool is_unpropagated(void) {
+	return (movecnt == MOVECNT_PTM_WINS_UNPROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
+    }
+
+    bool is_normal_movecnt(void) {
+	return (movecnt > MOVECNT_PNTM_WINS_UNPROPED) && (movecnt <= MOVECNT_MAX);
     }
 
     /* Get DTM in a more suitable format
@@ -7342,8 +7456,11 @@ class EntriesTable {
 
 	// set_movecnt(index, movecnt);
 	// if (tracking_dtm) set_raw_DTM(index, dtm);
-	(*this)[index].movecnt = movecnt;
-	if (tracking_dtm) (*this)[index].dtm = dtm;
+
+	//(*this)[index].movecnt = movecnt;
+	// if (tracking_dtm) (*this)[index].dtm = dtm;
+
+	(*this)[index] = entry(movecnt, dtm);
     }
 
     void initialize_entry_as_illegal(index_t index) {
@@ -7829,84 +7946,103 @@ EntriesTablePtr entriesTable;
  * backed out its moves, figured out a position that leads to it in one move, and are ready to
  * update that other postion with the knowledge that either PTM can win, or that some of the moves
  * that lead out of it result in PNTM wins.
+ *
+ * Starting with 1.816, I've introduced a lockless update that uses C++11's atomic compare-exchange
+ * primitive.  If another processor changes the entry while we're working on it, we go back and do
+ * the calculation again.  The locks ran pretty quick, but burned a bit on each entry.
  */
 
 inline void PTM_wins(index_t index, int dtm)
 {
+    entry expected = entriesTable[index];
+    entry desired;
+
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	info("PTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
-	     index, dtm, entriesTable[index].dtm);
+	     index, dtm, expected.dtm);
 #endif
 
-    if (dtm < 0) {
+    do {
+	desired = expected;
 
-	fatal("Negative distance to mate in PTM_wins!?\n");
+	if (dtm < 0) {
 
-    } else if (entriesTable[index].is_normal_movecnt()) {
+	    fatal("Negative distance to mate in PTM_wins!?\n");
 
-	/* In ordinary chess, we should never get here with MOVECNT_PNTM_WINS_UNPROPED (or PROPED)
-	 * because we have to have decremented the movecnt already to zero to have gotten either of
-	 * those flags.  However, if this is a suicide analysis, we can get a MOVECNT_PNTM_WINS from
-	 * a forced capture, so we have to exclude this cases.  In any event, this code fragment
-	 * only runs for a "normal" movecnt field - none of the five special cases.
-	 */
+	} else if (desired.is_normal_movecnt()) {
 
-	entriesTable[index].set_PTM_wins_unpropagated();
-	entriesTable[index].dtm = dtm;
-	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
+	    /* In ordinary chess, we should never get here with MOVECNT_PNTM_WINS_UNPROPED (or
+	     * PROPED) because we have to have decremented the movecnt already to zero to have
+	     * gotten either of those flags.  However, if this is a suicide analysis, we can get a
+	     * MOVECNT_PNTM_WINS from a forced capture, so we have to exclude this cases.  In any
+	     * event, this code fragment only runs for a "normal" movecnt field - none of the five
+	     * special cases.
+	     */
 
-    } else if ((dtm < entriesTable[index].dtm)
-	       && (entriesTable[index].does_PTM_win())
-	       && (entriesTable[index].is_unpropagated())) {
+	    desired.set_PTM_wins_unpropagated();
+	    desired.dtm = dtm;
+	    if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
 
-	/* This can happen if we get a PTM mate during futurebase back prop, then, later during
-	 * futurebase back prop or during intra-table back prop, improve upon the mate.
-	 */
+	} else if ((dtm < desired.dtm)
+		   && (desired.does_PTM_win())
+		   && (desired.is_unpropagated())) {
 
-	entriesTable[index].dtm = dtm;
-	if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
-    }
+	    /* This can happen if we get a PTM mate during futurebase back prop, then, later during
+	     * futurebase back prop or during intra-table back prop, improve upon the mate.
+	     */
+
+	    desired.dtm = dtm;
+	    if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
+	}
+    } while (!entriesTable[index].compare_exchange_weak(expected, desired));
 }
 
 inline void add_one_to_PNTM_wins(index_t index, int dtm)
 {
+    entry expected = entriesTable[index];
+    entry desired;
+
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	info("add_one_to_PNTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
-	     index, dtm, entriesTable[index].dtm);
+	     index, dtm, expected.dtm);
 #endif
 
-    if (dtm > 0) {
-	fatal("Positive distance to mate in PNTM_wins!?\n");
-    } else if (entriesTable[index].is_normal_movecnt()) {
+    do {
+	desired = expected;
 
-	/* Again, this is the code for a "normal" movecnt field. */
+	if (dtm > 0) {
+	    fatal("Positive distance to mate in PNTM_wins!?\n");
+	} else if (desired.is_normal_movecnt()) {
 
-	// XXX entriesTable[index].movecnt --;
-	entriesTable[index].movecnt = entriesTable[index].movecnt - 1;
+	    /* Again, this is the code for a "normal" movecnt field. */
 
-	if ((dtm < entriesTable[index].dtm) && (entriesTable[index].dtm <= 0)) {
-	    /* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
-	    entriesTable[index].dtm = dtm;
-	}
+	    // XXX entriesTable[index].movecnt --;
+	    desired.movecnt = desired.movecnt - 1;
 
-	if (entriesTable[index].does_PNTM_win()) {
-	    /* This call pushed movecnt to zero, but the passed-in DTM might not be the best line,
-	     * so that's why we fetch entry DTM here.
-	     */
-	    dtm = entriesTable[index].dtm;
-#ifdef DEBUG_PASS_DEPENDANCIES
-	    if ((dtm >= min_tracked_dtm) && (! negative_passes_needed[-dtm])) {
-		global_position_t global;
-		index_to_global_position(current_tb, index, &global);
-		printf("%d pass needed by %" PRIindex " %s\n",
-		       dtm, index, global_position_to_FEN(&global));
+	    if ((dtm < desired.dtm) && (desired.dtm <= 0)) {
+		/* Since this is PNTM wins, PTM will make the move leading to the slowest mate. */
+		desired.dtm = dtm;
 	    }
+
+	    if (desired.does_PNTM_win()) {
+		/* This call pushed movecnt to zero, but the passed-in DTM might not be the best line,
+		 * so that's why we fetch entry DTM here.
+		 */
+		dtm = desired.dtm;
+#ifdef DEBUG_PASS_DEPENDANCIES
+		if ((dtm >= min_tracked_dtm) && (! negative_passes_needed[-dtm])) {
+		    global_position_t global;
+		    index_to_global_position(current_tb, index, &global);
+		    printf("%d pass needed by %" PRIindex " %s\n",
+			   dtm, index, global_position_to_FEN(&global));
+		}
 #endif
-	    if (dtm >= min_tracked_dtm) negative_passes_needed[-dtm] = true;
+		if (dtm >= min_tracked_dtm) negative_passes_needed[-dtm] = true;
+	    }
 	}
-    }
+    } while (!entriesTable[index].compare_exchange_weak(expected, desired));
 }
 
 void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
@@ -7936,8 +8072,6 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 
     /* The guts of committing an update into the entries table. */
 
-    // entriesTable->lock_entry(index);
-
     if (dtm > 0) {
 	PTM_wins(index, dtm);
     } else if (dtm < 0) {
@@ -7946,7 +8080,6 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 	}
     }
 
-    // entriesTable->unlock_entry(index);
 }
 
 /* back_propagate_index()
@@ -7964,30 +8097,25 @@ void back_propagate_index_within_table(index_t index, int reflection);
 
 void back_propagate_index(index_t index, int target_dtm)
 {
-    bool back_propagate = false;
-    bool does_PTM_win;
-
     print_progress_dot(current_tb, index);
 
-    /* Keep the entry locked for as short a time as possible.  Just update it.  Do the actual
-     * back propagating after we've released the lock.
-     */
+    entry expected = entriesTable[index];
 
-    // entriesTable->lock_entry(index);
+    if (((! tracking_dtm) && expected.is_unpropagated())
+	|| (expected.get_DTM() == target_dtm)) {
 
-    if (((! tracking_dtm) && entriesTable[index].is_unpropagated())
-	|| (entriesTable[index].get_DTM() == target_dtm)) {
+	/* What could another processor change?  Well, it's not going to flip the propagated flag,
+	 * because next_backprop_index (below) is atomic, so it's not going to attempt a back prop.
+	 *
+	 * XXX Could the DTM change (don't think so)
+	 */
 
-	back_propagate = true;
+	entry desired;
 
-	does_PTM_win = entriesTable[index].does_PTM_win();
-
-	entriesTable[index].flag_as_propagated();
-    }
-
-    // entriesTable->unlock_entry(index);
-
-    if (back_propagate) {
+	do {
+	    desired = expected;
+	    desired.flag_as_propagated();
+	} while (!entriesTable[index].compare_exchange_weak(expected, desired));
 
 	/* Symmetry.
 	 *
@@ -8017,7 +8145,7 @@ void back_propagate_index(index_t index, int target_dtm)
 
 	positions_finalized_this_pass ++;
 
-	if (does_PTM_win) {
+	if (expected.does_PTM_win()) {
 	    if (target_dtm > 1) player_wins[index_to_side_to_move(current_tb, index)] ++;
 	} else {
 	    player_wins[1 - index_to_side_to_move(current_tb, index)] ++;
@@ -12717,8 +12845,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		futurevector = capture_futurevector;
 	    }
 
-	    entriesTable[index].capture_possible = (capturecnt != 0);
-
 	    /* Symmetry and multiplicity.  If we're using a symmetric index, then there might be more
 	     * than one actual board position that corresponds to a given index value.  The number
 	     * of non-identical board positions for a given index is called its multiplicity.  So
@@ -12734,6 +12860,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	     */
 
 	    entriesTable->initialize_entry_with_movecnt(index, movecnt * position.multiplicity);
+
+	    entriesTable[index].capture_possible = (capturecnt != 0);
 
 #ifdef DEBUG_MOVE
 	    if (index == DEBUG_MOVE) {
@@ -14325,7 +14453,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.816 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.817 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
