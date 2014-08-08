@@ -5362,7 +5362,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.815 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.816 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7052,9 +7052,9 @@ public:
      * -1 = PTM checkmated
      * -N = PNTM will have a mate in N-1 after this move
      *
-     * The difference between get_DTM (here) and dtm (above) is that if the DTM value is
-     * less than zero (PNTM wins), but movecnt is still greater than zero, then there are still
-     * moves that might let PTM slip off the hook, so in that case we indicate draw.
+     * The difference between get_DTM (here) and reading the dtm bitfield directly is that if the
+     * DTM value is less than zero (PNTM wins), but movecnt is still greater than zero, then there
+     * are still moves that might let PTM slip off the hook, so in that case we indicate draw.
      *
      * There's also a tablebase member function called get_DTM() that retrieves this value from a
      * computed tablebase, while this function works on the tablebase under construction.
@@ -14325,7 +14325,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.815 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.816 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
