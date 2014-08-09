@@ -5362,7 +5362,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.818 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.819 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6925,9 +6925,14 @@ unsigned int tablebase::get_basic(index_t index)
 
 int dtm_offset;
 uint8_t dtm_bits;
+uint dtm_bitmask;
+
 int movecnt_offset;
 uint8_t movecnt_bits;
+uint movecnt_bitmask;
+
 int capture_possible_flag_offset;
+const uint capture_possible_flag_bitmask = 1;
 
 #define MOVECNT_MASK ((1 << movecnt_bits) - 1)
 
@@ -6940,66 +6945,19 @@ int capture_possible_flag_offset;
 
 typedef uint16_t entry_t;
 
-class unsigned_bitfield {
-protected:
-    entry_t * ptr;
-    int offset;
-    int length;
-    uint bitmask;
-
-public:
-    unsigned_bitfield(entry_t *ptr, int offset, int length) : ptr(ptr), offset(offset), length(length) {
-	bitmask = (1 << length) - 1;
-    }
-
-    unsigned_bitfield & operator=(entry_t val) {
-	*ptr &= ~(bitmask << offset);
-	*ptr |= (val & bitmask) << offset;
-	return *this;
-    }
-    operator entry_t () {
-	return (*ptr >> offset) & bitmask;
-    }
-};
-
-class signed_bitfield : public unsigned_bitfield {
-public:
-    signed_bitfield(entry_t *ptr, int offset, int length) : unsigned_bitfield(ptr, offset, length) {
-    }
-
-    signed_bitfield & operator=(int val) {
-	*ptr &= ~(bitmask << offset);
-	*ptr |= (val & bitmask) << offset;
-	return *this;
-    }
-    operator int () {
-	//	return unsigned_bitfield::operator entry_t();
-	// int val = (entry_t) *this;
-	int val = (*ptr >> offset) & bitmask;
-	if (val > (bitmask >> 1)) val |= (~ (bitmask >> 1));
-	return val;
-    }
-};
-
 class entry {
     friend class atomic_entry;
 private:
     entry_t e;
 
 public:
-    signed_bitfield dtm;
-    unsigned_bitfield movecnt;
-    unsigned_bitfield capture_possible;
 
-    entry(entry_t e = 0):
-	e(e), dtm(&(this->e), dtm_offset, dtm_bits),
-	movecnt(&(this->e), movecnt_offset, movecnt_bits),
-	capture_possible(&(this->e), capture_possible_flag_offset, 1) {
+    entry(entry_t e = 0): e(e) {
     }
 
     entry(int movecnt, int dtm): entry(0) {
-	this->movecnt = movecnt;
-	this->dtm = dtm;
+	set_movecnt(movecnt);
+	set_raw_DTM(dtm);
     }
 
     entry (const entry & val): entry(val.e) {
@@ -7017,47 +6975,67 @@ public:
 
     operator entry_t () { return e; }
 
+    unsigned int get_unsigned_bitfield(int offset, int bitmask) {
+	return (e >> offset) & bitmask;
+    }
+
+    void set_unsigned_bitfield(int offset, int bitmask, unsigned int val) {
+	e &= ~(bitmask << offset);
+	e |= (val & bitmask) << offset;
+    }
+
+    int get_signed_bitfield(int offset, int bitmask) {
+	int val = (e >> offset) & bitmask;
+	if (val > (bitmask >> 1)) val |= (~ (bitmask >> 1));
+	return val;
+    }
+
+    void set_signed_bitfield(int offset, int bitmask, int val) {
+	e &= ~(bitmask << offset);
+	e |= (val & bitmask) << offset;
+    }
+
     void set_raw_DTM(int dtm) {
-	this->dtm = dtm;
+	set_signed_bitfield(dtm_offset, dtm_bitmask, dtm);
     }
 
     int get_raw_DTM(void) {
-	return this->dtm;
+	return get_signed_bitfield(dtm_offset, dtm_bitmask);
     }
 
     void set_movecnt(unsigned int movecnt) {
-	this->movecnt = movecnt;
+	set_unsigned_bitfield(movecnt_offset, movecnt_bitmask, movecnt);
     }
 
     unsigned int get_movecnt(void) {
-	return this->movecnt;
+	return get_unsigned_bitfield(movecnt_offset, movecnt_bitmask);
     }
 
     bool does_PTM_win(void) {
-	return (movecnt == MOVECNT_PTM_WINS_PROPED) || (movecnt == MOVECNT_PTM_WINS_UNPROPED);
+	return (get_movecnt() == MOVECNT_PTM_WINS_PROPED) || (get_movecnt() == MOVECNT_PTM_WINS_UNPROPED);
     }
 
     bool does_PNTM_win(void) {
-	return (movecnt == MOVECNT_PNTM_WINS_PROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
+	return (get_movecnt() == MOVECNT_PNTM_WINS_PROPED) || (get_movecnt() == MOVECNT_PNTM_WINS_UNPROPED);
     }
 
     bool is_unpropagated(void) {
-	return (movecnt == MOVECNT_PTM_WINS_UNPROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
+	return (get_movecnt() == MOVECNT_PTM_WINS_UNPROPED) || (get_movecnt() == MOVECNT_PNTM_WINS_UNPROPED);
     }
 
     bool is_normal_movecnt(void) {
-	return (movecnt > MOVECNT_PNTM_WINS_UNPROPED) && (movecnt <= MOVECNT_MAX);
+	return (get_movecnt() > MOVECNT_PNTM_WINS_UNPROPED) && (get_movecnt() <= MOVECNT_MAX);
     }
 
     void set_PTM_wins_unpropagated(void) {
-	movecnt = MOVECNT_PTM_WINS_UNPROPED;
+	set_movecnt(MOVECNT_PTM_WINS_UNPROPED);
     }
 
     void flag_as_propagated(void) {
 	if (does_PTM_win()) {
-	    movecnt = MOVECNT_PTM_WINS_PROPED;
+	    set_movecnt(MOVECNT_PTM_WINS_PROPED);
 	} else {
-	    movecnt = MOVECNT_PNTM_WINS_PROPED;
+	    set_movecnt(MOVECNT_PNTM_WINS_PROPED);
 	}
     }
 
@@ -7078,7 +7056,7 @@ public:
      */
 
     int get_DTM(void) {
-	return (does_PTM_win() || does_PNTM_win()) ? dtm : 0;
+	return (does_PTM_win() || does_PNTM_win()) ? get_raw_DTM() : 0;
     }
 };
 
@@ -7295,6 +7273,8 @@ class EntriesTable {
 	for (movecnt_bits = 1; (max_white_moves > MOVECNT_MAX)
 		 || (max_black_moves > MOVECNT_MAX); movecnt_bits ++);
 
+	movecnt_bitmask = (1 << movecnt_bits) - 1;
+
 	if (current_tb->variant == VARIANT_NORMAL) {
 	    capture_possible_flag_offset = -1;
 	    movecnt_offset = 0;
@@ -7309,6 +7289,8 @@ class EntriesTable {
 
 	bits = 8 * sizeof(entry_t);
 	dtm_bits = bits - dtm_offset;
+
+	dtm_bitmask = (1 << dtm_bits) - 1;
     }
 
     void print_current_format(void) {
@@ -14501,7 +14483,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.818 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.819 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
