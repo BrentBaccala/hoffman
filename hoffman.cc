@@ -716,7 +716,7 @@ index_t debug_futuremove = INVALID_INDEX;
 
 int fatal_errors = 0;
 
-bool printing_progress_dots = false;
+std::atomic<bool> printing_progress_dots(false);
 
 char * error_report_url = nullptr;
 char * completion_report_url = nullptr;
@@ -831,24 +831,31 @@ void info (const char * format, ...)
  * progress dot every tb->max_index/progress_dots indices.  Since we're using integer arithmetic,
  * that result is rounded DOWN, so the result of dividing by it gets shifted UP.  That could result
  * in an extra dot or two getting printed, so we limit ourselves to progress_dot dots.
+ *
+ * XXX lots of problems in this routine, starting with the divisions that get done every time it
+ * runs
  */
 
 void print_progress_dot(tablebase_t *tb, index_t index)
 {
     static std::mutex mutex;
+    static std::atomic<int> progress_dots_printed(0);
+
+    if (index == 0) progress_dots_printed = 0;
 
     if (progress_dots > 0) {
 	if ((index + 1) % (tb->max_index / progress_dots) == 0) {
-	    if ((index + 1) / (tb->max_index / progress_dots) <= progress_dots) {
+	    if (progress_dots_printed < progress_dots) {
 		std::lock_guard<std::mutex> _(mutex);
 
 		if (! printing_progress_dots) {
-		    for (int i=1; i < (index + 1) / (tb->max_index / progress_dots); i++) {
+		    for (int i=1; i <= progress_dots_printed; i++) {
 			fputc(' ', stderr);
 		    }
 		}
 		fputc('.', stderr);
 		printing_progress_dots = true;
+		progress_dots_printed ++;
 	    }
 	}
     }
@@ -5363,7 +5370,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.822 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.823 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7930,8 +7937,6 @@ void back_propagate_index_within_table(index_t index, int reflection);
 
 void back_propagate_index(index_t index, int target_dtm)
 {
-    print_progress_dot(current_tb, index);
-
     nonatomic_entry expected = entriesTable[index];
 
     if (((! tracking_dtm) && expected.is_unpropagated())
@@ -7974,6 +7979,8 @@ void back_propagate_index(index_t index, int target_dtm)
 
 	/* Track statistics.  For the "player wins" statistics, we don't want to count illegal (PNTM
 	 * mated) positions, so we don't increment anything if DTM is 1.
+	 *
+	 * XXX make these stats thread local
 	 */
 
 	positions_finalized_this_pass ++;
@@ -7987,18 +7994,25 @@ void back_propagate_index(index_t index, int target_dtm)
 }
 
 /* If we're not using proptables, then this section of code spawns off a number of threads to run
- * through the entries table, intra-table backpropagating to a single target DTM.
+ * through the entries table, intra-table backpropagating to a single target DTM.  We could go
+ * though the table sequentially, each thread picking the next available entry for processing, but
+ * that would create a lot of contention between threads as they access adjacent entries that occupy
+ * the same cache line.  Instead, we break the table into large blocks and assign a thread to each
+ * one.
+ *
+ * XXX What happens if part of the table back props a lot faster than another part?  For, say, a ten
+ * minute pass with two threads, a 1% difference in speed would result in six seconds of idle time
+ * for the faster thread.  Maybe we should use smaller blocks, just big enough to avoid cache
+ * conflicts.  On the other hand, Intel processors recognize sequential data access patterns and
+ * prefetch data from memory, so there is a clear advantage to a simple sequential access pattern.
  */
 
-std::atomic<index_t> next_backprop_index;
-
-void non_proptable_thread(int target_dtm)
+void back_propagate_section(index_t start_index, index_t end_index, int target_dtm)
 {
-    while (1) {
-	index_t index = (next_backprop_index ++);
+    index_t index;
 
-	if (index > current_tb->max_index) break;
-
+    for (index = start_index; index <= end_index; index++) {
+	print_progress_dot(current_tb, index);
 	back_propagate_index(index, target_dtm);
     }
 }
@@ -8007,12 +8021,21 @@ void non_proptable_pass(int target_dtm)
 {
     std::thread t[num_threads];
     unsigned int thread;
+    index_t block_size = (current_tb->max_index+1)/num_threads;
 
     entriesTable->set_threads(num_threads);
-    next_backprop_index = 0;
 
     for (thread = 0; thread < num_threads; thread ++) {
-	t[thread] = std::thread(non_proptable_thread, target_dtm);
+	index_t start_index = thread*block_size;
+	index_t end_index;
+
+        if (thread != num_threads-1) {
+            end_index = (thread+1)*block_size - 1;
+        } else {
+            end_index = current_tb->max_index;
+        }
+
+	t[thread] = std::thread(back_propagate_section, start_index, end_index, target_dtm);
     }
 
     for (thread = 0; thread < num_threads; thread ++) {
@@ -14286,7 +14309,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.822 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.823 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
