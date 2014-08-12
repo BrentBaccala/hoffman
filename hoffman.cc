@@ -5363,7 +5363,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.820 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.821 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6910,12 +6910,7 @@ unsigned int tablebase::get_basic(index_t index)
 
 /* THE ENTRIES TABLE - this is the tablebase under construction
  *
- * EntriesTable is a virtual class so that calling functions don't need to know the details of table
- * format, but none of the functions called in our inner loops are virtual.
- *
- * These "add one" functions (atomically) add one to the count in question, subtract one from the
- * total move count, and flag the position as 'ready for propagation' (maybe this is just a move
- * count of zero) if the total move count goes to zero.
+ * EntriesTable is a virtual class so that it can be implemented either in memory or on disk.
  *
  * PTM = Player to Move
  * PNTM = Player not to Move
@@ -6948,9 +6943,17 @@ typedef uint16_t entry_t;
 
 extern "C++" {
 
-    template <typename T, bool isAtomic>
+/* A templated class for tablebase entries.
+ *
+ * We want two slightly different versions, one for atomic entries in a big, shared array, and
+ * another for non-atomic entries manipulated by a single thread.  They're almost the same except
+ * that the atomic version provides an extra function, compare_exchange_weak(), and the logic to set
+ * an entry is more sophisticated.
+ */
+
+template <typename T, bool isAtomic>
 class entry {
-	// friend class atomic_entry;
+
 private:
     T e;
 
@@ -6959,32 +6962,17 @@ public:
     entry(entry_t e = 0): e(e) {
     }
 
-    entry(int movecnt, int dtm): entry(0) {
+    entry(unsigned int movecnt, int dtm): entry(0) {
 	set_movecnt(movecnt);
 	set_raw_DTM(dtm);
     }
 
-    entry (const entry & val): entry(val.e) {
-    }
-
-    entry & operator=(entry &&val) {
-	e = (T) val.e;
-	return *this;
-    }
-
-    entry & operator=(const entry &val) {
-	e = (T) val.e;
-	return *this;
-    }
-
-	// operator T () { return e; }
-
-
-
+#if 0
     entry & operator=(entry_t &&val) {
 	e = val;
 	return *this;
     }
+#endif
 
     entry & operator=(const entry_t &val) {
 	e = val;
@@ -7002,9 +6990,22 @@ public:
 	return (e >> offset) & bitmask;
     }
 
-    void set_unsigned_bitfield(int offset, int bitmask, unsigned int val) {
+    template <bool A=isAtomic>
+    typename std::enable_if<!A, void>::type set_unsigned_bitfield(int offset, int bitmask, unsigned int val) {
 	e &= ~(bitmask << offset);
 	e |= (val & bitmask) << offset;
+    }
+
+    template <bool A=isAtomic>
+    typename std::enable_if<A, void>::type set_unsigned_bitfield(int offset, int bitmask, unsigned int val) {
+	entry_t expected = e;
+	entry_t desired;
+
+	do {
+	    desired = expected;
+	    desired &= ~(bitmask << offset);
+	    desired |= (val & bitmask) << offset;
+	} while (! e.compare_exchange_weak(expected, desired));
     }
 
     int get_signed_bitfield(int offset, int bitmask) {
@@ -7014,8 +7015,7 @@ public:
     }
 
     void set_signed_bitfield(int offset, int bitmask, int val) {
-	e &= ~(bitmask << offset);
-	e |= (val & bitmask) << offset;
+	set_unsigned_bitfield(offset, bitmask, val);
     }
 
     void set_raw_DTM(int dtm) {
@@ -7080,9 +7080,9 @@ public:
      * -1 = PTM checkmated
      * -N = PNTM will have a mate in N-1 after this move
      *
-     * The difference between get_DTM (here) and reading the dtm bitfield directly is that if the
-     * DTM value is less than zero (PNTM wins), but movecnt is still greater than zero, then there
-     * are still moves that might let PTM slip off the hook, so in that case we indicate draw.
+     * The difference between get_DTM (here) and get_raw_DTM (above) is that if the DTM value is
+     * less than zero (PNTM wins), but movecnt is still greater than zero, then there are still
+     * moves that might let PTM slip off the hook, so in that case we indicate draw.
      *
      * There's also a tablebase member function called get_DTM() that retrieves this value from a
      * computed tablebase, while this function works on the tablebase under construction.
@@ -7098,155 +7098,6 @@ typedef entry<std::atomic<entry_t>, true> atomic_entry;
 typedef entry<entry_t, false> nonatomic_entry;
 
 }
-
-#if 0
-
-class unsigned_atomic_bitfield {
-protected:
-    std::atomic<entry_t> * ptr;
-    int offset;
-    int length;
-    uint bitmask;
-
-public:
-    unsigned_atomic_bitfield(std::atomic<entry_t> *ptr, int offset, int length) : ptr(ptr), offset(offset), length(length) {
-	bitmask = (1 << length) - 1;
-    }
-
-    unsigned_atomic_bitfield & operator=(entry_t val) {
-
-	entry_t expected = *ptr;
-	entry_t desired;
-
-	do {
-	    desired = expected;
-	    desired &= ~(bitmask << offset);
-	    desired |= (val & bitmask) << offset;
-	} while (! ptr->compare_exchange_weak(expected, desired));
-
-	return *this;
-    }
-    operator entry_t () {
-	return (*ptr >> offset) & bitmask;
-    }
-};
-
-class signed_atomic_bitfield : public unsigned_atomic_bitfield {
-public:
-    signed_atomic_bitfield(std::atomic<entry_t> *ptr, int offset, int length) : unsigned_atomic_bitfield(ptr, offset, length) {
-    }
-
-    operator int () {
-	int val = (*ptr >> offset) & bitmask;
-	if (val > (bitmask >> 1)) val |= (~ (bitmask >> 1));
-	return val;
-    }
-};
-
-class atomic_entry {
-private:
-    std::atomic<entry_t> e;
-
-public:
-
-    signed_atomic_bitfield dtm;
-    unsigned_atomic_bitfield movecnt;
-    unsigned_atomic_bitfield capture_possible;
-
-    atomic_entry(entry_t e = 0):
-	e(e), dtm(&(this->e), dtm_offset, dtm_bits),
-	movecnt(&(this->e), movecnt_offset, movecnt_bits),
-	capture_possible(&(this->e), capture_possible_flag_offset, 1) {
-    }
-
-    atomic_entry & operator=(entry_t &&val) {
-	e = val;
-	return *this;
-    }
-
-    atomic_entry & operator=(const entry_t &val) {
-	e = val;
-	return *this;
-    }
-
-    operator entry_t () { return e; }
-
-    operator entry () { return entry(e); }
-
-    bool compare_exchange_weak(entry expected, entry desired) {
-	return e.compare_exchange_weak(expected.e, desired.e);
-    }
-
-#if 0
-    void set_raw_DTM(int dtm) {
-	this->dtm = dtm;
-    }
-#endif
-
-    int get_raw_DTM(void) {
-	return this->dtm;
-    }
-
-#if 0
-    void set_movecnt(unsigned int movecnt) {
-	this->movecnt = movecnt;
-    }
-#endif
-
-    unsigned int get_movecnt(void) {
-	return this->movecnt;
-    }
-
-    bool get_capture_possible_flag(void) {
-	//if (capture_possible_flag_offset == -1) return false;
-	//return get_bit_field(pointer(index), offset(index) + capture_possible_flag_offset);
-	return capture_possible;
-    }
-
-    void set_capture_possible_flag(bool flag) {
-	//if (capture_possible_flag_offset == -1) return;
-	//set_bit_field(pointer(index), offset(index) + capture_possible_flag_offset, flag);
-	capture_possible = flag;
-    }
-
-    bool does_PTM_win(void) {
-	return (movecnt == MOVECNT_PTM_WINS_PROPED) || (movecnt == MOVECNT_PTM_WINS_UNPROPED);
-    }
-
-    bool does_PNTM_win(void) {
-	return (movecnt == MOVECNT_PNTM_WINS_PROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
-    }
-
-    bool is_unpropagated(void) {
-	return (movecnt == MOVECNT_PTM_WINS_UNPROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
-    }
-
-    bool is_normal_movecnt(void) {
-	return (movecnt > MOVECNT_PNTM_WINS_UNPROPED) && (movecnt <= MOVECNT_MAX);
-    }
-
-    /* Get DTM in a more suitable format
-     *
-     * 0 = draw
-     * 1 = PNTM in check (illegal position)
-     * N = mate in N-1
-     * -1 = PTM checkmated
-     * -N = PNTM will have a mate in N-1 after this move
-     *
-     * The difference between get_DTM (here) and get_raw_DTM (above) is that if the DTM value is
-     * less than zero (PNTM wins), but movecnt is still greater than zero, then there are still
-     * moves that might let PTM slip off the hook, so in that case we indicate draw.
-     *
-     * There's also a tablebase member function called get_DTM() that retrieves this value from a
-     * computed tablebase, while this function works on the tablebase under construction.
-     */
-
-    int get_DTM(void) {
-	return (does_PTM_win() || does_PNTM_win()) ? dtm : 0;
-    }
-};
-
-#endif
 
 class EntriesTable {
 
@@ -7391,111 +7242,6 @@ class EntriesTable {
 	    terminate();
 	}
     }
-
-#if 0
-    /* If we do need to lock, I use spinlocks.  They're a bit dangerous because a bug can cause them
-     * to lock forever, but bugs are dangerous anyway.  They only require a single bit.
-     */
-
-    void lock_entry(index_t index) {
-	if (locking_bit_offset >= 0) {
-	    if (spinlock_bit_field(pointer(index), offset(index) + locking_bit_offset)) {
-		contended_indices ++;
-	    }
-	}
-    }
-
-    void unlock_entry(index_t index) {
-	if (locking_bit_offset >= 0) {
-	    set_bit_field(pointer(index), offset(index) + locking_bit_offset, 0);
-	}
-    }
-
-    /* The remaining method functions in the class access an individual entry in the table and do
-     * so atomically, because we might share multiple entries in a single machine word.
-     */
-
-    int get_raw_DTM(index_t index) {
-	if (! tracking_dtm) return 0;
-	return get_int_field(pointer(index), offset(index) + dtm_offset, dtm_bits);
-    }
-
-    void set_raw_DTM(index_t index, int dtm) {
-	if (! tracking_dtm) return;
-	set_int_field(pointer(index), offset(index) + dtm_offset, dtm_bits, dtm);
-    }
-
-    int get_movecnt(index_t index) {
-	return get_unsigned_int_field(pointer(index), offset(index) + movecnt_offset, movecnt_bits);
-    }
-
-    void set_movecnt(index_t index, unsigned int movecnt) {
-	set_unsigned_int_field(pointer(index), offset(index) + movecnt_offset, movecnt_bits, movecnt);
-    }
-
-    bool get_capture_possible_flag(index_t index) {
-	if (capture_possible_flag_offset == -1) return false;
-	return get_bit_field(pointer(index), offset(index) + capture_possible_flag_offset);
-    }
-
-    void set_capture_possible_flag(index_t index, bool flag) {
-	if (capture_possible_flag_offset == -1) return;
-	set_bit_field(pointer(index), offset(index) + capture_possible_flag_offset, flag);
-    }
-
-    bool does_PTM_win(index_t index) {
-	return (get_movecnt(index) == MOVECNT_PTM_WINS_PROPED)
-	    || (get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED);
-    }
-
-    bool does_PNTM_win(index_t index) {
-	return (get_movecnt(index) == MOVECNT_PNTM_WINS_PROPED)
-	    || (get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
-    }
-
-    bool is_unpropagated(index_t index) {
-	return (get_movecnt(index) == MOVECNT_PTM_WINS_UNPROPED)
-	    || (get_movecnt(index) == MOVECNT_PNTM_WINS_UNPROPED);
-    }
-
-    bool is_normal_movecnt(index_t index) {
-	return (get_movecnt(index) > MOVECNT_PNTM_WINS_UNPROPED)
-	    && (get_movecnt(index) <= MOVECNT_MAX);
-    }
-
-    void set_PTM_wins_unpropagated(index_t index) {
-	set_movecnt(index, MOVECNT_PTM_WINS_UNPROPED);
-    }
-
-    void flag_as_propagated(index_t index) {
-	/* assert(is_unpropagated(index)); */
-	if (does_PTM_win(index)) {
-	    set_movecnt(index, MOVECNT_PTM_WINS_PROPED);
-	} else {
-	    set_movecnt(index, MOVECNT_PNTM_WINS_PROPED);
-	}
-    }
-
-    /* Get DTM in a more suitable format
-     *
-     * 0 = draw
-     * 1 = PNTM in check (illegal position)
-     * N = mate in N-1
-     * -1 = PTM checkmated
-     * -N = PNTM will have a mate in N-1 after this move
-     *
-     * The difference between get_DTM (here) and get_raw_DTM (above) is that if the DTM value is
-     * less than zero (PNTM wins), but movecnt is still greater than zero, then there are still
-     * moves that might let PTM slip off the hook, so in that case we indicate draw.
-     *
-     * There's also a tablebase member function called get_DTM() that retrieves this value from a
-     * computed tablebase, while this function works on the tablebase under construction.
-     */
-
-    int get_DTM(index_t index) {
-	return (does_PTM_win(index) || does_PNTM_win(index)) ? get_raw_DTM(index) : 0;
-    }
-#endif
 
     /* Seven possible ways we can initialize a tablebase entry for a position:
      *  - it's illegal
@@ -7646,6 +7392,7 @@ public:
     EntriesTablePtr & operator=(EntriesTable * table) {
 	entriesTable = table;
     }
+
     atomic_entry & operator[](index_t index) {
 	return (*entriesTable)[index];
     }
@@ -14526,7 +14273,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.820 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.821 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
