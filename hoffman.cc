@@ -5363,7 +5363,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.821 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.822 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6939,23 +6939,30 @@ const uint capture_possible_flag_bitmask = 1;
 #define MOVECNT_MAX (MOVECNT_MASK - 4)
 #define MOVECNT_PNTM_WINS_UNPROPED (0)
 
-typedef uint16_t entry_t;
-
-extern "C++" {
-
 /* A templated class for tablebase entries.
  *
  * We want two slightly different versions, one for atomic entries in a big, shared array, and
  * another for non-atomic entries manipulated by a single thread.  They're almost the same except
  * that the atomic version provides an extra function, compare_exchange_weak(), and the logic to set
- * an entry is more sophisticated.
+ * bitfields in an entry is more sophisticated.
  */
 
-template <typename T, bool isAtomic>
-class entry {
+extern "C++" {
+
+template <typename T, bool isAtomic> class entry;
+
+typedef uint16_t entry_t;
+
+typedef entry<std::atomic<entry_t>, true> atomic_entry;
+typedef entry<entry_t, false> nonatomic_entry;
+
+template <typename T, bool isAtomic> class entry {
 
 private:
     T e;
+
+    /* nonatomic_entry needs to expose 'e' to atomic_entry */
+    friend atomic_entry;
 
 public:
 
@@ -6967,24 +6974,26 @@ public:
 	set_raw_DTM(dtm);
     }
 
-#if 0
-    entry & operator=(entry_t &&val) {
-	e = val;
+    /* atomic_entry can be implicitly converted to nonatomic_entry (when we read the array), and a
+     * nonatomic_entry can be atomically assigned to an atomic_entry (when we write the array).  A
+     * third possibility, for atomic_entry only, is compare_exchange_weak().
+     */
+
+    template <bool A=isAtomic, typename = typename std::enable_if<A>::type>
+    operator nonatomic_entry () { return nonatomic_entry(e); }
+
+    template <bool A=isAtomic, typename = typename std::enable_if<A>::type>
+    atomic_entry & operator=(const nonatomic_entry &val) {
+	e = val.e;
 	return *this;
     }
-#endif
 
-    entry & operator=(const entry_t &val) {
-	e = val;
-	return *this;
+    template <bool A=isAtomic, typename = typename std::enable_if<A>::type>
+    bool compare_exchange_weak(nonatomic_entry & expected, nonatomic_entry desired) {
+	return e.compare_exchange_weak(expected.e, desired.e);
     }
 
-    operator entry_t () { return e; }
-
-    template <bool A=isAtomic>
-    typename std::enable_if<A, bool>::type compare_exchange_weak(entry_t expected, entry_t desired) {
-	return e.compare_exchange_weak(expected, desired);
-    }
+    /* Bitfields can be accessed for both types.  Atomic access requires a bit more work, though. */
 
     unsigned int get_unsigned_bitfield(int offset, int bitmask) {
 	return (e >> offset) & bitmask;
@@ -7008,6 +7017,8 @@ public:
 	} while (! e.compare_exchange_weak(expected, desired));
     }
 
+    /* Signed bitfields need to be sign-extended when we read from them. */
+
     int get_signed_bitfield(int offset, int bitmask) {
 	int val = (e >> offset) & bitmask;
 	if (val > (bitmask >> 1)) val |= (~ (bitmask >> 1));
@@ -7017,6 +7028,8 @@ public:
     void set_signed_bitfield(int offset, int bitmask, int val) {
 	set_unsigned_bitfield(offset, bitmask, val);
     }
+
+    /* Now we have method functions that access specific bitfields. */
 
     void set_raw_DTM(int dtm) {
 	set_signed_bitfield(dtm_offset, dtm_bitmask, dtm);
@@ -7043,6 +7056,8 @@ public:
 	if (capture_possible_flag_offset == -1) return;
 	set_unsigned_bitfield(capture_possible_flag_offset, 1, flag);
     }
+
+    /* More complicated combinations of the movecnt field */
 
     bool does_PTM_win(void) {
 	return (get_movecnt() == MOVECNT_PTM_WINS_PROPED) || (get_movecnt() == MOVECNT_PTM_WINS_UNPROPED);
@@ -7094,8 +7109,6 @@ public:
 };
 
 
-typedef entry<std::atomic<entry_t>, true> atomic_entry;
-typedef entry<entry_t, false> nonatomic_entry;
 
 }
 
@@ -7774,7 +7787,7 @@ EntriesTablePtr entriesTable;
 
 inline void PTM_wins(index_t index, int dtm)
 {
-    nonatomic_entry expected = (entry_t) entriesTable[index];
+    nonatomic_entry expected = entriesTable[index];
     nonatomic_entry desired;
 
 #ifdef DEBUG_MOVE
@@ -7820,7 +7833,7 @@ inline void PTM_wins(index_t index, int dtm)
 
 inline void add_one_to_PNTM_wins(index_t index, int dtm)
 {
-    nonatomic_entry expected = (entry_t) entriesTable[index];
+    nonatomic_entry expected = entriesTable[index];
     nonatomic_entry desired;
 
 #ifdef DEBUG_MOVE
@@ -7919,7 +7932,7 @@ void back_propagate_index(index_t index, int target_dtm)
 {
     print_progress_dot(current_tb, index);
 
-    nonatomic_entry expected = (entry_t) entriesTable[index];
+    nonatomic_entry expected = entriesTable[index];
 
     if (((! tracking_dtm) && expected.is_unpropagated())
 	|| (expected.get_DTM() == target_dtm)) {
@@ -14273,7 +14286,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.821 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.822 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
