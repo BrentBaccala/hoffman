@@ -5370,7 +5370,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.823 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.824 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6770,6 +6770,8 @@ bool parse_move_in_global_position(char *movestr, global_position_t *global)
 
 inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 {
+    static std::mutex cache_lock;
+    std::lock_guard<std::mutex> _(cache_lock);
 
     /* assert(index % 8 == 0); */
 
@@ -6779,6 +6781,7 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
     }
 
     if (index != tb->next_read_index) {
+	info ("Seeking for %" PRIindex " from %" PRIindex "\n", index, tb->next_read_index);
 	if (zlib_seek(tb->file, tb->offset + (off_t) (index * tb->format.bits / 8), SEEK_SET)
 	    != tb->offset + (off_t) (index * tb->format.bits / 8)) {
 	    fatal("Seek failed for index %" PRIindex " in fetch_entry_pointer()\n", index);
@@ -6800,28 +6803,15 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 
 inline void * fetch_entry_pointer(tablebase_t *tb, index_t index)
 {
-    static tablebase_t *cached_tb = nullptr;
-    static void *cached_entries = nullptr;
-    static index_t *cached_indices = nullptr;
-    static int num_cached_entries = 0;
-    int n = 0;
-
-    static std::vector<std::thread::id> cached_thread_ids;
-    static std::mutex cache_lock;
-
-    std::lock_guard<std::mutex> _(cache_lock);
+    thread_local tablebase_t * cached_tb = nullptr;
+    thread_local char * cached_entries = nullptr;
+    thread_local index_t cached_index;
 
     /* If we're switching tablebases, discard old cache */
 
     if (cached_tb && (cached_tb != tb)) {
-	free(cached_entries);
-	free(cached_indices);
+	delete [] cached_entries;
 	cached_entries = nullptr;
-	cached_indices = nullptr;
-
-	cached_thread_ids.resize(0);
-
-	num_cached_entries = 0;
 	cached_tb = nullptr;
     }
 
@@ -6833,66 +6823,22 @@ inline void * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	/* The calculation here is that tb->format.bits bytes is enough space for 8 entries. */
 
-	cached_entries = malloc(tb->format.bits * num_threads + 2*sizeof(int));
+	cached_entries = new char[tb->format.bits];
 
-	VALGRIND_HG_DISABLE_CHECKING(cached_entries, tb->format.bits * num_threads + 2*sizeof(int));
+    } else if ((index & ~7) == cached_index) {
 
-	cached_indices = (index_t *) malloc(sizeof(index_t) * num_threads);
-	memset(cached_indices, 0xff, sizeof(index_t) * num_threads);
+	/* We've got the requested index in the cache */
 
-	cached_thread_ids.resize(num_threads);
+	return cached_entries;
+
     }
 
-    /* Find current thread's cache line */
+    /* Otherwise, fetch it and cache it */
 
-    for (n = 0; n < num_cached_entries; n++) {
-	if (cached_thread_ids[n] == std::this_thread::get_id()) break;
-    }
+    cached_index = index & ~7;
+    prefetch_entry_pointer(tb, cached_index, cached_entries);
 
-    /* If cache is non existant or isn't big enough, build it or expand it */
-
-    if (n == num_cached_entries) {
-	num_cached_entries ++;
-
-	cached_thread_ids[n] = std::this_thread::get_id();
-    }
-
-    if (n == num_threads) {
-	fatal("More threads than cache lines in fetch_entry_pointer()!\n");
-    }
-
-    /* Check to see if we've got the requested index in the current thread's cache line */
-
-    if ((index & ~7) == cached_indices[n]) {
-
-	/* fall through */
-
-    } else {
-
-	/* Check to see if we've got the requested index in ANY cache line.  If so, copy it to the
-	 * current thread's cache line.
-	 */
-
-	for (int i=0; i<num_cached_entries; i++) {
-
-	    if ((index & ~7) == cached_indices[i]) {
-		memcpy((char *)cached_entries + n*tb->format.bits, (char *)cached_entries + i*tb->format.bits,
-		       tb->format.bits);
-		cached_indices[n] = cached_indices[i];
-		break;
-	    }
-
-	}
-
-	/* Otherwise, fetch it and cache it */
-
-	if ((index & ~7) != cached_indices[n]) {
-	    cached_indices[n] = index & ~7;
-	    prefetch_entry_pointer(tb, cached_indices[n], (char *)cached_entries + n * tb->format.bits);
-	}
-    }
-
-    return (char *)cached_entries + n * tb->format.bits;
+    return cached_entries;
 }
 
 int tablebase::get_DTM(index_t index)
@@ -9612,14 +9558,11 @@ std::atomic<index_t> next_future_index;
 
 /* The four futurebase back-propagation functions
  *
- * All work the same way - they are passed in the current thread number, cast as a pointer, which is
- * only used to tell fetch_entry_pointer_n which cache entry to use (and that probably could be
- * cleaned up).  These functions handle threading differently from the intra-table case, where we
- * split the tablebase up into N sections for the N threads and let each thread tear into its own
- * section.  This time, we're reading the futurebase from disk, and it might be biiiig, so we want
- * to proceed through it sequentially.  Each thread calls the appropriate one of these functions,
- * and they loop until everything is done.  Right at the beginning of the loop you see that they
- * mutex lock to pick up the next future index that needs to be processed.
+ * These functions handle threading differently from the intra-table case, where we split the
+ * tablebase up into N sections for the N threads and let each thread tear into its own section.
+ * This time, we're reading the futurebase from disk, and it might be biiiig, so we want to proceed
+ * through it sequentially.  Each thread reads a portion of the futurebase, calls the appropriate
+ * one of these functions for every index in that portion, and loops until everything is done.
  *
  * reflections[] is a global variable that gets computed for every futurebase.  See comments on
  * compute_reflections().
@@ -10482,24 +10425,35 @@ void back_propagate_futurebase_thread(void (* backprop_function)(index_t, int))
 {
     index_t future_index;
     int reflection;
+    const int stride = 8;
+    int i;
 
     /* XXX We could limit the range of future_index here to only those positions where the promoted
      * piece appears on the back rank, but watch out for reflection.
      */
 
-    while ((future_index = (next_future_index ++)) <= futurebase->max_index) {
+    while ((future_index = next_future_index.fetch_add(stride)) <= futurebase->max_index) {
 
-	/* It's tempting to break out the loop here if the position isn't a win, but we want to
-	 * track futuremoves in order to make sure we don't miss one, so the simplest way to do that
-	 * is to run this loop even for draws.
+	/* XXX bit of a race condition here - we want to read the futurebase sequentially from disk,
+	 * but another thread could get ahead of us and read before we do
 	 */
 
-	print_progress_dot(futurebase, future_index);
+	for (i=0; i<stride; i++) {
 
-	for (reflection = 0; reflection < max_reflection; reflection ++) {
-	    (*backprop_function)(future_index, reflection);
+	    if (future_index + i <= futurebase->max_index) {
+
+		/* It's tempting to break out the loop here if the position isn't a win, but we want
+		 * to track futuremoves in order to make sure we don't miss one, so the simplest way
+		 * to do that is to run this loop even for draws.
+		 */
+
+		print_progress_dot(futurebase, future_index + i);
+
+		for (reflection = 0; reflection < max_reflection; reflection ++) {
+		    (*backprop_function)(future_index + i, reflection);
+		}
+	    }
 	}
-
     }
 }
 
@@ -14309,7 +14263,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.823 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.824 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
