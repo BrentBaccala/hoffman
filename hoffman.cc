@@ -97,6 +97,7 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <type_traits>
 
 extern "C" {
 
@@ -5362,7 +5363,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.819 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.820 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6945,10 +6946,13 @@ const uint capture_possible_flag_bitmask = 1;
 
 typedef uint16_t entry_t;
 
+extern "C++" {
+
+    template <typename T, bool isAtomic>
 class entry {
-    friend class atomic_entry;
+	// friend class atomic_entry;
 private:
-    entry_t e;
+    T e;
 
 public:
 
@@ -6964,16 +6968,35 @@ public:
     }
 
     entry & operator=(entry &&val) {
-	e = (entry_t) val.e;
+	e = (T) val.e;
 	return *this;
     }
 
     entry & operator=(const entry &val) {
-	e = (entry_t) val.e;
+	e = (T) val.e;
+	return *this;
+    }
+
+	// operator T () { return e; }
+
+
+
+    entry & operator=(entry_t &&val) {
+	e = val;
+	return *this;
+    }
+
+    entry & operator=(const entry_t &val) {
+	e = val;
 	return *this;
     }
 
     operator entry_t () { return e; }
+
+    template <bool A=isAtomic>
+    typename std::enable_if<A, bool>::type compare_exchange_weak(entry_t expected, entry_t desired) {
+	return e.compare_exchange_weak(expected, desired);
+    }
 
     unsigned int get_unsigned_bitfield(int offset, int bitmask) {
 	return (e >> offset) & bitmask;
@@ -7009,6 +7032,16 @@ public:
 
     unsigned int get_movecnt(void) {
 	return get_unsigned_bitfield(movecnt_offset, movecnt_bitmask);
+    }
+
+    bool get_capture_possible_flag(void) {
+	if (capture_possible_flag_offset == -1) return false;
+	return get_unsigned_bitfield(capture_possible_flag_offset, 1);
+    }
+
+    void set_capture_possible_flag(bool flag) {
+	if (capture_possible_flag_offset == -1) return;
+	set_unsigned_bitfield(capture_possible_flag_offset, 1, flag);
     }
 
     bool does_PTM_win(void) {
@@ -7059,6 +7092,14 @@ public:
 	return (does_PTM_win() || does_PNTM_win()) ? get_raw_DTM() : 0;
     }
 };
+
+
+typedef entry<std::atomic<entry_t>, true> atomic_entry;
+typedef entry<entry_t, false> nonatomic_entry;
+
+}
+
+#if 0
 
 class unsigned_atomic_bitfield {
 protected:
@@ -7204,6 +7245,8 @@ public:
 	return (does_PTM_win() || does_PNTM_win()) ? dtm : 0;
     }
 };
+
+#endif
 
 class EntriesTable {
 
@@ -7490,7 +7533,7 @@ class EntriesTable {
 	//(*this)[index].movecnt = movecnt;
 	// if (tracking_dtm) (*this)[index].dtm = dtm;
 
-	(*this)[index] = entry(movecnt, dtm);
+	(*this)[index] = nonatomic_entry(movecnt, dtm);
     }
 
     void initialize_entry_as_illegal(index_t index) {
@@ -7984,8 +8027,8 @@ EntriesTablePtr entriesTable;
 
 inline void PTM_wins(index_t index, int dtm)
 {
-    entry expected = entriesTable[index];
-    entry desired;
+    nonatomic_entry expected = (entry_t) entriesTable[index];
+    nonatomic_entry desired;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -8030,8 +8073,8 @@ inline void PTM_wins(index_t index, int dtm)
 
 inline void add_one_to_PNTM_wins(index_t index, int dtm)
 {
-    entry expected = entriesTable[index];
-    entry desired;
+    nonatomic_entry expected = (entry_t) entriesTable[index];
+    nonatomic_entry desired;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -8129,7 +8172,7 @@ void back_propagate_index(index_t index, int target_dtm)
 {
     print_progress_dot(current_tb, index);
 
-    entry expected = entriesTable[index];
+    nonatomic_entry expected = (entry_t) entriesTable[index];
 
     if (((! tracking_dtm) && expected.is_unpropagated())
 	|| (expected.get_DTM() == target_dtm)) {
@@ -8140,7 +8183,7 @@ void back_propagate_index(index_t index, int target_dtm)
 	 * XXX Could the DTM change (don't think so)
 	 */
 
-	entry desired;
+	nonatomic_entry desired;
 
 	do {
 	    desired = expected;
@@ -14483,7 +14526,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.819 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.820 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
