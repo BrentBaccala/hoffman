@@ -5370,7 +5370,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.824 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.825 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6768,7 +6768,13 @@ bool parse_move_in_global_position(char *movestr, global_position_t *global)
  * Probably should bury most of these functions as private within tablebase_t.
  */
 
-inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
+    thread_local tablebase_t * cached_tb = nullptr;
+    thread_local char * cached_entries = nullptr;
+    thread_local index_t cached_index;
+
+    const int futurebase_stride = 8;
+
+index_t prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 {
     static std::mutex cache_lock;
     std::lock_guard<std::mutex> _(cache_lock);
@@ -6780,8 +6786,13 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
 	terminate();
     }
 
-    if (index != tb->next_read_index) {
-	info ("Seeking for %" PRIindex " from %" PRIindex "\n", index, tb->next_read_index);
+    if (index == INVALID_INDEX) {
+	index = tb->next_read_index;
+    } else if (index != tb->next_read_index) {
+	if (index < tb->next_read_index) {
+	    /* Backwards seeks in a compressed file are expensive, but occasionally unavoidable */
+	    info("Seeking backwards for %" PRIindex " from %" PRIindex "\n", index, tb->next_read_index);
+	}
 	if (zlib_seek(tb->file, tb->offset + (off_t) (index * tb->format.bits / 8), SEEK_SET)
 	    != tb->offset + (off_t) (index * tb->format.bits / 8)) {
 	    fatal("Seek failed for index %" PRIindex " in fetch_entry_pointer()\n", index);
@@ -6799,14 +6810,12 @@ inline void prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
     }
 
     tb->next_read_index += 8;
+
+    return index;
 }
 
-inline void * fetch_entry_pointer(tablebase_t *tb, index_t index)
+index_t fetch_entry_pointer(tablebase_t *tb, index_t index = INVALID_INDEX)
 {
-    thread_local tablebase_t * cached_tb = nullptr;
-    thread_local char * cached_entries = nullptr;
-    thread_local index_t cached_index;
-
     /* If we're switching tablebases, discard old cache */
 
     if (cached_tb && (cached_tb != tb)) {
@@ -6815,9 +6824,9 @@ inline void * fetch_entry_pointer(tablebase_t *tb, index_t index)
 	cached_tb = nullptr;
     }
 
-    /* If cache is non existant, build it */
-
     if (! cached_tb) {
+
+	/* If cache is non existant, build it */
 
 	cached_tb = tb;
 
@@ -6829,34 +6838,38 @@ inline void * fetch_entry_pointer(tablebase_t *tb, index_t index)
 
 	/* We've got the requested index in the cache */
 
-	return cached_entries;
+	return cached_index;
 
     }
 
-    /* Otherwise, fetch it and cache it */
+    /* Round down to stride boundary, fetch it, and cache it */
 
-    cached_index = index & ~7;
-    prefetch_entry_pointer(tb, cached_index, cached_entries);
+    if (index != INVALID_INDEX) index &= ~7;
 
-    return cached_entries;
+    cached_index = prefetch_entry_pointer(tb, index, cached_entries);
+
+    return cached_index;
 }
 
 int tablebase::get_DTM(index_t index)
 {
-    return get_int_field(fetch_entry_pointer(this, index),
+    fetch_entry_pointer(this, index);
+    return get_int_field(cached_entries,
 			 format.dtm_offset + ((index % 8) * format.bits),
 			 format.dtm_bits);
 }
 
 bool tablebase::get_flag(index_t index)
 {
-    return get_bit_field(fetch_entry_pointer(this, index),
+    fetch_entry_pointer(this, index);
+    return get_bit_field(cached_entries,
 			 format.flag_offset + ((index % 8) * format.bits));
 }
 
 unsigned int tablebase::get_basic(index_t index)
 {
-    return get_unsigned_int_field(fetch_entry_pointer(this, index),
+    fetch_entry_pointer(this, index);
+    return get_unsigned_int_field(cached_entries,
 				  format.basic_offset + ((index % 8) * format.bits), 2);
 }
 
@@ -10425,20 +10438,20 @@ void back_propagate_futurebase_thread(void (* backprop_function)(index_t, int))
 {
     index_t future_index;
     int reflection;
-    const int stride = 8;
     int i;
 
     /* XXX We could limit the range of future_index here to only those positions where the promoted
      * piece appears on the back rank, but watch out for reflection.
      */
 
-    while ((future_index = next_future_index.fetch_add(stride)) <= futurebase->max_index) {
+    //while ((future_index = next_future_index.fetch_add(futurebase_stride)) <= futurebase->max_index) {
+    while ((future_index = fetch_entry_pointer(futurebase)) <= futurebase->max_index) {
 
 	/* XXX bit of a race condition here - we want to read the futurebase sequentially from disk,
 	 * but another thread could get ahead of us and read before we do
 	 */
 
-	for (i=0; i<stride; i++) {
+	for (i=0; i<futurebase_stride; i++) {
 
 	    if (future_index + i <= futurebase->max_index) {
 
@@ -14263,7 +14276,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.824 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.825 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
