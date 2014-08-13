@@ -560,6 +560,8 @@ typedef struct tablebase {
     uint total_legal_king_positions;
 
     struct format format;
+
+    index_t fetch_entry(index_t index);
     int get_DTM(index_t index);
     bool get_flag(index_t index);
     unsigned int get_basic(index_t index);
@@ -5370,7 +5372,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.825 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.826 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5479,7 +5481,7 @@ tablebase_t * preload_futurebase_from_file(char *filename)
 }
 
 /* open_futurebase() reopens a preloaded futurebase, seeks to the start of the data, and leaves the
- * file open and ready to read the first entry with fetch_entry_pointer().
+ * file open and ready to read the first entry with fetch_entry().
  */
 
 void open_futurebase(tablebase_t * tb)
@@ -6760,65 +6762,37 @@ bool parse_move_in_global_position(char *movestr, global_position_t *global)
 /* We're reading from a compressed tablebase, possibly over the network.  We want to make a single
  * sequential pass over the file, even though we may have multiple threads running concurrently.
  *
- * We keep a cache with eight entries in each cache line, ensuring that each cache line is
- * byte-aligned even if the entries themselves are not.  We maintain as many cache lines as we have
- * threads.  We can have multiple identical cache lines which allows any one thread to move ahead
- * without affecting the others,
+ * We read blocks of futurebase_stride entries at a time, and maintain as many blocks as we have
+ * threads.
  *
- * Probably should bury most of these functions as private within tablebase_t.
+ * fetch_entry() can be called with an index, which causes that index to be read into the current
+ * thread's block, or it can be called with no arguments, which causes the next sequential block to
+ * be read from disk.  In either case, the starting index in the block is returned.
+ *
+ * futurebase_stride is the number of index entries to read as a block.  It must be a power of two,
+ * so that we can round down to the stride boundary by ANDing with ~(futurebase_stride - 1), and it
+ * must be at least eight, so that futurebase_stride/8 is an exact division and blocks fit evenly on
+ * byte boundaries, even if the entries themselves are not byte-aligned.
  */
 
-    thread_local tablebase_t * cached_tb = nullptr;
-    thread_local char * cached_entries = nullptr;
-    thread_local index_t cached_index;
+const int futurebase_stride = 16384;
 
-    const int futurebase_stride = 8;
+static_assert((futurebase_stride & (futurebase_stride - 1)) == 0,
+	      "futurebase_stride must be a power of two");
+static_assert(futurebase_stride >= 8,
+	      "futurebase_stride must be at least eight");
 
-index_t prefetch_entry_pointer(tablebase_t *tb, index_t index, void *entry)
+thread_local tablebase_t * cached_tb = nullptr;
+thread_local char * cached_entries = nullptr;
+thread_local index_t cached_index;
+
+index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
 {
-    static std::mutex cache_lock;
-    std::lock_guard<std::mutex> _(cache_lock);
+    /* If we're switching tablebases, discard old cache.  No locking required since we're working on
+     * thread_local variables.
+     */
 
-    /* assert(index % 8 == 0); */
-
-    if (tb->file == nullptr) {
-	fatal("fetch_entry_pointer() called on a non-preloaded tablebase\n");
-	terminate();
-    }
-
-    if (index == INVALID_INDEX) {
-	index = tb->next_read_index;
-    } else if (index != tb->next_read_index) {
-	if (index < tb->next_read_index) {
-	    /* Backwards seeks in a compressed file are expensive, but occasionally unavoidable */
-	    info("Seeking backwards for %" PRIindex " from %" PRIindex "\n", index, tb->next_read_index);
-	}
-	if (zlib_seek(tb->file, tb->offset + (off_t) (index * tb->format.bits / 8), SEEK_SET)
-	    != tb->offset + (off_t) (index * tb->format.bits / 8)) {
-	    fatal("Seek failed for index %" PRIindex " in fetch_entry_pointer()\n", index);
-	}
-	tb->next_read_index = index;
-    }
-
-    if (zlib_read(tb->file, (char *) entry, tb->format.bits) != tb->format.bits) {
-	/* Might get a short read at the end of an older tablebase that doesn't round up to blocks
-	 * of eight entries.
-	 */
-	if (tb->next_read_index + 8 < tb->max_index) {
-	    fatal("fetch_entry_pointer() hit EOF reading from disk\n");
-	}
-    }
-
-    tb->next_read_index += 8;
-
-    return index;
-}
-
-index_t fetch_entry_pointer(tablebase_t *tb, index_t index = INVALID_INDEX)
-{
-    /* If we're switching tablebases, discard old cache */
-
-    if (cached_tb && (cached_tb != tb)) {
+    if (cached_tb && (cached_tb != this)) {
 	delete [] cached_entries;
 	cached_entries = nullptr;
 	cached_tb = nullptr;
@@ -6828,13 +6802,18 @@ index_t fetch_entry_pointer(tablebase_t *tb, index_t index = INVALID_INDEX)
 
 	/* If cache is non existant, build it */
 
-	cached_tb = tb;
+	if (file == nullptr) {
+	    fatal("fetch_entry() called on a non-preloaded tablebase\n");
+	    terminate();
+	}
 
-	/* The calculation here is that tb->format.bits bytes is enough space for 8 entries. */
+	cached_tb = this;
 
-	cached_entries = new char[tb->format.bits];
+	/* The calculation here is that format.bits bytes is enough space for 8 entries. */
 
-    } else if ((index & ~7) == cached_index) {
+	cached_entries = new char[format.bits * futurebase_stride / 8];
+
+    } else if ((index & ~(futurebase_stride - 1)) == cached_index) {
 
 	/* We've got the requested index in the cache */
 
@@ -6842,35 +6821,67 @@ index_t fetch_entry_pointer(tablebase_t *tb, index_t index = INVALID_INDEX)
 
     }
 
-    /* Round down to stride boundary, fetch it, and cache it */
+    /* Round down to stride boundary */
 
-    if (index != INVALID_INDEX) index &= ~7;
+    if (index != INVALID_INDEX) index &= ~(futurebase_stride - 1);
 
-    cached_index = prefetch_entry_pointer(tb, index, cached_entries);
+    /* Mutex lock to protect the remainder of this function.  Only one thread should be accessing
+     * tablebase variable next_read_index or calling zlib.
+     */
 
-    return cached_index;
+    static std::mutex cache_lock;
+    std::lock_guard<std::mutex> _(cache_lock);
+
+    if (index == INVALID_INDEX) {
+	index = next_read_index;
+    } else if (index != next_read_index) {
+	if (index < next_read_index) {
+	    /* Backwards seeks in a compressed file are expensive, but occasionally unavoidable */
+	    info("Seeking backwards for %" PRIindex " from %" PRIindex "\n", index, next_read_index);
+	}
+	if (zlib_seek(file, offset + (off_t) (index * format.bits / 8), SEEK_SET)
+	    != offset + (off_t) (index * format.bits / 8)) {
+	    fatal("Seek failed for index %" PRIindex " in fetch_entry()\n", index);
+	}
+	next_read_index = index;
+    }
+
+    if (zlib_read(file, cached_entries, format.bits * futurebase_stride / 8) != format.bits * futurebase_stride / 8) {
+	/* Might get a short read at the end of a tablebase, otherwise complain */
+
+	if (next_read_index + futurebase_stride < max_index) {
+	    fatal("fetch_entry() hit EOF reading from disk\n");
+	}
+    }
+
+    next_read_index += futurebase_stride;
+
+    cached_index = index;
+
+    return index;
 }
+
+/* To retrieve fields in the tablebase, we call fetch_entry() to both get the index into
+ * cached_entries and return the starting index, which is subtracted to get an index offset into
+ * cached_entries.
+ */
 
 int tablebase::get_DTM(index_t index)
 {
-    fetch_entry_pointer(this, index);
-    return get_int_field(cached_entries,
-			 format.dtm_offset + ((index % 8) * format.bits),
-			 format.dtm_bits);
+    index -= fetch_entry(index);
+    return get_int_field(cached_entries, format.dtm_offset + index * format.bits, format.dtm_bits);
 }
 
 bool tablebase::get_flag(index_t index)
 {
-    fetch_entry_pointer(this, index);
-    return get_bit_field(cached_entries,
-			 format.flag_offset + ((index % 8) * format.bits));
+    index -= fetch_entry(index);
+    return get_bit_field(cached_entries, format.flag_offset + index * format.bits);
 }
 
 unsigned int tablebase::get_basic(index_t index)
 {
-    fetch_entry_pointer(this, index);
-    return get_unsigned_int_field(cached_entries,
-				  format.basic_offset + ((index % 8) * format.bits), 2);
+    index -= fetch_entry(index);
+    return get_unsigned_int_field(cached_entries, format.basic_offset + index * format.bits, 2);
 }
 
 
@@ -10444,12 +10455,7 @@ void back_propagate_futurebase_thread(void (* backprop_function)(index_t, int))
      * piece appears on the back rank, but watch out for reflection.
      */
 
-    //while ((future_index = next_future_index.fetch_add(futurebase_stride)) <= futurebase->max_index) {
-    while ((future_index = fetch_entry_pointer(futurebase)) <= futurebase->max_index) {
-
-	/* XXX bit of a race condition here - we want to read the futurebase sequentially from disk,
-	 * but another thread could get ahead of us and read before we do
-	 */
+    while ((future_index = futurebase->fetch_entry()) <= futurebase->max_index) {
 
 	for (i=0; i<futurebase_stride; i++) {
 
@@ -14276,7 +14282,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.825 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.826 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
