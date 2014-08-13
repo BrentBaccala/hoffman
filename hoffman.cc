@@ -5372,7 +5372,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.826 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.827 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12707,19 +12707,15 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 /* Tablebase initialization is the first important place where we can use threads to speed things up
  * on a multi-processor machine, though my experience is that actual gains are highly architecture
  * specific.  Since initialization only touches single entries in the tablebase (no propagation at
- * this point), thread synchronization is trivial.
+ * this point), thread synchronization is fairly trivial.  We do initialize entire sections instead
+ * of individual entries to avoid processors fighting over cache lines.
  */
 
-std::atomic<index_t> next_initialization_index(0);
-
-void initialize_tablebase_thread(void)
+void initialize_tablebase_section(index_t start_index, index_t end_index)
 {
-    while (1) {
+    index_t index;
 
-	index_t index = (next_initialization_index ++);
-
-	if (index > current_tb->max_index) break;
-
+    for (index=start_index; index <= end_index; index++) {
 	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 
 	set_unsigned_int_field(current_tb->futurevectors, bit_offset, current_tb->futurevector_bits,
@@ -12731,9 +12727,19 @@ void initialize_tablebase(void)
 {
     std::thread t[num_threads];
     unsigned int thread;
+    index_t block_size = (current_tb->max_index+1)/num_threads;
 
     for (thread = 0; thread < num_threads; thread ++) {
-	t[thread] = std::thread(initialize_tablebase_thread);
+	index_t start_index = thread*block_size;
+	index_t end_index;
+
+	if (thread != num_threads-1) {
+	    end_index = (thread+1)*block_size - 1;
+	} else {
+	    end_index = current_tb->max_index;
+	}
+
+	t[thread] = std::thread(initialize_tablebase_section, start_index, end_index);
     }
 
     for (thread = 0; thread < num_threads; thread ++) {
@@ -14282,7 +14288,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.826 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.827 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
