@@ -5369,7 +5369,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.828 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.829 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7461,34 +7461,13 @@ class DiskEntriesTable: public EntriesTable {
 
     }
 
-    /* This is the in-memory portion of the table.  entry_buffer_size is the size of the buffer in
-     * entries.  Since it is a multiple of 8, the entry buffer is always byte-aligned, and
-     * entry_buffer_bytes is its size in bytes.  On any given pass, we might be expanding each entry
-     * by a single bit from the previous pass.  In this case, input_entry_buffer_bytes will be
-     * smaller than entry_buffer_bytes, and we expand the buffer when we read it.
-     */
+    /* This is the in-memory portion of the table, and the index number of the first entry.  */
 
-    void * entry_buffer;
-    index_t entry_buffer_start;
     static const int entry_buffer_size = 4096;
-    int entry_buffer_bytes;
-    int input_entry_buffer_bytes;
 
-    bool resize_on_next_pass;
+    atomic_entry entries[entry_buffer_size];
 
-    void resize_entry_buffer_if_needed(void) {
-
-	if (entry_buffer_bytes != input_entry_buffer_bytes) {
-	    for (index_t index = entry_buffer_size - 1; index >= 0; index --) {
-		unsigned int field = get_unsigned_int_field(entry_buffer, index * (bits-1), bits-1);
-		int dtm = get_int_field(entry_buffer, index * (bits-1) + dtm_offset, dtm_bits-1);
-		set_unsigned_int_field(entry_buffer, index * bits, bits, field);
-		set_int_field(entry_buffer, index * bits + dtm_offset, dtm_bits, dtm);
-		if (index == 0) break;
-	    }
-	}
-
-    }
+    index_t entry_buffer_start;
 
     void advance_entry_buffer(void)
     {
@@ -7497,9 +7476,9 @@ class DiskEntriesTable: public EntriesTable {
 	/* write the old entry buffer to disk */
 
 	if (compress_entries_table) {
-	    zlib_write(entries_write_file, (char *) entry_buffer, entry_buffer_bytes);
+	    zlib_write(entries_write_file, (char *) entries, sizeof(entries));
 	} else {
-	    do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+	    do_write(entries_write_fd, entries, sizeof(entries));
 	}
 
 	/* read the new entry buffer if we've got an input file, or just zero it out if we don't
@@ -7508,17 +7487,16 @@ class DiskEntriesTable: public EntriesTable {
 
 	if (entries_read_fd != -1) {
 	    if (compress_entries_table) {
-		ret = zlib_read(entries_read_file, (char *) entry_buffer, input_entry_buffer_bytes);
+		ret = zlib_read(entries_read_file, (char *) entries, sizeof(entries));
 	    } else {
-		ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
+		ret = read(entries_read_fd, entries, sizeof(entries));
 	    }
-	    if (ret != input_entry_buffer_bytes) {
+	    if (ret != sizeof(entries)) {
 		fatal("entries read: %s\n", strerror(errno));
 		return;
 	    }
-	    resize_entry_buffer_if_needed();
 	} else {
-	    memset(entry_buffer, 0, entry_buffer_bytes);
+	    std::fill(entries, entries + entry_buffer_size, nonatomic_entry());
 	}
 
 	entry_buffer_start += entry_buffer_size;
@@ -7546,29 +7524,29 @@ class DiskEntriesTable: public EntriesTable {
 	 */
 
 	if (compress_entries_table) {
-	    zlib_write(entries_write_file, (char *) entry_buffer, entry_buffer_bytes);
+	    zlib_write(entries_write_file, (char *) entries, sizeof(entries));
 	} else {
-	    do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+	    do_write(entries_write_fd, entries, sizeof(entries));
 	}
 
 	if (entries_read_fd != -1) {
 	    if (compress_entries_table) {
-		while ((ret = zlib_read(entries_read_file, (char *) entry_buffer, input_entry_buffer_bytes)) != 0) {
-		    if (ret != input_entry_buffer_bytes) {
+		while ((ret = zlib_read(entries_read_file, (char *) entries, sizeof(entries))) != 0) {
+		    if (ret != sizeof(entries)) {
 			fatal("entries read: %s\n", strerror(errno));
 			return;
 		    }
-		    resize_entry_buffer_if_needed();
-		    zlib_write(entries_write_file, (char *) entry_buffer, entry_buffer_bytes);
+		    // XXX check error return?
+		    zlib_write(entries_write_file, (char *) entries, sizeof(entries));
 		}
 	    } else {
-		while ((ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes)) != 0) {
-		    if (ret != input_entry_buffer_bytes) {
+		while ((ret = read(entries_read_fd, entries, sizeof(entries))) != 0) {
+		    if (ret != sizeof(entries)) {
 			fatal("entries read: %s\n", strerror(errno));
 			return;
 		    }
-		    resize_entry_buffer_if_needed();
-		    do_write(entries_write_fd, entry_buffer, entry_buffer_bytes);
+		    // XXX check error return?
+		    do_write(entries_write_fd, entries, sizeof(entries));
 		}
 	    }
 	}
@@ -7594,36 +7572,17 @@ class DiskEntriesTable: public EntriesTable {
 	open_new_entries_write_file();
 
 	entry_buffer_start = 0;
-	input_entry_buffer_bytes = entry_buffer_bytes;
-
-	if (resize_on_next_pass) {
-	    dtm_bits ++;
-	    bits ++;
-	    entry_buffer_bytes = (entry_buffer_size * bits) / 8;
-
-	    entry_buffer = realloc(entry_buffer, entry_buffer_bytes + 2*sizeof(int));
-	    if (entry_buffer == nullptr) {
-		fatal("Can't realloc entries buffer\n");
-		return;
-	    }
-
-	    info("Resizing entries table during next pass: ");
-	    print_current_format();
-
-	    resize_on_next_pass = 0;
-	}
 
 	if (compress_entries_table) {
-	    ret = zlib_read(entries_read_file, (char *) entry_buffer, input_entry_buffer_bytes);
+	    ret = zlib_read(entries_read_file, (char *) entries, sizeof(entries));
 	} else {
-	    ret = read(entries_read_fd, entry_buffer, input_entry_buffer_bytes);
+	    ret = read(entries_read_fd, entries, sizeof(entries));
 	}
 
-	if (ret != input_entry_buffer_bytes) {
+	if (ret != sizeof(entries)) {
 	    fatal("initial entries read: %s\n", strerror(errno));
 	    return;
 	}
-	resize_entry_buffer_if_needed();
     }
 
     void wait_for_all_threads_ready_then_reset(void) {
@@ -7652,21 +7611,9 @@ class DiskEntriesTable: public EntriesTable {
 
 	int ret;
 
-	entry_buffer_bytes = (entry_buffer_size * bits) / 8;
-	input_entry_buffer_bytes = entry_buffer_bytes;
-	resize_on_next_pass = 0;
-
 	threads_waiting_to_advance = 0;
 	threads_waiting_to_reset = 0;
 
-	/* first, malloc the entries buffer */
-
-	entry_buffer = malloc(entry_buffer_bytes + 2*sizeof(int));
-	if (entry_buffer == nullptr) {
-	    fatal("Can't malloc entries buffer\n");
-	    return;
-	}
-	memset(entry_buffer, 0, entry_buffer_bytes);
 	entry_buffer_start = 0;
 
 	open_new_entries_write_file();
@@ -7684,8 +7631,8 @@ class DiskEntriesTable: public EntriesTable {
 		return;
 	    }
 
-	    ret = read(entries_read_fd, entry_buffer, entry_buffer_bytes);
-	    if (ret != entry_buffer_bytes) {
+	    ret = read(entries_read_fd, entries, sizeof(entries));
+	    if (ret != sizeof(entries)) {
 		fatal("initial entries read: %s\n", strerror(errno));
 		return;
 	    }
@@ -7698,7 +7645,6 @@ class DiskEntriesTable: public EntriesTable {
     }
 
     ~DiskEntriesTable(void) {
-	free(entry_buffer);
 	if (entries_read_fd != -1) {
 	    zlib_close(entries_read_file);
 	    unlink(entries_read_filename);
@@ -7707,26 +7653,10 @@ class DiskEntriesTable: public EntriesTable {
 	unlink(entries_write_filename);
     }
 
-    /* If our DTM field is about to overflow, resize it one bit larger */
-
-    void verify_DTM_field_size(int dtm) {
-	if (! tracking_dtm) return;
-	if (((dtm > 0) && (dtm > ((1 << (dtm_bits - 1)) - 1)))
-	    || ((dtm < 0) && (dtm < -(1 << (dtm_bits - 1))))) {
-	    resize_on_next_pass = 1;
-	}
-    }
-
-    void * pointer(index_t index) {
+    atomic_entry & operator[](index_t index) {
 	advance_entry_buffer_to_index(index);
 
-	return entry_buffer;
-    }
-
-    bitoffset offset(index_t index) {
-	advance_entry_buffer_to_index(index);
-
-	return (index - entry_buffer_start) * bits;
+	return entries[index - entry_buffer_start];
     }
 };
 
@@ -14276,7 +14206,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.828 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.829 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
