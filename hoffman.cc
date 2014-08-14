@@ -99,6 +99,14 @@
 #include <condition_variable>
 #include <type_traits>
 
+#include <fstream>
+#include <iostream>
+
+#include <boost/iostreams/device/file.hpp>
+#include <boost/iostreams/stream.hpp>
+#include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filter/gzip.hpp>
+
 extern "C" {
 
 #ifndef _LARGEFILE64_SOURCE
@@ -5369,7 +5377,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.829 $ $Locker: baccala $");
+    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.830 $ $Locker: baccala $");
     xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12758,13 +12766,15 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
  * of the error checking on 'filename' is done by the caller, since we'd like that error checking to
  * occur prior to a time consuming generation run, rather than when we're ready to write the
  * finished product out.
+ *
+ * XXX put URL support back in
+ *
+ * XXX figure out boost iostreams error handling
  */
 
 void write_tablebase_to_file(tablebase_t *tb, char *filename)
 {
     xmlDocPtr doc;
-    index_t index;
-    void *file = nullptr;
     int dtm_bits;
     xmlNodePtr tablebase;
     xmlChar *buf;
@@ -12772,31 +12782,6 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
     int padded_size;
     char str[16];
     char entrybuf[MAX_FORMAT_BYTES];
-    void *entry = entrybuf;
-
-#ifdef HAVE_LIBFTP
-    if (strncmp(filename, "ftp:", 4) == 0) {
-	void *ptr = ftp_openurl(filename, "w");
-	if (ptr) {
-	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "w");
-	}
-    }
-#endif
-
-    if (file == nullptr) {
-	int fd;
-	fd = open(filename, O_WRONLY|O_CREAT|O_TRUNC|O_LARGEFILE, 0666);
-	if (fd != -1) {
-	    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-	}
-    }
-
-    if (file == nullptr) {
-	fatal("Can't open output tablebase '%s'\n", filename);
-	terminate();
-    }
-
-    info("Writing '%s'\n", filename);
 
     for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) && (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
 
@@ -12835,22 +12820,30 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	terminate();
     }
 
-    if (zlib_write(file, (char *) buf, size) != size) {
-	fatal("Tablebase write failed\n");
-	terminate();
-    }
+    info("Writing '%s'\n", filename);
 
-    if (padded_size > size) {
-	bzero(entrybuf, sizeof(entrybuf));
-	if (zlib_write(file, entrybuf, padded_size - size) != padded_size - size) {
-	    fatal("Tablebase write failed\n");
-	    terminate();
-	}
-    }
+    std::ofstream output_file;
+    output_file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
+    output_file.open(filename, std::ofstream::out | std::ofstream::binary | std::ofstream::trunc);
+
+    namespace io = boost::iostreams;
+
+    io::filtering_ostream outstream;
+
+    outstream.push(io::gzip_compressor());
+    outstream.push(output_file);
+
+    /* First we write an XML header */
+
+    outstream.write((char *) buf, size);
+
+    for (; size < padded_size; size ++) outstream << '\0';
 
     xmlFree(buf);
 
-    for (index = 0; index <= tb->max_index; index ++) {
+    /* Then we write the tablebase data */
+
+    for (index_t index = 0; index <= tb->max_index; index ++) {
 
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE) {
@@ -12864,7 +12857,7 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	 */
 
 	if (tb->format.dtm_bits > 0) {
-	    set_int_field(entry,
+	    set_int_field(entrybuf,
 			  tb->format.dtm_offset + ((index % 8) * tb->format.bits),
 			  tb->format.dtm_bits,
 			  entriesTable[index].get_DTM());
@@ -12884,20 +12877,20 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	    } else {
 		basic = 0;
 	    }
-	    set_unsigned_int_field(entry,
+	    set_unsigned_int_field(entrybuf,
 				   tb->format.basic_offset + ((index % 8) * tb->format.bits), 2,
 				   basic);
 	}
 
 	switch (tb->format.flag_type) {
 	case FORMAT_FLAG_WHITE_WINS:
-	    set_bit_field(entry,
+	    set_bit_field(entrybuf,
 			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
 			  (index_to_side_to_move(tb, index) == WHITE)
 			  ? entriesTable[index].does_PTM_win() : entriesTable[index].does_PNTM_win());
 	    break;
 	case FORMAT_FLAG_WHITE_DRAWS:
-	    set_bit_field(entry,
+	    set_bit_field(entrybuf,
 			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
 			  (index_to_side_to_move(tb, index) == WHITE)
 			  ? ! entriesTable[index].does_PNTM_win() : ! entriesTable[index].does_PTM_win());
@@ -12910,17 +12903,11 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 	 */
 
 	if ((index % 8 == 7) || (index == tb->max_index)) {
-	    if (zlib_write(file, (char *) entry, tb->format.bits) != tb->format.bits) {
-		fatal("Tablebase write failed\n");
-		terminate();
-	    }
+	    outstream.write(entrybuf, tb->format.bits);
 	}
     }
 
-    if (zlib_close(file) != 0) {
-	fatal("Tablebase write failed\n");
-	terminate();
-    }
+    /* File close is done implicitly by the destructor. */
 }
 
 /* The "master routine" for tablebase generation.
@@ -14206,7 +14193,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.829 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.830 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
