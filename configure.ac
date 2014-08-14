@@ -52,10 +52,13 @@ AC_CHECK_LIB(m, sqrt,, AC_MSG_ERROR([You must have the math library]))
 AC_CHECK_LIB(z, inflate,, AC_MSG_ERROR([You must have zlib]))
 AM_PATH_XML2(,,AC_MSG_ERROR(You must have libxml2))
 
+PKG_CHECK_MODULES(libxml, libxml++-2.6 >= 2.10.0)
+AC_SUBST(libxml_CFLAGS)
+AC_SUBST(libxml_LIBS)
+
 dnl Check for readline
 
-m4_include(vl_lib_readline.m4)
-VL_LIB_READLINE
+AX_LIB_READLINE
 
 if test "$ac_cv_header_readline_readline_h" = "yes"; then
    AC_SUBST([READLINE_CPPFLAGS], ["-I /usr/include/readline"])
@@ -119,5 +122,5 @@ else
 fi
 
 AC_CONFIG_HEADERS(config.h)
-AC_CONFIG_FILES([Makefile])
+AC_CONFIG_FILES([Makefile test/Makefile])
 AC_OUTPUT
