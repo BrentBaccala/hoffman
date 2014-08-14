@@ -1,9 +1,9 @@
 
 HOFFMAN ?= ./hoffman
 
-CXXFLAGS= @CXXFLAGS@ @READLINE_CPPFLAGS@ @XML_CPPFLAGS@ @CURL_CFLAGS@
+CXXFLAGS= @CXXFLAGS@ @READLINE_CPPFLAGS@ @XML_CPPFLAGS@ @CURL_CFLAGS@ @libxml_CFLAGS@
 
-hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@
+hoffman_OBJS = hoffman.o zlib_fopen.o @NALIMOVOBJS@ @CURLOBJS@ @FTPOBJS@ @libxml_LIBS@
 
 configure_SRCS = configure configure.ac Makefile.in config.h.in config.guess config.sub install-sh
 hoffman_SRCS = hoffman.cc probe.c egtb.cpp lock.h tbdecode.h url_fopen.c ftp_fopen.c zlib_fopen.c url_fopen.h ftp_fopen.h zlib_fopen.h bitlib.h
