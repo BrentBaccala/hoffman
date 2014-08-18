@@ -102,10 +102,16 @@
 #include <fstream>
 #include <iostream>
 
+#include <boost/lexical_cast.hpp>
+
+#include <boost/algorithm/string.hpp>
+
 #include <boost/iostreams/device/file.hpp>
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
+
+#include <libxml++/libxml++.h>
 
 extern "C" {
 
@@ -259,6 +265,74 @@ bool * negative_passes_needed = nullptr;
 
 
 /***** DATA STRUCTURES *****/
+
+/* From Guru of The Week #29 [http://www.gotw.ca/gotw/029.htm]
+ *
+ * The key here is to understand what a "string" actually is in standard C++. If you look in your
+ * trusty string header, you'll see something like this:
+ *
+ *  typedef basic_string<char> string;
+ *
+ * So string isn't really a class... it's a typedef of a template...
+ *
+ * basic_string supplies useful comparison functions that let you compare whether a string is equal
+ * to another, less than another, and so on...
+ *
+ * If we want these to behave differently, all we have to do is provide a different char_traits
+ * template!
+ *
+ */
+
+/* Hmmm... modifying char_traits sounds interesting, but I'm using Glib::ustring because that's what
+ * glib++ uses to get UTF-8 strings, and Glib::ustring doesn't use char_traits.  What it's got
+ * instead is a casefold() method that "returns a caseless representation of the UTF-8 string.  The
+ * resulting string doesn't correspond to any particular case, therefore the result is only useful
+ * to compare strings and should never be displayed to the user."
+ */
+
+/* Class 'bimap' is used for converting from strings in the XML to integer flags, but sometimes we
+ * need to convert a flag back to a string.  The crazy "using" statement is a C++11-ism to inherit
+ * the constructor.
+ */
+
+/* XXX use templates for this! */
+
+struct casefold_compare {
+    bool operator() (const Glib::ustring a, const Glib::ustring b) const {
+	return a.casefold() < b.casefold();
+    }
+};
+
+class bimap : public std::map<Glib::ustring, int, casefold_compare> {
+public:
+    using std::map<Glib::ustring, int, casefold_compare>::map;
+    Glib::ustring operator[] (int value)
+    {
+	for (auto it = begin(); it != end(); it++) {
+	    if (it->second == value) return it->first;
+	}
+	// XXX this isn't consistent with std::map usage
+	return nullptr;
+    }
+};
+
+struct casefold_compare2 {
+    bool operator() (const std::string a, const std::string b) const {
+	return boost::ilexicographical_compare(a, b);
+    }
+};
+
+class bimap2 : public std::map<std::string, int, casefold_compare2> {
+public:
+    using std::map<std::string, int, casefold_compare2>::map;
+    const char * operator[] (int value)
+    {
+	for (auto it = begin(); it != end(); it++) {
+	    if (it->second == value) return it->first.c_str();
+	}
+	return nullptr;
+    }
+};
 
 /* Futuremoves are moves like captures and promotions that lead to a different tablebase.
  * 'futurevectors' are bit vectors used to track which futuremoves have been handled in a particular
@@ -416,16 +490,18 @@ typedef struct {
 #define KNIGHT 4
 #define PAWN 5
 
-const char * piece_name[NUM_PIECES+1] = {"KING", "QUEEN", "ROOK", "BISHOP", "KNIGHT", "PAWN", nullptr};
-const char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
+bimap2 piece_name = {{"KING", KING}, {"QUEEN", QUEEN}, {"ROOK", ROOK},
+		    {"BISHOP", BISHOP}, {"KNIGHT", KNIGHT}, {"PAWN", PAWN}};
 
-const char * colors[3] = {"WHITE", "BLACK", nullptr};
+const char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
 
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
 
 #define WHITE 0
 #define BLACK 1
+
+bimap colors = {{"WHITE", WHITE}, {"BLACK", BLACK}};
 
 /* Possibilities for pawn promotions.  "2" means queen and knight, but that can cause some problems,
  * as I've learned the hard (and embarrassing) way.  "4" is typical, but "5" is used for suicide
@@ -458,17 +534,17 @@ struct format {
     int basic_offset;
 };
 
-const char * format_fields[] = {"dtm", "flag", "basic", nullptr};
-
 #define FORMAT_FIELD_DTM 0
 #define FORMAT_FIELD_FLAG 1
 #define FORMAT_FIELD_BASIC 2
 
-const char * format_flag_types[] = {"", "white-wins", "white-draws", nullptr};
+bimap format_fields = {{"dtm", FORMAT_FIELD_DTM}, {"flag", FORMAT_FIELD_FLAG}, {"basic", FORMAT_FIELD_BASIC}};
 
 #define FORMAT_FLAG_NONE 0
 #define FORMAT_FLAG_WHITE_WINS 1
 #define FORMAT_FLAG_WHITE_DRAWS 2
+
+bimap format_flag_types = {{"white-wins", FORMAT_FLAG_WHITE_WINS}, {"white-draws", FORMAT_FLAG_WHITE_DRAWS}};
 
 #define MAX_FORMAT_BYTES 16
 
@@ -509,12 +585,12 @@ struct format dtm_format = {0, 0,0, -1,FORMAT_FLAG_NONE, -1};
 #define RESTRICTION_DISCARD 1
 #define RESTRICTION_CONCEDE 2
 
-const char * restriction_types[4] = {"NONE", "DISCARD", "CONCEDE", nullptr};
+bimap restriction_types = {{"NONE", RESTRICTION_NONE}, {"DISCARD", RESTRICTION_DISCARD}, {"CONCEDE", RESTRICTION_CONCEDE}};
 
 #define FORMAT_FOURBYTE 0
 #define FORMAT_ONE_BYTE_DTM 1
 
-const char * formats[] = {"fourbyte", "one-byte-dtm", nullptr};
+bimap formats = {{"fourbyte", FORMAT_FOURBYTE}, {"one-byte-dtm", FORMAT_ONE_BYTE_DTM}};
 
 #define NAIVE_INDEX 0
 #define NAIVE2_INDEX 1
@@ -526,19 +602,24 @@ const char * formats[] = {"fourbyte", "one-byte-dtm", nullptr};
 
 #define DEFAULT_INDEX COMBINADIC4_INDEX
 
-const char * index_types[] = {"naive", "naive2", "simple", "compact", "no-en-passant", "combinadic3", "combinadic4"};
-
-const char * futurebase_types[] = {"capture", "promotion", "capture-promotion", "normal"};
+bimap index_types = {{"naive", NAIVE_INDEX}, {"naive2", NAIVE2_INDEX}, {"simple", SIMPLE_INDEX},
+		     {"compact", COMPACT_INDEX}, {"no-en-passant", NO_EN_PASSANT_INDEX},
+		     {"combinadic3", COMBINADIC3_INDEX}, {"combinadic4", COMBINADIC4_INDEX}};
 
 #define FUTUREBASE_CAPTURE 0
 #define FUTUREBASE_PROMOTION 1
 #define FUTUREBASE_CAPTURE_PROMOTION 2
 #define FUTUREBASE_NORMAL 3
 
-const char * variant_names[] = {"normal", "suicide"};
+bimap futurebase_types = 
+    {{"capture", FUTUREBASE_CAPTURE}, {"promotion", FUTUREBASE_PROMOTION},
+     {"capture-promotion", FUTUREBASE_CAPTURE_PROMOTION}, {"normal", FUTUREBASE_NORMAL}};
 
 #define VARIANT_NORMAL 0
 #define VARIANT_SUICIDE 1
+
+std::map<Glib::ustring, int> variant_names =
+    {{"normal", VARIANT_NORMAL}, {"suicide", VARIANT_SUICIDE}};
 
 typedef struct tablebase {
     int variant;
@@ -574,7 +655,7 @@ typedef struct tablebase {
 
     /* for futurebases only */
     void * file;
-    char * filename;
+    const char * filename;
     int futurebase_type;
     index_t next_read_index;
     off_t offset;
@@ -591,7 +672,7 @@ typedef struct tablebase {
      */
     int matching_local_semilegal_group[MAX_PIECES][64];
 
-    xmlDocPtr xml;
+    xmlpp::Document * xml;
 
     /* Pieces */
 
@@ -681,13 +762,18 @@ int proptable_MBs = 0;
 bool do_restart = false;
 int last_dtm_before_restart;
 
-xmlNodePtr generation_statistics;
-xmlNodePtr checkpoint_time;
-xmlNodePtr positive_passes_needed_node, negative_passes_needed_node;
-xmlNodePtr positive_passes_needed_text_node, negative_passes_needed_text_node;
+xmlpp::Element * generation_statistics;
+xmlpp::Element * checkpoint_time;
+xmlpp::Element * positive_passes_needed_node;
+xmlpp::Element * negative_passes_needed_node;
+xmlpp::Node * positive_passes_needed_text_node;
+xmlpp::Node * negative_passes_needed_text_node;
 
-xmlNodePtr user_time, system_time, real_time;
-xmlNodePtr page_faults, page_reclaims;
+xmlpp::Element * user_time;
+xmlpp::Element * system_time;
+xmlpp::Element * real_time;
+xmlpp::Element * page_faults;
+xmlpp::Element * page_reclaims;
 
 
 /* PROPTABLE_BITS for 16 byte entries:
@@ -725,8 +811,8 @@ int fatal_errors = 0;
 
 std::atomic<bool> printing_progress_dots(false);
 
-char * error_report_url = nullptr;
-char * completion_report_url = nullptr;
+Glib::ustring error_report_url;
+Glib::ustring completion_report_url;
 
 #define MAX_FATAL_ERRORS 10
 
@@ -789,6 +875,8 @@ void fatal (const char * format, ...)
     if (current_tb && current_tb->xml) {
 	vsnprintf(strbuf + strlen(strbuf), sizeof(strbuf) - strlen(strbuf), format, va);
 	if (index(strbuf, '\n')) {
+	    // XXX fix to use libxml++
+#if 0
 	    xmlNodePtr tablebase = xmlDocGetRootElement(current_tb->xml);
 
 	    *index(strbuf, '\n') = '\0';
@@ -797,6 +885,7 @@ void fatal (const char * format, ...)
 	    xmlNodeAddContent(tablebase, BAD_CAST "\n");
 
 	    memset(strbuf, 0, sizeof(strbuf));
+#endif
 	}
     }
 
@@ -3720,9 +3809,9 @@ int check_1000_indices(tablebase_t *tb)
  * An implicit format is just a <dtm/> tag without an enclosing format element.
  */
 
-bool parse_format(xmlNodePtr formatNode, struct format *format, bool expl)
+bool parse_format(xmlpp::Element * formatNode, struct format * format, bool expl)
 {
-    xmlNodePtr child;
+    auto children = formatNode->get_children();
 
     memset(format, 0, sizeof(struct format));
 
@@ -3730,50 +3819,37 @@ bool parse_format(xmlNodePtr formatNode, struct format *format, bool expl)
     format->flag_offset = -1;
     format->basic_offset = -1;
 
-    for (child = formatNode->children; child; child = child->next) {
-	if (child->type == XML_ELEMENT_NODE) {
-	    char * bitstr = (char *) xmlGetProp(child, BAD_CAST "bits");
-	    char * typestr;
-	    int bits = bitstr ? atoi(bitstr) : 0;
-	    int format_field = find_name_in_array((char *) child->name, format_fields);
+    for (auto child = children.begin(); child != children.end(); child ++) {
+	xmlpp::Element * child_element = dynamic_cast<xmlpp::Element *>(*child);
+	if (child_element != nullptr) {
+	    int bits = child_element->eval_to_number("@bits");
+	    try {
+		// this might throw an exception - see below
+		int format_field = format_fields.at(child_element->get_name());
 
-	    if (bitstr) xmlFree(bitstr);
-
-	    if (format_field == -1) {
-		if (expl) {
-		    fatal("Unknown field in format: %s\n", (char *) child->name);
-		    return false;
-		} else {
-		    continue;
-		}
-	    }
-
-	    switch (format_field) {
-	    case FORMAT_FIELD_DTM:
-		format->dtm_offset = 0;
-		format->dtm_bits = bits;
-		break;
-	    case FORMAT_FIELD_FLAG:
-		format->flag_offset = 0;
-		bits = 1;
-		typestr = (char *) xmlGetProp(child, BAD_CAST "type");
-		format->flag_type = find_name_in_array(typestr, format_flag_types);
-		if (typestr) xmlFree(typestr);
-		if (format->flag_type == -1) {
-		    fatal("'type' is a required property in format field 'flag'\n");
+		switch (format_field) {
+		case FORMAT_FIELD_DTM:
+		    format->dtm_offset = 0;
+		    format->dtm_bits = bits;
+		    break;
+		case FORMAT_FIELD_FLAG:
+		    format->flag_offset = 0;
+		    bits = 1;
+		    format->flag_type = format_flag_types.at(child_element->get_attribute_value("type"));
+		    break;
+		case FORMAT_FIELD_BASIC:
+		    format->basic_offset = 0;
+		    bits = 2;
+		    break;
+		default:
+		    fatal("Unknown field in format\n");
 		    return false;
 		}
-		break;
-	    case FORMAT_FIELD_BASIC:
-		format->basic_offset = 0;
-		bits = 2;
-		break;
-	    default:
-		fatal("Unknown field in format\n");
-		return false;
-	    }
 
-	    format->bits = bits;
+		format->bits = bits;
+	    } catch (std::out_of_range ex) {
+		/* ignore the exception, since we're scanning elements that might not be format fields */
+	    }
 	}
     }
 
@@ -3851,21 +3927,21 @@ bool tablebase_is_color_symmetric(tablebase_t *tb)
  * distinguish between them.
  */
 
-tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
+tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc, bool is_futurebase)
 {
     tablebase_t *tb;
     int generating_version = 0;
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
-    xmlNodePtr tablebase;
-    xmlNodePtr index_node;
-    xmlChar * format;
-    xmlChar * index;
-    xmlChar * modulus;
-    xmlChar * index_symmetry;
+
+    xmlpp::NodeSet result;
+    xmlpp::Element * tablebase;
+
+    Glib::ustring index;
+    xmlpp::Element * index_node;
+
+    Glib::ustring format;
+
     int piece, piece2, square, white_king_square, black_king_square, dir;
     int pass;
-    xmlChar * king_positions;
     int no_frozen_check_king_positions = 0;
     int starting_fatal_errors = fatal_errors;
     int piece_in_set = 1;
@@ -3881,25 +3957,21 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     /* Fetch tablebase from XML */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//tablebase", context);
-    tablebase = result->nodesetval->nodeTab[0];
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
+    result = tb->xml->get_root_node()->find("//tablebase");
+    tablebase = (xmlpp::Element *) result[0];
 
     /* Figure out which version of chess we're playing... */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//variant", context);
-    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	xmlChar * variant_name = xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "name");
-	tb->variant = find_name_in_array((char *) variant_name, variant_names);
-	if (tb->variant == -1) {
-	    fatal("Unknown variant '%s' specified\n", variant_name);
+    result = tablebase->find("//variant");
+
+    if (! result.empty()) {
+	Glib::ustring variant_name = result[0]->eval_to_string("//@name");
+	try {
+	    tb->variant = variant_names.at(variant_name);
+	} catch (std::exception & ex) {
+	    fatal("Unknown variant '%s' specified\n", variant_name.c_str());
 	}
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     switch (tb->variant) {
 
@@ -3919,76 +3991,36 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      * string!
      */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//program", context);
-    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	xmlChar * content = xmlNodeGetContent(result->nodesetval->nodeTab[0]);
-	if (content) {
-	    sscanf((char *) content, "Hoffman %*[$]Revision: 1.%u $", &generating_version);
-	    xmlFree(content);
-	}
+    result = tablebase->find("//program");
+    if (! result.empty()) {
+	sscanf(((xmlpp::Element *) result[0])->get_child_text()->get_content().c_str(), "Hoffman %*[$]Revision: 1.%u $", &generating_version);
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//@pawngen-condition", context);
-    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+    if (! tablebase->find("//@pawngen-condition").empty()) {
 	fatal("'pawngen-condition' attribute disallowed by Hoffman; preprocess with pawngen first\n");
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     /* Some statistics we'll use if this is a futurebase */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//max-dtm", context);
-    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	xmlChar * content = xmlNodeGetContent(result->nodesetval->nodeTab[0]);
-	if (content) {
-	    tb->max_dtm = atoi((char *) content);
-	    xmlFree(content);
-	}
-    }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
-
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//min-dtm", context);
-    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	xmlChar * content = xmlNodeGetContent(result->nodesetval->nodeTab[0]);
-	if (content) {
-	    tb->min_dtm = atoi((char *) content);
-	    xmlFree(content);
-	}
-    }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
+    tb->max_dtm = tablebase->eval_to_number("//max-dtm");
+    tb->min_dtm = tablebase->eval_to_number("//min-dtm");
 
     /* If there's a stalemate prune, fetch it */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//prune[attribute::move='stalemate']", context);
-    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "color");
-	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "type");
-	tb->stalemate_prune_type = find_name_in_array((char *) prune_type, restriction_types);
-	tb->stalemate_prune_color = find_name_in_array((char *) prune_color, colors);
-	if (prune_color) xmlFree(prune_color);
-	if (prune_type) xmlFree(prune_type);
+    result = tablebase->find("//prune[attribute::move='stalemate']");
+    if (! result.empty()) {
+	tb->stalemate_prune_type = restriction_types.at(result[0]->eval_to_string("@type"));
+	tb->stalemate_prune_color = colors.at(result[0]->eval_to_string("@color"));
 	if (tb->stalemate_prune_type != RESTRICTION_CONCEDE) {
 	    fatal("Stalemates can only be pruned to 'concede'\n");
 	}
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     /* Fetch the pieces from the XML */
 
-    context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression(BAD_CAST "//piece", context);
+    result = tablebase->find("//piece");
 
-    tb->num_pieces = result->nodesetval->nodeNr;
+    tb->num_pieces = result.size();
 
     if (tb->num_pieces > MAX_PIECES) {
 	fatal("Too many pieces (%d compiled-in maximum)!\n", MAX_PIECES);
@@ -4000,15 +4032,22 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	xmlChar * color = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "color");
-	xmlChar * type = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "type");
-	xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
-	xmlChar * index_ordering = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "index-ordering");
+	tb->piece_color[piece] = colors.at(result[piece]->eval_to_string("@color"));
+	tb->piece_type[piece] = piece_name.at(result[piece]->eval_to_string("@type"));
 
-	tb->piece_color[piece] = find_name_in_array((char *) color, colors);
-	tb->piece_type[piece] = find_name_in_array((char *) type, piece_name);
+	if (result[piece]->eval_to_string("@index-ordering") == "reverse") {
+	    fatal("reverse index ordering no longer supported\n");
+	}
 
-	if (location == nullptr) {
+#if 0
+	if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
+	    fatal("Illegal piece color (%s) or type (%s)\n", color, type);
+	}
+#endif
+
+	Glib::ustring location = result[piece]->eval_to_string("@location");
+
+	if (location == "") {
 	    if (tb->piece_type[piece] == PAWN) {
 		tb->legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
 	    } else {
@@ -4026,16 +4065,8 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		while (location[j] == ' ') j ++;
 	    }
 	    if (location[j] != '\0') {
-		fatal("Illegal piece location (%s)\n", location);
+		fatal("Illegal piece location (%s)\n", location.c_str());
 	    }
-	}
-
-	if (index_ordering && (strcmp((char *) index_ordering, "reverse") == 0)) {
-	    fatal("reverse index ordering no longer supported\n");
-	}
-
-	if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
-	    fatal("Illegal piece color (%s) or type (%s)\n", color, type);
 	}
 
 	tb->num_pieces_by_color[tb->piece_color[piece]] ++;
@@ -4059,11 +4090,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    }
 
 	}
-
-	if (color) xmlFree(color);
-	if (type) xmlFree(type);
-	if (location) xmlFree(location);
-	if (index_ordering) xmlFree(index_ordering);
     }
 
     if ((tb->num_pieces_by_color[WHITE] == 0) || (tb->num_pieces_by_color[BLACK] == 0)) {
@@ -4077,7 +4103,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    return nullptr;
 	}
     }
-
 
     /* We quietly skipped over any plus signs after pawn locations, which mean that the pawn should
      * be advanced as far as possible along its file.  For example, if there is a white pawn at
@@ -4122,10 +4147,10 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	if (tb->piece_type[piece] == PAWN) {
 
-	    xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
+	    Glib::ustring location = result[piece]->eval_to_string("@location");
 	    uint64_t pawn_positions = 0xffffffffffffffffLL;
 
-	    if (location && (location[2] == '+')) {
+	    if ((location != "") && (location[2] == '+')) {
 
 		int square = rowcol2square(location[1] - '1', location[0] - 'a');
 		int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
@@ -4166,8 +4191,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 		 * since we can always just add an extra pruning statement for the non-move.
 		 */
 	    }
-
-	    if (location) xmlFree(location);
 	}
     }
 
@@ -4179,9 +4202,9 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
 	    if (tb->piece_type[piece] == PAWN) {
 
-		xmlChar * location = xmlGetProp(result->nodesetval->nodeTab[piece], BAD_CAST "location");
+		Glib::ustring location = result[piece]->eval_to_string("@location");
 
-		if (location && (location[2] == '+')) {
+		if ((location != "") && (location[2] == '+')) {
 
 		    int square = rowcol2square(location[1] - '1', location[0] - 'a');
 		    int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
@@ -4196,8 +4219,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 			square += dir;
 		    }
 		}
-
-		if (location) xmlFree(location);
 	    }
 	}
     }
@@ -4334,9 +4355,6 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     }
 
 
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
-
 #if DEBUG
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	info("Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
@@ -4345,46 +4363,37 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
     }
 #endif
 
+
     /* Fetch the index type.  First, for backwards compatibility, we check for an index property on
      * the tablebase element itself.  Next, check for the preferred syntax of an index element.
-     * Finally, if there is no index element, add one with the default index type.
+     * Finally, if there is no index element, add one with the default index type, to avoid having
+     * to figure out the default index from the version of the program that generated a tablebase.
      */
 
-    index = xmlGetProp(tablebase, BAD_CAST "index");
+    index = tablebase->get_attribute_value("index");
     index_node = tablebase;
-    if (index == nullptr) {
-	context = xmlXPathNewContext(tb->xml);
-	result = xmlXPathEvalExpression(BAD_CAST "//index", context);
-	if (result->nodesetval->nodeNr == 1) {
-	    index_node = result->nodesetval->nodeTab[0];
-	    index = xmlGetProp(index_node, BAD_CAST "type");
-	    xmlChar * index_offset = xmlGetProp(index_node, BAD_CAST "offset");
-	    if (index_offset) {
-		tb->index_offset = atoi((char *) index_offset);
-		xmlFree(index_offset);
-	    }
+
+    if (index == "") {
+	result = tablebase->find("//index");
+	if (!result.empty()) {
+	    index_node = (xmlpp::Element *) result[0];
+	    index = index_node->get_attribute_value("type");
+	    tb->index_offset = index_node->eval_to_number("@offset");
 	}
-	xmlXPathFreeObject(result);
-	xmlXPathFreeContext(context);
     }
 
-    if (index == nullptr) {
+    if (index == "") {
 	tb->index_type = DEFAULT_INDEX;
 
-	xmlNodeAddContent(tablebase, BAD_CAST "   ");
-	index_node = xmlNewChild(tablebase, nullptr, BAD_CAST "index", nullptr);
-	xmlNodeAddContent(tablebase, BAD_CAST "\n");
+	tablebase->add_child_text("   ");
+	index_node = tablebase->add_child("index");
+	tablebase->add_child_text("\n");
 
-	xmlNewProp(index_node, BAD_CAST "type", BAD_CAST index_types[DEFAULT_INDEX]);
+	index_node->set_attribute("type", index_types[DEFAULT_INDEX]);
     } else {
-	tb->index_type = find_name_in_array((char *) index, index_types);
-	if (tb->index_type == -1) {
-	    fatal("Unknown tablebase index type '%s'\n", index);
-	    return nullptr;
-	}
-	xmlFree(index);
-	index = nullptr;
+	tb->index_type = index_types.at(index);
     }
+
 
     /* The other encoding schemes depend on a special encoding for the kings, which might not even
      * be present if we're doing a suicide analysis.
@@ -4407,14 +4416,14 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      * where the king is in check, we still discard king moves into check by frozen pieces.
      */
 
-    king_positions = xmlGetProp(index_node, BAD_CAST "king-positions");
-    if (king_positions) {
-	if (!strcmp((char *) king_positions, "no-frozen-checks")) no_frozen_check_king_positions = 1;
-	else no_frozen_check_king_positions = 0;
-	xmlFree(king_positions);
+    if (tablebase->eval_to_string("//index/@king-positions") == "no-frozen-checks") {
+	no_frozen_check_king_positions = 1;
+    } else if (tablebase->eval_to_string("//index/@king-positions") == "any") {
+	no_frozen_check_king_positions = 0;
+    } else if (generating_version <= 390) {
+	no_frozen_check_king_positions = 1;
     } else {
-	if ((generating_version >= 1) && (generating_version <= 390)) no_frozen_check_king_positions = 1;
-	else no_frozen_check_king_positions = 0;
+	no_frozen_check_king_positions = 0;
     }
 
     /* Now, compute a bitvector for all the pieces that are frozen on single squares.  This
@@ -4511,49 +4520,39 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
      * XXX no reason to assume DTM format if the futurebases don't support it
      */
 
-    format = xmlGetProp(tablebase, BAD_CAST "format");
-    if (format) {
-	switch (find_name_in_array((char *) format, formats)) {
+    format = tablebase->get_attribute_value("format");
+    if (format != "") {
+	switch (formats.at(format)) {
 	case FORMAT_ONE_BYTE_DTM:
 	    tb->format = one_byte_dtm_format;
 	    break;
 	default:
-	    fatal("Unknown tablebase format '%s'\n", format);
+	    fatal("Unknown tablebase format '%s'\n", format.c_str());
 	    return nullptr;
 	}
-	xmlFree(format);
     } else {
-	context = xmlXPathNewContext(tb->xml);
-	result = xmlXPathEvalExpression(BAD_CAST "//format", context);
-	if (result->nodesetval->nodeNr == 1) {
-	    if (! parse_format(result->nodesetval->nodeTab[0], &tb->format, true)) return nullptr;
+	result = tablebase->find("//format");
+	if (! result.empty()) {
+	    if (! parse_format((xmlpp::Element *) result[0], &tb->format, true)) return nullptr;
 	} else {
 	    if (! parse_format(tablebase, &tb->format, false)) {
 		tb->format = dtm_format;
 
-		xmlNodeAddContent(tablebase, BAD_CAST "   ");
-		xmlNewChild(tablebase, nullptr, BAD_CAST "dtm", nullptr);
-		xmlNodeAddContent(tablebase, BAD_CAST "\n");
+		tablebase->add_child_text("   ");
+		index_node = tablebase->add_child("dtm");
+		tablebase->add_child_text("\n");
 
 		warning("Format not expressly specified; assuming dtm\n");
 	    }
 	}
-	xmlXPathFreeObject(result);
-	xmlXPathFreeContext(context);
     }
 
     /* Extract index symmetry (if it was specified) */
 
-    index_symmetry = xmlGetProp(index_node, BAD_CAST "symmetry");
-    if (index_symmetry) {
-	tb->symmetry = atoi((char *) index_symmetry);
-	if ((tb->symmetry != 1) && (tb->symmetry != 2) && (tb->symmetry != 4) && (tb->symmetry != 8)) {
-	    fatal("Bad index symmetry %d\n", tb->symmetry);
-	}
-	xmlFree(index_symmetry);
-    } else {
+    tb->symmetry = tablebase->eval_to_number("//index/@symmetry");
+
+    if (tb->symmetry == 0) {
 	/* If symmetry was not explicitly specified, compute it automatically */
-	char symmetry_string[8];
 
 	tb->symmetry = 8;
 	if ((tb->index_type == NAIVE_INDEX) || (tb->index_type == NAIVE2_INDEX)) {
@@ -4572,8 +4571,11 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 	    tb->symmetry = 1;
 	}
 
-	sprintf(symmetry_string, "%d", tb->symmetry);
-	xmlNewProp(index_node, BAD_CAST "symmetry", BAD_CAST symmetry_string);
+	index_node->set_attribute("symmetry", boost::lexical_cast<std::string>(tb->symmetry));
+    }
+
+    if ((tb->symmetry != 1) && (tb->symmetry != 2) && (tb->symmetry != 4) && (tb->symmetry != 8)) {
+	fatal("Bad index symmetry %d\n", tb->symmetry);
     }
 
     /* Symmetry is based on the location of the white king, but in a suicide analysis we might not have
@@ -5190,67 +5192,54 @@ tablebase_t * parse_XML_into_tablebase(xmlDocPtr doc, bool is_futurebase)
 
     /* See if an index modulus was specified for inversion in a finite field */
 
-    modulus = xmlGetProp(index_node, BAD_CAST "modulus");
-    if (modulus) {
-	if (strcmp((char *) modulus, "auto") == 0) {
-	    tb->modulus = round_up_to_prime(tb->max_index + 1);
-	    if (! is_futurebase) info("Using %" PRIindex " as auto modulus\n", tb->modulus);
-	} else {
-	    tb->modulus = strtoll((const char *) modulus, nullptr, 0);
-	    if (! is_prime(tb->modulus)) {
-		fatal("modulus %" PRIindex " is not a prime number\n", tb->modulus);
-		return nullptr;
-	    }
-	    if (tb->modulus <= tb->max_index) {
-		fatal("modulus %" PRIindex " less than max_index %" PRIindex "\n", tb->modulus, tb->max_index);
-		return nullptr;
-	    }
+    auto modulus = index_node->get_attribute_value("modulus");
+
+    if (modulus == "auto") {
+
+	tb->modulus = round_up_to_prime(tb->max_index + 1);
+	if (! is_futurebase) info("Using %" PRIindex " as auto modulus\n", tb->modulus);
+	tb->max_index = tb->modulus - 1;
+
+    } else if (modulus != "") {
+	tb->modulus = index_node->eval_to_number("@modulus");
+	if (! is_prime(tb->modulus)) {
+	    fatal("modulus %" PRIindex " is not a prime number\n", tb->modulus);
+	    return nullptr;
+	}
+	if (tb->modulus <= tb->max_index) {
+	    fatal("modulus %" PRIindex " less than max_index %" PRIindex "\n", tb->modulus, tb->max_index);
+	    return nullptr;
 	}
 	tb->max_index = tb->modulus - 1;
-	xmlFree(modulus);
     }
 
     /* Fetch any prune enable elements */
 
-    context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression(BAD_CAST "//prune-enable | //move-restriction", context);
-    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+    result = tablebase->find("//prune-enable | //move-restriction");
+    if (! result.empty()) {
 	int i;
-	for (i=0; i < result->nodesetval->nodeNr; i++) {
-	    xmlChar * color_str;
-	    xmlChar * type_str;
-	    int color;
-	    int type;
+	for (i=0; i < result.size(); i++) {
+	    auto color_str = ((xmlpp::Element *) result[i])->get_attribute_value("color");
+	    auto type_str = ((xmlpp::Element *) result[i])->get_attribute_value("type");
+	    int color = colors.at(color_str);
+	    int type = restriction_types.at(type_str);
 
-	    color_str = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "color");
-	    type_str = xmlGetProp(result->nodesetval->nodeTab[i], BAD_CAST "type");
-
-	    color = find_name_in_array((char *) color_str, colors);
-	    type = find_name_in_array((char *) type_str, restriction_types);
 	    if ((color == -1) || (type == -1)) {
 		fatal("Illegal prune-enable\n");
 	    } else {
 		tb->prune_enable[color] |= type;
 	    }
-
-	    if (color_str) xmlFree(color_str);
-	    if (type_str) xmlFree(type_str);
 	}
     }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     return (fatal_errors == starting_fatal_errors) ? tb : nullptr;
 }
 
-xmlNodePtr create_GenStats_node(const char *name)
+xmlpp::Element * create_GenStats_node(std::string name)
 {
-    xmlNodePtr node;
-
-    xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
-    node = xmlNewChild(generation_statistics, nullptr, BAD_CAST name, nullptr);
-    xmlNodeAddContent(generation_statistics, BAD_CAST "\n   ");
+    generation_statistics->add_child_text("   ");
+    auto node = generation_statistics->add_child(name);
+    generation_statistics->add_child_text("\n   ");
 
     return node;
 }
@@ -5261,93 +5250,84 @@ xmlNodePtr create_GenStats_node(const char *name)
 tablebase_t * parse_XML_control_file(char *filename)
 {
     xmlParserInputBufferPtr dtd_input_buffer;
-    xmlDtdPtr dtd;
-    xmlDocPtr doc;
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
+    xmlpp::DtdValidator dtd;
+    xmlpp::Document * doc;
+    xmlpp::NodeSet result;
     tablebase_t *tb;
 
-    xmlNodePtr tablebase, node;
     char hostname[256];		/* XXX hardwired max */
     struct hostent *he;
     char strbuf[256];
 
     /* load the DTD from memory */
 
-    dtd_input_buffer = xmlParserInputBufferCreateMem(tablebase_dtd, strlen(tablebase_dtd),
-						     XML_CHAR_ENCODING_ASCII);
-    dtd = xmlIOParseDTD(nullptr, dtd_input_buffer, XML_CHAR_ENCODING_ASCII);
+    dtd.parse_memory(tablebase_dtd);
 
     /* load the control file from the specified filename or URL */
 
-    doc = xmlReadFile(filename, nullptr, 0);
+    std::ifstream input_file;
+    input_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+    input_file.open(filename, std::ifstream::in | std::ifstream::binary);
 
-    /* check if parsing suceeded */
-    if (doc == nullptr) {
-	fatal("'%s' failed XML read\n", filename);
-	return nullptr;
-    }
+    namespace io = boost::iostreams;
+
+    io::filtering_istream instream;
+
+    instream.push(io::gzip_decompressor());
+    instream.push(input_file);
+
+    // XXX this might throw an exception
+    xmlpp::DomParser parser;
+    parser.parse_stream(instream);
+
+    doc = parser.get_document();
 
     /* Does the tablebase specify URLs to report errors or successful completion to?  If so, extract
      * them now, as early as possible, because we want to report to the error URL in case validation
      * or parsing fails.
      */
 
-    context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression(BAD_CAST "//error-report", context);
-    if (result->nodesetval->nodeNr > 0) {
-	error_report_url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
+    result = doc->get_root_node()->find("//error-report");
+    if (! result.empty()) {
+	error_report_url = result[0]->eval_to_string("//@url");
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
-    context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression(BAD_CAST "//completion-report", context);
-    if (result->nodesetval->nodeNr > 0) {
-	completion_report_url = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url");
+    result = doc->get_root_node()->find("//completion-report");
+    if (! result.empty()) {
+	completion_report_url = result[0]->eval_to_string("//@url");
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     /* check if validation suceeded */
 
-    xmlValidCtxtPtr validCtxtPtr = xmlNewValidCtxt();
-    if (! xmlValidateDtd(validCtxtPtr, doc, dtd)) {
+    if (! dtd.validate(doc)) {
 	fatal("'%s' failed XML validatation\n", filename);
 	return nullptr;
     }
-    xmlFree(validCtxtPtr);
 
     tb = parse_XML_into_tablebase(doc, 0);
     if (tb == nullptr) return nullptr;
 
     /* We don't free the XML doc because the tablebase struct contains a pointer to it */
 
-    xmlFreeDtd(dtd);
-
-    /* dtd_input_buffer appears to have been freed by freeing the dtd; at least, malloc complains if
-     * we try to free it here.
-     */
-
-    /* xmlFreeParserInputBuffer(dtd_input_buffer); */
+    //xmlFreeDtd(dtd);
 
     /* Now, check to see if we already have a generation-statistics element, which would mean this
      * is a restart.  If so, figure out (XXX) where we're going to restart.  In any event, add a new
      * generation-statistics element for the current run, and populate it.
      */
 
-    tablebase = xmlDocGetRootElement(doc);
-    context = xmlXPathNewContext(doc);
-    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics", context);
+    auto tablebase = doc->get_root_node();
+    result = tablebase->find("//generation-statistics");
 
-    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+    if (result.empty()) {
 
-	xmlNodeAddContent(tablebase, BAD_CAST "   ");
-	generation_statistics = xmlNewChild(tablebase, nullptr, BAD_CAST "generation-statistics", nullptr);
-	xmlNodeAddContent(tablebase, BAD_CAST "\n");
+	tablebase->add_child_text("   ");
+	generation_statistics = tablebase->add_child("generation-statistics");
+	tablebase->add_child_text("\n   ");
 
     } else {
 
+#if 0
 	xmlChar * dtm;
 
 	do_restart = true;
@@ -5366,24 +5346,24 @@ tablebase_t * parse_XML_control_file(char *filename)
 	    last_dtm_before_restart = strtol((const char *)dtm, nullptr, 0);
 	    xmlFree(dtm);
 	}
+#else
+	fatal("Can't restart this version of hoffman (sorry)\n");
+#endif
     }
 
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
-
-    xmlNodeAddContent(generation_statistics, BAD_CAST "\n   ");
+    generation_statistics->add_child_text("\n   ");
 
     gethostname(hostname, sizeof(hostname));
     he = gethostbyname(hostname);
 
-    xmlNodeSetContent(create_GenStats_node("host"), BAD_CAST he->h_name);
-    xmlNodeSetContent(create_GenStats_node("program"), BAD_CAST "Hoffman $Revision: 1.830 $ $Locker: baccala $");
-    xmlNodeSetContent(create_GenStats_node("args"), BAD_CAST options_string);
+    create_GenStats_node("host")->add_child_text(he->h_name);
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.831 $ $Locker: baccala $");
+    create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
-	xmlNodeSetContent(create_GenStats_node("start-time"), BAD_CAST strbuf);
+	create_GenStats_node("start-time")->add_child_text(strbuf);
     } else {
-	xmlNodeSetContent(create_GenStats_node("restart-time"), BAD_CAST strbuf);
+	create_GenStats_node("restart-time")->add_child_text(strbuf);
     }
 
     checkpoint_time = create_GenStats_node("checkpoint-time");
@@ -5397,11 +5377,12 @@ tablebase_t * parse_XML_control_file(char *filename)
      * negative_passes_needed_text_node.  When these nodes here are unlinked, everything lines up.
      */
 
-    xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
-    positive_passes_needed_node = xmlNewChild(generation_statistics, nullptr, BAD_CAST "positive-passes-needed", nullptr);
-    positive_passes_needed_text_node = xmlAddChild(generation_statistics, xmlNewText(BAD_CAST "\n      "));
-    negative_passes_needed_node = xmlNewChild(generation_statistics, nullptr, BAD_CAST "negative-passes-needed", nullptr);
-    negative_passes_needed_text_node = xmlAddChild(generation_statistics, xmlNewText(BAD_CAST "\n   "));
+    generation_statistics->add_child_text("   ");
+
+    positive_passes_needed_node = generation_statistics->add_child("positive-passes-needed");
+    positive_passes_needed_text_node = generation_statistics->add_child_text("\n      ");
+    negative_passes_needed_node = generation_statistics->add_child("negative-passes-needed");
+    negative_passes_needed_text_node = generation_statistics->add_child_text("\n   ");
 
     /* create global counter nodes */
 
@@ -5420,9 +5401,46 @@ tablebase_t * parse_XML_control_file(char *filename)
  * XXX I save the 'filename' and xmlFree it when I unload the futurebase, but that assumes that the
  * filename came from an XML attribute, which isn't the case if we're probing!  Fortunately, if
  * we're probing, we never unload the futurebases...
+ *
+ * XXX put ftp: and http: URL support back in
  */
 
-tablebase_t * preload_futurebase_from_file(char *filename)
+/* limiting_input_filter is a Boost iostreams filter that reads until it has read (and returned) a
+ * particular string, then terminates reading and returns EOF.  I use it to terminate reading at the
+ * string "</tablebase>", which prevents a libxml++ parser error "Extra content at the end of the
+ * document".
+ *
+ * XXX it isn't quite right in the general case.  "</tab</tablebase>" won't match at all.
+ */
+
+namespace io = boost::iostreams;
+
+extern "C++" {
+
+class limiting_input_filter : public io::input_filter {
+    std::string limitstr;
+    size_t pos;
+
+public:
+    limiting_input_filter(std::string limitstr) : limitstr(limitstr), pos(0) { }
+
+    template<typename Source>
+    int get(Source& src)
+    {
+	if (pos == limitstr.length()) return EOF;
+
+	int c = io::get(src);
+
+	if (limitstr[pos] == c) pos++;
+	else if (c != io::WOULD_BLOCK) pos = 0;
+
+	return c;
+    }
+};
+
+};
+
+tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 {
     void * file = nullptr;
     xmlDocPtr doc;
@@ -5430,53 +5448,40 @@ tablebase_t * preload_futurebase_from_file(char *filename)
     xmlNodePtr tablebase;
     xmlChar * offsetstr;
 
-    if (rindex(filename, ':') == nullptr) {
-	int fd;
+    std::ifstream input_file;
+    input_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
+    input_file.open(filename, std::ifstream::in | std::ifstream::binary);
 
-	fd = open(filename, O_RDONLY|O_LARGEFILE, 0);
-	if (fd != -1) {
-	    file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
-	}
+    namespace io = boost::iostreams;
 
-    } else if (strncmp(filename, "ftp:", 4) == 0) {
-#ifdef HAVE_LIBFTP
-	void *ptr = ftp_openurl(filename, "r");
-	if (ptr) {
-	    file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
-	}
-#else
-	fatal("Compiled without ftplib - ftp: URLs unsupported\n");
-#endif
-    } else if (strncmp(filename, "http:", 5) == 0) {
-	fatal("http: URLs currently unsupported for tablebase I/O\n");
-    }
+    io::filtering_istream instream;
 
-    if (file == nullptr) {
-	fatal("Can't open tablebase '%s'\n", filename);
-	return nullptr;
-    }
+    instream.push(limiting_input_filter("</tablebase>"));
+    instream.push(io::gzip_decompressor());
+    instream.push(input_file);
+
+    xmlpp::DomParser parser;
+
+    parser.parse_stream(instream);
 
     /* My experiments with xmlReadIO indicate that it only calls its read function enough times to
      * get the XML document, which is good, because we don't want it reading the entire file.
      */
-    doc = xmlReadIO(&zlib_read_int, nullptr, file, nullptr, nullptr, 0);
+    //doc = xmlReadIO(&zlib_read_int, nullptr, file, nullptr, nullptr, 0);
 
-    tb = parse_XML_into_tablebase(doc, 1);
+    //const xmlpp::Node* pNode = parser.get_document()->get_root_node();
+
+    tb = parse_XML_into_tablebase(parser.get_document(), 1);
+
+    //tb = parse_XML_into_tablebase(doc, 1);
 
     if (tb == nullptr) {
-	fatal("Futurebase preload failed: '%s'\n", filename);
+	fatal("Futurebase preload failed: '%s'\n", filename.c_str());
 	return nullptr;
     }
 
-    tb->filename = filename;
-
-    tablebase = xmlDocGetRootElement(doc);
-
-    offsetstr = xmlGetProp(tablebase, BAD_CAST "offset");
-    tb->offset = strtol((const char *) offsetstr, nullptr, 0);
-    if (offsetstr) xmlFree(offsetstr);
-
-    zlib_close(file);
+    tb->filename = filename.c_str();
+    tb->offset = tb->xml->get_root_node()->eval_to_number("/tablebase/@offset");
 
     return tb;
 }
@@ -5532,10 +5537,12 @@ void close_futurebase(tablebase_t * tb)
 
 void unload_futurebase(tablebase_t *tb)
 {
-    if (tb->filename) xmlFree(tb->filename);
+    /* XXXtb->filename came from c_str - do we free it */
+    // if (tb->filename) xmlFree(tb->filename);
     tb->filename = nullptr;
 
-    if (tb->xml) xmlFreeDoc(tb->xml);
+    // if (tb->xml) xmlFreeDoc(tb->xml);
+    if (tb->xml) delete tb->xml;
     tb->xml = nullptr;
 
     close_futurebase(tb);
@@ -5684,13 +5691,12 @@ int autodetect_futurebase_type(tablebase_t *futurebase)
 
 bool preload_all_futurebases(tablebase_t *tb)
 {
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
+    xmlpp::NodeSet result;
     int fbnum;
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//futurebase", context);
-    num_futurebases = result->nodesetval->nodeNr;
+    result = tb->xml->get_root_node()->find("//futurebase");
+    num_futurebases = result.size();
+
     futurebases = (tablebase_t **) malloc(sizeof(tablebase_t *) * num_futurebases);
     if (futurebases == nullptr) {
 	fatal("Can't malloc futurebases array\n");
@@ -5698,11 +5704,11 @@ bool preload_all_futurebases(tablebase_t *tb)
     }
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	xmlChar * filename;
+	Glib::ustring filename = result[fbnum]->eval_to_string("//@filename");
 	xmlChar * colors_property;
-	xmlChar * type;
 
-	filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "filename");
+	// XXX put this back in
+#if 0
 	if (filename == nullptr) {
 	    filename = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "url");
 	}
@@ -5710,8 +5716,9 @@ bool preload_all_futurebases(tablebase_t *tb)
 	    fatal("No filename or URL specified in futurebase element\n");
 	    continue;
 	}
+#endif
 
-	futurebases[fbnum] = preload_futurebase_from_file((char *) filename);
+	futurebases[fbnum] = preload_futurebase_from_file(filename);
 
 	/* load_futurebase_from_file() already printed some kind of error message */
 	if (futurebases[fbnum] == nullptr) continue;
@@ -5729,18 +5736,13 @@ bool preload_all_futurebases(tablebase_t *tb)
 	if (futurebases[fbnum]->max_dtm > max_tracked_dtm) max_tracked_dtm = futurebases[fbnum]->max_dtm;
 	if (futurebases[fbnum]->min_dtm < min_tracked_dtm) min_tracked_dtm = futurebases[fbnum]->min_dtm;
 
-	futurebases[fbnum]->invert_colors = 0;
-	colors_property = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "colors");
-	if (colors_property) {
-	    if (!strcasecmp((char *) colors_property, "invert")) futurebases[fbnum]->invert_colors = 1;
-	    xmlFree(colors_property);
-	}
+	futurebases[fbnum]->invert_colors = (result[fbnum]->eval_to_string("//@colors") == "invert");
 
 	/* Check futurebase to make sure its prune enable(s) match our own */
 
 	for (int color = 0; color < 2; color ++) {
 	    if (futurebases[fbnum]->prune_enable[color] & ~(tb->prune_enable[futurebases[fbnum]->invert_colors ? 1 - color : color])) {
-		fatal("'%s': Futurebase doesn't match prune-enables!\n", filename);
+		fatal("'%s': Futurebase doesn't match prune-enables!\n", filename.c_str());
 		return false;
 	    }
 	}
@@ -5748,7 +5750,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	try {
 	    compute_extra_and_missing_pieces(tb, futurebases[fbnum]);
 	} catch (const char * reason) {
-	    fatal("'%s': %s\n", filename, reason);
+	    fatal("'%s': %s\n", filename.c_str(), reason);
 	}
 
 	/* We used to have to specify futurebase type in the XML, but now it is autodetected.  Check
@@ -5758,24 +5760,20 @@ bool preload_all_futurebases(tablebase_t *tb)
 	futurebases[fbnum]->futurebase_type = autodetect_futurebase_type(futurebases[fbnum]);
 
 	if (futurebases[fbnum]->futurebase_type == -1) {
-	    fatal("'%s': Can't autodetect futurebase type\n", filename);
+	    fatal("'%s': Can't autodetect futurebase type\n", filename.c_str());
 	}
 
-	type = xmlGetProp(result->nodesetval->nodeTab[fbnum], BAD_CAST "type");
-	if (type) {
-	    if (futurebases[fbnum]->futurebase_type != find_name_in_array((char *) type, futurebase_types)) {
+	Glib::ustring type = result[fbnum]->eval_to_string("//@type");
+	if (type != "") {
+	    if (futurebases[fbnum]->futurebase_type != futurebase_types.at(type)) {
 		fatal("'%s': Specified futurebase type '%s' doesn't match autodetected type '%s'\n",
-		      filename, type, futurebase_types[futurebases[fbnum]->futurebase_type]);
+		      filename.c_str(), type.c_str(), futurebase_types[futurebases[fbnum]->futurebase_type].c_str());
 	    }
-	    xmlFree(type);
 	}
 
 	/* We can't xmlFree filename here, because it's stashed away in the tablebase structure */
 	/* if (filename) xmlFree(filename); */
     }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     return (fatal_errors == 0);
 }
@@ -5796,7 +5794,7 @@ void unload_all_futurebases(void)
 
 void finalize_pass_statistics()
 {
-    xmlNodePtr passNode;
+    xmlpp::Element * passNode;
 
     static struct timeval last_timeval;
     static struct rusage last_rusage;
@@ -5813,35 +5811,35 @@ void finalize_pass_statistics()
     getrusage(RUSAGE_SELF, &rusage);
 
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&timeval.tv_sec));
-    xmlNodeSetContent(checkpoint_time, BAD_CAST strbuf);
+    checkpoint_time->set_child_text(strbuf);
 
     sprint_timeval(strbuf, &rusage.ru_utime);
-    xmlNodeSetContent(user_time, BAD_CAST strbuf);
+    user_time->set_child_text(strbuf);
 
     sprint_timeval(strbuf, &rusage.ru_stime);
-    xmlNodeSetContent(system_time, BAD_CAST strbuf);
+    system_time->set_child_text(strbuf);
 
     /* Note that we modified timeval here to compute the real time used by the program */
     subtract_timeval(&timeval, &program_start_time);
     sprint_timeval(strbuf, &timeval);
-    xmlNodeSetContent(real_time, BAD_CAST strbuf);
+    real_time->set_child_text(strbuf);
 
     snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_majflt);
-    xmlNodeSetContent(page_faults, BAD_CAST strbuf);
+    page_faults->set_child_text(strbuf);
 
     snprintf(strbuf, sizeof(strbuf), "%ld", rusage.ru_minflt);
-    xmlNodeSetContent(page_reclaims, BAD_CAST strbuf);
+    page_reclaims->set_child_text(strbuf);
 
     /* Now add a element with current pass statistics */
 
     gettimeofday(&timeval, nullptr);
     getrusage(RUSAGE_SELF, &rusage);
 
-    xmlNodeAddContent(generation_statistics, BAD_CAST "   ");
-    passNode = xmlNewChild(generation_statistics, nullptr, BAD_CAST "pass", nullptr);
-    xmlNodeAddContent(generation_statistics, BAD_CAST "\n   ");
+    generation_statistics->add_child_text("   ");
+    passNode = generation_statistics->add_child("pass");
+    generation_statistics->add_child_text("\n   ");
 
-    xmlNewProp(passNode, BAD_CAST "type", BAD_CAST pass_type[total_passes]);
+    passNode->set_attribute("type", boost::lexical_cast<std::string>(pass_type[total_passes]));
 
     if (last_timings_valid) {
 	subtract_timeval(&timeval, &last_timeval);
@@ -5851,10 +5849,10 @@ void finalize_pass_statistics()
     }
 
     sprint_timeval(strbuf, &timeval);
-    xmlNewProp(passNode, BAD_CAST "real-time", BAD_CAST strbuf);
+    passNode->set_attribute("real-time", strbuf);
 
     sprint_timeval(strbuf, &rusage.ru_utime);
-    xmlNewProp(passNode, BAD_CAST "user-time", BAD_CAST strbuf);
+    passNode->set_attribute("user-time", strbuf);
 
     gettimeofday(&last_timeval, nullptr);
     getrusage(RUSAGE_SELF, &last_rusage);
@@ -5862,13 +5860,10 @@ void finalize_pass_statistics()
 
     if (! strcmp(pass_type[total_passes], "intratable")) {
 	if (tracking_dtm) {
-	    snprintf(strbuf, sizeof(strbuf), "%d", pass_target_dtms[total_passes]);
-	    xmlNewProp(passNode, BAD_CAST "dtm", BAD_CAST strbuf);
+	    passNode->set_attribute("dtm", boost::lexical_cast<std::string>(pass_target_dtms[total_passes]));
 	}
-	snprintf(strbuf, sizeof(strbuf), "%d", positions_finalized[total_passes]);
-	xmlNewProp(passNode, BAD_CAST "positions-finalized", BAD_CAST strbuf);
-	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, backproped_moves[total_passes]);
-	xmlNewProp(passNode, BAD_CAST "moves-generated", BAD_CAST strbuf);
+	passNode->set_attribute("positions-finalized", boost::lexical_cast<std::string>(positions_finalized[total_passes]));
+	passNode->set_attribute("moves-generated", boost::lexical_cast<std::string>(backproped_moves[total_passes]));
     }
 
     if (using_proptables) {
@@ -5876,19 +5871,21 @@ void finalize_pass_statistics()
 
 	/* update the passes needed nodes */
 
-	xmlNodeSetContent(positive_passes_needed_node, BAD_CAST "");
+	positive_passes_needed_node->set_child_text("");
+
 	for (i = 1; i <= max_tracked_dtm; i ++) {
 	    if (positive_passes_needed[i]) {
-		snprintf(strbuf, sizeof(strbuf), "%d ", i);
-		xmlNodeAddContent(positive_passes_needed_node, BAD_CAST strbuf);
+		positive_passes_needed_node->add_child_text(boost::lexical_cast<std::string>(i));
+		positive_passes_needed_node->add_child_text(" ");
 	    }
 	}
 
-	xmlNodeSetContent(negative_passes_needed_node, BAD_CAST "");
+	negative_passes_needed_node->set_child_text("");
+
 	for (i = -1; i >= min_tracked_dtm; i --) {
 	    if (negative_passes_needed[-i]) {
-		snprintf(strbuf, sizeof(strbuf), "%d ", i);
-		xmlNodeAddContent(negative_passes_needed_node, BAD_CAST strbuf);
+		negative_passes_needed_node->add_child_text(boost::lexical_cast<std::string>(i));
+		negative_passes_needed_node->add_child_text(" ");
 	    }
 	}
 
@@ -5902,64 +5899,48 @@ void finalize_pass_statistics()
  * indicating the program, time, and host that generated the data.
  */
 
-xmlDocPtr finalize_XML_header(tablebase_t *tb)
+xmlpp::Document * finalize_XML_header(tablebase_t *tb)
 {
-    xmlNodePtr tablebase, node;
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
+    xmlpp::Element * tablebase = tb->xml->get_root_node();
+    xmlpp::Element * node;
+    xmlpp::NodeSet result;
     char strbuf[256];
 
-    tablebase = xmlDocGetRootElement(tb->xml);
-
-    xmlSetProp(tablebase, BAD_CAST "offset", BAD_CAST "0x1000");
+    tablebase->set_attribute("offset", "0x1000");
 
     /* If no size field was specified for a DTM format, set it now */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//dtm", context);
-    if (! xmlXPathNodeSetIsEmpty(result->nodesetval)) {
-	node = result->nodesetval->nodeTab[0];
-	if (xmlGetProp(node, BAD_CAST "bits") == nullptr) {
-	    char str[16];
-	    sprintf(str, "%d", tb->format.dtm_bits);
-	    xmlNewProp(node, BAD_CAST "bits", BAD_CAST str);
-	}
+    result = tablebase->find("//dtm");
+
+    if (! result.empty()) {
+	// XXX check cast
+	((xmlpp::Element *) result[0])->set_attribute("bits", boost::lexical_cast<std::string>(tb->format.dtm_bits));
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     /* Add a set of tablebase-statistics.  We prefer to add this before the generation-statistics,
      * because the generation-statistics are long and boring, and because this is how it's always
      * been done.
      */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics", context);
-    if (xmlXPathNodeSetIsEmpty(result->nodesetval)) {
+    result = tablebase->find("//generation-statistics");
+
+    if (result.empty()) {
 	warning("Can't find /generation-statistics in XML\n");
-
-	xmlNodeAddContent(tablebase, BAD_CAST "   ");
-	node = xmlNewChild(tablebase, nullptr, BAD_CAST "tablebase-statistics", nullptr);
+	tablebase->add_child_text("   ");
+	node = tablebase->add_child("tablebase-statistics");
     } else {
-	node = result->nodesetval->nodeTab[0];
-	node = xmlAddPrevSibling(node, xmlNewDocNode(tb->xml, nullptr, BAD_CAST "tablebase-statistics", nullptr));
-	xmlAddNextSibling(node, xmlNewText(BAD_CAST "\n   "));
+	node = tablebase->add_child_before(result[0], "tablebase-statistics");
+	tablebase->add_child_text(node, "\n   ");
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIindex, tb->max_index + 1);
-    xmlNewChild(node, nullptr, BAD_CAST "indices", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_PNTM_mated_positions);
-    xmlNewChild(node, nullptr, BAD_CAST "PNTM-mated-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_legal_positions);
-    xmlNewChild(node, nullptr, BAD_CAST "legal-positions", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_stalemate_positions);
-    xmlNewChild(node, nullptr, BAD_CAST "stalemate-positions", BAD_CAST strbuf);
+    node->add_child_text("\n      ");
+    node->add_child("indices")->set_child_text(boost::lexical_cast<std::string>(tb->max_index + 1));
+    node->add_child_text("\n      ");
+    node->add_child("PNTM-mated-positions")->set_child_text(boost::lexical_cast<std::string>(total_PNTM_mated_positions));
+    node->add_child_text("\n      ");
+    node->add_child("legal-positions")->set_child_text(boost::lexical_cast<std::string>(total_legal_positions));
+    node->add_child_text("\n      ");
+    node->add_child("stalemate-positions")->set_child_text(boost::lexical_cast<std::string>(total_stalemate_positions));
 
     /* If we generating a full tablebase, report both white-wins-positions and black-wins-positions.
      * If we generating a bitbase, report only one or the other of white-wins-positions or
@@ -5967,51 +5948,42 @@ xmlDocPtr finalize_XML_header(tablebase_t *tb)
      */
 
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) player_wins[WHITE]);
-	xmlNewChild(node, nullptr, BAD_CAST "white-wins-positions", BAD_CAST strbuf);
+	node->add_child("\n      ");
+	node->add_child("white-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[WHITE]));
     }
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1)) {
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) player_wins[BLACK]);
-	xmlNewChild(node, nullptr, BAD_CAST "black-wins-positions", BAD_CAST strbuf);
+	node->add_child("\n      ");
+	node->add_child("black-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[BLACK]));
     }
     if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%" PRIu64, total_legal_positions - player_wins[1]);
-	xmlNewChild(node, nullptr, BAD_CAST "white-wins-or-draws-positions", BAD_CAST strbuf);
+	node->add_child("\n      ");
+	node->add_child("white-wins-or-draws-positions")->set_child_text(boost::lexical_cast<std::string>(total_legal_positions - player_wins[BLACK]));
     }
 
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_moves);
-    xmlNewChild(node, nullptr, BAD_CAST "forward-moves", BAD_CAST strbuf);
-    xmlNodeAddContent(node, BAD_CAST "\n      ");
-    snprintf(strbuf, sizeof(strbuf), "%" PRIu64, (uint64_t) total_futuremoves);
-    xmlNewChild(node, nullptr, BAD_CAST "futuremoves", BAD_CAST strbuf);
+    node->add_child("\n      ");
+    node->add_child("forward-moves")->set_child_text(boost::lexical_cast<std::string>(total_moves));
+    node->add_child("\n      ");
+    node->add_child("futuremoves")->set_child_text(boost::lexical_cast<std::string>(total_futuremoves));
+
     if (tb->format.dtm_bits > 0) {
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%d", max_dtm);
-	xmlNewChild(node, nullptr, BAD_CAST "max-dtm", BAD_CAST strbuf);
-	xmlNodeAddContent(node, BAD_CAST "\n      ");
-	snprintf(strbuf, sizeof(strbuf), "%d", min_dtm);
-	xmlNewChild(node, nullptr, BAD_CAST "min-dtm", BAD_CAST strbuf);
+	node->add_child("\n      ");
+	node->add_child("max-dtm")->set_child_text(boost::lexical_cast<std::string>(max_dtm));
+	node->add_child("\n      ");
+	node->add_child("min-dtm")->set_child_text(boost::lexical_cast<std::string>(min_dtm));
     }
 
-    xmlNodeAddContent(node, BAD_CAST "\n   ");
+    node->add_child("\n      ");
 
     /* Rename the last checkpoint-time to completion-time */
 
-    xmlChar * content = xmlNodeGetContent(checkpoint_time);
-    node = xmlNewDocNode(tb->xml, nullptr, BAD_CAST "completion-time", content);
-    xmlReplaceNode(checkpoint_time, node);
-    xmlFree(content);
+    checkpoint_time->set_name("completion-time");
 
     /* Remove the passes needed nodes from the XML */
 
-    xmlUnlinkNode(positive_passes_needed_node);
-    xmlUnlinkNode(negative_passes_needed_node);
-    xmlUnlinkNode(positive_passes_needed_text_node);
-    xmlUnlinkNode(negative_passes_needed_text_node);
+    delete positive_passes_needed_node;
+    delete negative_passes_needed_node;
+    delete positive_passes_needed_text_node;
+    delete negative_passes_needed_text_node;
 
     return tb->xml;
 }
@@ -10609,50 +10581,39 @@ bool have_all_futuremoves_been_handled(tablebase_t *tb) {
 
 int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
 {
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
+    xmlpp::NodeSet result;
     int prune;
     int type = RESTRICTION_NONE;
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//prune", context);
+    result = tb->xml->get_root_node()->find("//prune");
 
-    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
-	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-					   BAD_CAST "color");
-	xmlChar * prune_move = xmlGetProp(result->nodesetval->nodeTab[prune],
-					  BAD_CAST "move");
-	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
-					  BAD_CAST "type");
+    for (auto prune = result.begin(); prune != result.end(); prune ++) {
+
+	Glib::ustring prune_color = (*prune)->eval_to_string("//@color");
+	Glib::ustring prune_move = (*prune)->eval_to_string("//@move");
+	Glib::ustring prune_type = (*prune)->eval_to_string("//@type");
 
 	/* Trailing 'any' is an older syntax that means '*' */
 
-	if (!strcasecmp("any", (char *) prune_move + strlen((char *) prune_move) - 3)) {
-	    prune_move[strlen((char *) prune_move) - 3] = '*';
-	    prune_move[strlen((char *) prune_move) - 2] = '\0';
+	auto pos = prune_move.find("any");
+	if (pos != std::string::npos) {
+	    prune_move.replace(pos, std::string::npos, "*");
 	}
 
-	if ((find_name_in_array((char *) prune_color, colors) == color)
-	    && (fnmatch((char *) prune_move, pruning_statement, FNM_CASEFOLD) == 0)) {
+	if ((colors.at(prune_color) == color)
+	    && (fnmatch(prune_move.c_str(), pruning_statement, FNM_CASEFOLD) == 0)) {
 
 	    if (type == RESTRICTION_NONE) {
-		type = find_name_in_array((char *) prune_type, restriction_types);
-	    } else if (type != find_name_in_array((char *) prune_type, restriction_types)) {
+		type = restriction_types.at(prune_type);
+	    } else if (type != restriction_types.at(prune_type)) {
 		fatal("Conflicting %s pruning statements match futuremove %s\n",
-		      colors[color], pruning_statement);
+		      colors[color].c_str(), pruning_statement);
 	    } else {
 		warning("Multiple %s pruning statements match futuremove %s\n",
-			colors[color], pruning_statement);
+			colors[color].c_str(), pruning_statement);
 	    }
 	}
-
-	if (prune_color) xmlFree(prune_color);
-	if (prune_move) xmlFree(prune_move);
-	if (prune_type) xmlFree(prune_type);
     }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     return type;
 }
@@ -11133,37 +11094,29 @@ void print_futuremoves(void)
  * sure we've used each one, and complain if any are left unused.
  */
 
-bool compute_pruned_futuremoves(tablebase_t *tb) {
-
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
+bool compute_pruned_futuremoves(tablebase_t *tb)
+{
+    xmlpp::NodeSet result;
     int prune;
     int color;
     unsigned int fm;
 
     /* Check pruning statements for consistency, and record stalemate pruning if specified */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//prune", context);
+    result = tb->xml->get_root_node()->find("//prune");
 
-    for (prune = 0; prune < result->nodesetval->nodeNr; prune ++) {
-	xmlChar * prune_color = xmlGetProp(result->nodesetval->nodeTab[prune],
-					   BAD_CAST "color");
-	xmlChar * prune_type = xmlGetProp(result->nodesetval->nodeTab[prune],
-					  BAD_CAST "type");
-	int color = find_name_in_array((char *) prune_color, colors);
-	int type = find_name_in_array((char *) prune_type, restriction_types);
+    for (auto prune = result.begin(); prune != result.end(); prune ++) {
+
+	Glib::ustring prune_color = (*prune)->eval_to_string("//@color");
+	Glib::ustring prune_type = (*prune)->eval_to_string("//@type");
+
+	int color = colors.at(prune_color);
+	int type = restriction_types.at(prune_type);
 
 	if (! (type & tb->prune_enable[color])) {
 	    fatal("Prune statements don't match tablebase prune-enables\n");
 	}
-
-	if (prune_color) xmlFree(prune_color);
-	if (prune_type) xmlFree(prune_type);
     }
-
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
     if (fatal_errors != 0) return false;
 
@@ -11261,7 +11214,7 @@ bool check_pruning(tablebase_t *tb) {
 		    if (! (pruned_futuremoves[tb->piece_color[capturing_piece]]
 			   & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
 			fatal("No futurebase or pruning for %s move %s\n",
-			      colors[tb->piece_color[capturing_piece]],
+			      colors[tb->piece_color[capturing_piece]].c_str(),
 			      movestr[tb->piece_color[capturing_piece]][futurecaptures[capturing_piece][captured_piece]]);
 			return false;
 		    } else if (discarded_futuremoves[tb->piece_color[capturing_piece]]
@@ -11356,7 +11309,7 @@ bool check_pruning(tablebase_t *tb) {
 		if (! (pruned_futuremoves[tb->piece_color[pawn]]
 		       & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]))) {
 		    fatal("No futurebase or pruning for %s move %s\n",
-			  colors[tb->piece_color[pawn]],
+			  colors[tb->piece_color[pawn]].c_str(),
 			  movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece][promotion]]);
 		    return false;
 		} else if (discarded_futuremoves[tb->piece_color[pawn]]
@@ -11397,7 +11350,7 @@ bool check_pruning(tablebase_t *tb) {
 
 	    if (! (pruned_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion]))) {
 		fatal("No futurebase or pruning for %s move %s\n",
-		      colors[tb->piece_color[pawn]],
+		      colors[tb->piece_color[pawn]].c_str(),
 		      movestr[tb->piece_color[pawn]][promotions[pawn][promotion]]);
 		return false;
 	    } else if (discarded_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion])) {
@@ -11439,7 +11392,7 @@ bool check_pruning(tablebase_t *tb) {
 
 		    if (! (pruned_futuremoves[tb->piece_color[piece]] & FUTUREVECTOR(futuremoves[piece][sq]))) {
 			fatal("No futurebase or pruning for %s move %s\n",
-			      colors[tb->piece_color[piece]],
+			      colors[tb->piece_color[piece]].c_str(),
 			      movestr[tb->piece_color[piece]][futuremoves[piece][sq]]);
 			return false;
 		    }
@@ -11512,7 +11465,7 @@ void optimize_futuremoves(tablebase_t *tb)
 		remove_futuremove(&(discarded_futuremoves[color]), fm);
 		remove_futuremove(&(optimized_futuremoves[color]), fm);
 
-		info("Pruned %s futuremove %s\n", colors[color], movestr[color][fm]);
+		info("Pruned %s futuremove %s\n", colors[color].c_str(), movestr[color][fm]);
 
 		for (fm2 = fm + 1; fm2 < (int) num_futuremoves[color]; fm2++) {
 		    strcpy(movestr[color][fm2-1], movestr[color][fm2]);
@@ -12772,12 +12725,11 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
  * XXX figure out boost iostreams error handling
  */
 
-void write_tablebase_to_file(tablebase_t *tb, char *filename)
+void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 {
-    xmlDocPtr doc;
+    xmlpp::Document * doc;
     int dtm_bits;
     xmlNodePtr tablebase;
-    xmlChar *buf;
     int size;
     int padded_size;
     char str[16];
@@ -12804,23 +12756,20 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
      * size hasn't changed.
      */
 
-    xmlDocDumpMemory(doc, &buf, &size);
-    xmlFree(buf);
+    size = doc->write_to_string().length();
+
     padded_size = (size+5)&(~3);
 
-    sprintf(str, "0x%04x", padded_size);
+    doc->get_root_node()->set_attribute("offset", boost::lexical_cast<std::string>(padded_size));
 
-    tablebase = xmlDocGetRootElement(doc);
-    xmlSetProp(tablebase, BAD_CAST "offset", BAD_CAST str);
-
-    xmlDocDumpMemory(doc, &buf, &size);
+    size = doc->write_to_string().length();
 
     if (padded_size != ((size+5)&(~3))) {
 	fatal("sizes don't match in write_tablebase_to_file\n");
 	terminate();
     }
 
-    info("Writing '%s'\n", filename);
+    info("Writing '%s'\n", filename.c_str());
 
     std::ofstream output_file;
     output_file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
@@ -12835,11 +12784,9 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
 
     /* First we write an XML header */
 
-    outstream.write((char *) buf, size);
+    doc->write_to_stream(outstream);
 
     for (; size < padded_size; size ++) outstream << '\0';
-
-    xmlFree(buf);
 
     /* Then we write the tablebase data */
 
@@ -12916,13 +12863,11 @@ void write_tablebase_to_file(tablebase_t *tb, char *filename)
  * an error indication, which is why we just silently return in many cases.
  */
 
-bool generate_tablebase_from_control_file(char *control_filename, char *output_filename) {
-
+bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring output_filename)
+{
     tablebase_t *tb;
-    xmlXPathContextPtr context;
-    xmlXPathObjectPtr result;
+    xmlpp::NodeSet result;
     size_t futurevector_bytes;
-    bool output_filename_needs_xmlFree = false;
 
 #if defined(RLIMIT_MEMLOCK) && LOCK_MEMORY
     struct rlimit rlimit;
@@ -12937,39 +12882,36 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
 
     /* Figure out where we want to write the finished product. */
 
-    context = xmlXPathNewContext(tb->xml);
-    result = xmlXPathEvalExpression(BAD_CAST "//output", context);
-    if ((result->nodesetval->nodeNr == 0) && (output_filename == nullptr)) {
+    result = tb->xml->get_root_node()->find("//output");
+    if (result.empty() && output_filename.empty()) {
 	fatal("Output filename must be specified either on command line or with <output> tag\n");
 	return false;
     }
-    if (result->nodesetval->nodeNr > 0) {
-	if (output_filename) {
+    if (! result.empty()) {
+	if (! output_filename.empty()) {
 	    warning("Output filename specified on command line overrides <output> tag\n");
 	} else {
-	    /* XXX this can leak memory on an error return, but fixing it would clutter this routine */
-	    if (output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "filename")) {
-		output_filename_needs_xmlFree = true;
-	    } else if (output_filename = (char *) xmlGetProp(result->nodesetval->nodeTab[0], BAD_CAST "url")) {
-		output_filename_needs_xmlFree = true;
+	    output_filename = ((xmlpp::Element *) result[0])->get_attribute_value("filename");
+	    if (output_filename.empty()) {
+		output_filename = ((xmlpp::Element *) result[0])->get_attribute_value("url");
 	    }
 	}
     }
-    xmlXPathFreeObject(result);
-    xmlXPathFreeContext(context);
 
-    if (! output_filename) {
+    if (output_filename.empty()) {
 	fatal("No output filename or URL specified\n");
 	return false;
     }
 
-    if (strncmp(output_filename, "http:", 5) == 0) {
+    // XXX make case insensitive
+
+    if (output_filename.substr(0,5) == "http:") {
 	fatal("http URLs currently unsupported for tablebase I/O\n");
 	return false;
     }
 
 #ifndef HAVE_LIBFTP
-    if (strncmp(output_filename, "ftp:", 4) == 0) {
+    if (output_filename.substr(0,4) == "ftp:") {
 	fatal("Compiled without ftplib - ftp URLs unavailable\n");
 	return false;
     }
@@ -13143,8 +13085,6 @@ bool generate_tablebase_from_control_file(char *control_filename, char *output_f
     propagate_all_moves_within_tablebase(tb);
 
     write_tablebase_to_file(tb, output_filename);
-
-    if (output_filename_needs_xmlFree) xmlFree(output_filename);
 
     // XXX we alloced it in this routine, but we might still use it to verify itself internally
     // delete entriesTable;
@@ -13728,7 +13668,7 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 				printf("   %c%sx%s   %s WINS\n", piece_char[piece_type],
 				       algebraic_notation[square],
 				       algebraic_notation[movementptr->square],
-				       colors[1 - piece_color]);
+				       colors[1 - piece_color].c_str());
 			    } else {
 				printf("   %c%sx%s   NO DATA\n", piece_char[piece_type],
 				       algebraic_notation[square],
@@ -13857,7 +13797,7 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 			    printf("   P%sx%s   %s WINS\n",
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square],
-				   colors[1 - piece_color]);
+				   colors[1 - piece_color].c_str());
 			} else {
 			    printf("   P%sx%s   NO DATA\n",
 				   algebraic_notation[square],
@@ -13920,7 +13860,7 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 				       algebraic_notation[square],
 				       algebraic_notation[movementptr->square],
 				       piece_char[promoted_pieces[promotion]],
-				       colors[1 - piece_color]);
+				       colors[1 - piece_color].c_str());
 			    } else {
 				printf("   P%sx%s=%c NO DATA\n",
 				       algebraic_notation[square],
@@ -13955,7 +13895,7 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 			    printf("   P%sx%s   %s WINS\n",
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square],
-				   colors[1 - piece_color]);
+				   colors[1 - piece_color].c_str());
 			} else {
 			    printf("   P%sx%s   NO DATA\n",
 				   algebraic_notation[square],
@@ -14158,7 +14098,7 @@ int main(int argc, char *argv[])
     int probing=0;
     int verify=0;
     int dump_info=0;
-    char *output_filename = nullptr;
+    std::string output_filename;
     extern char *optarg;
     extern int optind;
     char *options_string_ptr = options_string;
@@ -14193,7 +14133,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.830 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.831 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14292,7 +14232,7 @@ int main(int argc, char *argv[])
 	terminate();
     }
 
-    if (!generating && output_filename) {
+    if (!generating && ! output_filename.empty()) {
 	fatal("An output filename can not be specified when probing or verifying\n");
 	usage(argv[0]);
 	terminate();
@@ -14331,7 +14271,7 @@ int main(int argc, char *argv[])
 	    fatal("Error loading '%s'\n", argv[argi]);
 	} else {
 	    open_futurebase(tbs[i]);
-	    if (dump_info) xmlDocDump(stdout, tbs[i]->xml);
+	    if (dump_info) tbs[i]->xml->write_to_stream(std::cout);
 #ifdef USE_NALIMOV
 	    if (verify) verify_tablebase_against_nalimov(tbs[i]);
 #endif
@@ -14346,3 +14286,40 @@ int main(int argc, char *argv[])
 }
 
 }
+
+/*
+ * Why did I learn writing Hoffman?
+ * 
+ * My biggest regret is that I started writing it the program at all.  Why?  It's among the best in
+ * the world at what it does.  But it just plays endgames in chess.  That's it.
+ *
+ * So what?
+ *
+ * At 44, I've become more utilitarian than Magnus Carlsen or Payton Manning.  I expect my programs
+ * to do something useful.  Just being among the best at something isn't good enough.  Being the
+ * best isn't good enough!  Let's see a computer endgame showdown between Nalimov, Lomosolov (who's
+ * gonna win that round?), Freezer, FinalGen, and Hoffman.  Even if Hoffman won, it's still not
+ * good enough.  At it does is play a game!
+ *
+ * At least Don Knuth's idea of "literate programming" let me turn it into a book, and I liked
+ * writing the book a lot better than writing the program!
+ *
+ * My second biggest regret is writing it in C++11.  We need templates in Java, but we need dynamic,
+ * run-time type checking built into the language for testing.  My code has too many bugs.  I spend
+ * too much time staring at strange seg faults.
+ *
+ * We need software that can build with all kinds of run-time type checking, run it through 15,000
+ * test cases to convince yourself that it's right, then build a version that runs without all the
+ * type checking and runs fast.
+ *
+ * Still sounds like Java!  To build with run-time typing, we need a language that makes sure it's
+ * possible!  Right?  So we can build it when we need it and turn it off later?  Maybe they already
+ * know that in grad schools but the C++ standards committee seems unaware.  They're coming out with
+ * C++14!
+ *
+ * And I'll repeat: WE NEED TEMPLATES IN JAVA!
+ *
+ * You believe that?  I regret writing this program and I regret using this crazy language to do it?
+ *
+ * I don't know if I do either.
+ */
