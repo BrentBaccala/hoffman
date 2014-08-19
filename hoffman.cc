@@ -110,6 +110,9 @@
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/restrict.hpp>
+
+namespace io = boost::iostreams;
 
 #include <libxml++/libxml++.h>
 
@@ -654,8 +657,9 @@ typedef struct tablebase {
     unsigned int get_basic(index_t index);
 
     /* for futurebases only */
-    void * file;
+    std::istream * istream;
     const char * filename;
+
     int futurebase_type;
     index_t next_read_index;
     off_t offset;
@@ -4378,7 +4382,10 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc, bool is_futurebase
 	if (!result.empty()) {
 	    index_node = (xmlpp::Element *) result[0];
 	    index = index_node->get_attribute_value("type");
-	    tb->index_offset = index_node->eval_to_number("@offset");
+
+	    if (index_node->get_attribute_value("offset") != "") {
+		tb->index_offset = index_node->eval_to_number("@offset");
+	    }
 	}
     }
 
@@ -5269,8 +5276,6 @@ tablebase_t * parse_XML_control_file(char *filename)
     input_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
     input_file.open(filename, std::ifstream::in | std::ifstream::binary);
 
-    namespace io = boost::iostreams;
-
     io::filtering_istream instream;
 
     instream.push(io::gzip_decompressor());
@@ -5357,7 +5362,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.831 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.832 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5442,38 +5447,22 @@ public:
 
 tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 {
-    void * file = nullptr;
-    xmlDocPtr doc;
-    tablebase_t *tb = nullptr;
-    xmlNodePtr tablebase;
-    xmlChar * offsetstr;
+    std::ifstream * input_file = new std::ifstream;
 
-    std::ifstream input_file;
-    input_file.exceptions(std::ifstream::failbit | std::ifstream::badbit);
-    input_file.open(filename, std::ifstream::in | std::ifstream::binary);
+    input_file->exceptions(std::ifstream::failbit | std::ifstream::badbit);
+    input_file->open(filename, std::ifstream::in | std::ifstream::binary);
 
-    namespace io = boost::iostreams;
+    io::filtering_istream * instream = new io::filtering_istream;
 
-    io::filtering_istream instream;
-
-    instream.push(limiting_input_filter("</tablebase>"));
-    instream.push(io::gzip_decompressor());
-    instream.push(input_file);
+    instream->push(limiting_input_filter("</tablebase>"));
+    instream->push(io::gzip_decompressor());
+    instream->push(*input_file);
 
     xmlpp::DomParser parser;
 
-    parser.parse_stream(instream);
+    parser.parse_stream(*instream);
 
-    /* My experiments with xmlReadIO indicate that it only calls its read function enough times to
-     * get the XML document, which is good, because we don't want it reading the entire file.
-     */
-    //doc = xmlReadIO(&zlib_read_int, nullptr, file, nullptr, nullptr, 0);
-
-    //const xmlpp::Node* pNode = parser.get_document()->get_root_node();
-
-    tb = parse_XML_into_tablebase(parser.get_document(), 1);
-
-    //tb = parse_XML_into_tablebase(doc, 1);
+    tablebase_t * tb = parse_XML_into_tablebase(parser.get_document(), 1);
 
     if (tb == nullptr) {
 	fatal("Futurebase preload failed: '%s'\n", filename.c_str());
@@ -5481,7 +5470,24 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
     }
 
     tb->filename = filename.c_str();
-    tb->offset = tb->xml->get_root_node()->eval_to_number("/tablebase/@offset");
+
+    /* not tb->offset = tb->xml->get_root_node()->eval_to_number("/tablebase/@offset") because the
+     * offset might be specified as a hexadecimal string
+     */
+    tb->offset = std::stoi(tb->xml->get_root_node()->eval_to_string("/tablebase/@offset"), 0, 0);
+
+    /* We don't just destroy instream, because that would close the file.  Instead, we disassemble
+     * it and reassemble it for reading the data.
+     */
+
+    instream->set_auto_close(false);
+    while (! instream->empty()) instream->pop();
+
+    instream->push(io::gzip_decompressor());
+    instream->push(io::restrict(*input_file, 0, tb->offset));
+
+    tb->istream = instream;
+    tb->next_read_index = 0;
 
     return tb;
 }
@@ -5492,52 +5498,23 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 
 void open_futurebase(tablebase_t * tb)
 {
-    /* already open? */
-    if (tb->file) return;
-
-    if (rindex(tb->filename, ':') == nullptr) {
-	int fd;
-	fd = open(tb->filename, O_RDONLY|O_LARGEFILE, 0);
-	if (fd != -1) {
-	    tb->file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
-	}
-    } else if (strncmp(tb->filename, "ftp:", 4) == 0) {
-#ifdef HAVE_LIBFTP
-	void *ptr = ftp_openurl(tb->filename, "r");
-	if (ptr) {
-	    tb->file = zlib_open(ptr, ftp_read, ftp_write, ftp_seek, ftp_close, "r");
-	}
-#else
-	fatal("Compiled without ftplib - ftp: URLs unsupported\n");
-#endif
-    } else if (strncmp(tb->filename, "http:", 5) == 0) {
-	fatal("http: URLs currently unsupported for tablebase I/O\n");
-    }
-
-    if (tb->file == nullptr) {
-	fatal("Can't open tablebase '%s'\n", tb->filename);
-    }
-
-    if (zlib_seek(tb->file, tb->offset, SEEK_SET) != tb->offset) {
-	fatal("Seek failed in open_futurebase()\n");
-    }
-
-    tb->next_read_index = 0;
 }
 
 void close_futurebase(tablebase_t * tb)
 {
+#if 0
     if (tb->file) {
 	if (zlib_close(tb->file) != 0) {
 	    warning("zlib_close failed in close_futurebase()\n");
 	}
     }
     tb->file = nullptr;
+#endif
 }
 
 void unload_futurebase(tablebase_t *tb)
 {
-    /* XXXtb->filename came from c_str - do we free it */
+    /* XXX tb->filename came from c_str - do we free it */
     // if (tb->filename) xmlFree(tb->filename);
     tb->filename = nullptr;
 
@@ -6770,7 +6747,7 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
 
 	/* If cache is non existant, build it */
 
-	if (file == nullptr) {
+	if (istream == nullptr) {
 	    fatal("fetch_entry() called on a non-preloaded tablebase\n");
 	    terminate();
 	}
@@ -6807,13 +6784,15 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
 	    /* Backwards seeks in a compressed file are expensive, but occasionally unavoidable */
 	    info("Seeking backwards for %" PRIindex " from %" PRIindex "\n", index, next_read_index);
 	}
-	if (zlib_seek(file, offset + (off_t) (index * format.bits / 8), SEEK_SET)
-	    != offset + (off_t) (index * format.bits / 8)) {
-	    fatal("Seek failed for index %" PRIindex " in fetch_entry()\n", index);
-	}
+	// XXX check error handling
+	istream->seekg(index * format.bits / 8);
 	next_read_index = index;
     }
 
+    istream->read(cached_entries, format.bits * futurebase_stride / 8);
+
+    // XXX put this error handling back in
+#if 0
     if (zlib_read(file, cached_entries, format.bits * futurebase_stride / 8) != format.bits * futurebase_stride / 8) {
 	/* Might get a short read at the end of a tablebase, otherwise complain */
 
@@ -6821,6 +6800,7 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
 	    fatal("fetch_entry() hit EOF reading from disk\n");
 	}
     }
+#endif
 
     next_read_index += futurebase_stride;
 
@@ -14133,7 +14113,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.831 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.832 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
