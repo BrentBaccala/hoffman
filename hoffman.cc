@@ -269,6 +269,20 @@ bool * negative_passes_needed = nullptr;
 
 /***** DATA STRUCTURES *****/
 
+/* dynamic_cast'ing a pointer returns nullptr if the cast fails, but usually I want an exception
+ * instead.  exception_cast<Type> works just like dynamic_cast<Type> except that it throws an
+ * exception instead of returning nullptr.
+ */
+    extern "C++" {
+	template<typename T, typename P>
+	T exception_cast(P p) {
+	    T val;
+	    val = dynamic_cast<T>(p);
+	    if (val == nullptr) throw new std::bad_cast();
+	    else return val;
+	}
+    }
+
 /* From Guru of The Week #29 [http://www.gotw.ca/gotw/029.htm]
  *
  * The key here is to understand what a "string" actually is in standard C++. If you look in your
@@ -529,9 +543,9 @@ int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, KING};
  */
 
 struct format {
-    uint8_t bits;
+    int bits;
     int dtm_offset;
-    uint8_t dtm_bits;
+    int dtm_bits;
     int flag_offset;
     int flag_type;
     int basic_offset;
@@ -676,6 +690,8 @@ typedef struct tablebase {
      */
     int matching_local_semilegal_group[MAX_PIECES][64];
 
+    // XXX put this in to destroy parser when tablebase is destroyed
+    // xmlpp::DomParser * parser;
     xmlpp::Document * xml;
 
     /* Pieces */
@@ -3826,7 +3842,7 @@ bool parse_format(xmlpp::Element * formatNode, struct format * format, bool expl
     for (auto child = children.begin(); child != children.end(); child ++) {
 	xmlpp::Element * child_element = dynamic_cast<xmlpp::Element *>(*child);
 	if (child_element != nullptr) {
-	    int bits = child_element->eval_to_number("@bits");
+	    int bits = child_element->get_attribute_value("bits") != "" ? child_element->eval_to_number("@bits") : 0;
 	    try {
 		// this might throw an exception - see below
 		int format_field = format_fields.at(child_element->get_name());
@@ -3969,7 +3985,7 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc, bool is_futurebase
     result = tablebase->find("//variant");
 
     if (! result.empty()) {
-	Glib::ustring variant_name = result[0]->eval_to_string("//@name");
+	Glib::ustring variant_name = result[0]->eval_to_string("@name");
 	try {
 	    tb->variant = variant_names.at(variant_name);
 	} catch (std::exception & ex) {
@@ -4546,7 +4562,7 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc, bool is_futurebase
 		tb->format = dtm_format;
 
 		tablebase->add_child_text("   ");
-		index_node = tablebase->add_child("dtm");
+		tablebase->add_child("dtm");
 		tablebase->add_child_text("\n");
 
 		warning("Format not expressly specified; assuming dtm\n");
@@ -4556,7 +4572,9 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc, bool is_futurebase
 
     /* Extract index symmetry (if it was specified) */
 
-    tb->symmetry = tablebase->eval_to_number("//index/@symmetry");
+    if (index_node->get_attribute_value("symmetry") != "") {
+	tb->symmetry = index_node->eval_to_number("@symmetry");
+    }
 
     if (tb->symmetry == 0) {
 	/* If symmetry was not explicitly specified, compute it automatically */
@@ -5278,14 +5296,18 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     io::filtering_istream instream;
 
-    instream.push(io::gzip_decompressor());
+    // XXX can we test for compression and then push?
+    //instream.push(io::gzip_decompressor());
     instream.push(input_file);
 
+    /* DomParser will destroy its document when it's destroyed, so we need to allocate it on the
+     * heap and keep it around with the tablebase.
+     */
     // XXX this might throw an exception
-    xmlpp::DomParser parser;
-    parser.parse_stream(instream);
+    xmlpp::DomParser * parser = new xmlpp::DomParser;
+    parser->parse_stream(instream);
 
-    doc = parser.get_document();
+    doc = parser->get_document();
 
     /* Does the tablebase specify URLs to report errors or successful completion to?  If so, extract
      * them now, as early as possible, because we want to report to the error URL in case validation
@@ -5294,12 +5316,12 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     result = doc->get_root_node()->find("//error-report");
     if (! result.empty()) {
-	error_report_url = result[0]->eval_to_string("//@url");
+	error_report_url = result[0]->eval_to_string("@url");
     }
 
     result = doc->get_root_node()->find("//completion-report");
     if (! result.empty()) {
-	completion_report_url = result[0]->eval_to_string("//@url");
+	completion_report_url = result[0]->eval_to_string("@url");
     }
 
     /* check if validation suceeded */
@@ -5362,7 +5384,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.832 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.833 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5458,18 +5480,25 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
     instream->push(io::gzip_decompressor());
     instream->push(*input_file);
 
-    xmlpp::DomParser parser;
+    /* DomParser will destroy its document when it's destroyed, so we need to allocate it on the
+     * heap and keep it around with the tablebase.
+     *
+     * XXX keep it around with the tablebase
+     */
 
-    parser.parse_stream(*instream);
+    xmlpp::DomParser * parser = new xmlpp::DomParser;
 
-    tablebase_t * tb = parse_XML_into_tablebase(parser.get_document(), 1);
+    parser->parse_stream(*instream);
+
+    tablebase_t * tb = parse_XML_into_tablebase(parser->get_document(), 1);
 
     if (tb == nullptr) {
 	fatal("Futurebase preload failed: '%s'\n", filename.c_str());
 	return nullptr;
     }
 
-    tb->filename = filename.c_str();
+    // XXX fix this - filename will be destroyed when we return, so we need a copy here
+    tb->filename = (new Glib::ustring(filename))->c_str();
 
     /* not tb->offset = tb->xml->get_root_node()->eval_to_number("/tablebase/@offset") because the
      * offset might be specified as a hexadecimal string
@@ -5480,11 +5509,19 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
      * it and reassemble it for reading the data.
      */
 
+    // XXX keep reading without reseting the file (might not work over network)
+
     instream->set_auto_close(false);
     while (! instream->empty()) instream->pop();
+    input_file->seekg(0);
 
-    instream->push(io::gzip_decompressor());
-    instream->push(io::restrict(*input_file, 0, tb->offset));
+    // XXX test cases for exceptions
+
+    //instream->push(io::gzip_decompressor());
+    //instream->push(io::restrict(*input_file, tb->offset));
+    instream->push(io::restrict(io::gzip_decompressor(), tb->offset));
+    instream->push(*input_file);
+    instream->exceptions(std::ifstream::failbit | std::ifstream::badbit);
 
     tb->istream = instream;
     tb->next_read_index = 0;
@@ -5681,7 +5718,7 @@ bool preload_all_futurebases(tablebase_t *tb)
     }
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	Glib::ustring filename = result[fbnum]->eval_to_string("//@filename");
+	Glib::ustring filename = result[fbnum]->eval_to_string("@filename");
 	xmlChar * colors_property;
 
 	// XXX put this back in
@@ -5713,7 +5750,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	if (futurebases[fbnum]->max_dtm > max_tracked_dtm) max_tracked_dtm = futurebases[fbnum]->max_dtm;
 	if (futurebases[fbnum]->min_dtm < min_tracked_dtm) min_tracked_dtm = futurebases[fbnum]->min_dtm;
 
-	futurebases[fbnum]->invert_colors = (result[fbnum]->eval_to_string("//@colors") == "invert");
+	futurebases[fbnum]->invert_colors = (result[fbnum]->eval_to_string("@colors") == "invert");
 
 	/* Check futurebase to make sure its prune enable(s) match our own */
 
@@ -5740,7 +5777,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	    fatal("'%s': Can't autodetect futurebase type\n", filename.c_str());
 	}
 
-	Glib::ustring type = result[fbnum]->eval_to_string("//@type");
+	Glib::ustring type = exception_cast<xmlpp::Element *>(result[fbnum])->get_attribute_value("type");
 	if (type != "") {
 	    if (futurebases[fbnum]->futurebase_type != futurebase_types.at(type)) {
 		fatal("'%s': Specified futurebase type '%s' doesn't match autodetected type '%s'\n",
@@ -5890,8 +5927,7 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
     result = tablebase->find("//dtm");
 
     if (! result.empty()) {
-	// XXX check cast
-	((xmlpp::Element *) result[0])->set_attribute("bits", boost::lexical_cast<std::string>(tb->format.dtm_bits));
+	exception_cast<xmlpp::Element *>(result[0])->set_attribute("bits", boost::lexical_cast<std::string>(tb->format.dtm_bits));
     }
 
     /* Add a set of tablebase-statistics.  We prefer to add this before the generation-statistics,
@@ -5925,31 +5961,31 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
      */
 
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
-	node->add_child("\n      ");
+	node->add_child_text("\n      ");
 	node->add_child("white-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[WHITE]));
     }
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1)) {
-	node->add_child("\n      ");
+	node->add_child_text("\n      ");
 	node->add_child("black-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[BLACK]));
     }
     if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
-	node->add_child("\n      ");
+	node->add_child_text("\n      ");
 	node->add_child("white-wins-or-draws-positions")->set_child_text(boost::lexical_cast<std::string>(total_legal_positions - player_wins[BLACK]));
     }
 
-    node->add_child("\n      ");
+    node->add_child_text("\n      ");
     node->add_child("forward-moves")->set_child_text(boost::lexical_cast<std::string>(total_moves));
-    node->add_child("\n      ");
+    node->add_child_text("\n      ");
     node->add_child("futuremoves")->set_child_text(boost::lexical_cast<std::string>(total_futuremoves));
 
     if (tb->format.dtm_bits > 0) {
-	node->add_child("\n      ");
+	node->add_child_text("\n      ");
 	node->add_child("max-dtm")->set_child_text(boost::lexical_cast<std::string>(max_dtm));
-	node->add_child("\n      ");
+	node->add_child_text("\n      ");
 	node->add_child("min-dtm")->set_child_text(boost::lexical_cast<std::string>(min_dtm));
     }
 
-    node->add_child("\n      ");
+    node->add_child_text("\n      ");
 
     /* Rename the last checkpoint-time to completion-time */
 
@@ -6789,7 +6825,16 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
 	next_read_index = index;
     }
 
-    istream->read(cached_entries, format.bits * futurebase_stride / 8);
+    if (next_read_index + futurebase_stride < max_index) {
+	istream->read(cached_entries, format.bits * futurebase_stride / 8);
+	next_read_index += futurebase_stride;
+    } else {
+	int bytes_to_read = format.bits * (max_index - next_read_index + 1) / 8;
+	if ((format.bits * (max_index - next_read_index + 1)) % 8 != 0) bytes_to_read ++;
+	istream->read(cached_entries, bytes_to_read);
+	//next_read_index = INVALID_INDEX;
+	next_read_index = max_index + 1;
+    }
 
     // XXX put this error handling back in
 #if 0
@@ -6802,7 +6847,6 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
     }
 #endif
 
-    next_read_index += futurebase_stride;
 
     cached_index = index;
 
@@ -10569,9 +10613,9 @@ int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
 
     for (auto prune = result.begin(); prune != result.end(); prune ++) {
 
-	Glib::ustring prune_color = (*prune)->eval_to_string("//@color");
-	Glib::ustring prune_move = (*prune)->eval_to_string("//@move");
-	Glib::ustring prune_type = (*prune)->eval_to_string("//@type");
+	Glib::ustring prune_color = (*prune)->eval_to_string("@color");
+	Glib::ustring prune_move = (*prune)->eval_to_string("@move");
+	Glib::ustring prune_type = (*prune)->eval_to_string("@type");
 
 	/* Trailing 'any' is an older syntax that means '*' */
 
@@ -11087,8 +11131,8 @@ bool compute_pruned_futuremoves(tablebase_t *tb)
 
     for (auto prune = result.begin(); prune != result.end(); prune ++) {
 
-	Glib::ustring prune_color = (*prune)->eval_to_string("//@color");
-	Glib::ustring prune_type = (*prune)->eval_to_string("//@type");
+	Glib::ustring prune_color = (*prune)->eval_to_string("@color");
+	Glib::ustring prune_type = (*prune)->eval_to_string("@type");
 
 	int color = colors.at(prune_color);
 	int type = restriction_types.at(prune_type);
@@ -11149,6 +11193,8 @@ bool check_pruning(tablebase_t *tb) {
      */
 
     for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+
+	// XXX suicide?
 
 	if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
@@ -12744,6 +12790,12 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 
     size = doc->write_to_string().length();
 
+    padded_size = (size+5)&(~3);
+
+    doc->get_root_node()->set_attribute("offset", boost::lexical_cast<std::string>(padded_size));
+
+    size = doc->write_to_string().length();
+
     if (padded_size != ((size+5)&(~3))) {
 	fatal("sizes don't match in write_tablebase_to_file\n");
 	terminate();
@@ -14113,7 +14165,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.832 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.833 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
