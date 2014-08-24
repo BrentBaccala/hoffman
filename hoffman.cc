@@ -5385,7 +5385,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.835 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.836 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8022,7 +8022,7 @@ struct proptable_format {
 	for (index_bits = 1; (1ULL << index_bits) <= max_index; index_bits ++);
 
 	if ((max_dtm != 0) || (min_dtm != 0)) {
-	    for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) && (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
+	    for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) || (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
 	} else {
 	    dtm_bits = 0;
 	}
@@ -12778,7 +12778,7 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
     char str[16];
     char entrybuf[MAX_FORMAT_BYTES];
 
-    for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) && (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
+    for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) || (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
 
     if ((tb->format.dtm_offset != -1) && (tb->format.dtm_bits == 0)) {
 	tb->format.dtm_bits = dtm_bits;
@@ -14180,7 +14180,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.835 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.836 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
