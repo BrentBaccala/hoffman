@@ -109,7 +109,8 @@
 #include <boost/iostreams/device/file.hpp>
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
-#include <boost/iostreams/filter/gzip.hpp>
+//#include <boost/iostreams/filter/gzip.hpp>
+#include "gzip.hpp"
 #include <boost/iostreams/restrict.hpp>
 
 namespace io = boost::iostreams;
@@ -5384,7 +5385,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.834 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.835 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5439,8 +5440,6 @@ tablebase_t * parse_XML_control_file(char *filename)
  *
  * XXX it isn't quite right in the general case.  "</tab</tablebase>" won't match at all.
  */
-
-namespace io = boost::iostreams;
 
 extern "C++" {
 
@@ -5517,11 +5516,25 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 
     // XXX test cases for exceptions
 
-    //instream->push(io::gzip_decompressor());
-    //instream->push(io::restrict(*input_file, tb->offset));
+#if 1
+    io::filtering_stream<io::input_seekable> * instream2 = new io::filtering_stream<io::input_seekable>;
+
+    instream2->push(io::gzip_decompressor());
+    instream2->push(*input_file);
+
+    //std::cout << "offset: " << tb->offset << std::endl;
+
+    instream->push(io::restrict(*instream2, tb->offset));
+    instream->exceptions(std::ifstream::failbit | std::ifstream::badbit);
+
+#else
+
+    // XXX nice idea, but doesn't work
     instream->push(io::restrict(io::gzip_decompressor(), tb->offset));
     instream->push(*input_file);
     instream->exceptions(std::ifstream::failbit | std::ifstream::badbit);
+
+#endif
 
     tb->istream = instream;
     tb->next_read_index = 0;
@@ -12811,8 +12824,6 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
     output_file.exceptions(std::ofstream::failbit | std::ofstream::badbit);
     output_file.open(filename, std::ofstream::out | std::ofstream::binary | std::ofstream::trunc);
 
-    namespace io = boost::iostreams;
-
     io::filtering_ostream outstream;
 
     outstream.push(io::gzip_compressor());
@@ -14169,7 +14180,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.834 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.835 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
