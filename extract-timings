@@ -70,8 +70,8 @@ my $insert = $dbh->prepare("INSERT INTO timings VALUES(?, ?, ?, ?, ?)");
 sub time2sec {
     my ($timestr) = @_;
 
-    if ($timestr =~ m/(([0-9]+)m)?([0-9.]+)s/) {
-	return 60*$2+$3;
+    if ($timestr =~ m/(([0-9]+)h)?(([0-9]+)m)?([0-9.]+)s/) {
+	return 3600*$2 + 60*$4 + $5;
     } else {
 	return "";
     }
@@ -98,7 +98,7 @@ sub extract_timings {
 		     $XMLfuturebase->find('//indices'),
 #		     &time2sec($XMLfuturebase->find('//real-time')),
 		     &time2sec($XMLfuturebase->find('//user-time')),
-		     $XMLfuturebase->find('//max-dtm'));
+		     $XMLfuturebase->findvalue('//max-dtm') - $XMLfuturebase->findvalue('//min-dtm'));
 }
 
 
