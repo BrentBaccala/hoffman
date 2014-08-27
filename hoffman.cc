@@ -109,6 +109,7 @@
 #include <boost/iostreams/device/file.hpp>
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filter/counter.hpp>
 //#include <boost/iostreams/filter/gzip.hpp>
 #include "gzip.hpp"
 #include <boost/iostreams/restrict.hpp>
@@ -5385,7 +5386,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.836 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.837 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5466,6 +5467,105 @@ public:
 
 };
 
+class hoffman_nested_istream : public io::filtering_istream {
+
+protected:
+
+    std::streampos seekoff (std::streamoff off, ios_base::seekdir way,
+			       ios_base::openmode which = ios_base::in | ios_base::out)
+    {
+	return 0;
+    }
+
+};
+
+    //class hoffman_instream : public io::filtering_istream
+class hoffman_instream : public io::filtering_istreambuf
+{
+    typedef std::streampos streampos;
+    typedef std::streamoff streamoff;
+    typedef std::ios_base ios_base;
+
+    std::ifstream * input_file;
+    streampos offset;
+
+    //io::filtering_istream nested_instream;
+    //hoffman_nested_istream nested_instream;
+
+    void reset(void)
+    {
+	//std::cout << "reseting\n";
+	//while (! nested_instream.empty()) pop();
+	while (! empty()) pop();
+	input_file->seekg(0);
+
+	/* nice idea, but doesn't work */
+	// push(io::restrict(io::gzip_decompressor(), offset));
+	// push(input_file);
+
+	/* instead, we have to nest ourselves around another input stream */
+	// nested_instream.push(io::gzip_decompressor());
+	// nested_instream.push(*input_file);
+
+	//io::gzip_decompressor t;
+	//std::cout << t.total_out() << std::endl;
+
+	push(io::counter());
+	push(io::gzip_decompressor());
+	push(*input_file);
+    }
+
+protected:
+
+    streampos seekpos (streampos sp, ios_base::openmode which = ios_base::in | ios_base::out)
+    {
+	//int total_out = component<io::gzip_decompressor>(0)->total_out();
+	int total_out = component<io::counter>(0)->characters();
+
+	sp += offset;
+
+	std::cout << "seekpos " << sp << " " << total_out << " " << size() << std::endl;
+
+	if (sp < total_out) {
+	    reset();
+	    //sgetc();
+	    total_out = component<io::counter>(0)->characters();
+	    //total_out = component<io::gzip_decompressor>(0)->total_out();
+	    //total_out = 0;
+	}
+
+	while (total_out < sp) {
+	    sbumpc();
+	    total_out ++;
+	}
+
+	total_out = component<io::counter>(0)->characters();
+
+	//std::cout << "seekpos " << sp << " " << total_out << " " << size() << std::endl;
+	return (total_out - offset);
+    }
+
+#if 0
+    streampos seekoff (streamoff off, ios_base::seekdir way,
+		       ios_base::openmode which = ios_base::in | ios_base::out)
+    {
+	std::cout << "seekoff" << std::endl;
+	return 0;
+    }
+#endif
+
+public:
+    hoffman_instream(std::ifstream * input_file, streampos offset)
+	: input_file(input_file), offset(offset)
+	{
+	    set_auto_close(false);
+	    reset();
+	    // push(io::restrict(nested_instream, offset));
+	    // XXX need this
+	    // exceptions(std::ifstream::failbit | std::ifstream::badbit);
+	}
+};
+
 tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 {
     std::ifstream * input_file = new std::ifstream;
@@ -5508,6 +5608,7 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
      * it and reassemble it for reading the data.
      */
 
+#if 0
     // XXX keep reading without reseting the file (might not work over network)
 
     instream->set_auto_close(false);
@@ -5536,7 +5637,12 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 
 #endif
 
+
     tb->istream = instream;
+    tb->next_read_index = 0;
+#endif
+
+    tb->istream = new std::istream(new hoffman_instream(input_file, tb->offset));
     tb->next_read_index = 0;
 
     return tb;
@@ -6831,7 +6937,7 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
     } else if (index < next_read_index) {
 	/* Backwards seeks in a compressed file are expensive, but occasionally unavoidable */
 	// XXX backwards seeks current impossible
-	info("Seeking backwards for %" PRIindex " from %" PRIindex "\n", index, next_read_index);
+	// info("Seeking backwards for %" PRIindex " from %" PRIindex "\n", index, next_read_index);
 	// XXX check error handling
 	istream->seekg(index * format.bits / 8);
 	next_read_index = index;
@@ -14180,7 +14286,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.836 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.837 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
