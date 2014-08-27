@@ -109,6 +109,7 @@
 #include <boost/iostreams/device/file.hpp>
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
+#include <boost/iostreams/filter/symmetric.hpp>
 #include <boost/iostreams/filter/counter.hpp>
 //#include <boost/iostreams/filter/gzip.hpp>
 #include "gzip.hpp"
@@ -5386,7 +5387,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.837 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.838 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5465,6 +5466,47 @@ public:
     }
 };
 
+    /* This next section of code was ripped out of the boost library */
+
+const int default_device_buffer_size = 16384;
+
+template<typename Alloc = std::allocator<char> >
+class gzip_decompressor_impl {
+public:
+    typedef char char_type;
+    gzip_decompressor_impl() { }
+    ~gzip_decompressor_impl() { }
+    bool filter( const char*& begin_in, const char* end_in,
+                 char*& begin_out, char* end_out, bool flush )
+    {
+	begin_out = end_out;
+	return true;
+    }
+    void close() { }
+    bool eof() const { return eof_; }
+private:
+    bool eof_;
+};
+
+template<typename Alloc = std::allocator<char> >
+struct basic_gzip_decompressor 
+    : io::symmetric_filter<gzip_decompressor_impl<Alloc>, Alloc> 
+{
+private:
+    typedef gzip_decompressor_impl<Alloc>           impl_type;
+    typedef io::symmetric_filter<impl_type, Alloc>  base_type;
+public:
+    typedef typename base_type::char_type               char_type;
+    typedef typename base_type::category                category;
+    basic_gzip_decompressor( int buffer_size = default_device_buffer_size )
+	: base_type(buffer_size) { }
+    ulong crc() { return this->filter().crc(); }
+    int total_out() {  return this->filter().total_out(); }
+    bool eof() { return this->filter().eof(); }
+};
+
+typedef basic_gzip_decompressor<> gzip_decompressor;
+
 };
 
 class hoffman_nested_istream : public io::filtering_istream {
@@ -5478,6 +5520,9 @@ protected:
     }
 
 };
+
+
+
 
     //class hoffman_instream : public io::filtering_istream
 class hoffman_instream : public io::filtering_istreambuf
@@ -5608,7 +5653,7 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
      * it and reassemble it for reading the data.
      */
 
-#if 0
+#if 1
     // XXX keep reading without reseting the file (might not work over network)
 
     instream->set_auto_close(false);
@@ -5617,7 +5662,7 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 
     // XXX test cases for exceptions
 
-#if 1
+#if 0
     io::filtering_stream<io::input_seekable> * instream2 = new io::filtering_stream<io::input_seekable>;
 
     instream2->push(io::gzip_decompressor());
@@ -5631,7 +5676,8 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 #else
 
     // XXX nice idea, but doesn't work
-    instream->push(io::restrict(io::gzip_decompressor(), tb->offset));
+    //instream->push(io::restrict(io::gzip_decompressor(), tb->offset));
+    instream->push(io::restrict(gzip_decompressor(), tb->offset));
     instream->push(*input_file);
     instream->exceptions(std::ifstream::failbit | std::ifstream::badbit);
 
@@ -5640,10 +5686,13 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 
     tb->istream = instream;
     tb->next_read_index = 0;
-#endif
+
+#else
 
     tb->istream = new std::istream(new hoffman_instream(input_file, tb->offset));
     tb->next_read_index = 0;
+
+#endif
 
     return tb;
 }
@@ -14286,7 +14335,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.837 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.838 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
