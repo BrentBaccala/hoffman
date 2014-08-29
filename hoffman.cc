@@ -106,12 +106,15 @@
 
 #include <boost/algorithm/string.hpp>
 
+#include <boost/iostreams/detail/ios.hpp>  // for failure exception
+
 #include <boost/iostreams/device/file.hpp>
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/symmetric.hpp>
 #include <boost/iostreams/filter/counter.hpp>
 //#include <boost/iostreams/filter/gzip.hpp>
+#include <boost/iostreams/seek.hpp>
 #include "gzip.hpp"
 #include <boost/iostreams/restrict.hpp>
 
@@ -165,6 +168,8 @@ extern "C" {
 
 #define STRICT_ZLIB_OPEN_DECLARATION 1
 #include "zlib_fopen.h"		/* My wrapper around the ZLIB compression library (required) */
+
+#include "zlib.h"
 
 #ifdef USE_LIBCURL
 #include "url_fopen.h"		/* My wrapper around libcurl (optional, for http: URL support) */
@@ -5387,7 +5392,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.838 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.839 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5471,21 +5476,47 @@ public:
 const int default_device_buffer_size = 16384;
 
 template<typename Alloc = std::allocator<char> >
-class gzip_decompressor_impl {
+class gzip_decompressor_impl : public z_stream {
 public:
     typedef char char_type;
-    gzip_decompressor_impl() { }
+    void reset()
+    {
+	zalloc = nullptr;
+	zfree = nullptr;
+	next_in = nullptr;
+	avail_in = 0;
+	total_in = 0;
+	total_out = 0;
+
+	if (inflateInit2(this, 32 + MAX_WBITS) != Z_OK) throw new std::exception;
+    }
+
+    gzip_decompressor_impl() { reset(); }
+
     ~gzip_decompressor_impl() { }
+
     bool filter( const char*& begin_in, const char* end_in,
                  char*& begin_out, char* end_out, bool flush )
     {
-	begin_out = end_out;
-	return true;
+	next_in = reinterpret_cast<Bytef*>(const_cast<char *>(begin_in));
+	avail_in = end_in - begin_in;
+	next_out = reinterpret_cast<Bytef*>(begin_out);
+	avail_out = end_out - begin_out;
+
+	int result = inflate(this, flush ? Z_SYNC_FLUSH : Z_NO_FLUSH);
+	//if (result < 0) throw new std::exception;
+	//if (result < 0) throw new io::detail::failure(msg);
+	if (result < 0) {
+	    throw new BOOST_IOSTREAMS_FAILURE(msg);
+	}
+
+	begin_in = reinterpret_cast<char*>(next_in);
+	begin_out = reinterpret_cast<char*>(next_out);
+
+	return (result != Z_STREAM_END);
     }
+    //void close() { reset(); }
     void close() { }
-    bool eof() const { return eof_; }
-private:
-    bool eof_;
 };
 
 template<typename Alloc = std::allocator<char> >
@@ -5497,118 +5528,46 @@ private:
     typedef io::symmetric_filter<impl_type, Alloc>  base_type;
 public:
     typedef typename base_type::char_type               char_type;
-    typedef typename base_type::category                category;
+    struct category : base_type::category, io::input_seekable { };
     basic_gzip_decompressor( int buffer_size = default_device_buffer_size )
 	: base_type(buffer_size) { }
     ulong crc() { return this->filter().crc(); }
-    int total_out() {  return this->filter().total_out(); }
+    int total_out() {  return this->filter().total_out; }
     bool eof() { return this->filter().eof(); }
+
+    template <typename T>
+    std::streampos seek(T& t, io::stream_offset off, BOOST_IOS::seekdir way)
+    {
+	// std::cout << typeid(t).name() << std::endl;
+	// std::cerr << "seeking " << off << " " << way << " from " << total_out() << std::endl;
+
+	if (way == BOOST_IOS::cur) {
+	    if (off < 0) {
+		off += total_out();
+		//close_impl();
+		this->close(t, BOOST_IOS::in);
+		this->filter().reset();
+		io::seek(t, 0, BOOST_IOS::beg);
+	    }
+	    if (off > 0) {
+		// XXX check type
+		char_type buffer[default_device_buffer_size];
+		while (off > 0) {
+		    if (off > default_device_buffer_size) {
+			off -= this->read(t, buffer, default_device_buffer_size);
+		    } else {
+			off -= this->read(t, buffer, off);
+		    }
+		}
+	    }
+	}
+	// std::cerr << "seek done\n";
+	return total_out();
+    }
 };
 
 typedef basic_gzip_decompressor<> gzip_decompressor;
 
-};
-
-class hoffman_nested_istream : public io::filtering_istream {
-
-protected:
-
-    std::streampos seekoff (std::streamoff off, ios_base::seekdir way,
-			       ios_base::openmode which = ios_base::in | ios_base::out)
-    {
-	return 0;
-    }
-
-};
-
-
-
-
-    //class hoffman_instream : public io::filtering_istream
-class hoffman_instream : public io::filtering_istreambuf
-{
-    typedef std::streampos streampos;
-    typedef std::streamoff streamoff;
-    typedef std::ios_base ios_base;
-
-    std::ifstream * input_file;
-    streampos offset;
-
-    //io::filtering_istream nested_instream;
-    //hoffman_nested_istream nested_instream;
-
-    void reset(void)
-    {
-	//std::cout << "reseting\n";
-	//while (! nested_instream.empty()) pop();
-	while (! empty()) pop();
-	input_file->seekg(0);
-
-	/* nice idea, but doesn't work */
-	// push(io::restrict(io::gzip_decompressor(), offset));
-	// push(input_file);
-
-	/* instead, we have to nest ourselves around another input stream */
-	// nested_instream.push(io::gzip_decompressor());
-	// nested_instream.push(*input_file);
-
-	//io::gzip_decompressor t;
-	//std::cout << t.total_out() << std::endl;
-
-	push(io::counter());
-	push(io::gzip_decompressor());
-	push(*input_file);
-    }
-
-protected:
-
-    streampos seekpos (streampos sp, ios_base::openmode which = ios_base::in | ios_base::out)
-    {
-	//int total_out = component<io::gzip_decompressor>(0)->total_out();
-	int total_out = component<io::counter>(0)->characters();
-
-	sp += offset;
-
-	std::cout << "seekpos " << sp << " " << total_out << " " << size() << std::endl;
-
-	if (sp < total_out) {
-	    reset();
-	    //sgetc();
-	    total_out = component<io::counter>(0)->characters();
-	    //total_out = component<io::gzip_decompressor>(0)->total_out();
-	    //total_out = 0;
-	}
-
-	while (total_out < sp) {
-	    sbumpc();
-	    total_out ++;
-	}
-
-	total_out = component<io::counter>(0)->characters();
-
-	//std::cout << "seekpos " << sp << " " << total_out << " " << size() << std::endl;
-	return (total_out - offset);
-    }
-
-#if 0
-    streampos seekoff (streamoff off, ios_base::seekdir way,
-		       ios_base::openmode which = ios_base::in | ios_base::out)
-    {
-	std::cout << "seekoff" << std::endl;
-	return 0;
-    }
-#endif
-
-public:
-    hoffman_instream(std::ifstream * input_file, streampos offset)
-	: input_file(input_file), offset(offset)
-	{
-	    set_auto_close(false);
-	    reset();
-	    // push(io::restrict(nested_instream, offset));
-	    // XXX need this
-	    // exceptions(std::ifstream::failbit | std::ifstream::badbit);
-	}
 };
 
 tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
@@ -5653,7 +5612,6 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
      * it and reassemble it for reading the data.
      */
 
-#if 1
     // XXX keep reading without reseting the file (might not work over network)
 
     instream->set_auto_close(false);
@@ -5662,10 +5620,11 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 
     // XXX test cases for exceptions
 
-#if 0
+#if 1
     io::filtering_stream<io::input_seekable> * instream2 = new io::filtering_stream<io::input_seekable>;
 
-    instream2->push(io::gzip_decompressor());
+    //instream2->push(io::gzip_decompressor());
+    instream2->push(gzip_decompressor());
     instream2->push(*input_file);
 
     //std::cout << "offset: " << tb->offset << std::endl;
@@ -5683,16 +5642,8 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 
 #endif
 
-
     tb->istream = instream;
     tb->next_read_index = 0;
-
-#else
-
-    tb->istream = new std::istream(new hoffman_instream(input_file, tb->offset));
-    tb->next_read_index = 0;
-
-#endif
 
     return tb;
 }
@@ -14335,7 +14286,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.838 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.839 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
