@@ -5392,7 +5392,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.839 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.840 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5574,8 +5574,14 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 {
     std::ifstream * input_file = new std::ifstream;
 
-    input_file->exceptions(std::ifstream::failbit | std::ifstream::badbit);
     input_file->open(filename, std::ifstream::in | std::ifstream::binary);
+
+    if (!input_file->good()) {
+	fatal("Can't open tablebase '%s'\n", filename.c_str());
+	return nullptr;
+    }
+
+    input_file->exceptions(std::ifstream::failbit | std::ifstream::badbit);
 
     io::filtering_istream * instream = new io::filtering_istream;
 
@@ -14286,7 +14292,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.839 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.840 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
