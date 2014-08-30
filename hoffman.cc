@@ -161,11 +161,6 @@ extern "C" {
 #include <history.h>
 #endif
 
-#include <libxml/parser.h>	/* The GNOME XML library (required) */
-#include <libxml/tree.h>
-#include <libxml/xpath.h>
-#include <libxml/xmlsave.h>
-
 #define STRICT_ZLIB_OPEN_DECLARATION 1
 #include "zlib_fopen.h"		/* My wrapper around the ZLIB compression library (required) */
 
@@ -5282,7 +5277,6 @@ xmlpp::Element * create_GenStats_node(std::string name)
 
 tablebase_t * parse_XML_control_file(char *filename)
 {
-    xmlParserInputBufferPtr dtd_input_buffer;
     xmlpp::DtdValidator dtd;
     xmlpp::Document * doc;
     xmlpp::NodeSet result;
@@ -5392,7 +5386,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.840 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.841 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5844,7 +5838,6 @@ bool preload_all_futurebases(tablebase_t *tb)
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 	Glib::ustring filename = result[fbnum]->eval_to_string("@filename");
-	xmlChar * colors_property;
 
 	// XXX put this back in
 #if 0
@@ -12884,7 +12877,6 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 {
     xmlpp::Document * doc;
     int dtm_bits;
-    xmlNodePtr tablebase;
     int size;
     int padded_size;
     char str[16];
@@ -14292,7 +14284,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.840 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.841 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
