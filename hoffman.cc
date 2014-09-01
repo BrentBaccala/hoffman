@@ -5387,7 +5387,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.842 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.843 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7554,14 +7554,16 @@ class MemoryEntriesTable: public EntriesTable {
  * accessing the table at all!
  */
 
-static const int entry_buffer_size = 4096;
+    //static const int entry_buffer_size = 4096;
+    static const int entry_buffer_size = 512;
 
 class atomic_entries_array {
 
 public:
     atomic_entry entries[entry_buffer_size];
 
-    operator atomic_entry * () { return entries; }
+    //operator atomic_entry * () { return entries; }
+    atomic_entry & operator[](index_t index) { return entries[index]; }
 
     void zero(void) {
 	std::fill(entries, entries + entry_buffer_size, nonatomic_entry());
@@ -7633,7 +7635,7 @@ class DiskEntriesTable: public EntriesTable {
 
 	entries_write_stream << entries;
 
-	/* read the new entry buffer if we've got an input file, or just zero it out if we don't
+	/* read the new entry buffer if we've got an input stream, or just zero it out if we don't
 	 * (i.e, if this is the first pass)
 	 */
 
@@ -7672,22 +7674,32 @@ class DiskEntriesTable: public EntriesTable {
 		entries_read_stream >> entries;
 		entries_write_stream << entries;
 	    }
-	    while (! entries_read_stream.empty()) entries_read_stream.pop();
-	    unlink(entries_read_filename);
+	    //while (! entries_read_stream.empty()) entries_read_stream.pop();
+	    entries_read_stream.reset();
+	    //unlink(entries_read_filename);
 	}
 
+	entries_write_stream.reset();
+
+#if 0
+	lseek(entries_write_fd, 0, SEEK_SET);
 	io::file_descriptor device(entries_write_fd, io::close_handle);
 	device.seek(0, BOOST_IOS::beg);
+#else
+	/* Have to make this a pointer so it isn't closed by destruction at function return */
+	std::ifstream * device = new std::ifstream;
+	device->open(entries_write_filename, std::ifstream::in | std::ifstream::binary);
+#endif
 
 	if (compress_entries_table) {
 	    entries_read_stream.push(io::gzip_decompressor());
 	}
 
-	entries_read_stream.push(device);
+	entries_read_stream.push(*device);
 
 	//entries_read_stream.exceptions(BOOST_IOS::failbit | BOOST_IOS::badbit);
 
-	while (! entries_write_stream.empty()) entries_write_stream.pop();
+	//while (! entries_write_stream.empty()) entries_write_stream.pop();
 
 	strcpy(entries_read_filename, entries_write_filename);
 
@@ -7744,7 +7756,8 @@ class DiskEntriesTable: public EntriesTable {
 		return;
 	    }
 
-	    ret = read(entries_read_fd, entries, sizeof(entries));
+	    // XXX this is broken
+	    // ret = read(entries_read_fd, entries, sizeof(entries));
 	    if (ret != sizeof(entries)) {
 		fatal("initial entries read: %s\n", strerror(errno));
 		return;
@@ -14271,7 +14284,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.842 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.843 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
