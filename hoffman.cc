@@ -109,6 +109,7 @@
 #include <boost/iostreams/detail/ios.hpp>  // for failure exception
 
 #include <boost/iostreams/device/file.hpp>
+#include <boost/iostreams/device/file_descriptor.hpp>
 #include <boost/iostreams/stream.hpp>
 #include <boost/iostreams/filtering_stream.hpp>
 #include <boost/iostreams/filter/symmetric.hpp>
@@ -5386,7 +5387,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.841 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.842 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7553,14 +7554,41 @@ class MemoryEntriesTable: public EntriesTable {
  * accessing the table at all!
  */
 
+static const int entry_buffer_size = 4096;
+
+class atomic_entries_array {
+
+public:
+    atomic_entry entries[entry_buffer_size];
+
+    operator atomic_entry * () { return entries; }
+
+    void zero(void) {
+	std::fill(entries, entries + entry_buffer_size, nonatomic_entry());
+    }
+};
+
+std::ostream& operator<< (std::ostream& os, atomic_entries_array & array) {
+    os.write(reinterpret_cast<char *>(array.entries), sizeof(array.entries));
+}
+
+std::istream& operator>> (std::istream& is, atomic_entries_array & array) {
+    is.read(reinterpret_cast<char *>(array.entries), sizeof(array.entries));
+    if (is.gcount() != sizeof(array.entries)) {
+	is.setstate(BOOST_IOS::eofbit);
+    }
+}
+
 class DiskEntriesTable: public EntriesTable {
 
  private:
     int entries_read_fd;
     int entries_write_fd;
-
-    void * entries_read_file;
+    void* entries_read_file;
     void * entries_write_file;
+
+    io::filtering_istream entries_read_stream;
+    io::filtering_ostream entries_write_stream;
 
     char entries_read_filename[16];
     char entries_write_filename[16];
@@ -7581,48 +7609,38 @@ class DiskEntriesTable: public EntriesTable {
 	    return;
 	}
 
+	// io::file_descriptor device(entries_write_fd, /* close_on_exit = */ true);  /* is this close_on_destroy? */
+	//io::file_descriptor device(entries_write_fd, io::close_handle);
+	io::file_descriptor device(entries_write_fd, io::never_close_handle);
+
 	if (compress_entries_table) {
-	    entries_write_file = zlib_open((void *)((size_t) entries_write_fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
+	    entries_write_stream.push(io::gzip_compressor());
 	}
 
+	entries_write_stream.push(device);
+
+	entries_write_stream.exceptions(BOOST_IOS::failbit | BOOST_IOS::badbit);
     }
 
     /* This is the in-memory portion of the table, and the index number of the first entry.  */
 
-    static const int entry_buffer_size = 4096;
-
-    atomic_entry entries[entry_buffer_size];
-
+    atomic_entries_array entries;
     index_t entry_buffer_start;
 
     void advance_entry_buffer(void)
     {
-	int ret;
-
 	/* write the old entry buffer to disk */
 
-	if (compress_entries_table) {
-	    zlib_write(entries_write_file, (char *) entries, sizeof(entries));
-	} else {
-	    do_write(entries_write_fd, entries, sizeof(entries));
-	}
+	entries_write_stream << entries;
 
 	/* read the new entry buffer if we've got an input file, or just zero it out if we don't
 	 * (i.e, if this is the first pass)
 	 */
 
-	if (entries_read_fd != -1) {
-	    if (compress_entries_table) {
-		ret = zlib_read(entries_read_file, (char *) entries, sizeof(entries));
-	    } else {
-		ret = read(entries_read_fd, entries, sizeof(entries));
-	    }
-	    if (ret != sizeof(entries)) {
-		fatal("entries read: %s\n", strerror(errno));
-		return;
-	    }
+	if (! entries_read_stream.empty()) {
+	    entries_read_stream >> entries;
 	} else {
-	    std::fill(entries, entries + entry_buffer_size, nonatomic_entry());
+	    entries.zero();
 	}
 
 	entry_buffer_start += entry_buffer_size;
@@ -7643,72 +7661,41 @@ class DiskEntriesTable: public EntriesTable {
 
     void reset_files(void) {
 
-	int ret;
-
 	/* we're reseting back to the beginning - write the current buffer out, write out everything
 	 * else, close and reopen both file descriptors, and read the first buffer in
 	 */
 
-	if (compress_entries_table) {
-	    zlib_write(entries_write_file, (char *) entries, sizeof(entries));
-	} else {
-	    do_write(entries_write_fd, entries, sizeof(entries));
-	}
+	entries_write_stream << entries;
 
-	if (entries_read_fd != -1) {
-	    if (compress_entries_table) {
-		while ((ret = zlib_read(entries_read_file, (char *) entries, sizeof(entries))) != 0) {
-		    if (ret != sizeof(entries)) {
-			fatal("entries read: %s\n", strerror(errno));
-			return;
-		    }
-		    // XXX check error return?
-		    zlib_write(entries_write_file, (char *) entries, sizeof(entries));
-		}
-	    } else {
-		while ((ret = read(entries_read_fd, entries, sizeof(entries))) != 0) {
-		    if (ret != sizeof(entries)) {
-			fatal("entries read: %s\n", strerror(errno));
-			return;
-		    }
-		    // XXX check error return?
-		    do_write(entries_write_fd, entries, sizeof(entries));
-		}
+	if (! entries_read_stream.empty()) {
+	    while (! entries_read_stream.eof()) {
+		entries_read_stream >> entries;
+		entries_write_stream << entries;
 	    }
+	    while (! entries_read_stream.empty()) entries_read_stream.pop();
+	    unlink(entries_read_filename);
 	}
+
+	io::file_descriptor device(entries_write_fd, io::close_handle);
+	device.seek(0, BOOST_IOS::beg);
 
 	if (compress_entries_table) {
-	    if (entries_read_fd != -1) zlib_close(entries_read_file);
-	    zlib_flush(entries_write_file);
-	    zlib_free(entries_write_file);
-	} else {
-	    if (entries_read_fd != -1) close(entries_read_fd);
+	    entries_read_stream.push(io::gzip_decompressor());
 	}
 
-	if (entries_read_fd != -1) unlink(entries_read_filename);
+	entries_read_stream.push(device);
 
-	entries_read_fd = entries_write_fd;
+	//entries_read_stream.exceptions(BOOST_IOS::failbit | BOOST_IOS::badbit);
+
+	while (! entries_write_stream.empty()) entries_write_stream.pop();
+
 	strcpy(entries_read_filename, entries_write_filename);
-	lseek(entries_read_fd, 0, SEEK_SET);
-
-	if (compress_entries_table) {
-	    entries_read_file = zlib_open((void *)((size_t) entries_read_fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
-	}
 
 	open_new_entries_write_file();
 
 	entry_buffer_start = 0;
 
-	if (compress_entries_table) {
-	    ret = zlib_read(entries_read_file, (char *) entries, sizeof(entries));
-	} else {
-	    ret = read(entries_read_fd, entries, sizeof(entries));
-	}
-
-	if (ret != sizeof(entries)) {
-	    fatal("initial entries read: %s\n", strerror(errno));
-	    return;
-	}
+	entries_read_stream >> entries;
     }
 
     void wait_for_all_threads_ready_then_reset(void) {
@@ -14284,7 +14271,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.841 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.842 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
