@@ -5387,7 +5387,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.843 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.844 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7505,6 +7505,10 @@ public:
     EntriesTable * operator->() {
 	return entriesTable;
     }
+
+    operator EntriesTable * () {
+	return entriesTable;
+    }
 };
 
 /* MemoryEntriesTable - an EntriesTable held completely in memory */
@@ -7554,46 +7558,80 @@ class MemoryEntriesTable: public EntriesTable {
  * accessing the table at all!
  */
 
-    //static const int entry_buffer_size = 4096;
-    static const int entry_buffer_size = 512;
+/* atomic_entries_array is a simple wrapper class around an array of atomic_entry's that provides
+ * methods for reading and writing it as a raw binary array.
+ */
+
+static const int entry_buffer_size = 4096;
 
 class atomic_entries_array {
 
-public:
     atomic_entry entries[entry_buffer_size];
 
-    //operator atomic_entry * () { return entries; }
+public:
+
     atomic_entry & operator[](index_t index) { return entries[index]; }
 
     void zero(void) {
 	std::fill(entries, entries + entry_buffer_size, nonatomic_entry());
     }
+
+    void operator>> (std::ostream& os) {
+	os.write(reinterpret_cast<char *>(entries), sizeof(entries));
+    }
+
+    void operator<< (std::istream& is) {
+	is.read(reinterpret_cast<char *>(entries), sizeof(entries));
+	/* It's a bug in boost iostreams that eof isn't set by the read, but let's do it now. */
+	if (is.gcount() != sizeof(entries)) {
+	    is.setstate(BOOST_IOS::eofbit);
+	}
+    }
+
 };
 
-std::ostream& operator<< (std::ostream& os, atomic_entries_array & array) {
-    os.write(reinterpret_cast<char *>(array.entries), sizeof(array.entries));
-}
+/* temporary_device implements a temporary disk file that can be converted to a boost
+ * io::file_descriptor, for use in a filtering_stream, and will be deleted on disk when the object
+ * is destroyed.
+ */
 
-std::istream& operator>> (std::istream& is, atomic_entries_array & array) {
-    is.read(reinterpret_cast<char *>(array.entries), sizeof(array.entries));
-    if (is.gcount() != sizeof(array.entries)) {
-	is.setstate(BOOST_IOS::eofbit);
+class temporary_device {
+
+    char filename[16];
+    int fd;
+
+public:
+    temporary_device(void)
+    {
+	strcpy(filename, "entriesXXXXXX");
+	fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
+
+	if (fd == -1) {
+	    fatal("Can't open '%s' for writing: %s\n", filename, strerror(errno));
+	}
     }
-}
+
+    io::file_descriptor device(void)
+    {
+	lseek(fd, 0, SEEK_SET);
+	return io::file_descriptor(fd, io::never_close_handle);
+    }
+
+    ~temporary_device(void)
+    {
+	close(fd);
+	unlink(filename);
+    }
+};
 
 class DiskEntriesTable: public EntriesTable {
 
  private:
-    int entries_read_fd;
-    int entries_write_fd;
-    void* entries_read_file;
-    void * entries_write_file;
-
     io::filtering_istream entries_read_stream;
     io::filtering_ostream entries_write_stream;
 
-    char entries_read_filename[16];
-    char entries_write_filename[16];
+    temporary_device * entries_read_device;
+    temporary_device * entries_write_device;
 
     std::mutex ready_to_advance_mutex;
     std::condition_variable ready_to_advance_cond;
@@ -7601,46 +7639,32 @@ class DiskEntriesTable: public EntriesTable {
     int threads_waiting_to_advance;
     int threads_waiting_to_reset;
 
-    void open_new_entries_write_file(void) {
-
-	strcpy(entries_write_filename, "entriesXXXXXX");
-	entries_write_fd = mkostemp(entries_write_filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
-
-	if (entries_write_fd == -1) {
-	    fatal("Can't open '%s' for writing: %s\n", entries_write_filename, strerror(errno));
-	    return;
-	}
-
-	// io::file_descriptor device(entries_write_fd, /* close_on_exit = */ true);  /* is this close_on_destroy? */
-	//io::file_descriptor device(entries_write_fd, io::close_handle);
-	io::file_descriptor device(entries_write_fd, io::never_close_handle);
-
-	if (compress_entries_table) {
-	    entries_write_stream.push(io::gzip_compressor());
-	}
-
-	entries_write_stream.push(device);
-
-	entries_write_stream.exceptions(BOOST_IOS::failbit | BOOST_IOS::badbit);
-    }
-
     /* This is the in-memory portion of the table, and the index number of the first entry.  */
 
     atomic_entries_array entries;
     index_t entry_buffer_start;
 
+    void open_new_entries_write_file(void) {
+
+	entries_write_device = new temporary_device();
+
+	entries_write_stream.reset();
+
+	if (compress_entries_table) {
+	    entries_write_stream.push(io::gzip_compressor());
+	}
+
+	entries_write_stream.push(entries_write_device->device());
+
+	entries_write_stream.exceptions(BOOST_IOS::failbit | BOOST_IOS::badbit);
+    }
+
     void advance_entry_buffer(void)
     {
-	/* write the old entry buffer to disk */
-
-	entries_write_stream << entries;
-
-	/* read the new entry buffer if we've got an input stream, or just zero it out if we don't
-	 * (i.e, if this is the first pass)
-	 */
+	entries >> entries_write_stream;
 
 	if (! entries_read_stream.empty()) {
-	    entries_read_stream >> entries;
+	    entries << entries_read_stream;
 	} else {
 	    entries.zero();
 	}
@@ -7663,51 +7687,39 @@ class DiskEntriesTable: public EntriesTable {
 
     void reset_files(void) {
 
-	/* we're reseting back to the beginning - write the current buffer out, write out everything
-	 * else, close and reopen both file descriptors, and read the first buffer in
+	/* We're reseting for a new pass.  Write the current buffer out, write out everything left
+	 * in the input file, switch the output file to become the next pass's input file, destroy
+	 * the old input file, and create a new output file.
 	 */
 
-	entries_write_stream << entries;
+	entries >> entries_write_stream;
 
 	if (! entries_read_stream.empty()) {
 	    while (! entries_read_stream.eof()) {
-		entries_read_stream >> entries;
-		entries_write_stream << entries;
+		entries << entries_read_stream;
+		entries >> entries_write_stream;
 	    }
-	    //while (! entries_read_stream.empty()) entries_read_stream.pop();
 	    entries_read_stream.reset();
-	    //unlink(entries_read_filename);
+	    delete entries_read_device;
 	}
 
-	entries_write_stream.reset();
+	entries_read_device = entries_write_device;
 
-#if 0
-	lseek(entries_write_fd, 0, SEEK_SET);
-	io::file_descriptor device(entries_write_fd, io::close_handle);
-	device.seek(0, BOOST_IOS::beg);
-#else
-	/* Have to make this a pointer so it isn't closed by destruction at function return */
-	std::ifstream * device = new std::ifstream;
-	device->open(entries_write_filename, std::ifstream::in | std::ifstream::binary);
-#endif
+	/* Do this before creating the read stream, because it may need to flush output to
+	 * the old write file, which is the new read file.
+	 */
+
+	open_new_entries_write_file();
 
 	if (compress_entries_table) {
 	    entries_read_stream.push(io::gzip_decompressor());
 	}
 
-	entries_read_stream.push(*device);
-
-	//entries_read_stream.exceptions(BOOST_IOS::failbit | BOOST_IOS::badbit);
-
-	//while (! entries_write_stream.empty()) entries_write_stream.pop();
-
-	strcpy(entries_read_filename, entries_write_filename);
-
-	open_new_entries_write_file();
+	entries_read_stream.push(entries_read_device->device());
 
 	entry_buffer_start = 0;
 
-	entries_read_stream >> entries;
+	entries << entries_read_stream;
     }
 
     void wait_for_all_threads_ready_then_reset(void) {
@@ -7741,12 +7753,14 @@ class DiskEntriesTable: public EntriesTable {
 
 	entry_buffer_start = 0;
 
+	entries_read_device = nullptr;
 	open_new_entries_write_file();
 
 	/* if we're restarting, there should be an input entries file */
 	/* XXX not true if the restart is right after futurebase backprop */
 	/* XXX doesn't currently handled compressed entries files */
 
+#if 0
 	if (do_restart) {
 
 	    entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
@@ -7756,8 +7770,7 @@ class DiskEntriesTable: public EntriesTable {
 		return;
 	    }
 
-	    // XXX this is broken
-	    // ret = read(entries_read_fd, entries, sizeof(entries));
+	    ret = read(entries_read_fd, entries, sizeof(entries));
 	    if (ret != sizeof(entries)) {
 		fatal("initial entries read: %s\n", strerror(errno));
 		return;
@@ -7768,15 +7781,12 @@ class DiskEntriesTable: public EntriesTable {
 	    entries_read_fd = -1;
 
 	}
+#endif
     }
 
     ~DiskEntriesTable(void) {
-	if (entries_read_fd != -1) {
-	    zlib_close(entries_read_file);
-	    unlink(entries_read_filename);
-	}
-	zlib_close(entries_write_file);
-	unlink(entries_write_filename);
+	if (entries_read_device != nullptr) delete entries_read_device;
+	if (entries_write_device != nullptr) delete entries_write_device;
     }
 
     atomic_entry & operator[](index_t index) {
@@ -13237,8 +13247,15 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 
     write_tablebase_to_file(tb, output_filename);
 
-    // XXX we alloced it in this routine, but we might still use it to verify itself internally
-    // delete entriesTable;
+    /* We alloced entriesTable in this routine, but we might still use it to verify itself
+     * internally.  That will only happen if we've got a MemoryEntriesTable, since a
+     * DiskEntriesTable can't be accessed randomly.  Furthermore, a DiskEntriesTable will leave
+     * temporary files lying around if it isn't destroyed properly.
+     */
+
+    if (using_proptables) {
+	delete entriesTable;
+    }
 
     return true;
 }
@@ -14284,7 +14301,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.843 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.844 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
