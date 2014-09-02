@@ -2874,10 +2874,11 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 /* Normalization
  *
- * Not all positions are created equal.  For example, interchanging two identical pieces doesn't
- * change the position at all, so a position with rook #1 on e4 and rook #2 on g6 is the same as one
- * with rook #1 on g6 and rook #2 on e4.  When converting to an index, we deal with this by sorting
- * identical pieces so the piece on the lowest numbered square always appears first in the position.
+ * Not all positions are created equal, but some are.  For example, interchanging two identical
+ * pieces doesn't change the position at all, so a position with rook #1 on e4 and rook #2 on g6 is
+ * the same as one with rook #1 on g6 and rook #2 on e4.  When converting to an index, we deal with
+ * this by sorting identical pieces so the piece on the lowest numbered square always appears first
+ * in the position.
  *
  * But this creates problems when trying to move a piece.  Consider for example, the two rooks.  If
  * we are moving rook #1 along the e file, it moves to e5, then e6, then e7.  Now, at e7, it has
@@ -3473,9 +3474,12 @@ int check_1000_indices(tablebase_t *tb)
  *   </format>
  *
  * An implicit format is just a <dtm/> tag without an enclosing format element.
+ *
+ * This function can be called on either a format element (the explicit case), or the tablebase
+ * element itself (the implicit case).
  */
 
-bool parse_format(xmlpp::Element * formatNode, struct format * format, bool expl)
+bool parse_format(xmlpp::Element * formatNode, struct format * format)
 {
     auto children = formatNode->get_children();
 
@@ -3593,7 +3597,7 @@ bool tablebase_is_color_symmetric(tablebase_t *tb)
  * distinguish between them.
  */
 
-tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc, bool is_futurebase)
+tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 {
     tablebase_t *tb;
     int generating_version = 0;
@@ -4144,9 +4148,9 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc, bool is_futurebase
     } else {
 	result = tablebase->find("//format");
 	if (! result.empty()) {
-	    if (! parse_format((xmlpp::Element *) result[0], &tb->format, true)) return nullptr;
+	    if (! parse_format((xmlpp::Element *) result[0], &tb->format)) return nullptr;
 	} else {
-	    if (! parse_format(tablebase, &tb->format, false)) {
+	    if (! parse_format(tablebase, &tb->format)) {
 		tb->format = dtm_format;
 
 		tablebase->add_child_text("   ");
@@ -4895,7 +4899,7 @@ tablebase_t * parse_XML_control_file(char *filename)
 	return nullptr;
     }
 
-    tb = parse_XML_into_tablebase(doc, 0);
+    tb = parse_XML_into_tablebase(doc);
     if (tb == nullptr) return nullptr;
 
     /* We don't free the XML doc because the tablebase struct contains a pointer to it */
@@ -4948,7 +4952,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.856 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.857 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5151,7 +5155,7 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 
     parser->parse_stream(*instream);
 
-    tablebase_t * tb = parse_XML_into_tablebase(parser->get_document(), 1);
+    tablebase_t * tb = parse_XML_into_tablebase(parser->get_document());
 
     if (tb == nullptr) {
 	fatal("Futurebase preload failed: '%s'\n", filename.c_str());
@@ -13783,7 +13787,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.856 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.857 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
