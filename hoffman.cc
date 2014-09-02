@@ -5387,7 +5387,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.844 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.845 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7590,26 +7590,15 @@ public:
 
 };
 
-/* temporary_device implements a temporary disk file that can be converted to a boost
- * io::file_descriptor, for use in a filtering_stream, and will be deleted on disk when the object
- * is destroyed.
+/* temporary_file implements a temporary disk file that presents input and output streams, can be
+ * optionally compressed, and will be deleted on disk when the object is destroyed.
  */
 
-class temporary_device {
+class temporary_file {
 
     char filename[16];
     int fd;
-
-public:
-    temporary_device(void)
-    {
-	strcpy(filename, "entriesXXXXXX");
-	fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
-
-	if (fd == -1) {
-	    fatal("Can't open '%s' for writing: %s\n", filename, strerror(errno));
-	}
-    }
+    bool compress;
 
     io::file_descriptor device(void)
     {
@@ -7617,7 +7606,41 @@ public:
 	return io::file_descriptor(fd, io::never_close_handle);
     }
 
-    ~temporary_device(void)
+public:
+    temporary_file(std::string filename_template = "entriesXXXXXX", bool compress = true)
+	: compress(compress)
+    {
+	strcpy(filename, filename_template.c_str());
+	fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
+
+	if (fd == -1) {
+	    fatal("Can't open '%s' for writing: %s\n", filename, strerror(errno));
+	}
+    }
+
+    std::ostream * ostream(void)
+    {
+	io::filtering_ostream * os = new io::filtering_ostream;
+
+	if (compress) os->push(io::gzip_compressor());
+	os->push(device());
+	os->exceptions(BOOST_IOS::failbit | BOOST_IOS::badbit);
+
+	return os;
+    }
+
+    std::istream * istream(void)
+    {
+	io::filtering_istream * is = new io::filtering_istream;
+
+	if (compress) is->push(io::gzip_decompressor());
+	is->push(device());
+	//is->exceptions(BOOST_IOS::failbit | BOOST_IOS::badbit);
+
+	return is;
+    }
+
+    ~temporary_file(void)
     {
 	close(fd);
 	unlink(filename);
@@ -7627,11 +7650,11 @@ public:
 class DiskEntriesTable: public EntriesTable {
 
  private:
-    io::filtering_istream entries_read_stream;
-    io::filtering_ostream entries_write_stream;
+    std::istream * entries_read_stream;
+    std::ostream * entries_write_stream;
 
-    temporary_device * entries_read_device;
-    temporary_device * entries_write_device;
+    temporary_file * entries_read_device;
+    temporary_file * entries_write_device;
 
     std::mutex ready_to_advance_mutex;
     std::condition_variable ready_to_advance_cond;
@@ -7644,27 +7667,18 @@ class DiskEntriesTable: public EntriesTable {
     atomic_entries_array entries;
     index_t entry_buffer_start;
 
-    void open_new_entries_write_file(void) {
-
-	entries_write_device = new temporary_device();
-
-	entries_write_stream.reset();
-
-	if (compress_entries_table) {
-	    entries_write_stream.push(io::gzip_compressor());
-	}
-
-	entries_write_stream.push(entries_write_device->device());
-
-	entries_write_stream.exceptions(BOOST_IOS::failbit | BOOST_IOS::badbit);
+    void open_new_entries_write_file(void)
+    {
+	entries_write_device = new temporary_file("entriesXXXXXX", compress_entries_table);
+	entries_write_stream = entries_write_device->ostream();
     }
 
     void advance_entry_buffer(void)
     {
-	entries >> entries_write_stream;
+	entries >> *entries_write_stream;
 
-	if (! entries_read_stream.empty()) {
-	    entries << entries_read_stream;
+	if (entries_read_device != nullptr) {
+	    entries << *entries_read_stream;
 	} else {
 	    entries.zero();
 	}
@@ -7692,14 +7706,14 @@ class DiskEntriesTable: public EntriesTable {
 	 * the old input file, and create a new output file.
 	 */
 
-	entries >> entries_write_stream;
+	entries >> *entries_write_stream;
 
-	if (! entries_read_stream.empty()) {
-	    while (! entries_read_stream.eof()) {
-		entries << entries_read_stream;
-		entries >> entries_write_stream;
+	if (entries_read_device != nullptr) {
+	    while (! entries_read_stream->eof()) {
+		entries << *entries_read_stream;
+		entries >> *entries_write_stream;
 	    }
-	    entries_read_stream.reset();
+	    delete entries_read_stream;
 	    delete entries_read_device;
 	}
 
@@ -7709,17 +7723,14 @@ class DiskEntriesTable: public EntriesTable {
 	 * the old write file, which is the new read file.
 	 */
 
+	if (entries_write_stream) delete entries_write_stream;
 	open_new_entries_write_file();
 
-	if (compress_entries_table) {
-	    entries_read_stream.push(io::gzip_decompressor());
-	}
-
-	entries_read_stream.push(entries_read_device->device());
+	entries_read_stream = entries_read_device->istream();
 
 	entry_buffer_start = 0;
 
-	entries << entries_read_stream;
+	entries << *entries_read_stream;
     }
 
     void wait_for_all_threads_ready_then_reset(void) {
@@ -14301,7 +14312,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.844 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.845 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
