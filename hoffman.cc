@@ -4952,7 +4952,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.858 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.859 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5029,7 +5029,11 @@ public:
     }
 };
 
-/* This next section of code was ripped out of the boost library */
+/* This next section of code was ripped out of the boost library, to create a gzip decompressor that
+ * supports seeks.  Forward seeks are implemented by just burning data.  Backwards seeks reset to
+ * the beginning of the stream and then burn data.  Backwards seeks in a compressed file are
+ * obviously expensive, but occasionally unavoidable.
+ */
 
 const int default_device_buffer_size = 16384;
 
@@ -6495,28 +6499,21 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
 
     if (index == INVALID_INDEX) {
 	index = next_read_index;
-    } else if (index < next_read_index) {
-	/* Backwards seeks in a compressed file are expensive, but occasionally unavoidable */
-	// XXX backwards seeks current impossible
-	// info("Seeking backwards for %" PRIindex " from %" PRIindex "\n", index, next_read_index);
-	// XXX check error handling
-	istream->seekg(index * format.bits / 8);
-	next_read_index = index;
     }
 
-    while (next_read_index < index) {
-	istream->read(cached_entries, format.bits * futurebase_stride / 8);
-	next_read_index += futurebase_stride;
+    if (index != next_read_index) {
+	istream->seekg(index * format.bits / 8);
+	next_read_index = index;
     }
 
     if (next_read_index + futurebase_stride < max_index) {
 	istream->read(cached_entries, format.bits * futurebase_stride / 8);
 	next_read_index += futurebase_stride;
     } else {
+	/* short read at end of file */
 	int bytes_to_read = format.bits * (max_index - next_read_index + 1) / 8;
 	if ((format.bits * (max_index - next_read_index + 1)) % 8 != 0) bytes_to_read ++;
 	istream->read(cached_entries, bytes_to_read);
-	//next_read_index = INVALID_INDEX;
 	next_read_index = max_index + 1;
     }
 
@@ -13788,7 +13785,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.858 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.859 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
