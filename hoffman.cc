@@ -257,12 +257,13 @@ bool * positive_passes_needed = nullptr;
 bool * negative_passes_needed = nullptr;
 
 
-/***** DATA STRUCTURES *****/
+/***** C++ TEMPLATE TRICKS *****/
 
 /* dynamic_cast'ing a pointer returns nullptr if the cast fails, but usually I want an exception
  * instead.  exception_cast<Type> works just like dynamic_cast<Type> except that it throws an
  * exception instead of returning nullptr.
  */
+
 template<typename T, typename P>
 T exception_cast(P p) {
     T val;
@@ -270,6 +271,35 @@ T exception_cast(P p) {
     if (val == nullptr) throw new std::bad_cast();
     else return val;
 }
+
+/* dereferencing a pointer type passed as a template argument
+ *
+ * Usage: dereference<TypePtr>::type will be the type that TypePtr points to
+ */
+
+template<typename> struct dereference;
+
+template <typename T>
+struct dereference<T*> {
+    typedef T type;
+};
+
+template <typename T>
+struct dereference<std::shared_ptr<T>> {
+    typedef T type;
+};
+
+/* Java-like synchronized classes
+ *
+ * An object of type synchronized<Class> will be just like an object of type Class, except that it
+ * comes with a mutex and can be locked.
+ */
+
+template <class T>
+class synchronized : public T, public std::mutex { };
+
+
+/***** DATA STRUCTURES *****/
 
 /* From Guru of The Week #29 [http://www.gotw.ca/gotw/029.htm]
  *
@@ -5342,7 +5372,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.848 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.849 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8200,18 +8230,6 @@ struct disk_que {
  * by right shifting the index.  I got this idea from Knuth.
  */
 
-template<typename> struct dereference;
-
-template <typename T>
-struct dereference<T*> {
-    typedef T type;
-};
-
-template <typename T>
-struct dereference<std::shared_ptr<T>> {
-    typedef T type;
-};
-
 template <class Container>
 class sorting_network {
 
@@ -8349,9 +8367,6 @@ public:
  * be bumped atomically)... we expect the caller to already hold the lock when we retrieve... we do
  * this because we want to atomically retrieve the front element along with any elements equal to it
  */
-
-template <class T>
-class synchronized : public T, public std::mutex { };
 
 template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
 class priority_queue : public std::mutex {
@@ -14204,7 +14219,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.848 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.849 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
