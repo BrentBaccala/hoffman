@@ -820,8 +820,6 @@ xmlpp::Element * page_reclaims;
 
 #define LOCK_MEMORY 0
 
-#define CHECK_KING_LEGALITY_EARLY 1
-
 int verbose = 1;
 
 /* Use '-d' option to set debug_move to an index in the current tablebase, or the negative of an
@@ -4969,7 +4967,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.854 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.855 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8927,10 +8925,6 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == INVALID_INDEX) {
-#if !CHECK_KING_LEGALITY_EARLY
-	/* This can happen if we don't fully check en passant legality (but right now, we do) */
-	fprintf(stderr, "Can't lookup local position in futurebase propagation!\n");
-#endif
 	return;
     }
 
@@ -9007,10 +9001,6 @@ void propagate_mini_normalized_position_from_futurebase(tablebase_t *tb, tableba
     current_index = normalized_position_to_index(tb, current_position);
 
     if (current_index == INVALID_INDEX) {
-#if !CHECK_KING_LEGALITY_EARLY
-	/* This can happen if we don't fully check en passant legality (but right now, we do) */
-	fprintf(stderr, "Can't lookup local position in futurebase propagation!\n");
-#endif
 	return;
     }
 
@@ -11163,10 +11153,6 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == INVALID_INDEX) {
-#if !CHECK_KING_LEGALITY_EARLY
-	/* This can happen if we don't fully check en passant legality (but right now, we do) */
-	fprintf(stderr, "Can't lookup position in intratable propagation!\n");
-#endif
 #ifdef DEBUG_MOVE
 	if (future_index == DEBUG_MOVE) {
 	    info("propagate_one_minimove_within_table:  current_index=INVALID"
@@ -13816,7 +13802,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.854 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.855 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
