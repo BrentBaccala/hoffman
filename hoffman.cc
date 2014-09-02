@@ -1027,43 +1027,6 @@ int find_name_in_array(char * name, const char * array[])
     return -1;
 }
 
-/* do_write() is like the system call write(), but keeps repeating until the write is complete */
-
-int do_write(int fd, void *ptr, int length)
-{
-    char * cptr = (char *) ptr;
-
-    while (length > 0) {
-	int writ = write(fd, cptr, length);
-	if (writ == -1) {
-	    perror("do_write");
-	    return -1;
-	}
-	cptr += writ;
-	length -= writ;
-    }
-    return 0;
-}
-
-/* do_write_or_suspend() is like do_write(), but suspends the program on an error (like ENOSPC) */
-
-int do_write_or_suspend(int fd, void *ptr, int length)
-{
-    char * cptr = (char *) ptr;
-
-    while (length > 0) {
-	int writ = write(fd, cptr, length);
-	if (writ == -1) {
-	    perror("do_write");
-	    kill(getpid(), SIGSTOP);
-	} else {
-	    cptr += writ;
-	    length -= writ;
-	}
-    }
-    return 0;
-}
-
 int ROW(int square) {
     return square / 8;
 }
@@ -5372,7 +5335,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.849 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.850 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14219,7 +14182,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.849 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.850 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
