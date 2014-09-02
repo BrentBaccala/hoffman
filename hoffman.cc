@@ -4952,7 +4952,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.857 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.858 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13751,6 +13751,7 @@ int main(int argc, char *argv[])
     int generating=0;
     int probing=0;
     int verify=0;
+    int summarize=0;
     int dump_info=0;
     std::string output_filename;
     extern char *optarg;
@@ -13787,7 +13788,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.857 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.858 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -13814,7 +13815,7 @@ int main(int argc, char *argv[])
 #endif
 
     while (1) {
-	c = getopt(argc, argv, "hiqgpvo:n:P:t:" DEBUG_FLAG);
+	c = getopt(argc, argv, "hiqgpsvo:n:P:t:" DEBUG_FLAG);
 
 	if (c == -1) break;
 
@@ -13840,6 +13841,9 @@ int main(int argc, char *argv[])
 	    break;
 	case 'p':
 	    probing = 1;
+	    break;
+	case 's':
+	    summarize = 1;
 	    break;
 	case 'v':
 	    verify = 1;
@@ -13870,17 +13874,18 @@ int main(int argc, char *argv[])
 	}
     }
 
+    // XXX need to consider other invalid possibilities like -g and -s
     if (generating && probing) {
 	fatal("Only one of the generating (-g) and probing (-p) options can be specified\n");
 	usage(argv[0]);
 	terminate();
     }
 
-    if (!generating && !probing && !verify && !dump_info) {
+    if (!generating && !probing && !verify && !dump_info && !summarize) {
 #if USE_NALIMOV
-	fatal("At least one of -g, -p, -i, or -v must be specified\n");
+	fatal("At least one of -g, -p, -i, -s, or -v must be specified\n");
 #else
-	fatal("At least one of -g, -p, or -i must be specified\n");
+	fatal("At least one of -g, -p, -s, or -i must be specified\n");
 #endif
 	usage(argv[0]);
 	terminate();
@@ -13899,6 +13904,16 @@ int main(int argc, char *argv[])
 	terminate();
     }
 #endif
+
+    /* Summarize */
+
+    if (summarize) {
+	tablebase_t * tb = parse_XML_control_file(argv[optind]);
+	if (tb != nullptr) {
+	    std::cout << "Total indices: " << tb->max_index + 1 << std::endl;
+	}
+	terminate();
+    }
 
     /* Generating */
 
