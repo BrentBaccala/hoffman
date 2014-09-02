@@ -3600,7 +3600,6 @@ bool tablebase_is_color_symmetric(tablebase_t *tb)
 tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 {
     tablebase_t *tb;
-    int generating_version = 0;
 
     xmlpp::NodeSet result;
     xmlpp::Element * tablebase;
@@ -3653,16 +3652,6 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	promotion_possibilities = 5;	/* A global var, but all futurebases have to use the same variant */
 	break;
 
-    }
-
-    /* If it's a header on a generated tablebase, retrieve the version of Hoffman that created it.
-     * The funky syntax on the sscanf is there to ensure that RCS co doesn't muck with THIS version
-     * string!
-     */
-
-    result = tablebase->find("//program");
-    if (! result.empty()) {
-	sscanf(((xmlpp::Element *) result[0])->get_child_text()->get_content().c_str(), "Hoffman %*[$]Revision: 1.%u $", &generating_version);
     }
 
     if (! tablebase->find("//@pawngen-condition").empty()) {
@@ -4952,7 +4941,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.860 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.861 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13771,7 +13760,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.860 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.861 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
