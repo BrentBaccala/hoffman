@@ -5387,7 +5387,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.845 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.846 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8196,45 +8196,27 @@ extern "C++" {
     struct disk_que {
 	typedef typename Container::value_type value_type;
 
-	static const unsigned int queue_size = 256;	// size of in-memory queue
+	temporary_file * file;
+	std::istream * is;
 
-	int fd;
-	unsigned int next;
-	unsigned int size;
-	value_type queue[queue_size];
-	char filename[16];
-	void *file;
-	int count;
+	int size;
+	int next;
 
-	disk_que(typename Container::iterator head, typename Container::iterator tail) {
+	disk_que(typename Container::iterator head, typename Container::iterator tail)
+	    : size(tail - head), next(0)
+	{
+	    file = new temporary_file("proptableXXXXXX", compress_proptables);
 
-	    strcpy(filename, "proptableXXXXXX");
-	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
+	    std::ostream * os = file->ostream();
+	    os->write(reinterpret_cast<char *>(head.base()), size * sizeof(value_type));
+	    delete os;
 
-	    size = (tail - head);
-
-	    if (compress_proptables) {
-		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-		zlib_write(file, (const char *) head.base(), size * sizeof(value_type));
-		zlib_flush(file);
-		zlib_free(file);
-		lseek(fd, 0, SEEK_SET);
-		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
-	    } else {
-		do_write(fd, head.base(), size * sizeof(value_type));
-		lseek(fd, 0, SEEK_SET);
-	    }
-
-	    next = 0;
+	    is = file->istream();
 	}
 
 	~disk_que() {
-	    if (compress_proptables) {
-		zlib_close(file);
-	    } else {
-		close(fd);
-	    }
-	    unlink(filename);
+	    delete is;
+	    delete file;
 	}
 
 	bool empty(void) {
@@ -8242,19 +8224,11 @@ extern "C++" {
 	}
 
 	value_type pop_front(void) {
-	    if (next % queue_size == 0) {
-		ssize_t retval;
-		if (compress_proptables) {
-		    retval = zlib_read(file, (char *) queue, queue_size * sizeof(value_type));
-		} else {
-		    retval = read(fd, queue, queue_size * sizeof(value_type));
-		}
-		if ((retval != (ssize_t) (queue_size * sizeof(value_type)))
-		    && (retval != (ssize_t) ((size - next) * sizeof(value_type)))) {
-		    throw "Short read in disk_que";
-		}
-	    }
-	    return queue[(next++) % queue_size];
+	    value_type val;
+	    if (empty()) throw "read past end of disk_que";
+	    is->read(reinterpret_cast<char *>(&val), sizeof(value_type));
+	    next ++;
+	    return val;
 	}
     };
 
@@ -8799,12 +8773,10 @@ class proptable_ptr {
 	return value < other.value;
     }
 
-    /* This is here to allow disk_que's constructor to cast us to a (void *) and write us to disk
-     *
-     * XXX fix this to use streams; we need a zlib I/O stream
-     */
+    /* This is here to allow disk_que's constructor to cast us to a (char *) and write us to disk */
 
-    operator void *() {
+    operator char *() {
+	if (i % 8 != 0) throw "can't convert bit-aligned proptable_ptr to char *";
 	return (char *)base + i * format->bits / 8;
     }
 
@@ -8938,45 +8910,33 @@ extern "C++" {
 
 	int size;
 	int next;
+
+	temporary_file * file;
+	std::istream * is;
+
 	char *buffer;
 	proptable_format format;
-
-	int fd;
-	char filename[16];
-	void *file;
-	int count;
 
     disk_que(proptable_iterator head, proptable_iterator tail): size(tail - head), next(0), format(*(head.format)) {
 
 	    size_t bits = size * format.bits;
 	    size_t bytes = (bits + 7)/8;
 
-	    strcpy(filename, "proptableXXXXXX");
-	    fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
+	    file = new temporary_file("proptableXXXXXX", compress_proptables);
 
-	    if (compress_proptables) {
-		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "w");
-		zlib_write(file, (const char *) (void *) *head, bytes);
-		zlib_flush(file);
-		zlib_free(file);
-		lseek(fd, 0, SEEK_SET);
-		file = zlib_open((void *)((size_t) fd), read_ptr, write_ptr, lseek_ptr, close_ptr, "r");
-	    } else {
-		do_write(fd, (void *) *head, bytes);
-		lseek(fd, 0, SEEK_SET);
-	    }
+	    std::ostream * os = file->ostream();
+	    os->write(*head, bytes);
+	    delete os;
+
+	    is = file->istream();
 
 	    // this will create a buffer with room for queue_size values
 	    buffer = new char[queue_size * format.bits / 8];
 	}
 
 	~disk_que() {
-	    if (compress_proptables) {
-		zlib_close(file);
-	    } else {
-		close(fd);
-	    }
-	    unlink(filename);
+	    delete is;
+	    delete file;
 	    delete[] buffer;
 	}
 
@@ -8985,17 +8945,9 @@ extern "C++" {
 	}
 
 	proptable_entry pop_front(void) {
+	    if (empty()) throw "read past end of disk_que";
 	    if (next % queue_size == 0) {
-		ssize_t retval;
-		if (compress_proptables) {
-		    retval = zlib_read(file, buffer, queue_size * format.bits / 8);
-		} else {
-		    retval = read(fd, buffer, queue_size * format.bits / 8);
-		}
-		if ((retval != queue_size * format.bits / 8)
-		    && (retval != ((size - next) * format.bits + 7) / 8)) {
-		    throw "Short read in disk_que";
-		}
+		is->read(buffer, queue_size * format.bits / 8);
 	    }
 	    proptable_ptr retval(&format, buffer, next % queue_size);
 	    next ++;
@@ -14312,7 +14264,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.845 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.846 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
