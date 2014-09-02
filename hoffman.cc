@@ -162,9 +162,6 @@ extern "C" {
 #include <history.h>
 #endif
 
-#define STRICT_ZLIB_OPEN_DECLARATION 1
-#include "zlib_fopen.h"		/* My wrapper around the ZLIB compression library (required) */
-
 #include "zlib.h"
 
 #ifdef USE_LIBCURL
@@ -182,15 +179,6 @@ extern "C" {
  */
 
 #include "tablebase_dtd.h"
-
-/* O_LARGEFILE - if it's defined, then sometimes we might need it, like when working with an entries
- * file for a 5-piece tablebase under construction.  I use it almost everywhere.  If it's not
- * defined, then just define it to 0 here so we can use it without (too many) worries.
- */
-
-#ifndef O_LARGEFILE
-#define O_LARGEFILE 0
-#endif
 
 #ifdef USE_SMALL_INDICES
 typedef uint32_t index_t;
@@ -1048,35 +1036,6 @@ int do_write_or_suspend(int fd, void *ptr, int length)
 	}
     }
     return 0;
-}
-
-/* These next few functions are here to make sure we don't get into pointer size issues on different
- * architectures, since the compression library interface in zlib_fopen.c takes pointers, and if
- * we're working with native files (and not a network URL), we just want to use file descriptors.
- */
-
-ssize_t read_ptr(void * ptr, char * buf, size_t count)
-{
-    int fd = (size_t) ptr;
-    return read(fd, buf, count);
-}
-
-ssize_t write_ptr(void * ptr, const char * buf, size_t count)
-{
-    int fd = (size_t) ptr;
-    return write(fd, buf, count);
-}
-
-off_t lseek_ptr(void * ptr, off_t offset, int whence)
-{
-    int fd = (size_t) ptr;
-    return lseek(fd, offset, whence);
-}
-
-int close_ptr(void * ptr)
-{
-    int fd = (size_t) ptr;
-    return close(fd);
 }
 
 int ROW(int square) {
@@ -5387,7 +5346,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.846 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.847 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -7611,7 +7570,7 @@ public:
 	: compress(compress)
     {
 	strcpy(filename, filename_template.c_str());
-	fd = mkostemp(filename, O_RDWR | O_CREAT | O_LARGEFILE | O_EXCL);
+	fd = mkostemp(filename, O_RDWR | O_CREAT | O_EXCL);
 
 	if (fd == -1) {
 	    fatal("Can't open '%s' for writing: %s\n", filename, strerror(errno));
@@ -14264,7 +14223,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.846 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.847 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
