@@ -1002,25 +1002,6 @@ void sigaction_internal_error (int signal, siginfo_t * siginfo, void * ucontext)
     terminate();
 }
 
-/* Matches a string against a nullptr-terminated array of strings using case insensitive match.
- * Returns index in array of matching string, or -1 if there was no match.
- */
-
-int find_name_in_array(char * name, const char * array[])
-{
-    int i=0;
-
-    if (name == nullptr) return -1;
-
-    while (*array) {
-	if (!strcasecmp(name, *array)) return i;
-	array ++;
-	i ++;
-    }
-
-    return -1;
-}
-
 int ROW(int square) {
     return square / 8;
 }
@@ -4967,7 +4948,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.855 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.856 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13802,7 +13783,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.855 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.856 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
