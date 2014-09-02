@@ -784,16 +784,14 @@ typedef struct tablebase {
     int futurevector_bits;
 } tablebase_t;
 
-int zeros_fd = -1;
-
 tablebase_t *current_tb = nullptr;
 
 tablebase_t **futurebases;
 int num_futurebases;
 
 bool using_proptables = false;		/* Proptables (see below) */
-bool compress_proptables = true;
-bool compress_entries_table = true;
+bool compress_proptables = false;
+bool compress_entries_table = false;
 int proptable_MBs = 0;
 
 bool do_restart = false;
@@ -5334,7 +5332,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.851 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.852 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14181,7 +14179,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.851 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.852 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
