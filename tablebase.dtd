@@ -13,8 +13,7 @@
 <!ATTLIST index
 	type (naive|naive2|simple|standard|compact|no-en-passant|combinadic3|combinadic4)	#REQUIRED
 	symmetry (1|2|2-way|4|8|8-way)			#IMPLIED
-	offset CDATA					#IMPLIED
-	modulus CDATA				#IMPLIED>
+	offset CDATA					#IMPLIED>
 
 <!ELEMENT format (dtm | flag | basic) >
 
@@ -86,7 +85,6 @@
 <!ATTLIST tablebase
 	offset	CDATA		#IMPLIED
 	format	(fourbyte|one-byte-dtm)	#IMPLIED
-	modulus CDATA		#IMPLIED
 	index	(naive|naive2|simple|standard|compact|no-en-passant)	#IMPLIED>
 
 <!ATTLIST piece

@@ -662,7 +662,6 @@ typedef struct tablebase {
     index_t index_offset;
     index_t max_index;
     index_t max_uninverted_index;
-    index_t modulus;
     bool positions_with_adjacent_kings_are_illegal;
     int symmetry;
     uint8_t reflections[64][64];
@@ -1780,276 +1779,6 @@ bool check_king_legality(int kingA, int kingB) {
     if ((ROW(kingA) < ROW(kingB) - 1) || (ROW(kingA) > ROW(kingB) + 1)) return true;
     if ((COL(kingA) < COL(kingB) - 1) || (COL(kingA) > COL(kingB) + 1)) return true;
     return false;
-}
-
-/* Later in the program, I'll use these indices as the keys in an address calculation insertion
- * sort.  This kind of sort performs well if the keys are evenly distributed, and performs horribly
- * if the keys are clumped together.  Since checkmates occur in groups of similar positions,
- * something has to be done.  "Something" is inversion of the indices in a finite field,
- * specifically a modulo ring with a prime modulus.  The modulus is either specified in the XML
- * configuration or computed automatically.
- *
- * Originally, I used the HalfExtendedEuclidian algorithm from Manuel Bronstein's book "Symbolic
- * Integration I".  In the hopes a speed improvement, I switched to using a binary extended GCD
- * algorithm on the advice of Prof. Christof Paar.  The speed improvement wasn't there, but I've
- * stuck with the newer algorithm because it avoids multiplications and divisions, using only right
- * shifts and subtractions, and should therefore be easier to implement for 64-bit indices on a
- * 32-bit architecture.  Also, I've since realized that because we only use this algorithm when the
- * program becomes disk-bound, the speed issue is (mostly) negligible.
- *
- * The binary extended GCD algorithm is based on computing a GCD by repeatedly subtracting the
- * smaller number from the larger one.  A consideration of the equation c = a - b shows that a
- * common multiple of any two of the numbers must be a common multiple of the third (unless it is
- * zero).  Therefore, subtracting preserves common multiples in the result and does not introduce
- * any new common multiples.  Because we are working with a binary architecture, detecting multiples
- * of two is easy, and we can eliminate them by right shifting.  Since subtracting two odd numbers
- * gives an even number, we can right shift by at least one bit per iteration.  Combining the two
- * operations of subtraction and right shifting, we get a GCD algorithm (14.61 in Menezes' Handbook
- * of Applied Cryptography) that requires more iterations than the extended Euclidian algorithm, but
- * still completes in a reasonable time and avoids both multiplication and division.
- *
- * Consider an array of number x[n].  To compute gcd(a,b), we set up x[0]=a and x[1]=b, then
- * repeatedly apply the algorithm below, which preserves the gcd at each step, i.e, each x[n] is a
- * multiple of gcd(a,b).  Each x[n] can be written in terms of a and b: x[n] = a[n] * a + b[n] * b.
- * If a was the prime modulus of our finite field, then finally x[n] = gcd(a,b) = 1, so:
- *
- *        1 = a[n] * a + b[n] * b
- *
- *        1 = b[n] * b  (mod a)
- *
- * i.e, b[n] is the multiplicative inverse of b (mod a).
- *
- * So we need to track the b[n] part of x[n] = a[n] * a + b[n] * b until we reach the GCD of 1.
- *
- * Subtracting (x[n+1] = x[n] - x[n-1]) is easy:
- *
- *                a[n+1] = a[n] - a[n-1]    and    b[n+1] = b[n] - b[n-1]
- *
- * Right shifting (division by 2) is only a little more difficult.  Let's first note that if x[n] is
- * even (the only case in which we'd be right shifting) and a is odd (it's a prime modulus, after
- * all), then either a[n] is even or a[n] and b[n] must both be odd.  So if b[n] is even, then a[n]
- * is also even and we can right shift everything: x[n]/2 = a[n]/2 * a + b[n]/2 * b, while if
- * b[n] is odd, we can add and subtract a * b to obtain:
- *
- *             x[n] = (a[n] + b) * a + (b[n] - a) * b
- *
- *             x[n]/2 = (a[n] + b)/2 * a + (b[n] - a)/2 * b
- *
- * Remember that a[n] gets discarded; b[n] is all we care about computing.
- *
- * So our operations are:
- *
- *    subtract (x > y)    x = x - y                            b[x] = (b[x] - b[y]) mod m
- *
- *    subtract (y > x)    y = y - x                            b[y] = (b[y] - b[x]) mod m
- *
- *    right shift x (b[x] even)     x = x / 2                  b[x] = b[x] / 2
- *
- *    right shift x (b[x] odd)      x = x / 2                  b[x] = ((b[x] - m) / 2) mod m
- *
- *                                                         or  b[x] = ((b[x] + m) / 2) mod m
- *
- * m    -> EAX
- * x    -> EBX
- * y    -> ECX
- * (m+1)/2 -> EDX
- * b[x] -> ESI
- * b[y] -> EDI
- *
- * This is a GNU compiler, so we use AT&T assembler syntax - the destination comes second.
- */
-
-#ifdef i386
-
-uint32_t invert_in_finite_field(uint32_t b, uint32_t m)
-{
-    asm("                                                                                       \
-                /* Input                                                                    */  \
-                /*                                                                          */  \
-                /* EAX - modulus                                                            */  \
-                /* ECX - index                                                              */  \
-                                                                                                \
-                mov %%eax, %%ebx;                                                               \
-                mov $0, %%esi;                                                                  \
-                mov $1, %%edi;                                                                  \
-                                                                                                \
-                mov %%eax, %%edx;                                                               \
-                add $1, %%edx;                                                                  \
-                shr %%edx;                                                                      \
-                                                                                                \
-                /* while ((y&1) == 0)                                                       */  \
-                                                                                                \
-           1:   test $1, %%ecx;                                                                 \
-                jne 2f;                                                                         \
-                                                                                                \
-                /*     y >>= 1;                                                             */  \
-                shr %%ecx;                                                                      \
-                                                                                                \
-                /*     if ((by&1) == 0) {                                                   */  \
-                /*        by >>= 1;                                                         */  \
-                /*    } else {                                                              */  \
-                /*        by = ((by + m)/2) mod m;                                          */  \
-                /*        by = (((by-1 + m+1)/2) mod m;                                     */  \
-                /*        by = ((by-1)/2 + (m+1)/2) mod m;                                  */  \
-                /*    }                                                                     */  \
-                /* }                                                                        */  \
-                                                                                                \
-                shr %%edi;                                                                      \
-                jnc 1b;                                                                         \
-                add %%edx, %%edi;                                                               \
-                cmp %%eax, %%edi;                                                               \
-                jc  1b;                                                                         \
-                sub %%eax, %%edi;                                                               \
-                jmp 1b;                                                                         \
-                                                                                                \
-           2:   /* Is x = y ?  Is x > y ?                                                   */  \
-                cmp %%ecx, %%ebx;                                                               \
-                jz  6f;                                                                         \
-                jc  4f;                                                                         \
-                                                                                                \
-                /* Yes, x > y                                                               */  \
-                /* Set x = x - y                                                            */  \
-                sub %%ecx, %%ebx;                                                               \
-                                                                                                \
-                /* Set b[x] = (b[x] - b[y]) mod m                                           */  \
-                sub %%edi, %%esi;                                                               \
-                jnc 3f;                                                                         \
-                add %%eax, %%esi;                                                               \
-                                                                                                \
-                /* while ((x&1) == 0)                                                       */  \
-                                                                                                \
-           3:   test $1, %%ebx;                                                                 \
-                jne 2b;                                                                         \
-                                                                                                \
-                /*     x >>= 1;                                                             */  \
-                shr %%ebx;                                                                      \
-                                                                                                \
-                /*     if ((bx&1) == 0) {                                                   */  \
-                /*        bx >>= 1;                                                         */  \
-                /*    } else {                                                              */  \
-                /*        bx = ((bx + m)/2) mod m;                                          */  \
-                /*        bx = (((bx-1 + m+1)/2) mod m;                                     */  \
-                /*        bx = ((bx-1)/2 + (m+1)/2) mod m;                                  */  \
-                /*    }                                                                     */  \
-                /* }                                                                        */  \
-                                                                                                \
-                shr %%esi;                                                                      \
-                jnc 3b;                                                                         \
-                add %%edx, %%esi;                                                               \
-                cmp %%eax, %%esi;                                                               \
-                jc  3b;                                                                         \
-                sub %%eax, %%esi;                                                               \
-                jmp 3b;                                                                         \
-                                                                                                \
-                /* y > x                                                                    */  \
-                /* Set y = y - x                                                            */  \
-           4:   sub %%ebx, %%ecx;                                                               \
-                                                                                                \
-                /* Set b[y] = (b[y] - b[x]) mod m                                           */  \
-                sub %%esi, %%edi;                                                               \
-                jnc 1b;                                                                         \
-                add %%eax, %%edi;                                                               \
-                                                                                                \
-                jmp 1b;                                                                         \
-                                                                                                \
-           6:   mov %%edi, %%ecx;                                                               \
-                                                                                                \
-                          " : "+c" (b) : "a" (m) : "bx", "dx", "di", "si", "cc");
-    return b;
-}
-
-#else
-
-uint32_t invert_in_finite_field(uint32_t b, uint32_t m)
-{
-    uint32_t x = m;
-    uint32_t y = b;
-    uint32_t bx = 0;
-    uint32_t by = 1;
-
-    while ((y&1) == 0) {
-	y >>= 1;
-	if ((by&1) == 0) {
-	    by >>= 1;
-	} else {
-	    by = ((by + m)/2)%m;
-	}
-    }
-
-    while (x != y) {
-	if (x > y) {
-	    x = x - y;
-
-	    if (bx > by) bx = (bx - by)%m;
-	    else bx = (m + bx - by)%m;
-
-	    while ((x&1) == 0) {
-		x >>= 1;
-		if ((bx&1) == 0) {
-		    bx >>= 1;
-		} else {
-		    bx = ((bx + m)/2)%m;
-		}
-	    }
-	} else {
-	    y = y - x;
-
-	    if (by > bx) by = (by - bx)%m;
-	    else by = (m + by - bx)%m;
-
-	    while ((y&1) == 0) {
-		y >>= 1;
-		if ((by&1) == 0) {
-		    by >>= 1;
-		} else {
-		    by = ((by + m)/2)%m;
-		}
-	    }
-	}
-    }
-    if (x != 1) fatal("x != 1 in invert_finite_field\n");
-
-    return by;
-}
-
-#endif
-
-/* Inversion in a finite field only works if the modulus is prime, so we need some routines to test
- * a number for primality and to round a number up to the next prime.  Because our numbers are all
- * fairly small (as prime numbers go), and since these routines are run at most once per tablebase
- * load, some very simple algorithms suffice.
- */
-
-bool is_prime(uint32_t test_number)
-{
-    uint32_t divisor, sqrt_test_number;
-
-    /* Quick, easy check to see if it's even (and thus can't be prime) */
-    if ((test_number % 2) == 0) return 0;
-
-    /* Now, check all odd numbers from 3 up to its square root to see if any divide it */
-    sqrt_test_number = (uint32_t) sqrt((double) test_number);
-    for (divisor = 3; divisor <= sqrt_test_number; divisor += 2) {
-	if ((test_number % divisor) == 0) return 0;
-    }
-
-    /* OK, it's prime */
-    return true;
-}
-
-uint32_t round_up_to_prime(uint32_t starting_number)
-{
-    uint32_t number = starting_number;
-
-    if (number % 2 == 0) number ++;
-
-    while (! is_prime(number)) number += 2;
-
-    if (number < starting_number) {
-	fatal("Wraparound in round_up_to_next_prime\n");
-    }
-
-    return number;
 }
 
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and multiplies
@@ -3466,10 +3195,6 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 
     index += tb->index_offset;
 
-    if ((index != INVALID_INDEX) && (index != 0) && (tb->modulus != 0)) {
-	index = invert_in_finite_field(index, tb->modulus);
-    }
-
     /* Multiplicity - number of non-identical positions that this index corresponds to.  We want to
      * update the original position structure that got passed in.
      */
@@ -3508,10 +3233,6 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 {
     int ret;
     int piece, piece2;
-
-    if ((index != 0) && (tb->modulus != 0)) {
-	index = invert_in_finite_field(index, tb->modulus);
-    }
 
     if (index > tb->max_uninverted_index) return false;
     if (index < tb->index_offset) return false;
@@ -3666,10 +3387,7 @@ int index_to_side_to_move(tablebase_t *tb, index_t index)
 {
     local_position_t position;
 
-    if (tb->modulus != 0) {
-	if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) return -1;
-	else return position.side_to_move;
-    } else if (tb->encode_stm) {
+    if (tb->encode_stm) {
 	return (index - tb->index_offset) & 1;
     } else {
 	return WHITE;
@@ -5106,29 +4824,6 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc, bool is_futurebase
     tb->max_index += tb->index_offset;
     tb->max_uninverted_index = tb->max_index;
 
-    /* See if an index modulus was specified for inversion in a finite field */
-
-    auto modulus = index_node->get_attribute_value("modulus");
-
-    if (modulus == "auto") {
-
-	tb->modulus = round_up_to_prime(tb->max_index + 1);
-	if (! is_futurebase) info("Using %" PRIindex " as auto modulus\n", tb->modulus);
-	tb->max_index = tb->modulus - 1;
-
-    } else if (modulus != "") {
-	tb->modulus = index_node->eval_to_number("@modulus");
-	if (! is_prime(tb->modulus)) {
-	    fatal("modulus %" PRIindex " is not a prime number\n", tb->modulus);
-	    return nullptr;
-	}
-	if (tb->modulus <= tb->max_index) {
-	    fatal("modulus %" PRIindex " less than max_index %" PRIindex "\n", tb->modulus, tb->max_index);
-	    return nullptr;
-	}
-	tb->max_index = tb->modulus - 1;
-    }
-
     /* Fetch any prune enable elements */
 
     result = tablebase->find("//prune-enable | //move-restriction");
@@ -5274,7 +4969,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.853 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.854 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -14121,7 +13816,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.853 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.854 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
