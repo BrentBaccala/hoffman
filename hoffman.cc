@@ -4952,7 +4952,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.859 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.860 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -6926,18 +6926,6 @@ class EntriesTable {
 	if (dtm > 0) positive_passes_needed[dtm] = true;
 	if (dtm < 0) negative_passes_needed[-dtm] = true;
 
-	/* XXX there's a matching "XXX" down below where we malloc the entries table and then zero
-	 * it with memset.  Might be more efficient to set the entire entry here, making sure that
-	 * we zero out any fields other than movecnt and DTM.  Might be more efficient not to worry
-	 * so much about efficiency.  ;-)
-	 */
-
-	// set_movecnt(index, movecnt);
-	// if (tracking_dtm) set_raw_DTM(index, dtm);
-
-	//(*this)[index].movecnt = movecnt;
-	// if (tracking_dtm) (*this)[index].dtm = dtm;
-
 	(*this)[index] = nonatomic_entry(movecnt, dtm);
     }
 
@@ -7074,24 +7062,17 @@ class MemoryEntriesTable: public EntriesTable {
 
  public:
     MemoryEntriesTable(void) {
-	entries = new atomic_entry [current_tb->max_index + 1];
-	// XXX catch an exception here
-#if 0
-	if (entries == nullptr) {
-	    fatal("Can't malloc %zdMB for tablebase entries: %s\n", bytes/(1024*1024), strerror(errno));
-	} else {
+	size_t bytes = (current_tb->max_index + 1) * sizeof(atomic_entry);
+	try {
+	    entries = new atomic_entry [current_tb->max_index + 1];
 	    if (bytes < 1024*1024) {
 		info("Malloced %zdKB for tablebase entries\n", bytes/1024);
 	    } else {
 		info("Malloced %zdMB for tablebase entries\n", bytes/(1024*1024));
 	    }
+	} catch (std::bad_alloc ex) {
+	    fatal("Can't malloc %zdMB for tablebase entries: %s\n", bytes/(1024*1024), ex.what());
 	}
-#endif
-
-	/* Don't really need this, since they will all get initialized anyway */
-	/* XXX actually do this need right now, because initialization isn't complete */
-	/* XXX C++ - do we need this? */
-	// memset(entries, 0, bytes);
     }
 
     atomic_entry & operator[](index_t index) {
@@ -7124,7 +7105,9 @@ class atomic_entries_array {
 
 public:
 
-    atomic_entry & operator[](index_t index) { return entries[index]; }
+    atomic_entry & operator[](index_t index) {
+	return entries[index];
+    }
 
     void zero(void) {
 	std::fill(entries, entries + entry_buffer_size, nonatomic_entry());
@@ -7739,9 +7722,6 @@ struct proptable_format {
  * file descriptor and the first one destroyed would close it.
  *
  * For bit-aligned proptables, we don't actually use this class, but specialize it later.
- *
- * XXX we'd like to use operator<< to write an object in the container.  Instead we just dump its
- * memory block to disk.
  */
 
 template <typename Container>
@@ -8134,6 +8114,12 @@ public:
  *   dtm - known from pass number, unless it isn't being tracked
  *   movecnt - always 1
  *   futuremove - unneeded
+ *
+ * The fields are stored as object variables, and functions are provided to marshal and demarshal an
+ * entire proptable entry into whatever integer type is being used by the proptable.  encode<T> is a
+ * method that takes a proptable_format and packs everything into a return value of type T.
+ * proptable_entry<T> is a constructor that takes a proptable_format and a value of type T and
+ * initializes the object fields appropriately.
  */
 
 class proptable_entry {
@@ -13785,7 +13771,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.859 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.860 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
