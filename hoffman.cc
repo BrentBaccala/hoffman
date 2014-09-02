@@ -123,8 +123,6 @@ namespace io = boost::iostreams;
 
 #include <libxml++/libxml++.h>
 
-extern "C" {
-
 #ifndef _LARGEFILE64_SOURCE
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
 #endif
@@ -265,15 +263,13 @@ bool * negative_passes_needed = nullptr;
  * instead.  exception_cast<Type> works just like dynamic_cast<Type> except that it throws an
  * exception instead of returning nullptr.
  */
-    extern "C++" {
-	template<typename T, typename P>
-	T exception_cast(P p) {
-	    T val;
-	    val = dynamic_cast<T>(p);
-	    if (val == nullptr) throw new std::bad_cast();
-	    else return val;
-	}
-    }
+template<typename T, typename P>
+T exception_cast(P p) {
+    T val;
+    val = dynamic_cast<T>(p);
+    if (val == nullptr) throw new std::bad_cast();
+    else return val;
+}
 
 /* From Guru of The Week #29 [http://www.gotw.ca/gotw/029.htm]
  *
@@ -5346,7 +5342,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.847 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.848 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5402,8 +5398,6 @@ tablebase_t * parse_XML_control_file(char *filename)
  * XXX it isn't quite right in the general case.  "</tab</tablebase>" won't match at all.
  */
 
-extern "C++" {
-
 class limiting_input_filter : public io::input_filter {
     std::string limitstr;
     size_t pos;
@@ -5425,7 +5419,7 @@ public:
     }
 };
 
-    /* This next section of code was ripped out of the boost library */
+/* This next section of code was ripped out of the boost library */
 
 const int default_device_buffer_size = 16384;
 
@@ -5521,8 +5515,6 @@ public:
 };
 
 typedef basic_gzip_decompressor<> gzip_decompressor;
-
-};
 
 tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 {
@@ -6998,8 +6990,6 @@ const uint capture_possible_flag_bitmask = 1;
  * bitfields in an entry is more sophisticated.
  */
 
-extern "C++" {
-
 template <typename T, bool isAtomic> class entry;
 
 typedef uint16_t entry_t;
@@ -7160,8 +7150,6 @@ public:
 };
 
 
-
-}
 
 class EntriesTable {
 
@@ -8132,417 +8120,412 @@ struct proptable_format {
     }
 };
 
-extern "C++" {
+/* A simple disk-backed que.
+ *
+ * Template argument Container is the in-memory container class we're backing up, and it has to be a
+ * contiguous array.  It has to provide a value_type typedef and an iterator typedef.  Our
+ * constructor takes a pair of iterators.  They have to provide a base() method that returns a
+ * pointer.  Our semantics are to make a copy of the container and export a pop_front() method to
+ * walk through our data.
+ *
+ * Caveat: Instances of this class can not be copied, because then both copies would have the same
+ * file descriptor and the first one destroyed would close it.
+ *
+ * For bit-aligned proptables, we don't actually use this class, but specialize it later.
+ *
+ * XXX we'd like to use operator<< to write an object in the container.  Instead we just dump its
+ * memory block to disk.
+ */
 
-    /* A simple disk-backed que.
-     *
-     * Template argument Container is the in-memory container class we're backing up, and it has to
-     * be a contiguous array.  It has to provide a value_type typedef and an iterator typedef.  Our
-     * constructor takes a pair of iterators.  They have to provide a base() method that returns a
-     * pointer.  Our semantics are to make a copy of the container and export a pop_front() method
-     * to walk through our data.
-     *
-     * Caveat: Instances of this class can not be copied, because then both copies would have the same
-     * file descriptor and the first one destroyed would close it.
-     *
-     * For bit-aligned proptables, we don't actually use this class, but specialize it later.
-     *
-     * XXX we'd like to use operator<< to write an object in the container.  Instead we just dump
-     * its memory block to disk.
+template <typename Container>
+struct disk_que {
+    typedef typename Container::value_type value_type;
+
+    temporary_file * file;
+    std::istream * is;
+
+    int size;
+    int next;
+
+    disk_que(typename Container::iterator head, typename Container::iterator tail)
+	: size(tail - head), next(0)
+    {
+	file = new temporary_file("proptableXXXXXX", compress_proptables);
+
+	std::ostream * os = file->ostream();
+	os->write(reinterpret_cast<char *>(head.base()), size * sizeof(value_type));
+	delete os;
+
+	is = file->istream();
+    }
+
+    ~disk_que() {
+	delete is;
+	delete file;
+    }
+
+    bool empty(void) {
+	return (next == size);
+    }
+
+    value_type pop_front(void) {
+	value_type val;
+	if (empty()) throw "read past end of disk_que";
+	is->read(reinterpret_cast<char *>(&val), sizeof(value_type));
+	next ++;
+	return val;
+    }
+};
+
+/* A sorting network.
+ *
+ * We're reading from a container of pointers to subcontainers.  Each subcontainer is itself sorted,
+ * but now we impose a total sort on all of them.  We do this by maintaining a binary tree (the
+ * sorting network), with the subcontainers 'feeding' the leaves and each non-leaf being the
+ * less-than comparison of the two nodes below it.  We also track which subcontainer each entry came
+ * from originally.  Once initialized, we just read the root of the tree to get the next entry, then
+ * refill whichever leaf we got the entry from (that's why we track subcontainers for each entry),
+ * and run back up the tree from that leaf only, recomputing the comparisons.  It's laid out in
+ * memory as an array, like this (in this example, highbit is 4):
+ *
+ *                    -4
+ *                   /
+ *                /-2--5
+ *               1
+ *                \-3--6
+ *		     \
+ *                    -7
+ *
+ * so that we can run that last step (backing up the tree, from right to left, in the diagram), just
+ * by right shifting the index.  I got this idea from Knuth.
+ */
+
+template<typename> struct dereference;
+
+template <typename T>
+struct dereference<T*> {
+    typedef T type;
+};
+
+template <typename T>
+struct dereference<std::shared_ptr<T>> {
+    typedef T type;
+};
+
+template <class Container>
+class sorting_network {
+
+    typedef typename Container::value_type SubcontainerPtr;
+    typedef typename dereference<SubcontainerPtr>::type Subcontainer;
+    typedef typename Subcontainer::value_type T;
+
+private:
+    Container * containers;
+    T * network;
+    int * container_num;
+    unsigned int highbit;
+
+    /* We don't initialize until the first retrieval request, which allows 'containers' to be
+     * modified, initially.  After we start retrieving, we expect 'containers' to be untouched.
      */
 
-    template <typename Container>
-    struct disk_que {
-	typedef typename Container::value_type value_type;
+    void initialize_network(void) {
 
-	temporary_file * file;
-	std::istream * is;
+	for (highbit = 1; highbit < containers->size(); highbit <<= 1);
 
-	int size;
-	int next;
+	network = new T[2 * highbit];
+	container_num = new int[2 * highbit];
 
-	disk_que(typename Container::iterator head, typename Container::iterator tail)
-	    : size(tail - head), next(0)
-	{
-	    file = new temporary_file("proptableXXXXXX", compress_proptables);
-
-	    std::ostream * os = file->ostream();
-	    os->write(reinterpret_cast<char *>(head.base()), size * sizeof(value_type));
-	    delete os;
-
-	    is = file->istream();
-	}
-
-	~disk_que() {
-	    delete is;
-	    delete file;
-	}
-
-	bool empty(void) {
-	    return (next == size);
-	}
-
-	value_type pop_front(void) {
-	    value_type val;
-	    if (empty()) throw "read past end of disk_que";
-	    is->read(reinterpret_cast<char *>(&val), sizeof(value_type));
-	    next ++;
-	    return val;
-	}
-    };
-
-    /* A sorting network.
-     *
-     * We're reading from a container of pointers to subcontainers.  Each subcontainer is itself
-     * sorted, but now we impose a total sort on all of them.  We do this by maintaining a binary
-     * tree (the sorting network), with the subcontainers 'feeding' the leaves and each non-leaf
-     * being the less-than comparison of the two nodes below it.  We also track which subcontainer
-     * each entry came from originally.  Once initialized, we just read the root of the tree to get
-     * the next entry, then refill whichever leaf we got the entry from (that's why we track
-     * subcontainers for each entry), and run back up the tree from that leaf only, recomputing the
-     * comparisons.  It's laid out in memory as an array, like this (in this example, highbit is 4):
-     *
-     *                    -4
-     *                   /
-     *                /-2--5
-     *               1
-     *                \-3--6
-     *                   \
-     *                    -7
-     *
-     * so that we can run that last step (backing up the tree, from right to left, in the diagram),
-     * just by right shifting the index.  I got this idea from Knuth.
-     */
-
-    template<typename> struct dereference;
-
-    template <typename T>
-    struct dereference<T*> {
-	typedef T type;
-    };
-
-    template <typename T>
-    struct dereference<std::shared_ptr<T>> {
-	typedef T type;
-    };
-
-    template <class Container>
-    class sorting_network {
-
-	typedef typename Container::value_type SubcontainerPtr;
-	typedef typename dereference<SubcontainerPtr>::type Subcontainer;
-	typedef typename Subcontainer::value_type T;
-
-    private:
-	Container * containers;
-	T * network;
-	int * container_num;
-	unsigned int highbit;
-
-	/* We don't initialize until the first retrieval request, which allows 'containers' to be
-	 * modified, initially.  After we start retrieving, we expect 'containers' to be untouched.
+	/* Fill in the upper half of the network with either the first entry from a disk queue, or
+	 * an "infinite" entry for slots with no proptables.
 	 */
 
-	void initialize_network(void) {
-
-	    for (highbit = 1; highbit < containers->size(); highbit <<= 1);
-
-	    network = new T[2 * highbit];
-	    container_num = new int[2 * highbit];
-
-	    /* Fill in the upper half of the network with either the first entry from a disk queue,
-	     * or an "infinite" entry for slots with no proptables.
-	     */
-
-	    for (unsigned int i=0; i<highbit; i++) {
-		if (i < containers->size()) {
-		    network[highbit + i] = (*containers)[i]->pop_front();
-		    container_num[highbit + i] = i;
-		} else {
-		    container_num[highbit + i] = -1;
-		}
-	    }
-
-	    /* Then, sort into the lower half of the network. */
-
-	    for (int network_node = highbit-1; network_node > 0; network_node --) {
-		if (container_num[2*network_node] == -1) {
-		    network[network_node] = network[2*network_node + 1];
-		    container_num[network_node] = container_num[2*network_node + 1];
-		} else if (container_num[2*network_node + 1] == -1) {
-		    network[network_node] = network[2*network_node];
-		    container_num[network_node] = container_num[2*network_node];
-		} else if (network[2*network_node] < network[2*network_node + 1]) {
-		    network[network_node] = network[2*network_node];
-		    container_num[network_node] = container_num[2*network_node];
-		} else {
-		    network[network_node] = network[2*network_node + 1];
-		    container_num[network_node] = container_num[2*network_node + 1];
-		}
-	    }
-	}
-
-    public:
-
-	sorting_network(Container * containers):
-	    containers(containers), network(nullptr), container_num(nullptr), highbit(0)
-	{ }
-
-	~sorting_network() {
-	    if (network) delete[] network;
-	    if (container_num) delete[] container_num;
-	}
-
-	bool empty(void) {
-	    return (highbit == 0) ? containers->empty() : (container_num[1] == -1);
-	}
-
-	const T& front(void) {
-	    if (highbit == 0) initialize_network();
-	    return network[1];
-	}
-
-	T pop_front(void) {
-	    if (highbit == 0) initialize_network();
-
-	    T retval = network[1];
-	    int network_node = highbit + container_num[1];
-
-	    if ((*containers)[container_num[1]]->empty()) {
-		container_num[network_node] = -1;
+	for (unsigned int i=0; i<highbit; i++) {
+	    if (i < containers->size()) {
+		network[highbit + i] = (*containers)[i]->pop_front();
+		container_num[highbit + i] = i;
 	    } else {
-		network[network_node] = (*containers)[container_num[1]]->pop_front();
+		container_num[highbit + i] = -1;
 	    }
-
-	    while (network_node > 1) {
-		network_node >>= 1;
-		if (container_num[2*network_node] == -1) {
-		    network[network_node] = network[2*network_node + 1];
-		    container_num[network_node] = container_num[2*network_node + 1];
-		} else if (container_num[2*network_node + 1] == -1) {
-		    network[network_node] = network[2*network_node];
-		    container_num[network_node] = container_num[2*network_node];
-		} else if (network[2*network_node] < network[2*network_node + 1]) {
-		    network[network_node] = network[2*network_node];
-		    container_num[network_node] = container_num[2*network_node];
-		} else {
-		    network[network_node] = network[2*network_node + 1];
-		    container_num[network_node] = container_num[2*network_node + 1];
-		}
-	    }
-
-	    return retval;
-	}
-    };
-
-    /* The priority queue template.
-     *
-     * Initialize with the size of the in-memory portion in megabytes.  If we insert less than that
-     * size, do everything in-memory.  If we insert more, then dump to disk and use a sorting
-     * network to read it back.
-     *
-     * Our template takes three types.  The first (T) is the type to store in the priority queue,
-     * the second (MemoryContainer) is a container to hold that type in memory, and the third
-     * (DiskContainer) is a container to hold that type on disk.  Names notwithstanding, we don't
-     * impose any memory or disk requirements in this class.  We expect MemoryContainer to export
-     * begin() and end() methods that return random access iterators usable for insertion,
-     * retrieval, and sorting (with std::sort).  We expect DiskContainer to take a begin/end pair of
-     * iterators as a constructor and supply pop_front() for retrieval.  We just push into a
-     * MemoryContainer until it's full, sort it and copy it to a DiskContainer, and keep going until
-     * we're done.  Then, if we used DiskContainer at all, we sort and dump the final
-     * MemoryContainer into a DiskContainer and read back from the DiskContainers using a sorting
-     * network.  Otherwise, we read back directly from a single MemoryContainer, i.e, we don't use a
-     * DiskContainer at all unless we fill up a MemoryContainer.
-     *
-     * we take advantage of multi-threading by breaking the in-memory table into equal size blocks,
-     * then making each thread sort and write a single block.  This is done by detecting when we
-     * write into the last num_threads elements in the table and using that as a trigger to sort and
-     * dump 1/num_threads-th of it.  So long as the table is at least n^2 elements, we're fine.
-     *
-     * about inheriting std::mutex... we lock when we insert (though we shouldn't need this if tail
-     * can be bumped atomically)... we expect the caller to already hold the lock when we
-     * retrieve... we do this because we want to atomically retrieve the front element along with
-     * any elements equal to it
-     */
-
-    template <class T>
-    class synchronized : public T, public std::mutex { };
-
-    template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
-	class priority_queue : public std::mutex {
-
-	typedef class synchronized<std::deque<std::shared_ptr<DiskContainer>>> DiskContainerQue;
-	typedef typename MemoryContainer::iterator Iterator;
-
-    private:
-	DiskContainerQue disk_ques;
-	class sorting_network<DiskContainerQue> snetwork;
-
-	MemoryContainer * in_memory_queue;
-	Iterator head;
-	Iterator tail;
-	bool sorted;
-
-	size_t remaining_space;
-	size_t block_size;
-	unsigned int blocks_dumped_to_disk;
-	std::mutex blocks_dumped_to_disk_mutex;
-	std::condition_variable blocks_dumped_to_disk_cond;
-
-	void sort_and_dump_to_disk(Iterator begin, Iterator end) {
-	    /* The sort is time-consuming, so we don't lock disk_ques until it's done */
-	    std::sort(begin, end);
-	    std::lock_guard<std::mutex> _(disk_ques);
-	    std::shared_ptr<DiskContainer> ptr(new DiskContainer(begin, end));
-	    disk_ques.push_back(ptr);
 	}
 
-	void prepare_to_retrieve(void) {
+	/* Then, sort into the lower half of the network. */
 
-	    /* XXX What I'd really like here is to detect when we get to the point where we can
-	     * start retrieving, then alternate between filling the array from the front and from
-	     * the back on alternate passes.  Right now, I just comment out this code and alloc
-	     * a new array each time around.
-	     */
+	for (int network_node = highbit-1; network_node > 0; network_node --) {
+	    if (container_num[2*network_node] == -1) {
+		network[network_node] = network[2*network_node + 1];
+		container_num[network_node] = container_num[2*network_node + 1];
+	    } else if (container_num[2*network_node + 1] == -1) {
+		network[network_node] = network[2*network_node];
+		container_num[network_node] = container_num[2*network_node];
+	    } else if (network[2*network_node] < network[2*network_node + 1]) {
+		network[network_node] = network[2*network_node];
+		container_num[network_node] = container_num[2*network_node];
+	    } else {
+		network[network_node] = network[2*network_node + 1];
+		container_num[network_node] = container_num[2*network_node + 1];
+	    }
+	}
+    }
+
+public:
+
+    sorting_network(Container * containers):
+	containers(containers), network(nullptr), container_num(nullptr), highbit(0)
+    { }
+
+    ~sorting_network() {
+	if (network) delete[] network;
+	if (container_num) delete[] container_num;
+    }
+
+    bool empty(void) {
+	return (highbit == 0) ? containers->empty() : (container_num[1] == -1);
+    }
+
+    const T& front(void) {
+	if (highbit == 0) initialize_network();
+	return network[1];
+    }
+
+    T pop_front(void) {
+	if (highbit == 0) initialize_network();
+
+	T retval = network[1];
+	int network_node = highbit + container_num[1];
+
+	if ((*containers)[container_num[1]]->empty()) {
+	    container_num[network_node] = -1;
+	} else {
+	    network[network_node] = (*containers)[container_num[1]]->pop_front();
+	}
+
+	while (network_node > 1) {
+	    network_node >>= 1;
+	    if (container_num[2*network_node] == -1) {
+		network[network_node] = network[2*network_node + 1];
+		container_num[network_node] = container_num[2*network_node + 1];
+	    } else if (container_num[2*network_node + 1] == -1) {
+		network[network_node] = network[2*network_node];
+		container_num[network_node] = container_num[2*network_node];
+	    } else if (network[2*network_node] < network[2*network_node + 1]) {
+		network[network_node] = network[2*network_node];
+		container_num[network_node] = container_num[2*network_node];
+	    } else {
+		network[network_node] = network[2*network_node + 1];
+		container_num[network_node] = container_num[2*network_node + 1];
+	    }
+	}
+
+	return retval;
+    }
+};
+
+/* The priority queue template.
+ *
+ * Initialize with the size of the in-memory portion in megabytes.  If we insert less than that
+ * size, do everything in-memory.  If we insert more, then dump to disk and use a sorting network to
+ * read it back.
+ *
+ * Our template takes three types.  The first (T) is the type to store in the priority queue, the
+ * second (MemoryContainer) is a container to hold that type in memory, and the third
+ * (DiskContainer) is a container to hold that type on disk.  Names notwithstanding, we don't impose
+ * any memory or disk requirements in this class.  We expect MemoryContainer to export begin() and
+ * end() methods that return random access iterators usable for insertion, retrieval, and sorting
+ * (with std::sort).  We expect DiskContainer to take a begin/end pair of iterators as a constructor
+ * and supply pop_front() for retrieval.  We just push into a MemoryContainer until it's full, sort
+ * it and copy it to a DiskContainer, and keep going until we're done.  Then, if we used
+ * DiskContainer at all, we sort and dump the final MemoryContainer into a DiskContainer and read
+ * back from the DiskContainers using a sorting network.  Otherwise, we read back directly from a
+ * single MemoryContainer, i.e, we don't use a DiskContainer at all unless we fill up a
+ * MemoryContainer.
+ *
+ * We take advantage of multi-threading by breaking the in-memory table into equal size blocks, then
+ * making each thread sort and write a single block.  This is done by detecting when we write into
+ * the last num_threads elements in the table and using that as a trigger to sort and dump
+ * 1/num_threads-th of it.  So long as the table is at least n^2 elements, we're fine.
+ *
+ * about inheriting std::mutex... we lock when we insert (though we shouldn't need this if tail can
+ * be bumped atomically)... we expect the caller to already hold the lock when we retrieve... we do
+ * this because we want to atomically retrieve the front element along with any elements equal to it
+ */
+
+template <class T>
+class synchronized : public T, public std::mutex { };
+
+template <typename T, typename MemoryContainer = std::vector<T>, typename DiskContainer = disk_que<MemoryContainer> >
+class priority_queue : public std::mutex {
+
+    typedef class synchronized<std::deque<std::shared_ptr<DiskContainer>>> DiskContainerQue;
+    typedef typename MemoryContainer::iterator Iterator;
+
+private:
+    DiskContainerQue disk_ques;
+    class sorting_network<DiskContainerQue> snetwork;
+
+    MemoryContainer * in_memory_queue;
+    Iterator head;
+    Iterator tail;
+    bool sorted;
+
+    size_t remaining_space;
+    size_t block_size;
+    unsigned int blocks_dumped_to_disk;
+    std::mutex blocks_dumped_to_disk_mutex;
+    std::condition_variable blocks_dumped_to_disk_cond;
+
+    void sort_and_dump_to_disk(Iterator begin, Iterator end) {
+	/* The sort is time-consuming, so we don't lock disk_ques until it's done */
+	std::sort(begin, end);
+	std::lock_guard<std::mutex> _(disk_ques);
+	std::shared_ptr<DiskContainer> ptr(new DiskContainer(begin, end));
+	disk_ques.push_back(ptr);
+    }
+
+    void prepare_to_retrieve(void) {
+
+	/* XXX What I'd really like here is to detect when we get to the point where we can start
+	 * retrieving, then alternate between filling the array from the front and from the back on
+	 * alternate passes.  Right now, I just comment out this code and alloc a new array each
+	 * time around.
+	 */
 #if 0
-	    /* If we never had to push anything to disk, just sort and retrieve in-memory.  The
-	     * problem with this code is that we might not be able to free much memory, something
-	     * that we can assure if we write everything out to disk.
-	     */
-	    if (disk_ques.empty() && (remaining_space >= num_threads)) {
-		if (! sorted) {
-		    std::sort(head, tail);
-		    in_memory_queue->resize(tail-head);
-		    sorted = true;
-		}
-		return;
+	/* If we never had to push anything to disk, just sort and retrieve in-memory.  The problem
+	 * with this code is that we might not be able to free much memory, something that we can
+	 * assure if we write everything out to disk.
+	 */
+	if (disk_ques.empty() && (remaining_space >= num_threads)) {
+	    if (! sorted) {
+		std::sort(head, tail);
+		in_memory_queue->resize(tail-head);
+		sorted = true;
 	    }
+	    return;
+	}
 #endif
 
-	    /* We assume that we're locked, so remaining_space remains constant and indicates
-	     * whether other threads are dumping to disk.
-	     */
-	    if (in_memory_queue) {
-		if (remaining_space >= num_threads) {
-		    if (head != tail) {
-			sort_and_dump_to_disk(head, tail);
-			tail = head;
-		    }
-		} else {
-		    unsigned int current = num_threads - remaining_space - 1;
-
-		    sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
-					  in_memory_queue->end());
+	/* We assume that we're locked, so remaining_space remains constant and indicates whether
+	 * other threads are dumping to disk.
+	 */
+	if (in_memory_queue) {
+	    if (remaining_space >= num_threads) {
+		if (head != tail) {
+		    sort_and_dump_to_disk(head, tail);
+		    tail = head;
 		}
-		delete in_memory_queue;
-		in_memory_queue = nullptr;
+	    } else {
+		unsigned int current = num_threads - remaining_space - 1;
+
+		sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
+				      in_memory_queue->end());
 	    }
+	    delete in_memory_queue;
+	    in_memory_queue = nullptr;
 	}
+    }
 
-    public:
+public:
     
-	/* Our constructor passes all of its arguments to MemoryContainer's constructor */
+    /* Our constructor passes all of its arguments to MemoryContainer's constructor */
 
-	template <typename... Args>
+    template <typename... Args>
     priority_queue(Args... args):
 	snetwork(&disk_ques),
 	in_memory_queue(new MemoryContainer(args...)),
 	head(in_memory_queue->begin()),
 	tail(head),
 	sorted(true)
-	{
-	    block_size = (in_memory_queue->end() - in_memory_queue->begin()) / num_threads;
+    {
+	block_size = (in_memory_queue->end() - in_memory_queue->begin()) / num_threads;
 
-	    /* Round down block_size to a multiple of eight to ensure that the blocks are byte aligned */
-	    while ((block_size % 8) != 0) block_size --;
+	/* Round down block_size to a multiple of eight to ensure that the blocks are byte aligned */
+	while ((block_size % 8) != 0) block_size --;
 
-	    blocks_dumped_to_disk = 0;
-	    remaining_space = in_memory_queue->end() - in_memory_queue->begin();
-	}
+	blocks_dumped_to_disk = 0;
+	remaining_space = in_memory_queue->end() - in_memory_queue->begin();
+    }
 
-	~priority_queue() {
-	    if (in_memory_queue) delete in_memory_queue;
-	}
+    ~priority_queue() {
+	if (in_memory_queue) delete in_memory_queue;
+    }
 
-	void push(const T& x) {
+    void push(const T& x) {
 
-	    std::unique_lock<std::mutex> self_lock(*this);
+	std::unique_lock<std::mutex> self_lock(*this);
 
-	    if (in_memory_queue == nullptr) throw "priority_queue: push attempted after retrieval started";
+	if (in_memory_queue == nullptr) throw "priority_queue: push attempted after retrieval started";
 
-	    *(tail ++) = x;
-	    remaining_space --;
-	    sorted = false;
+	*(tail ++) = x;
+	remaining_space --;
+	sorted = false;
 
-	    if (remaining_space < num_threads) {
+	if (remaining_space < num_threads) {
 
-		unsigned int current = num_threads - remaining_space - 1;
+	    unsigned int current = num_threads - remaining_space - 1;
 
-		if (current != num_threads - 1) {
-		    /* If there's still room to insert at the end, we unlock while we're sorting and
-		     * dumping to disk, but the real reason to unlock is to let other threads into
-		     * this code so they can also sort and dump to disk (it's a slow operation).
-		     */
-		    self_lock.unlock();
-		    sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
-					  in_memory_queue->begin() + (current+1) * block_size);
-		} else {
-		    sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
-					  in_memory_queue->end());
-		}
+	    if (current != num_threads - 1) {
+		/* If there's still room to insert at the end, we unlock while we're sorting and
+		 * dumping to disk, but the real reason to unlock is to let other threads into this
+		 * code so they can also sort and dump to disk (it's a slow operation).
+		 */
+		self_lock.unlock();
+		sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
+				      in_memory_queue->begin() + (current+1) * block_size);
+	    } else {
+		sort_and_dump_to_disk(in_memory_queue->begin() + current * block_size,
+				      in_memory_queue->end());
+	    }
 
-		/* Now we lock on a different mutex that protects a condition variable.  We never
-		 * hold this lock doing anything that blocks on the primary lock - just increment
-		 * blocks_dumped_to_disk and notify the thread waiting for it to reach num_threads,
-		 * which is holding the primary lock.
+	    /* Now we lock on a different mutex that protects a condition variable.  We never hold
+	     * this lock doing anything that blocks on the primary lock - just increment
+	     * blocks_dumped_to_disk and notify the thread waiting for it to reach num_threads,
+	     * which is holding the primary lock.
+	     */
+
+	    std::unique_lock<std::mutex> lock(blocks_dumped_to_disk_mutex);
+
+	    blocks_dumped_to_disk ++;
+	    blocks_dumped_to_disk_cond.notify_all();
+
+	    if (current == num_threads - 1) {
+		/* There's no remaining space, we're locked, and dumps to disk have at least started
+		 * for all blocks.  Make sure they're all done before we reset everything and get
+		 * going again.
 		 */
 
-		std::unique_lock<std::mutex> lock(blocks_dumped_to_disk_mutex);
-
-		blocks_dumped_to_disk ++;
-		blocks_dumped_to_disk_cond.notify_all();
-
-		if (current == num_threads - 1) {
-		    /* There's no remaining space, we're locked, and dumps to disk have at least
-		     * started for all blocks.  Make sure they're all done before we reset
-		     * everything and get going again.
-		     */
-
-		    while (blocks_dumped_to_disk < num_threads) {
-			blocks_dumped_to_disk_cond.wait(lock);
-		    }
-
-		    tail = head;
-		    remaining_space = in_memory_queue->end() - in_memory_queue->begin();
-		    blocks_dumped_to_disk = 0;
+		while (blocks_dumped_to_disk < num_threads) {
+		    blocks_dumped_to_disk_cond.wait(lock);
 		}
+
+		tail = head;
+		remaining_space = in_memory_queue->end() - in_memory_queue->begin();
+		blocks_dumped_to_disk = 0;
 	    }
 	}
+    }
 
-	bool empty(void) {
-	    return disk_ques.empty() ? (head == tail) : snetwork.empty();
+    bool empty(void) {
+	return disk_ques.empty() ? (head == tail) : snetwork.empty();
+    }
+
+    const T front(void) {
+	prepare_to_retrieve();
+	if (disk_ques.empty()) {
+	    return *head;
+	} else {
+	    return snetwork.front();
 	}
+    }
 
-	const T front(void) {
-	    prepare_to_retrieve();
-	    if (disk_ques.empty()) {
-		return *head;
-	    } else {
-		return snetwork.front();
-	    }
+    T pop_front(void) {
+	prepare_to_retrieve();
+	if (disk_ques.empty()) {
+	    return *(head++);
+	} else {
+	    return snetwork.pop_front();
 	}
-
-	T pop_front(void) {
-	    prepare_to_retrieve();
-	    if (disk_ques.empty()) {
-		return *(head++);
-	    } else {
-		return snetwork.pop_front();
-	    }
-	}
-    };
-
-}
+    }
+};
 
 /* The entries in the proptable
  *
@@ -8561,95 +8544,93 @@ extern "C++" {
  *   futuremove - unneeded
  */
 
-extern "C++" {
-    class proptable_entry {
+class proptable_entry {
 
-    private:
-	template<typename T>
-	static int value_to_dtm(proptable_format *format, T value) {
-	    int dtm = (value >> format->dtm_offset) & format->dtm_mask;
-	    if (dtm > (int) (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
-	    return dtm;
-	}
+private:
+    template<typename T>
+    static int value_to_dtm(proptable_format *format, T value) {
+	int dtm = (value >> format->dtm_offset) & format->dtm_mask;
+	if (dtm > (int) (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
+	return dtm;
+    }
 
-    public:
-	index_t index;
-	int dtm;
-	unsigned int movecnt;
-	int futuremove;
+public:
+    index_t index;
+    int dtm;
+    unsigned int movecnt;
+    int futuremove;
 
-	/* Can't initialize all our fields during construction since sorting_network creates an
-	 * uninitialized array of proptable_entry's.
-	 */
-	proptable_entry() {}
+    /* Can't initialize all our fields during construction since sorting_network creates an
+     * uninitialized array of proptable_entry's.
+     */
+    proptable_entry() {}
 
-	proptable_entry(index_t index, int dtm, unsigned int movecnt, int futuremove):
-	    index(index), dtm(dtm), movecnt(movecnt), futuremove(futuremove) {}
+    proptable_entry(index_t index, int dtm, unsigned int movecnt, int futuremove):
+	index(index), dtm(dtm), movecnt(movecnt), futuremove(futuremove) {}
 
 #if 0
-	template<typename T>
-	proptable_entry(proptable_format *format, T value):
-	    proptable_entry(value >> format->index_offset, value_to_dtm(format, value),
-			    ((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
-			    (value >> format->futuremove_offset) & format->futuremove_mask)
-	{}
+    template<typename T>
+    proptable_entry(proptable_format *format, T value):
+	proptable_entry(value >> format->index_offset, value_to_dtm(format, value),
+			((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
+			(value >> format->futuremove_offset) & format->futuremove_mask)
+    {}
 #else
-	template<typename T>
-	proptable_entry(proptable_format *format, T value):
-	    index(value >> format->index_offset), dtm(value_to_dtm(format, value)),
-	    movecnt(((value >> format->movecnt_offset) & format->movecnt_mask) + 1),
-	    futuremove((value >> format->futuremove_offset) & format->futuremove_mask)
-	{}
+    template<typename T>
+    proptable_entry(proptable_format *format, T value):
+	index(value >> format->index_offset), dtm(value_to_dtm(format, value)),
+	movecnt(((value >> format->movecnt_offset) & format->movecnt_mask) + 1),
+	futuremove((value >> format->futuremove_offset) & format->futuremove_mask)
+    {}
 #endif
 
-	template<typename T>
-	T encode(proptable_format *format) {
-	    return (index << format->index_offset)
-		| ((dtm & format->dtm_mask) << format->dtm_offset)
-		| (((movecnt - 1) & format->movecnt_mask) << format->movecnt_offset)
-		| ((futuremove & format->futuremove_mask) << format->futuremove_offset);
-	}
-
-	/* This is used when we build current_pt_entries */
-
-	bool operator<(const proptable_entry &other) const {
-	    return index < other.index;
-	}
-    };
-
-
-    /* Proptable - byte-aligned version
-     *
-     * Very simple - just construct a priority queue of a specified (integer) type and
-     * marshal/demarshal proptable_entry's into that integer.
-     */
-
     template<typename T>
-    class typed_proptable : public priority_queue<T> {
-    private:
-	proptable_format format;
+    T encode(proptable_format *format) {
+	return (index << format->index_offset)
+	    | ((dtm & format->dtm_mask) << format->dtm_offset)
+	    | (((movecnt - 1) & format->movecnt_mask) << format->movecnt_offset)
+	    | ((futuremove & format->futuremove_mask) << format->futuremove_offset);
+    }
 
-    public:
+    /* This is used when we build current_pt_entries */
 
-	typed_proptable(proptable_format format, size_t size_in_bytes):
-	    priority_queue<T>(size_in_bytes / sizeof(T)), format(format)
-	{
-	    if (format.bits > 8 * (int) sizeof(T)) throw "proptable format too large";
-	}
+    bool operator<(const proptable_entry &other) const {
+	return index < other.index;
+    }
+};
 
-	proptable_entry front() {
-	    return proptable_entry(&format, priority_queue<T>::front());
-	}
 
-	proptable_entry pop_front() {
-	    return proptable_entry(&format, priority_queue<T>::pop_front());
-	}
+/* Proptable - byte-aligned version
+ *
+ * Very simple - just construct a priority queue of a specified (integer) type and marshal/demarshal
+ * proptable_entry's into that integer.
+ */
 
-	void push(proptable_entry &entry) {
-	    priority_queue<T>::push(entry.encode<T>(&format));
-	}
-    };
-}
+template<typename T>
+class typed_proptable : public priority_queue<T> {
+private:
+    proptable_format format;
+
+public:
+
+    typed_proptable(proptable_format format, size_t size_in_bytes):
+	priority_queue<T>(size_in_bytes / sizeof(T)), format(format)
+    {
+	if (format.bits > 8 * (int) sizeof(T)) throw "proptable format too large";
+    }
+
+    proptable_entry front() {
+	return proptable_entry(&format, priority_queue<T>::front());
+    }
+
+    proptable_entry pop_front() {
+	return proptable_entry(&format, priority_queue<T>::pop_front());
+    }
+
+    void push(proptable_entry &entry) {
+	priority_queue<T>::push(entry.encode<T>(&format));
+    }
+};
 
 /* Proptable - bit-aligned version
  *
@@ -8859,62 +8840,60 @@ class memory_proptable {
  * tables.  Instead, we specialize a disk_que that dumps a bit-aligned table.
  */
 
-extern "C++" {
-    template <>
-    struct disk_que<memory_proptable> {
+template <>
+struct disk_que<memory_proptable> {
 
-	typedef proptable_entry value_type;
+    typedef proptable_entry value_type;
 
-	static const int queue_size = 256;	// size of in-memory queue; must be a multiple of 8
+    static const int queue_size = 256;	// size of in-memory queue; must be a multiple of 8
 
-	int size;
-	int next;
+    int size;
+    int next;
 
-	temporary_file * file;
-	std::istream * is;
+    temporary_file * file;
+    std::istream * is;
 
-	char *buffer;
-	proptable_format format;
+    char *buffer;
+    proptable_format format;
 
     disk_que(proptable_iterator head, proptable_iterator tail): size(tail - head), next(0), format(*(head.format)) {
 
-	    size_t bits = size * format.bits;
-	    size_t bytes = (bits + 7)/8;
+	size_t bits = size * format.bits;
+	size_t bytes = (bits + 7)/8;
 
-	    file = new temporary_file("proptableXXXXXX", compress_proptables);
+	file = new temporary_file("proptableXXXXXX", compress_proptables);
 
-	    std::ostream * os = file->ostream();
-	    os->write(*head, bytes);
-	    delete os;
+	std::ostream * os = file->ostream();
+	os->write(*head, bytes);
+	delete os;
 
-	    is = file->istream();
+	is = file->istream();
 
-	    // this will create a buffer with room for queue_size values
-	    buffer = new char[queue_size * format.bits / 8];
+	// this will create a buffer with room for queue_size values
+	buffer = new char[queue_size * format.bits / 8];
+    }
+
+    ~disk_que() {
+	delete is;
+	delete file;
+	delete[] buffer;
+    }
+
+    bool empty(void) {
+	return (next == size);
+    }
+
+    proptable_entry pop_front(void) {
+	if (empty()) throw "read past end of disk_que";
+	if (next % queue_size == 0) {
+	    is->read(buffer, queue_size * format.bits / 8);
 	}
+	proptable_ptr retval(&format, buffer, next % queue_size);
+	next ++;
 
-	~disk_que() {
-	    delete is;
-	    delete file;
-	    delete[] buffer;
-	}
-
-	bool empty(void) {
-	    return (next == size);
-	}
-
-	proptable_entry pop_front(void) {
-	    if (empty()) throw "read past end of disk_que";
-	    if (next % queue_size == 0) {
-		is->read(buffer, queue_size * format.bits / 8);
-	    }
-	    proptable_ptr retval(&format, buffer, next % queue_size);
-	    next ++;
-
-	    return (proptable_entry) retval;
-	}
-    };
-}
+	return (proptable_entry) retval;
+    }
+};
 
 /* Finally, the actual priority queue(s) */
 
@@ -13371,11 +13350,13 @@ bool verify_tablebase_internally(void)
 
 #ifdef USE_NALIMOV
 
-int EGTBProbe(int wtm, unsigned char board[64], int sqEnP, int *score);
+extern "C" {
+    int EGTBProbe(int wtm, unsigned char board[64], int sqEnP, int *score);
 
-int IInitializeTb(char *pszPath);
+    int IInitializeTb(char *pszPath);
 
-int FTbSetCacheSize(void    *pv, unsigned long   cbSize );
+    int FTbSetCacheSize(void    *pv, unsigned long   cbSize );
+}
 
 #define EGTB_CACHE_DEFAULT (1024*1024)
 
@@ -14223,7 +14204,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.847 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.848 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14373,8 +14354,6 @@ int main(int argc, char *argv[])
 
     probe_tablebases(tbs);
     terminate();
-}
-
 }
 
 /*
