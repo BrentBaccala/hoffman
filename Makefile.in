@@ -8,13 +8,14 @@ hoffman_OBJS = hoffman.o @NALIMOVOBJS@
 configure_SRCS = configure configure.ac Makefile.in config.h.in config.guess config.sub install-sh
 hoffman_SRCS = hoffman.cc probe.c egtb.cpp lock.h tbdecode.h bitlib.h
 hoffman_DTD = tablebase.dtd
-hoffman_SCRIPTS = pawngen genctlfile.pl gensuicide.pl genalltb genalltb.bat hoffman.nsi md5htb cgi-bin/*
+hoffman_TESTS = test/Makefile.in PROBES
+hoffman_SCRIPTS = pawngen genctlfile.pl genalltb genalltb.bat hoffman.nsi md5htb cgi-bin/*
 hoffman_DOCS = README COPYING ChangeLog TODO tutorial.pdf reference.pdf
 hoffman_DOCSRC = tutorial.tex reference.tex
 hoffman_XMLS = xml/*.xml
-hoffman_RCS = RCS xml/RCS
+hoffman_RCS = RCS xml/RCS test/RCS
 
-hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPTS) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS)
+hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPTS) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS) $(hoffman_TESTS)
 
 hoffman: $(hoffman_OBJS)
 	@LINKER@ $(CXXFLAGS) @BOOST_LDFLAGS@ -o hoffman $^ -lboost_iostreams @LIBS@ @libxml_LIBS@
@@ -28,14 +29,17 @@ tablebase_dtd.h: tablebase.dtd
 	sed -e 's/"/\\"/g' -e 's/$$/\\/' tablebase.dtd >> $@
 	echo "\";" >> $@
 
+check:
+	make -C test check
+
 tarball: docs
 	tar -czh -f hoffman.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST)
 	tar -czh -f hoffman-RCS.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST) $(hoffman_RCS)
 
+docs: $(hoffman_DOCS) ChangeLog
+
 ChangeLog: RCS/hoffman.c,v
 	rlog hoffman.c > ChangeLog
-
-docs: $(hoffman_DOCS)
 
 tutorial.pdf: tutorial.tex
 	latex tutorial
