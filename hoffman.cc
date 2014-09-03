@@ -967,7 +967,7 @@ void info (const char * format, ...)
 void print_progress_dot(tablebase_t *tb, index_t index)
 {
     static std::mutex mutex;
-    static std::atomic<int> progress_dots_printed(0);
+    static std::atomic<unsigned int> progress_dots_printed(0);
 
     if (index == 0) progress_dots_printed = 0;
 
@@ -977,7 +977,7 @@ void print_progress_dot(tablebase_t *tb, index_t index)
 		std::lock_guard<std::mutex> _(mutex);
 
 		if (! printing_progress_dots) {
-		    for (int i=1; i <= progress_dots_printed; i++) {
+		    for (auto i=1U; i <= progress_dots_printed; i++) {
 			fputc(' ', stderr);
 		    }
 		}
@@ -3365,8 +3365,6 @@ index_t max_index(tablebase_t * tb)
 
 int index_to_side_to_move(tablebase_t *tb, index_t index)
 {
-    local_position_t position;
-
     if (tb->encode_stm) {
 	return (index - tb->index_offset) & 1;
     } else {
@@ -3609,7 +3607,7 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
     Glib::ustring format;
 
-    int piece, piece2, square, white_king_square, black_king_square, dir;
+    int piece, piece2, square, white_king_square, black_king_square;
     int pass;
     int starting_fatal_errors = fatal_errors;
     int piece_in_set = 1;
@@ -4800,8 +4798,7 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
     result = tablebase->find("//prune-enable | //move-restriction");
     if (! result.empty()) {
-	int i;
-	for (i=0; i < result.size(); i++) {
+	for (auto i=0U; i < result.size(); i++) {
 	    auto color_str = ((xmlpp::Element *) result[i])->get_attribute_value("color");
 	    auto type_str = ((xmlpp::Element *) result[i])->get_attribute_value("type");
 	    int color = colors.at(color_str);
@@ -4941,7 +4938,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.861 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.862 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5591,7 +5588,6 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
     xmlpp::Element * tablebase = tb->xml->get_root_node();
     xmlpp::Element * node;
     xmlpp::NodeSet result;
-    char strbuf[256];
 
     tablebase->set_attribute("offset", "0x1000");
 
@@ -5813,7 +5809,7 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
     int missing_piece1 = NONE;
     int missing_piece2 = NONE;
     int extra_piece = NONE;
-    int extra_sq;
+    int extra_sq = 0;
 
     memset(local_position, 0, sizeof(local_position_t));
 
@@ -6569,7 +6565,7 @@ uint movecnt_bitmask;
 int capture_possible_flag_offset;
 const uint capture_possible_flag_bitmask = 1;
 
-#define MOVECNT_MASK ((1 << movecnt_bits) - 1)
+#define MOVECNT_MASK ((1U << movecnt_bits) - 1)
 
 #define MOVECNT_PTM_WINS_PROPED (MOVECNT_MASK)
 #define MOVECNT_PNTM_WINS_PROPED (MOVECNT_MASK - 1)
@@ -6779,13 +6775,13 @@ class EntriesTable {
 	    dtm_bits = 0;
 	}
 
-	int max_white_moves = 0;
-	int max_black_moves = 0;
+	unsigned int max_white_moves = 0;
+	unsigned int max_black_moves = 0;
 
 	/* Compute the moves available to each side and use this to size the movecnt field */
 
 	for (int piece = 0; piece < current_tb->num_pieces; piece ++) {
-	    int *max_moves = (current_tb->piece_color[piece] == WHITE) ? &max_white_moves : &max_black_moves;
+	    unsigned int *max_moves = (current_tb->piece_color[piece] == WHITE) ? &max_white_moves : &max_black_moves;
 	    switch (current_tb->piece_type[piece]) {
 	    case KING:
 	    case KNIGHT:
@@ -6812,7 +6808,9 @@ class EntriesTable {
 	    max_black_moves *= 2;
 	}
 
-	for (movecnt_bits = 1; (max_white_moves > MOVECNT_MAX)
+	info("%d maximum white moves; %d maximum black moves\n", max_white_moves, max_black_moves);
+
+	for (movecnt_bits = 3; (max_white_moves > MOVECNT_MAX)
 		 || (max_black_moves > MOVECNT_MAX); movecnt_bits ++);
 
 	movecnt_bitmask = (1 << movecnt_bits) - 1;
@@ -7027,6 +7025,7 @@ public:
 
     EntriesTablePtr & operator=(EntriesTable * table) {
 	entriesTable = table;
+	return *this;
     }
 
     atomic_entry & operator[](index_t index) {
@@ -7282,8 +7281,6 @@ class DiskEntriesTable: public EntriesTable {
 
  public:
     DiskEntriesTable(void) {
-
-	int ret;
 
 	threads_waiting_to_advance = 0;
 	threads_waiting_to_reset = 0;
@@ -8491,7 +8488,7 @@ void proptable_pass_thread(int target_dtm)
 
     while (1) {
 
-	futurevector_t futurevector;
+	futurevector_t futurevector = 0;
 
 	current_pt_entries.clear();
 
@@ -9771,7 +9768,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 	missing_piece1 = conversion_result & 0xff;
 	missing_piece2 = (conversion_result >> 24) & 0xff;
 
-	if ((missing_piece1 != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
+	if ((missing_piece1 != NONE) || (missing_piece2 != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
 	    return;
 	}
 
@@ -10198,7 +10195,6 @@ bool have_all_futuremoves_been_handled(tablebase_t *tb) {
 int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
 {
     xmlpp::NodeSet result;
-    int prune;
     int type = RESTRICTION_NONE;
 
     result = tb->xml->get_root_node()->find("//prune");
@@ -10713,9 +10709,6 @@ void print_futuremoves(void)
 bool compute_pruned_futuremoves(tablebase_t *tb)
 {
     xmlpp::NodeSet result;
-    int prune;
-    int color;
-    unsigned int fm;
 
     /* Check pruning statements for consistency, and record stalemate pruning if specified */
 
@@ -10736,8 +10729,8 @@ bool compute_pruned_futuremoves(tablebase_t *tb)
 
     if (fatal_errors != 0) return false;
 
-    for (color = WHITE; color <= BLACK; color ++) {
-	for (fm = 0; fm < num_futuremoves[color]; fm ++) {
+    for (auto color = WHITE; color <= BLACK; color ++) {
+	for (auto fm = 0U; fm < num_futuremoves[color]; fm ++) {
 	    assign_pruning_statement(tb, color, fm);
 	}
     }
@@ -12345,7 +12338,6 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
     int dtm_bits;
     int size;
     int padded_size;
-    char str[16];
     char entrybuf[MAX_FORMAT_BYTES];
 
     for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) || (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
@@ -13544,15 +13536,13 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 void probe_tablebases(tablebase_t **tbs) {
     global_position_t global_position;
     bool global_position_valid = false;
-    tablebase_t *tb = nullptr;
-    int i;
 
     if (tbs[0] == nullptr) {
 	fatal("No valid tablebases to probe!\n");
 	terminate();
     }
 
-    for (i=1; tbs[i]; i ++) {
+    for (int i=1; tbs[i]; i ++) {
 	if (tbs[i]->variant != tbs[0]->variant) {
 	    fatal("All probed tablebases must use same variant!\n");
 	    terminate();
@@ -13573,8 +13563,7 @@ void probe_tablebases(tablebase_t **tbs) {
 
 	/* print current position */
 	if (global_position_valid) {
-	    int i;
-	    for (i = 0; i < 64; i++) {
+	    for (int i = 0; i < 64; i++) {
 		char c = global_position.board[i % 8 + 8*(7-i/8)];
 		if (i % 8 == 0)
 		    printf("%c |",'8'-i/8);
@@ -13760,7 +13749,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.861 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.862 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
