@@ -1,6 +1,6 @@
 dnl Process this file with autoconf to produce a configure script.
 
-AC_INIT([hoffman],[1.4])
+AC_INIT([hoffman],[1.5])
 
 if test x"$CXXFLAGS" = x; then
         CXXFLAGS="-O3 -march=native"
@@ -8,9 +8,7 @@ fi
 
 AC_PROG_CXX
 
-AC_LANG_PUSH([C++])
-AX_CHECK_COMPILE_FLAG([-std=c++0x], [CXXFLAGS="$CXXFLAGS -std=c++0x"])
-AC_LANG_POP
+AX_CXX_COMPILE_STDCXX_11
 
 
 dnl Check for threading support
@@ -48,13 +46,18 @@ AS_IF([test "x$with_pthreads" != xno],
 
 dnl Check for the required libraries
 
-AC_CHECK_LIB(m, sqrt,, AC_MSG_ERROR([You must have the math library]))
 AC_CHECK_LIB(z, inflate,, AC_MSG_ERROR([You must have zlib]))
-AM_PATH_XML2(,,AC_MSG_ERROR(You must have libxml2))
 
 PKG_CHECK_MODULES(libxml, libxml++-2.6 >= 2.10.0)
 AC_SUBST(libxml_CFLAGS)
 AC_SUBST(libxml_LIBS)
+
+dnl Boost C++ library
+
+AX_BOOST_BASE
+
+dnl AX_BOOST_IOSTREAMS doesn't work on my Ubuntu 14.10 system, so I hand code -lboost_iostreams
+dnl in the Makefile instead of using the macro.
 
 dnl Check for readline
 
@@ -63,49 +66,6 @@ AX_LIB_READLINE
 if test "$ac_cv_header_readline_readline_h" = "yes"; then
    AC_SUBST([READLINE_CPPFLAGS], ["-I /usr/include/readline"])
 fi
-
-dnl Check for ftplib
-dnl
-dnl Do some extra work to make sure we can turn it off using
-dnl --without-ftplib, keep the default action (if found) of adding
-dnl library to LIBS and defining HAVE_LIBFTP, plus substituting
-dnl FTPOBJS in Makefile.
-
-AC_ARG_WITH([ftplib],
-  [AS_HELP_STRING([--without-ftplib], [Don't link with ftplib for ftp: URL support])],
-  [],
-  [with_ftplib=check])
-
-AS_IF([test "x$with_ftplib" != xno],
-  [AC_CHECK_LIB([ftp], [FtpConnect],,
-    [if test "x$with_ftplib" != xcheck; then
-       AC_MSG_FAILURE([--with-ftplib was given, but test for ftplib failed])
-     fi
-    ])
-   if test $ac_cv_lib_ftp_FtpConnect = yes; then
-     AC_SUBST([FTPOBJS], ["ftp_fopen.o"])
-   fi
-])
-
-dnl Check for libcurl
-dnl
-dnl PKG_CHECK_MODULES(CURL, libcurl, AC_DEFINE([USE_LIBCURL], [1], [Define if you have the Curl library])
-dnl 				 AC_SUBST([CURLOBJS], [url_fopen.o]))
-
-AC_ARG_WITH([libcurl],
-  [AS_HELP_STRING([--without-libcurl], [Don't link with libcurl for http: URL support])],
-  [],
-  [with_libcurl=check])
-
-AS_IF([test "x$with_libcurl" != xno],
-  [PKG_CHECK_MODULES([CURL], [libcurl],
-    [AC_DEFINE([USE_LIBCURL], [1], [Define if you have the Curl library])
-     AC_SUBST([CURLOBJS], [url_fopen.o])],
-    [if test "x$with_libcurl" != xcheck; then
-       AC_MSG_FAILURE([--with-libcurl was given, but test for libcurl failed])
-     fi
-    ])])
-
 
 dnl If we don't have C++, then we want to link with CC and leave out
 dnl Nalimov support.  If we have C++, then we want to link with C++

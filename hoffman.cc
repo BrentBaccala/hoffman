@@ -135,7 +135,6 @@ namespace io = boost::iostreams;
 #include <string.h>
 #include <strings.h>
 #include <unistd.h>		/* for write(), lseek(), gethostname() */
-#include <math.h>		/* for sqrt(), which is used only once */
 #include <time.h>		/* for putting timestamps on the output tablebases */
 #include <fcntl.h>		/* for O_RDONLY */
 #include <netdb.h>		/* for gethostbyname() */
@@ -160,14 +159,6 @@ namespace io = boost::iostreams;
 #endif
 
 #include "zlib.h"
-
-#ifdef USE_LIBCURL
-#include "url_fopen.h"		/* My wrapper around libcurl (optional, for http: URL support) */
-#endif
-
-#ifdef HAVE_LIBFTP
-#include "ftp_fopen.h"		/* My wrapper around ftplib (option, for ftp: URL support) */
-#endif
 
 #include "bitlib.h"
 
@@ -850,37 +841,10 @@ Glib::ustring completion_report_url;
 
  __attribute__((noreturn)) void terminate (void)
 {
-#ifdef USE_LIBCURL
-    void * file;
-    xmlChar *buf;
-    int size;
-#endif
 
     if (fatal_errors > 0) {
-#ifdef USE_LIBCURL
-	if (error_report_url) {
-	    file = url_open(error_report_url, "w");
-	    if (current_tb && current_tb->xml) {
-		xmlDocDumpMemory(current_tb->xml, &buf, &size);
-		url_write(file, (char *) buf, size);
-		xmlFree(buf);
-	    }
-	    url_close(file);
-	}
-#endif
 	exit(EXIT_FAILURE);
     } else {
-#ifdef USE_LIBCURL
-	if (completion_report_url) {
-	    file = url_open(completion_report_url, "w");
-	    if (current_tb && current_tb->xml) {
-		xmlDocDumpMemory(current_tb->xml, &buf, &size);
-		url_write(file, (char *) buf, size);
-		xmlFree(buf);
-	    }
-	    url_close(file);
-	}
-#endif
 	exit(EXIT_SUCCESS);
     }
 }
@@ -4938,7 +4902,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.863 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.864 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12515,12 +12479,10 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	return false;
     }
 
-#ifndef HAVE_LIBFTP
     if (output_filename.substr(0,4) == "ftp:") {
-	fatal("Compiled without ftplib - ftp URLs unavailable\n");
+	fatal("ftp URLs currently unsupported for tablebase I/O\n");
 	return false;
     }
-#endif
 
     if (! preload_all_futurebases(tb)) return false;
     assign_numbers_to_futuremoves(tb);
@@ -13745,7 +13707,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.863 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.864 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
