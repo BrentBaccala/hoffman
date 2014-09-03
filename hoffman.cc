@@ -3426,6 +3426,19 @@ int check_1000_indices(tablebase_t *tb)
 
 /***** XML TABLEBASE INTERACTION *****/
 
+/* xmlpp::Element's eval_to_number method has some serious drawbacks.  First, if the XPath
+ * expression evaluates empty, the method returns nan, which converts to an enormous negative
+ * integer number.  I always want empty XPaths to evaluate to zero instead.  Also, one place in
+ * older hoffman tablebases (the <tablebase> 'offset' attribute) is specified in hexadecimal
+ * notation, which doesn't convert right.  This function fixes both of these problems.
+ */
+
+int eval_to_number_or_zero(xmlpp::Element *node, std::string xpath)
+{
+    Glib::ustring str = node->eval_to_string(xpath);
+    return (str != "") ? std::stoi(str, 0, 0) : 0;
+}
+
 /* parse_format()
  *
  * Parse an XML format specification (for a dynamic structure) into a format structure.  A simple
@@ -3454,7 +3467,7 @@ bool parse_format(xmlpp::Element * formatNode, struct format * format)
     for (auto child = children.begin(); child != children.end(); child ++) {
 	xmlpp::Element * child_element = dynamic_cast<xmlpp::Element *>(*child);
 	if (child_element != nullptr) {
-	    int bits = child_element->get_attribute_value("bits") != "" ? child_element->eval_to_number("@bits") : 0;
+	    int bits = eval_to_number_or_zero(child_element, "@bits");
 	    try {
 		// this might throw an exception - see below
 		int format_field = format_fields.at(child_element->get_name());
@@ -3622,8 +3635,8 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
     /* Some statistics we'll use if this is a futurebase */
 
-    tb->max_dtm = tablebase->eval_to_number("//max-dtm");
-    tb->min_dtm = tablebase->eval_to_number("//min-dtm");
+    tb->max_dtm = eval_to_number_or_zero(tablebase, "//max-dtm");
+    tb->min_dtm = eval_to_number_or_zero(tablebase, "//min-dtm");
 
     /* If there's a stalemate prune, fetch it */
 
@@ -3999,9 +4012,7 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	    index_node = (xmlpp::Element *) result[0];
 	    index = index_node->get_attribute_value("type");
 
-	    if (index_node->get_attribute_value("offset") != "") {
-		tb->index_offset = index_node->eval_to_number("@offset");
-	    }
+	    tb->index_offset = eval_to_number_or_zero(index_node, "@offset");
 	}
     }
 
@@ -4115,9 +4126,7 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
     /* Extract index symmetry (if it was specified) */
 
-    if (index_node->get_attribute_value("symmetry") != "") {
-	tb->symmetry = index_node->eval_to_number("@symmetry");
-    }
+    tb->symmetry = eval_to_number_or_zero(index_node, "@symmetry");
 
     if (tb->symmetry == 0) {
 	/* If symmetry was not explicitly specified, compute it automatically */
@@ -4902,7 +4911,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.865 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.866 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5119,10 +5128,7 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
     // XXX fix this - filename will be destroyed when we return, so we need a copy here
     tb->filename = (new Glib::ustring(filename))->c_str();
 
-    /* not tb->offset = tb->xml->get_root_node()->eval_to_number("/tablebase/@offset") because the
-     * offset might be specified as a hexadecimal string
-     */
-    tb->offset = std::stoi(tb->xml->get_root_node()->eval_to_string("/tablebase/@offset"), 0, 0);
+    tb->offset = eval_to_number_or_zero(tb->xml->get_root_node(), "/tablebase/@offset");
 
     /* We don't just destroy instream, because that would close the file.  Instead, we disassemble
      * it and reassemble it for reading the data.
@@ -13707,7 +13713,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.865 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.866 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
