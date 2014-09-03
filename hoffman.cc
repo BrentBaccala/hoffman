@@ -4911,7 +4911,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.866 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.867 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -12975,8 +12975,6 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		    int basic = tb->get_basic(index);
 		    static const char * basic_meaning[3] = {"draw", "PTM wins", "PNTM wins"};
 
-		    if (global.side_to_move == BLACK) score *= -1;
-
 		    if ((basic != 2) && (score < 0)) {
 			fprintf(stderr, "%s (%" PRIindex "): Nalimov says PNTM wins, but we say %s\n",
 				global_position_to_FEN(&global), index, basic_meaning[basic]);
@@ -13713,7 +13711,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.866 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.867 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
