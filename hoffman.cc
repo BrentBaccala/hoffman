@@ -4938,7 +4938,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.862 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.863 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5775,15 +5775,15 @@ void invert_colors_of_global_position(global_position_t *global)
  * A restricted piece will be the last piece in a semilegal group.
  *
  * If there are additional differences not covered in this list (more than one extra piece, for
- * example), the function returns -1.  Otherwise, the return value is a 32 bit integer split into
- * four eight bit fields:
+ * example), the function returns invalid_translation.  Otherwise, the return value is a struct with
+ * four members:
  *
- * bits 0-7:   local tb piece number of missing piece #1
- * bits 8-15:  local tb piece number of restricted piece
- * bits 16-23: foreign tb piece number of extra piece
- * bits 24-31: local tb piece number of missing piece #2
+ * missing_piece1:   local tb piece number of missing piece #1
+ * missing_piece2:   local tb piece number of missing piece #2
+ * restricted_piece: local tb piece number of restricted piece
+ * extra_piece:      foreign tb piece number of extra piece
  *
- * If any of the fields are unused (because there is no corresponding piece), it's value is 0x80.
+ * If any of the fields are unused (because there is no corresponding piece), it's value is NONE.
  * If there are two missing pieces and only one of them is a pawn, the pawn will always be returned
  * as missing piece #1.  If there are multiple identical missing pieces, the last one will always be
  * returned as the missing piece(s).
@@ -5793,22 +5793,34 @@ void invert_colors_of_global_position(global_position_t *global)
  *
  * In addition to back-progagation, this function is also used while probing a set of tablebases to
  * see which one of them matches a given position.
- *
- * XXX the return value assumes that int holds at least 32 bits
  */
 
 #define NONE 0x80
 
-int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_position_t *foreign_position,
-						 tablebase_t *local_tb, local_position_t *local_position,
-						 int invert_colors)
+struct translation_result {
+    uint8_t missing_piece1;
+    uint8_t missing_piece2;
+    uint8_t extra_piece;
+    uint8_t restricted_piece;
+
+    bool operator!=(const translation_result &other) const {
+	return (missing_piece1 != other.missing_piece1) ||
+	    (missing_piece2 != other.missing_piece2) ||
+	    (extra_piece != other.extra_piece) ||
+	    (restricted_piece != other.restricted_piece);
+    }
+};
+
+translation_result invalid_translation = {0xff, 0xff, 0xff, 0xff};
+translation_result trivial_translation = {NONE, NONE, NONE, NONE};
+
+translation_result translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_position_t *foreign_position,
+								tablebase_t *local_tb, local_position_t *local_position,
+								int invert_colors)
 {
     int foreign_piece;
     int local_piece;
-    int restricted_piece = NONE;
-    int missing_piece1 = NONE;
-    int missing_piece2 = NONE;
-    int extra_piece = NONE;
+    translation_result result = trivial_translation;
     int extra_sq = 0;
 
     memset(local_position, 0, sizeof(local_position_t));
@@ -5848,11 +5860,11 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 	 */
 
 	if (local_piece == -1) {
-	    if (extra_piece != NONE) {
+	    if (result.extra_piece != NONE) {
 		/* More than one extra/restricted piece in translation */
-		return -1;
+		return invalid_translation;
 	    }
-	    extra_piece = foreign_piece;
+	    result.extra_piece = foreign_piece;
 	    extra_sq = sq;
 	}
 
@@ -5871,40 +5883,39 @@ int translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_
 
 	} else {
 
-	    if ((extra_piece != NONE)
-		&& (local_tb->piece_type[local_piece] == foreign_tb->piece_type[extra_piece])
+	    if ((result.extra_piece != NONE)
+		&& (local_tb->piece_type[local_piece] == foreign_tb->piece_type[result.extra_piece])
 		&& ((!invert_colors
-		     && (local_tb->piece_color[local_piece] == foreign_tb->piece_color[extra_piece]))
+		     && (local_tb->piece_color[local_piece] == foreign_tb->piece_color[result.extra_piece]))
 		    || (invert_colors
-			&& (local_tb->piece_color[local_piece] != foreign_tb->piece_color[extra_piece])))) {
+			&& (local_tb->piece_color[local_piece] != foreign_tb->piece_color[result.extra_piece])))) {
 
 		local_position->piece_position[local_piece] = extra_sq;
-		restricted_piece = local_piece;
-		extra_piece = NONE;
+		result.restricted_piece = local_piece;
+		result.extra_piece = NONE;
 
-	    } else if (missing_piece1 == NONE) {
-		missing_piece1 = local_piece;
-	    } else if (missing_piece2 == NONE) {
+	    } else if (result.missing_piece1 == NONE) {
+		result.missing_piece1 = local_piece;
+	    } else if (result.missing_piece2 == NONE) {
 		if (local_tb->piece_type[local_piece] == PAWN) {
-		    missing_piece2 = missing_piece1;
-		    missing_piece1 = local_piece;
+		    result.missing_piece2 = result.missing_piece1;
+		    result.missing_piece1 = local_piece;
 		} else {
-		    missing_piece2 = local_piece;
+		    result.missing_piece2 = local_piece;
 		}
 	    } else {
 		/* More than two missing pieces in translation */
-		return -1;
+		return invalid_translation;
 	    }
 
 	}
     }
 
-    return ((missing_piece2 << 24) | (extra_piece << 16) | (restricted_piece << 8) | missing_piece1);
-
+    return result;
 }
 
-int translate_foreign_index_to_local_position(tablebase_t *foreign_tb, index_t index1, int reflection,
-					      tablebase_t *local_tb, local_position_t *local_position, int invert_colors)
+translation_result translate_foreign_index_to_local_position(tablebase_t *foreign_tb, index_t index1, int reflection,
+							     tablebase_t *local_tb, local_position_t *local_position, int invert_colors)
 {
     local_position_t foreign_position;
 
@@ -5914,13 +5925,13 @@ int translate_foreign_index_to_local_position(tablebase_t *foreign_tb, index_t i
 	    info("translate_foreign_index_to_local_position: index_to_local_position failed\n");
 	}
 #endif
-	return -1;
+	return invalid_translation;
     }
 
     return translate_foreign_position_to_local_position(foreign_tb, &foreign_position, local_tb, local_position, invert_colors);
 }
 
-int global_position_to_local_position(tablebase_t *tb, global_position_t *global, local_position_t *local)
+translation_result global_position_to_local_position(tablebase_t *tb, global_position_t *global, local_position_t *local)
 {
     int square;
     tablebase_t fake_tb;
@@ -5955,7 +5966,7 @@ int global_position_to_local_position(tablebase_t *tb, global_position_t *global
     try {
 	compute_extra_and_missing_pieces(tb, &fake_tb);
     } catch (const char * reason) {
-	return 0;
+	return invalid_translation;
     }
 
     return translate_foreign_position_to_local_position(&fake_tb, &fake_position, tb, local, 0);
@@ -5965,7 +5976,7 @@ index_t global_position_to_index(tablebase_t *tb, global_position_t *global)
 {
     local_position_t local;
 
-    if (global_position_to_local_position(tb, global, &local) != 0x80808080) return INVALID_INDEX;
+    if (global_position_to_local_position(tb, global, &local) != trivial_translation) return INVALID_INDEX;
 
     return local_position_to_index(tb, &local);
 }
@@ -9138,7 +9149,7 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
     local_position_t foreign_position;
     local_position_t position;
     local_position_t normalized_position;
-    int conversion_result;
+    translation_result translation;
     int true_pawn;
 
     /* Take the position from the futurebase and translate it into a local position for the current
@@ -9150,19 +9161,16 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
     if (! index_to_local_position(futurebase, future_index, reflections[reflection],
 				  &foreign_position)) return;
 
-    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
+    translation = translate_foreign_position_to_local_position(futurebase, &foreign_position,
 								     current_tb, &position,
 								     futurebase->invert_colors);
 
-    if (conversion_result != -1) {
+    if (translation != invalid_translation) {
 
-	int extra_piece = (conversion_result >> 16) & 0xff;
-	int restricted_piece = (conversion_result >> 8) & 0xff;
-	int pawn = conversion_result & 0xff;                      /* missing_piece1 */
-	int missing_piece2 = (conversion_result >> 24) & 0xff;
+	if ((translation.extra_piece == NONE) || (translation.missing_piece1 == NONE)
+	    || (translation.missing_piece2 != NONE) || (translation.restricted_piece != NONE)) return;
 
-	if ((extra_piece == NONE) || (pawn == NONE)
-	    || (missing_piece2 != NONE) || (restricted_piece != NONE)) return;
+	uint8_t pawn = translation.missing_piece1;
 
 	/* Since the last move had to have been a promotion move, there is absolutely no way we
 	 * could have en passant capturable pawns in the futurebase position.
@@ -9186,12 +9194,12 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 	 * possibility that the pawn could promote into either of them.
 	 */
 
-	int promotion_sq = foreign_position.piece_position[extra_piece];
+	int promotion_sq = foreign_position.piece_position[translation.extra_piece];
 
 	if (futurebase->invert_colors)
 	    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-	int local_piece = futurebase->matching_local_semilegal_group[extra_piece][promotion_sq];
+	int local_piece = futurebase->matching_local_semilegal_group[translation.extra_piece][promotion_sq];
 
 	while (true) {
 
@@ -9264,8 +9272,7 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
     local_position_t foreign_position;
     local_position_t position;
     local_position_t normalized_position;
-    int conversion_result;
-    int pawn, extra_piece, restricted_piece, missing_piece2;
+    translation_result translation;
     int true_captured_piece;
     int true_pawn;
 
@@ -9279,19 +9286,14 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
     if (! index_to_local_position(futurebase, future_index, reflections[reflection],
 				  &foreign_position)) return;
 
-    conversion_result = translate_foreign_position_to_local_position(futurebase, &foreign_position,
-								     current_tb, &position,
-								     futurebase->invert_colors);
+    translation = translate_foreign_position_to_local_position(futurebase, &foreign_position,
+							       current_tb, &position,
+							       futurebase->invert_colors);
 
-    if (conversion_result != -1) {
+    if (translation != invalid_translation) {
 
-	extra_piece = (conversion_result >> 16) & 0xff;
-	restricted_piece = (conversion_result >> 8) & 0xff;
-	pawn = conversion_result & 0xff;                      /* missing_piece1 */
-	missing_piece2 = (conversion_result >> 24) & 0xff;
-
-	if ((extra_piece == NONE) || (pawn == NONE)
-	    || (missing_piece2 == NONE) || (restricted_piece != NONE)) return;
+	if ((translation.extra_piece == NONE) || (translation.missing_piece1 == NONE)
+	    || (translation.missing_piece2 == NONE) || (translation.restricted_piece != NONE)) return;
 
 	/* Since the last move had to have been a promotion move, there is absolutely no way
 	 * we could have en passant capturable pawns in the futurebase position.
@@ -9315,12 +9317,12 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 	 * possibility that the pawn could promote into either of them.
 	 */
 
-	int promotion_sq = foreign_position.piece_position[extra_piece];
+	int promotion_sq = foreign_position.piece_position[translation.extra_piece];
 
 	if (futurebase->invert_colors)
 	    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-	int local_piece = futurebase->matching_local_semilegal_group[extra_piece][promotion_sq];
+	int local_piece = futurebase->matching_local_semilegal_group[translation.extra_piece][promotion_sq];
 
 	while (true) {
 
@@ -9345,7 +9347,7 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 		/* Put the piece that was captured onto the board on the promotion square. */
 
-		position.piece_position[missing_piece2] = promotion_sq;
+		position.piece_position[translation.missing_piece2] = promotion_sq;
 
 		/* Consider first a capture to the left (white's left).  There has to be an empty
 		 * square where the pawn came from, and it has to be at least semilegal.
@@ -9353,14 +9355,14 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 		if ((COL(promotion_sq) != 0)
 		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
-		    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move - 1))) {
+		    && (current_tb->semilegal_squares[translation.missing_piece1] & BITVECTOR(promotion_sq - promotion_move - 1))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put the
 		     * missing pawn on the seventh (or second).
 		     */
 
-		    position.piece_position[pawn] = promotion_sq - promotion_move - 1;
+		    position.piece_position[translation.missing_piece1] = promotion_sq - promotion_move - 1;
 
 		    /* Back propagate the resulting position */
 
@@ -9368,8 +9370,8 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 		    normalize_position(current_tb, &normalized_position);
 
-		    true_captured_piece = normalized_position.permuted_piece[missing_piece2];
-		    true_pawn = normalized_position.permuted_piece[pawn];
+		    true_captured_piece = normalized_position.permuted_piece[translation.missing_piece2];
+		    true_pawn = normalized_position.permuted_piece[translation.missing_piece1];
 
 		    /* This function also back props any similar positions with one of the pawns
 		     * from the side that didn't promote in an en passant state.
@@ -9387,21 +9389,21 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 		if ((COL(promotion_sq) != 7)
 		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
-		    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move + 1))) {
+		    && (current_tb->semilegal_squares[translation.missing_piece1] & BITVECTOR(promotion_sq - promotion_move + 1))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put
 		     * the missing pawn on the seventh (or second).
 		     */
 
-		    position.piece_position[pawn] = promotion_sq - promotion_move + 1;
+		    position.piece_position[translation.missing_piece1] = promotion_sq - promotion_move + 1;
 
 		    normalized_position = position;
 
 		    normalize_position(current_tb, &normalized_position);
 
-		    true_captured_piece = normalized_position.permuted_piece[missing_piece2];
-		    true_pawn = normalized_position.permuted_piece[pawn];
+		    true_captured_piece = normalized_position.permuted_piece[translation.missing_piece2];
+		    true_pawn = normalized_position.permuted_piece[translation.missing_piece1];
 
 		    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 								  promotion_captures[true_pawn][true_captured_piece][futurebase->promotion],
@@ -9631,8 +9633,7 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 {
     local_position_t position;
     int piece;
-    int conversion_result;
-    int extra_piece, restricted_piece, captured_piece, missing_piece2;
+    translation_result translation;
 
     /* Take the position from the futurebase and translate it into a local position for the current
      * tablebase.  If the futurebase index was illegal, the function will return -1.  Otherwise,
@@ -9645,28 +9646,28 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
      * positions with multiple restricted pieces that should be quietly ignored.
      */
 
-    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index,
-								  reflections[reflection],
-								  current_tb, &position,
-								  futurebase->invert_colors);
+    translation = translate_foreign_index_to_local_position(futurebase, future_index,
+							    reflections[reflection],
+							    current_tb, &position,
+							    futurebase->invert_colors);
 
+#if 0
 #ifdef DEBUG_FUTUREMOVE
     if (future_index == DEBUG_FUTUREMOVE) {
 	info("capture backprop; reflection=%d; conversion_result=%x\n",
 	     reflections[reflection], conversion_result);
     }
 #endif
+#endif
 
-    if (conversion_result != -1) {
+    if (translation != invalid_translation) {
 
-	extra_piece = (conversion_result >> 16) & 0xff;
-	restricted_piece = (conversion_result >> 8) & 0xff;
-	captured_piece = conversion_result & 0xff;           /* missing_piece1 */
-	missing_piece2 = (conversion_result >> 24) & 0xff;
-
-	if ((extra_piece != NONE) || (captured_piece == NONE) || (missing_piece2 != NONE)) {
+	if ((translation.extra_piece != NONE) || (translation.missing_piece1 == NONE)
+	    || (translation.missing_piece2 != NONE)) {
 	    return;
 	}
+
+	uint8_t captured_piece = translation.missing_piece1;
 
 	/* Since the last move had to have been a capture move, there is absolutely no way
 	 * we could have en passant capturable pawns in the futurebase position.
@@ -9684,7 +9685,7 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 
 	flip_side_to_move_local(&position);
 
-	if (restricted_piece == NONE) {
+	if (translation.restricted_piece == NONE) {
 
 	    /* No pieces were on restricted squares.  Consider them all as the possible
 	     * capturing piece.
@@ -9704,22 +9705,22 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 	     * consider each piece in the semilegal group as the possible restricted piece.
 	     */
 
-	    int restricted_square = position.piece_position[restricted_piece];
+	    int restricted_square = position.piece_position[translation.restricted_piece];
 
-	    consider_possible_captures(future_index, &position, restricted_piece, captured_piece);
+	    consider_possible_captures(future_index, &position, translation.restricted_piece, captured_piece);
 
 	    for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
-		if ((current_tb->piece_color[piece] == current_tb->piece_color[restricted_piece])
-		    && (current_tb->piece_type[piece] == current_tb->piece_type[restricted_piece])
+		if ((current_tb->piece_color[piece] == current_tb->piece_color[translation.restricted_piece])
+		    && (current_tb->piece_type[piece] == current_tb->piece_type[translation.restricted_piece])
 		    && (current_tb->semilegal_squares[piece] & BITVECTOR(restricted_square))) {
 
-		    position.piece_position[restricted_piece] = position.piece_position[piece];
+		    position.piece_position[translation.restricted_piece] = position.piece_position[piece];
 		    position.piece_position[piece] = restricted_square;
 
-		    consider_possible_captures(future_index, &position, restricted_piece, captured_piece);
+		    consider_possible_captures(future_index, &position, translation.restricted_piece, captured_piece);
 
-		    position.piece_position[piece] = position.piece_position[restricted_piece];
+		    position.piece_position[piece] = position.piece_position[translation.restricted_piece];
 		}
 	    }
 	}
@@ -9737,8 +9738,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 {
     local_position_t parent_position;
     local_position_t current_position; /* i.e, last position that moved to parent_position */
-    int conversion_result;
-    int extra_piece, restricted_piece, missing_piece1, missing_piece2;
+    translation_result translation;
     int piece;
     int dir;
     struct movement *movementptr;
@@ -9757,22 +9757,18 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
      * multiple restricted pieces that should be quietly ignored.
      */
 
-    conversion_result = translate_foreign_index_to_local_position(futurebase, future_index, reflection,
-								  current_tb, &current_position,
-								  futurebase->invert_colors);
+    translation = translate_foreign_index_to_local_position(futurebase, future_index, reflection,
+							    current_tb, &current_position,
+							    futurebase->invert_colors);
 
-    if (conversion_result != -1) {
+    if (translation != invalid_translation) {
 
-	extra_piece = (conversion_result >> 16) & 0xff;
-	restricted_piece = (conversion_result >> 8) & 0xff;
-	missing_piece1 = conversion_result & 0xff;
-	missing_piece2 = (conversion_result >> 24) & 0xff;
-
-	if ((missing_piece1 != NONE) || (missing_piece2 != NONE) || (extra_piece != NONE) || (restricted_piece == NONE)) {
+	if ((translation.missing_piece1 != NONE) || (translation.missing_piece2 != NONE)
+	    || (translation.extra_piece != NONE) || (translation.restricted_piece == NONE)) {
 	    return;
 	}
 
-	piece = restricted_piece;
+	piece = translation.restricted_piece;
 
 	origin_square = current_position.piece_position[piece];
 
@@ -13749,7 +13745,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.862 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.863 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
