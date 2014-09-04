@@ -6,7 +6,8 @@ HOFFMAN ?= ../hoffman
 
 PROBES = ../PROBES
 REQUIRED_HTBs = kpkp.htb kqk-basic.htb kqk-whitewins.htb krvq.htb \
-	fortress.htb lasker1901.htb
+	fortress.htb lasker1901.htb kqpk.htb \
+	$(filter-out r810.htb r814.htb, $(subst xml,htb,$(wildcard r*.xml)))
 
 check: $(REQUIRED_HTBs) $(PROBES)
 	@cat $(PROBES) | while read md5expected input files; do						\
