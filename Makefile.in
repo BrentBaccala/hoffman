@@ -38,8 +38,8 @@ tarball: docs
 
 docs: $(hoffman_DOCS) ChangeLog
 
-ChangeLog: RCS/hoffman.c,v
-	rlog hoffman.c > ChangeLog
+ChangeLog: RCS/hoffman.cc,v
+	rlog hoffman.cc > ChangeLog
 
 tutorial.pdf: tutorial.tex
 	latex tutorial
