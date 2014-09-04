@@ -7,7 +7,16 @@
 # they exist, they are used to verify any corresponding Hoffman
 # tablebases after they are built.
 #
-# REQUIRED_HTBs are the tablebases that must be built for a 'make check'
+# REQUIRED_HTBs are the tablebases that must be built for a 'make
+# check'.  They include kpkp (the simplest tablebase which checks
+# en-passant handling), a few bitbases and suicide analyses, and
+# almost all of the xml files starting with an r, which are test cases
+# to check bugs fixed in various numbered RCS revisions, i.e, r796.xml
+# tests a bug in the initialization routine fixed in revision 1.796.
+#
+# FAILING_TESTS are a list of xml tests which are expected to fail to
+# build.  They test bugs which produced segfaults or corrupt
+# tablebases, and are excluded from REQUIRED_HTBs.
 #
 # PROBES is a file containing a list of Hoffman queries against the
 # tablebases listed as REQUIRED_HTBs, along with the MD5 hashes of the
@@ -20,9 +29,12 @@ HOFFMAN ?= ../hoffman
 
 NALIMOV ?= ~/Nalimov
 
+FAILING_TESTS = r810.xml r814.xml
+
+TESTING_XMLs = $(filter-out $(FAILING_TESTS), $(notdir $(wildcard ../xml/r*.xml)))
+
 REQUIRED_HTBs = kpkp.htb kqk-basic.htb kqk-whitewins.htb krvq.htb \
-	fortress.htb lasker1901.htb kqpk.htb \
-	$(filter-out r810.htb r814.htb, $(subst xml,htb,$(wildcard r*.xml)))
+	fortress.htb lasker1901.htb kqpk.htb $(TESTING_XMLs)
 
 PROBES = ../PROBES
 
