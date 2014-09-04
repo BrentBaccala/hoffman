@@ -1,13 +1,30 @@
-
+#
+# Testing framework for Hoffman
+#
+# HOFFMAN is how we call the program
+#
+# NALIMOV is an optional directory containing Nalimov tablebases.  If
+# they exist, they are used to verify any corresponding Hoffman
+# tablebases after they are built.
+#
+# REQUIRED_HTBs are the tablebases that must be built for a 'make check'
+#
+# PROBES is a file containing a list of Hoffman queries against the
+# tablebases listed as REQUIRED_HTBs, along with the MD5 hashes of the
+# expected output
+#
 # GNU Make is required to process this makefile, along with xmllint
 # (part of libxml2) to extract dependencies from the control files.
 
 HOFFMAN ?= ../hoffman
 
-PROBES = ../PROBES
+NALIMOV ?= ~/Nalimov
+
 REQUIRED_HTBs = kpkp.htb kqk-basic.htb kqk-whitewins.htb krvq.htb \
 	fortress.htb lasker1901.htb kqpk.htb \
 	$(filter-out r810.htb r814.htb, $(subst xml,htb,$(wildcard r*.xml)))
+
+PROBES = ../PROBES
 
 check: $(REQUIRED_HTBs) $(PROBES)
 	@cat $(PROBES) | while read md5expected input files; do						\
@@ -60,8 +77,10 @@ define futurebases
    $(shell xmllint --xpath "//futurebase/@filename" $(1) | sed -e 's/[^"]*"//' -e ':a' -e 's/"[^"]*"/ /' -e 'ta' -e 's/".*/\n/')
 endef
 
-# This next idea doesn't work because make won't use implicit rules
-# multiple times in a chain.  So we recursively call make instead.
+# We may need to build other tablebases that the target depends
+# on. This next idea doesn't work because make won't use implicit
+# rules multiple times in a chain.  So we recursively call make
+# instead.
 #
 # .SECONDEXPANSION:
 #
@@ -71,7 +90,8 @@ endef
 %.htb: %.xml
 	@echo Making $@
 	@$(if $(strip $(call futurebases, $<)), $(MAKE) $(call futurebases, $<))
-	$(HOFFMAN) -g $<
+	$(HOFFMAN) -g -v $<
+	$(if $(wildcard $(NALIMOV)/$*.nbb.emd), $(HOFFMAN) -v -n $(NALIMOV) $@)
 
 clean:
 	-rm $(wildcard *.xml) $(wildcard *.htb)
