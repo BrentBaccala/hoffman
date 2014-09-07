@@ -96,7 +96,6 @@ sub extract_timings {
     $insert->execute($XMLfuturebase->find('//output/@filename'),
 		     $futurebases,
 		     $XMLfuturebase->find('//indices'),
-#		     &time2sec($XMLfuturebase->find('//real-time')),
 		     &time2sec($XMLfuturebase->find('//user-time')),
 		     $XMLfuturebase->findvalue('//max-dtm') - $XMLfuturebase->findvalue('//min-dtm'));
 }
@@ -105,7 +104,6 @@ sub extract_timings {
 if ($#ARGV >= 0) {
     foreach my $file (@ARGV) { &extract_timings($file); }
 }
-
 
 my $subroutine_sth = $dbh->prepare("SELECT indices FROM timings WHERE tablebase = ?");
 
@@ -116,7 +114,6 @@ sub indices {
     $subroutine_sth->execute($tablebase);
 
     while (my @row = $subroutine_sth->fetchrow_array) {
-	#print $row[0], " ";
 	$indices += $row[0];
     }
 
@@ -134,6 +131,5 @@ while ( my @row = $sth->fetchrow_array ) {
     foreach my $futurebase (split(' ', $row[1])) {
 	$futureindices += &indices($futurebase);
     }
-    #print "$row[0] $row[2] $futureindices $row[3]\n";
-    print "$row[0] $row[2] $row[4] $row[3]\n";
+    print "$row[0] $row[2] $futureindices $row[4] $row[3]\n";
 }
