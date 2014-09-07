@@ -7,6 +7,14 @@
 # will be generated as well.  Files are written in the current
 # directory.
 #
+# Filename format for standard chess is kWkB-option.xml, where W is a
+# list of white pieces and B is a list of black pieces, both from the
+# set qrnbp, and the optional option is either 'basic' or 'whitewins',
+# to obtain bitbases instead of DTM (the default).
+#
+# Filename format for suicide chess is WvB-option.xml where W and B
+# now come from the set kqrnbp.
+#
 # To get the older behavior (write all 5-piece control files and their
 # dependencies), call it as 'genctlfile.pl kppkp.xml'
 #
