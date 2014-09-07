@@ -1,5 +1,10 @@
 #! /usr/bin/perl
 # -*- fill-column: 100; -*-
+#
+# Given a list of tablebases as command line arguments, this script extracts total indices, user
+# time to build, and the difference between minimum and maximum times.  This information is printed
+# for each tablebase, along with the total number of futureindices (indices of immediate
+# futurebases).
 
 use strict;
 
