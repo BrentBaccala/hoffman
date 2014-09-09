@@ -834,9 +834,6 @@ int fatal_errors = 0;
 
 std::atomic<bool> printing_progress_dots(false);
 
-Glib::ustring error_report_url;
-Glib::ustring completion_report_url;
-
 #define MAX_FATAL_ERRORS 10
 
  __attribute__((noreturn)) void terminate (void)
@@ -852,7 +849,6 @@ Glib::ustring completion_report_url;
 void fatal (const char * format, ...)
 {
     va_list va;
-    static char strbuf[256] = {'\0'};
 
     /* BREAKPOINT */
     if (index(format, '\n')) fatal_errors ++;
@@ -864,27 +860,6 @@ void fatal (const char * format, ...)
 
     va_start(va, format);
     vfprintf(stderr, format, va);
-    va_end(va);
-
-    va_start(va, format);
-
-    if (current_tb && current_tb->xml) {
-	vsnprintf(strbuf + strlen(strbuf), sizeof(strbuf) - strlen(strbuf), format, va);
-	if (index(strbuf, '\n')) {
-	    // XXX fix to use libxml++
-#if 0
-	    xmlNodePtr tablebase = xmlDocGetRootElement(current_tb->xml);
-
-	    *index(strbuf, '\n') = '\0';
-	    xmlNodeAddContent(tablebase, BAD_CAST "   ");
-	    xmlNewChild(tablebase, nullptr, BAD_CAST "error", BAD_CAST strbuf);
-	    xmlNodeAddContent(tablebase, BAD_CAST "\n");
-
-	    memset(strbuf, 0, sizeof(strbuf));
-#endif
-	}
-    }
-
     va_end(va);
 
     if (fatal_errors >= MAX_FATAL_ERRORS) terminate();
@@ -4836,21 +4811,6 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     doc = parser->get_document();
 
-    /* Does the tablebase specify URLs to report errors or successful completion to?  If so, extract
-     * them now, as early as possible, because we want to report to the error URL in case validation
-     * or parsing fails.
-     */
-
-    result = doc->get_root_node()->find("//error-report");
-    if (! result.empty()) {
-	error_report_url = result[0]->eval_to_string("@url");
-    }
-
-    result = doc->get_root_node()->find("//completion-report");
-    if (! result.empty()) {
-	completion_report_url = result[0]->eval_to_string("@url");
-    }
-
     /* check if validation suceeded */
 
     if (! dtd.validate(doc)) {
@@ -4911,7 +4871,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.867 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.868 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13711,7 +13671,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.867 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.868 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
