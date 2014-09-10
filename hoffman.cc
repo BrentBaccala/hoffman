@@ -649,7 +649,6 @@ std::map<Glib::ustring, int> variant_names =
 typedef struct tablebase {
     int variant;
     int index_type;
-    index_t index_offset;
     index_t max_index;
     bool positions_with_adjacent_kings_are_illegal;
     int symmetry;
@@ -770,7 +769,7 @@ typedef struct tablebase {
     char *futurevectors;
     int futurevector_bits;
 
-    tablebase(void) : index_offset(0), offset(0), invert_colors(false), num_pieces(0) { }
+    tablebase(void) : offset(0), invert_colors(false), num_pieces(0) { }
     tablebase(std::istream *);
 } tablebase_t;
 
@@ -3112,8 +3111,6 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	return INVALID_INDEX;
     }
 
-    index += tb->index_offset;
-
     /* Multiplicity - number of non-identical positions that this index corresponds to.  We want to
      * update the original position structure that got passed in.
      */
@@ -3154,8 +3151,6 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     int piece, piece2;
 
     if (index > tb->max_index) return false;
-    if (index < tb->index_offset) return false;
-    index -= tb->index_offset;
 
     bzero(position, sizeof(local_position_t));
     position->en_passant_square = ILLEGAL_POSITION;
@@ -3305,7 +3300,7 @@ index_t max_index(tablebase_t * tb)
 int index_to_side_to_move(tablebase_t *tb, index_t index)
 {
     if (tb->encode_stm) {
-	return (index - tb->index_offset) & 1;
+	return index & 1;
     } else {
 	return WHITE;
     }
@@ -3979,8 +3974,6 @@ tablebase::tablebase(std::istream *instream)
 	if (!result.empty()) {
 	    index_node = (xmlpp::Element *) result[0];
 	    index = index_node->get_attribute_value("type");
-
-	    index_offset = eval_to_number_or_zero(index_node, "@offset");
 	}
     }
 
@@ -4724,8 +4717,6 @@ tablebase::tablebase(std::istream *instream)
 
     }
 
-    max_index += index_offset;
-
     /* Fetch any prune enable elements */
 
     result = tablebase->find("//prune-enable | //move-restriction");
@@ -4829,7 +4820,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.871 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.872 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13619,7 +13610,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.871 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.872 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

@@ -12,8 +12,7 @@
 <!ELEMENT index EMPTY>
 <!ATTLIST index
 	type (naive|naive2|simple|standard|compact|no-en-passant|combinadic3|combinadic4)	#REQUIRED
-	symmetry (1|2|2-way|4|8|8-way)			#IMPLIED
-	offset CDATA					#IMPLIED>
+	symmetry (1|2|2-way|4|8|8-way)			#IMPLIED>
 
 <!ELEMENT format (dtm | flag | basic) >
 
