@@ -651,7 +651,6 @@ typedef struct tablebase {
     int index_type;
     index_t index_offset;
     index_t max_index;
-    index_t max_uninverted_index;
     bool positions_with_adjacent_kings_are_illegal;
     int symmetry;
     uint8_t reflections[64][64];
@@ -3154,7 +3153,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     int ret;
     int piece, piece2;
 
-    if (index > tb->max_uninverted_index) return false;
+    if (index > tb->max_index) return false;
     if (index < tb->index_offset) return false;
     index -= tb->index_offset;
 
@@ -4726,7 +4725,6 @@ tablebase::tablebase(std::istream *instream)
     }
 
     max_index += index_offset;
-    max_uninverted_index = max_index;
 
     /* Fetch any prune enable elements */
 
@@ -4831,7 +4829,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.870 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.871 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13621,7 +13619,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.870 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.871 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
