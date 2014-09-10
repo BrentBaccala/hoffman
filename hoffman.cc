@@ -644,7 +644,7 @@ bimap futurebase_types =
 #define VARIANT_SUICIDE 1
 
 std::map<Glib::ustring, int> variant_names =
-    {{"normal", VARIANT_NORMAL}, {"suicide", VARIANT_SUICIDE}};
+    {{"", VARIANT_NORMAL}, {"normal", VARIANT_NORMAL}, {"suicide", VARIANT_SUICIDE}};
 
 typedef struct tablebase {
     int variant;
@@ -697,8 +697,7 @@ typedef struct tablebase {
      */
     int matching_local_semilegal_group[MAX_PIECES][64];
 
-    // XXX put this in to destroy parser when tablebase is destroyed
-    // xmlpp::DomParser * parser;
+    xmlpp::DomParser parser;
     xmlpp::Document * xml;
 
     /* Pieces */
@@ -772,6 +771,9 @@ typedef struct tablebase {
 
     char *futurevectors;
     int futurevector_bits;
+
+    tablebase(void) : index_offset(0), offset(0), invert_colors(false), num_pieces(0) { }
+    tablebase(std::istream *);
 } tablebase_t;
 
 tablebase_t *current_tb = nullptr;
@@ -3547,9 +3549,9 @@ bool tablebase_is_color_symmetric(tablebase_t *tb)
  * distinguish between them.
  */
 
-tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
+tablebase::tablebase(std::istream *instream)
 {
-    tablebase_t *tb;
+    xmlpp::DtdValidator dtd;
 
     xmlpp::NodeSet result;
     xmlpp::Element * tablebase;
@@ -3557,48 +3559,44 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
     Glib::ustring index;
     xmlpp::Element * index_node;
 
-    Glib::ustring format;
+    Glib::ustring format_str;
 
     int piece, piece2, square, white_king_square, black_king_square;
     int pass;
-    int starting_fatal_errors = fatal_errors;
     int piece_in_set = 1;
 
-    tb = (tablebase_t *) malloc(sizeof(tablebase_t));
-    if (tb == nullptr) {
-	fatal("Can't malloc tablebase\n");
-	return nullptr;
-    }
-    memset(tb, 0, sizeof(tablebase_t));
+    // XXX this might throw an exception
+    parser.parse_stream(*instream);
 
-    tb->xml = doc;
+    xml = parser.get_document();
+
+    /* load the DTD from memory */
+
+    dtd.parse_memory(tablebase_dtd);
+
+    /* check if validation suceeded */
+
+    if (! dtd.validate(xml)) {
+	throw "failed XML validatation";
+    }
 
     /* Fetch tablebase from XML */
 
-    result = tb->xml->get_root_node()->find("//tablebase");
+    result = xml->get_root_node()->find("//tablebase");
     tablebase = (xmlpp::Element *) result[0];
 
     /* Figure out which version of chess we're playing... */
 
-    result = tablebase->find("//variant");
+    variant = variant_names.at(tablebase->eval_to_string("//variant/@name"));
 
-    if (! result.empty()) {
-	Glib::ustring variant_name = result[0]->eval_to_string("@name");
-	try {
-	    tb->variant = variant_names.at(variant_name);
-	} catch (std::exception & ex) {
-	    fatal("Unknown variant '%s' specified\n", variant_name.c_str());
-	}
-    }
-
-    switch (tb->variant) {
+    switch (variant) {
 
     case VARIANT_NORMAL:
-	tb->positions_with_adjacent_kings_are_illegal = true;
+	positions_with_adjacent_kings_are_illegal = true;
 	break;
 
     case VARIANT_SUICIDE:
-	tb->positions_with_adjacent_kings_are_illegal = false;
+	positions_with_adjacent_kings_are_illegal = false;
 	promotion_possibilities = 5;	/* A global var, but all futurebases have to use the same variant */
 	break;
 
@@ -3610,16 +3608,16 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
     /* Some statistics we'll use if this is a futurebase */
 
-    tb->max_dtm = eval_to_number_or_zero(tablebase, "//max-dtm");
-    tb->min_dtm = eval_to_number_or_zero(tablebase, "//min-dtm");
+    max_dtm = eval_to_number_or_zero(tablebase, "//max-dtm");
+    min_dtm = eval_to_number_or_zero(tablebase, "//min-dtm");
 
     /* If there's a stalemate prune, fetch it */
 
     result = tablebase->find("//prune[attribute::move='stalemate']");
     if (! result.empty()) {
-	tb->stalemate_prune_type = restriction_types.at(result[0]->eval_to_string("@type"));
-	tb->stalemate_prune_color = colors.at(result[0]->eval_to_string("@color"));
-	if (tb->stalemate_prune_type != RESTRICTION_CONCEDE) {
+	stalemate_prune_type = restriction_types.at(result[0]->eval_to_string("@type"));
+	stalemate_prune_color = colors.at(result[0]->eval_to_string("@color"));
+	if (stalemate_prune_type != RESTRICTION_CONCEDE) {
 	    fatal("Stalemates can only be pruned to 'concede'\n");
 	}
     }
@@ -3628,27 +3626,26 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
     result = tablebase->find("//piece");
 
-    tb->num_pieces = result.size();
+    num_pieces = result.size();
 
-    if (tb->num_pieces > MAX_PIECES) {
-	fatal("Too many pieces (%d compiled-in maximum)!\n", MAX_PIECES);
-	return nullptr;
+    if (num_pieces > MAX_PIECES) {
+	throw "Too many pieces (" + boost::lexical_cast<std::string>(MAX_PIECES) + "compiled-in maximum)!";
     }
 
-    tb->white_king = -1;
-    tb->black_king = -1;
+    white_king = -1;
+    black_king = -1;
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < num_pieces; piece ++) {
 
-	tb->piece_color[piece] = colors.at(result[piece]->eval_to_string("@color"));
-	tb->piece_type[piece] = piece_name.at(result[piece]->eval_to_string("@type"));
+	piece_color[piece] = colors.at(result[piece]->eval_to_string("@color"));
+	piece_type[piece] = piece_name.at(result[piece]->eval_to_string("@type"));
 
 	if (result[piece]->eval_to_string("@index-ordering") == "reverse") {
 	    fatal("reverse index ordering no longer supported\n");
 	}
 
 #if 0
-	if ((tb->piece_color[piece] == -1) || (tb->piece_type[piece] == -1)) {
+	if ((piece_color[piece] == -1) || (piece_type[piece] == -1)) {
 	    fatal("Illegal piece color (%s) or type (%s)\n", color, type);
 	}
 #endif
@@ -3656,20 +3653,20 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	Glib::ustring location = result[piece]->eval_to_string("@location");
 
 	if (location == "") {
-	    if (tb->piece_type[piece] == PAWN) {
-		tb->legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
+	    if (piece_type[piece] == PAWN) {
+		legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
 	    } else {
-		tb->legal_squares[piece] = ALL_ONES_BITVECTOR;
+		legal_squares[piece] = ALL_ONES_BITVECTOR;
 	    }
 	} else {
 	    int j = 0;
-	    tb->legal_squares[piece] = 0;
+	    legal_squares[piece] = 0;
 	    while ((location[j] >= 'a') && (location[j] <= 'h')
 		   && (location[j+1] >= '1') && (location[j+1] <= '8')) {
-		tb->legal_squares[piece]
+		legal_squares[piece]
 		    |= BITVECTOR(rowcol2square(location[j+1] - '1', location[j] - 'a'));
 		j += 2;
-		if ((tb->piece_type[piece] == PAWN) && (j == 2) && (location[j] == '+')) j++;
+		if ((piece_type[piece] == PAWN) && (j == 2) && (location[j] == '+')) j++;
 		while (location[j] == ' ') j ++;
 	    }
 	    if (location[j] != '\0') {
@@ -3677,38 +3674,36 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	    }
 	}
 
-	tb->num_pieces_by_color[tb->piece_color[piece]] ++;
+	num_pieces_by_color[piece_color[piece]] ++;
 
-	if (tb->variant != VARIANT_SUICIDE) {
+	if (variant != VARIANT_SUICIDE) {
 
-	    if ((tb->piece_color[piece] == WHITE) && (tb->piece_type[piece] == KING)) {
-		if (tb->white_king != -1) {
+	    if ((piece_color[piece] == WHITE) && (piece_type[piece] == KING)) {
+		if (white_king != -1) {
 		    fatal("Must have one white king and one black one!\n");
 		} else {
-		    tb->white_king = piece;
+		    white_king = piece;
 		}
 	    }
 
-	    if ((tb->piece_color[piece] == BLACK) && (tb->piece_type[piece] == KING)) {
-		if (tb->black_king != -1) {
+	    if ((piece_color[piece] == BLACK) && (piece_type[piece] == KING)) {
+		if (black_king != -1) {
 		    fatal("Must have one white king and one black one!\n");
 		} else {
-		    tb->black_king = piece;
+		    black_king = piece;
 		}
 	    }
 
 	}
     }
 
-    if ((tb->num_pieces_by_color[WHITE] == 0) || (tb->num_pieces_by_color[BLACK] == 0)) {
-	fatal("Must have at least one white piece and one black piece!\n");
-	return nullptr;
+    if ((num_pieces_by_color[WHITE] == 0) || (num_pieces_by_color[BLACK] == 0)) {
+	throw "Must have at least one white piece and one black piece!";
     }
 
-    if (tb->variant != VARIANT_SUICIDE) {
-	if ((tb->white_king == -1) || (tb->black_king == -1)) {
-	    fatal("Must have one white king and one black one!\n");
-	    return nullptr;
+    if (variant != VARIANT_SUICIDE) {
+	if ((white_king == -1) || (black_king == -1)) {
+	    throw "Must have one white king and one black one!";
 	}
     }
 
@@ -3749,11 +3744,11 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      * square.
      */
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < num_pieces; piece ++) {
 
-	tb->blocking_piece[piece] = -1;
+	blocking_piece[piece] = -1;
 
-	if (tb->piece_type[piece] == PAWN) {
+	if (piece_type[piece] == PAWN) {
 
 	    Glib::ustring location = result[piece]->eval_to_string("@location");
 	    uint64_t pawn_positions = 0xffffffffffffffffLL;
@@ -3761,15 +3756,15 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	    if ((location != "") && (location[2] == '+')) {
 
 		int square = rowcol2square(location[1] - '1', location[0] - 'a');
-		int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
+		int dir = (piece_color[piece] == WHITE) ? 8 : -8;
 
 		pawn_positions &= ~BITVECTOR(square);
 		square += dir;
 
-		while ((square < 56) && (square > 7) && (tb->blocking_piece[piece] == -1)) {
-		    for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
-			if ((pawn_positions & tb->legal_squares[piece2]) == BITVECTOR(square)) {
-			    tb->blocking_piece[piece] = piece2;
+		while ((square < 56) && (square > 7) && (blocking_piece[piece] == -1)) {
+		    for (piece2 = 0; piece2 < num_pieces; piece2 ++) {
+			if ((pawn_positions & legal_squares[piece2]) == BITVECTOR(square)) {
+			    blocking_piece[piece] = piece2;
 			}
 		    }
 		    pawn_positions &= ~BITVECTOR(square);
@@ -3782,12 +3777,12 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 		 * in the correct order in the piece list.
 		 */
 
-		if ((tb->blocking_piece[piece] != -1) && (tb->piece_type[tb->blocking_piece[piece]] == PAWN)
-		    && (tb->piece_color[tb->blocking_piece[piece]] == tb->piece_color[piece])) {
-		    if ((tb->piece_color[piece] == WHITE) && (tb->blocking_piece[piece] < piece)) {
+		if ((blocking_piece[piece] != -1) && (piece_type[blocking_piece[piece]] == PAWN)
+		    && (piece_color[blocking_piece[piece]] == piece_color[piece])) {
+		    if ((piece_color[piece] == WHITE) && (blocking_piece[piece] < piece)) {
 			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
 		    }
-		    if ((tb->piece_color[piece] == BLACK) && (tb->blocking_piece[piece] > piece)) {
+		    if ((piece_color[piece] == BLACK) && (blocking_piece[piece] > piece)) {
 			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
 		    }
 		}
@@ -3804,26 +3799,26 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
     /* Now advance plus-pawns as far as they can go without hitting the blocking piece. */
 
-    for (pass = 0; pass < tb->num_pieces; pass ++) {
+    for (pass = 0; pass < num_pieces; pass ++) {
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (piece = 0; piece < num_pieces; piece ++) {
 
-	    if (tb->piece_type[piece] == PAWN) {
+	    if (piece_type[piece] == PAWN) {
 
 		Glib::ustring location = result[piece]->eval_to_string("@location");
 
 		if ((location != "") && (location[2] == '+')) {
 
 		    int square = rowcol2square(location[1] - '1', location[0] - 'a');
-		    int dir = (tb->piece_color[piece] == WHITE) ? 8 : -8;
+		    int dir = (piece_color[piece] == WHITE) ? 8 : -8;
 
 		    square += dir;
 		    while ((square < 56) && (square > 7)) {
-			if ((tb->blocking_piece[piece] != -1)
-			    && (BITVECTOR(square) & tb->legal_squares[tb->blocking_piece[piece]])
-			    && !(BITVECTOR(square + dir) & tb->legal_squares[tb->blocking_piece[piece]]))
+			if ((blocking_piece[piece] != -1)
+			    && (BITVECTOR(square) & legal_squares[blocking_piece[piece]])
+			    && !(BITVECTOR(square + dir) & legal_squares[blocking_piece[piece]]))
 			    break;
-			tb->legal_squares[piece] |= BITVECTOR(square);
+			legal_squares[piece] |= BITVECTOR(square);
 			square += dir;
 		    }
 		}
@@ -3841,32 +3836,32 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      * the pieces in that group.  See the earlier discussion on semilegal squares.
      */
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < num_pieces; piece ++) {
 
-	tb->prev_piece_in_semilegal_group[piece] = -1;
-	tb->next_piece_in_semilegal_group[piece] = -1;
-	tb->next_identical_piece[piece] = -1;
+	prev_piece_in_semilegal_group[piece] = -1;
+	next_piece_in_semilegal_group[piece] = -1;
+	next_identical_piece[piece] = -1;
 
-	tb->semilegal_squares[piece] = tb->legal_squares[piece];
+	semilegal_squares[piece] = legal_squares[piece];
 
 	for (piece2 = 0; piece2 < piece; piece2 ++) {
-	    if ((tb->piece_color[piece2] == tb->piece_color[piece])
-		&& (tb->piece_type[piece2] == tb->piece_type[piece])) {
+	    if ((piece_color[piece2] == piece_color[piece])
+		&& (piece_type[piece2] == piece_type[piece])) {
 
-		if (tb->semilegal_squares[piece] & tb->semilegal_squares[piece2]) {
-		    tb->prev_piece_in_semilegal_group[piece] = piece2;
-		    tb->semilegal_squares[piece2] |= tb->semilegal_squares[piece];
-		    tb->semilegal_squares[piece] |= tb->semilegal_squares[piece2];
+		if (semilegal_squares[piece] & semilegal_squares[piece2]) {
+		    prev_piece_in_semilegal_group[piece] = piece2;
+		    semilegal_squares[piece2] |= semilegal_squares[piece];
+		    semilegal_squares[piece] |= semilegal_squares[piece2];
 		}
 
-		if (tb->next_identical_piece[piece2] == -1) {
-		    tb->next_identical_piece[piece2] = piece;
+		if (next_identical_piece[piece2] == -1) {
+		    next_identical_piece[piece2] = piece;
 		}
 	    }
 	}
 
-	if (tb->prev_piece_in_semilegal_group[piece] != -1) {
-	    tb->next_piece_in_semilegal_group[tb->prev_piece_in_semilegal_group[piece]] = piece;
+	if (prev_piece_in_semilegal_group[piece] != -1) {
+	    next_piece_in_semilegal_group[prev_piece_in_semilegal_group[piece]] = piece;
 	}
     }
 
@@ -3880,9 +3875,9 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      * squares are the same, because permuting wouldn't do anything for us then.
      */
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < num_pieces; piece ++) {
 
-	if (tb->prev_piece_in_semilegal_group[piece] == -1 && tb->next_piece_in_semilegal_group[piece] != -1) {
+	if (prev_piece_in_semilegal_group[piece] == -1 && next_piece_in_semilegal_group[piece] != -1) {
 
 	    int identical_pieces = 0;
 	    int piece2;
@@ -3892,14 +3887,14 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	    int i;
 	    int j;
 
-	    for (piece2 = piece; piece2 != -1; piece2 = tb->next_piece_in_semilegal_group[piece2]) {
+	    for (piece2 = piece; piece2 != -1; piece2 = next_piece_in_semilegal_group[piece2]) {
 		position[identical_pieces] = piece2;
 		directions[identical_pieces] = -1;
 		identical_pieces ++;
 	    }
 	    directions[0] = 0;
 
-	    tb->permutations[piece] = (int *) calloc(factorial(identical_pieces), sizeof(int));
+	    permutations[piece] = (int *) calloc(factorial(identical_pieces), sizeof(int));
 	    j = 0;
 
 	    /* Use Johnson–Trotter algorithm to generate all permutations as a series of
@@ -3926,7 +3921,7 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
 		if (largest_i_with_nonzero_direction == -1) break;
 
-		tb->permutations[piece][j++] = (position[largest_i_with_nonzero_direction] << 8)
+		permutations[piece][j++] = (position[largest_i_with_nonzero_direction] << 8)
 		    | position[largest_i_with_nonzero_direction + directions[largest_i_with_nonzero_direction]];
 
 		direction = directions[largest_i_with_nonzero_direction];
@@ -3964,10 +3959,10 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
 
 #if DEBUG
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < num_pieces; piece ++) {
 	info("Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
-	     piece, piece_name[tb->piece_type[piece]], colors[tb->piece_color[piece]],
-	     tb->legal_squares[piece], tb->semilegal_squares[piece]);
+	     piece, piece_name[piece_type[piece]], colors[piece_color[piece]],
+	     legal_squares[piece], semilegal_squares[piece]);
     }
 #endif
 
@@ -3987,12 +3982,12 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	    index_node = (xmlpp::Element *) result[0];
 	    index = index_node->get_attribute_value("type");
 
-	    tb->index_offset = eval_to_number_or_zero(index_node, "@offset");
+	    index_offset = eval_to_number_or_zero(index_node, "@offset");
 	}
     }
 
     if (index == "") {
-	tb->index_type = DEFAULT_INDEX;
+	index_type = DEFAULT_INDEX;
 
 	tablebase->add_child_text("   ");
 	index_node = tablebase->add_child("index");
@@ -4000,7 +3995,7 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
 	index_node->set_attribute("type", index_types[DEFAULT_INDEX]);
     } else {
-	tb->index_type = index_types.at(index);
+	index_type = index_types.at(index);
     }
 
 
@@ -4008,11 +4003,10 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      * be present if we're doing a suicide analysis.
      */
 
-    if ((tb->variant == VARIANT_SUICIDE) && (tb->index_type != NAIVE_INDEX)
-	&& (tb->index_type != SIMPLE_INDEX) && (tb->index_type != COMBINADIC3_INDEX)
-	&& (tb->index_type != COMBINADIC4_INDEX)) {
-	fatal("Only 'naive', 'simple', and 'combinadic3/4' indices are compatible with 'suicide' variant\n");
-	return nullptr;
+    if ((variant == VARIANT_SUICIDE) && (index_type != NAIVE_INDEX)
+	&& (index_type != SIMPLE_INDEX) && (index_type != COMBINADIC3_INDEX)
+	&& (index_type != COMBINADIC4_INDEX)) {
+	throw "Only 'naive', 'simple', and 'combinadic3/4' indices are compatible with 'suicide' variant";
     }
 
     /* Now, compute a bitvector for all the pieces that are frozen on single squares.  This
@@ -4029,25 +4023,24 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      * still discard king moves into check by frozen pieces.
      */
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    for (piece = 0; piece < num_pieces; piece ++) {
 	for (square = 0; square < 64; square ++) {
-	    if (BITVECTOR(square) == tb->semilegal_squares[piece]) {
-		if (tb->frozen_pieces_vector & BITVECTOR(square)) {
-		    fatal("More than one piece frozen on %c%c", 'a' + COL(square), '1' + ROW(square));
-		    return nullptr;
+	    if (BITVECTOR(square) == semilegal_squares[piece]) {
+		if (frozen_pieces_vector & BITVECTOR(square)) {
+		    throw "More than one piece frozen on " + ('a' + COL(square)) + ('1' + ROW(square));
 		}
-		tb->frozen_pieces_vector |= BITVECTOR(square);
+		frozen_pieces_vector |= BITVECTOR(square);
 
 		break;
 	    }
 	}
     }
 
-    if (tb->variant != VARIANT_SUICIDE) {
-	tb->legal_squares[tb->white_king] &= ~ tb->illegal_white_king_squares;
-	tb->legal_squares[tb->black_king] &= ~ tb->illegal_black_king_squares;
-	tb->semilegal_squares[tb->white_king] &= ~ tb->illegal_white_king_squares;
-	tb->semilegal_squares[tb->black_king] &= ~ tb->illegal_black_king_squares;
+    if (variant != VARIANT_SUICIDE) {
+	legal_squares[white_king] &= ~ illegal_white_king_squares;
+	legal_squares[black_king] &= ~ illegal_black_king_squares;
+	semilegal_squares[white_king] &= ~ illegal_white_king_squares;
+	semilegal_squares[black_king] &= ~ illegal_black_king_squares;
     }
 
     /* Strip the locations of frozen pieces off the legal squares bitvectors of all the other
@@ -4058,10 +4051,10 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      * changing this code can change index encoding.
      */
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->semilegal_squares[piece] & tb->frozen_pieces_vector) != tb->semilegal_squares[piece]) {
-	    tb->legal_squares[piece] &= ~ tb->frozen_pieces_vector;
-	    tb->semilegal_squares[piece] &= ~ tb->frozen_pieces_vector;
+    for (piece = 0; piece < num_pieces; piece ++) {
+	if ((semilegal_squares[piece] & frozen_pieces_vector) != semilegal_squares[piece]) {
+	    legal_squares[piece] &= ~ frozen_pieces_vector;
+	    semilegal_squares[piece] &= ~ frozen_pieces_vector;
 	}
     }
 
@@ -4072,23 +4065,23 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      * XXX no reason to assume DTM format if the futurebases don't support it
      */
 
-    format = tablebase->get_attribute_value("format");
-    if (format != "") {
-	switch (formats.at(format)) {
+    format_str = tablebase->get_attribute_value("format");
+    if (format_str != "") {
+	switch (formats.at(format_str)) {
 	case FORMAT_ONE_BYTE_DTM:
-	    tb->format = one_byte_dtm_format;
+	    format = one_byte_dtm_format;
 	    break;
 	default:
-	    fatal("Unknown tablebase format '%s'\n", format.c_str());
-	    return nullptr;
+	    throw "Unknown tablebase format " + format_str;
 	}
     } else {
 	result = tablebase->find("//format");
 	if (! result.empty()) {
-	    if (! parse_format((xmlpp::Element *) result[0], &tb->format)) return nullptr;
+	    // XXX should parse_format throw the exception?
+	    if (! parse_format((xmlpp::Element *) result[0], &format)) throw "Can't parse format";
 	} else {
-	    if (! parse_format(tablebase, &tb->format)) {
-		tb->format = dtm_format;
+	    if (! parse_format(tablebase, &format)) {
+		format = dtm_format;
 
 		tablebase->add_child_text("   ");
 		tablebase->add_child("dtm");
@@ -4101,33 +4094,33 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
     /* Extract index symmetry (if it was specified) */
 
-    tb->symmetry = eval_to_number_or_zero(index_node, "@symmetry");
+    symmetry = eval_to_number_or_zero(index_node, "@symmetry");
 
-    if (tb->symmetry == 0) {
+    if (symmetry == 0) {
 	/* If symmetry was not explicitly specified, compute it automatically */
 
-	tb->symmetry = 8;
-	if ((tb->index_type == NAIVE_INDEX) || (tb->index_type == NAIVE2_INDEX)) {
-	    tb->symmetry = 4;
+	symmetry = 8;
+	if ((index_type == NAIVE_INDEX) || (index_type == NAIVE2_INDEX)) {
+	    symmetry = 4;
 	}
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->piece_type[piece] == PAWN) {
-		tb->symmetry = 2;
+	for (piece = 0; piece < num_pieces; piece ++) {
+	    if (piece_type[piece] == PAWN) {
+		symmetry = 2;
 	    }
-	    if (((tb->piece_type[piece] != PAWN) && (tb->legal_squares[piece] != ALL_ONES_BITVECTOR))
-		|| ((tb->piece_type[piece] == PAWN) && (tb->legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
-		tb->symmetry = 1;
+	    if (((piece_type[piece] != PAWN) && (legal_squares[piece] != ALL_ONES_BITVECTOR))
+		|| ((piece_type[piece] == PAWN) && (legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
+		symmetry = 1;
 	    }
 	}
-	if (tb->variant == VARIANT_SUICIDE) {
-	    tb->symmetry = 1;
+	if (variant == VARIANT_SUICIDE) {
+	    symmetry = 1;
 	}
 
-	index_node->set_attribute("symmetry", boost::lexical_cast<std::string>(tb->symmetry));
+	index_node->set_attribute("symmetry", boost::lexical_cast<std::string>(symmetry));
     }
 
-    if ((tb->symmetry != 1) && (tb->symmetry != 2) && (tb->symmetry != 4) && (tb->symmetry != 8)) {
-	fatal("Bad index symmetry %d\n", tb->symmetry);
+    if ((symmetry != 1) && (symmetry != 2) && (symmetry != 4) && (symmetry != 8)) {
+	fatal("Bad index symmetry %d\n", symmetry);
     }
 
     /* Symmetry is based on the location of the white king, but in a suicide analysis we might not have
@@ -4136,9 +4129,8 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      * XXX fix this and allow symmetry based on the first piece in the tablebase
      */
 
-    if ((tb->variant == VARIANT_SUICIDE) && (tb->symmetry != 1)) {
-	fatal("Can't use symmetry with 'suicide' variant (yet)\n");
-	return nullptr;
+    if ((variant == VARIANT_SUICIDE) && (symmetry != 1)) {
+	throw "Can't use symmetry with 'suicide' variant (yet)";
     }
 
     /* Check piece specification to make sure it matches symmetry
@@ -4148,26 +4140,23 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      */
 
 
-    if ((tb->symmetry == 8) && ((tb->index_type == NAIVE_INDEX) || (tb->index_type == NAIVE2_INDEX))) {
-	fatal("8-way symmetry incompatible with naive/naive2 index types\n");
-	return nullptr;
+    if ((symmetry == 8) && ((index_type == NAIVE_INDEX) || (index_type == NAIVE2_INDEX))) {
+	throw "8-way symmetry incompatible with naive/naive2 index types";
     }
 
-    if (tb->symmetry >= 4) {
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->piece_type[piece] == PAWN) {
-		fatal("Pawns not allowed with 4/8-way symmetric indices\n");
-		return nullptr;
+    if (symmetry >= 4) {
+	for (piece = 0; piece < num_pieces; piece ++) {
+	    if (piece_type[piece] == PAWN) {
+		throw "Pawns not allowed with 4/8-way symmetric indices";
 	    }
 	}
     }
 
-    if (tb->symmetry > 1) {
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (((tb->piece_type[piece] != PAWN) && (tb->legal_squares[piece] != ALL_ONES_BITVECTOR))
-		|| ((tb->piece_type[piece] == PAWN) && (tb->legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
-		fatal("Piece restrictions not allowed with symmetric indices (yet)\n");
-		return nullptr;
+    if (symmetry > 1) {
+	for (piece = 0; piece < num_pieces; piece ++) {
+	    if (((piece_type[piece] != PAWN) && (legal_squares[piece] != ALL_ONES_BITVECTOR))
+		|| ((piece_type[piece] == PAWN) && (legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
+		throw "Piece restrictions not allowed with symmetric indices (yet)";
 	    }
 	}
     }
@@ -4185,32 +4174,34 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
     for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
 	for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
 
+	    reflections[white_king_square][black_king_square] = 0;
+
 	    int reflected_white_king_square = white_king_square;
 	    int reflected_black_king_square = black_king_square;
 
-	    if (tb->symmetry >= 2) {
+	    if (symmetry >= 2) {
 		if (COL(reflected_white_king_square) >= 4) {
-		    tb->reflections[white_king_square][black_king_square] |= REFLECTION_HORIZONTAL;
+		    reflections[white_king_square][black_king_square] |= REFLECTION_HORIZONTAL;
 		    reflected_white_king_square = horizontal_reflection(reflected_white_king_square);
 		    reflected_black_king_square = horizontal_reflection(reflected_black_king_square);
 		}
 	    }
 
-	    if (tb->symmetry >= 4) {
+	    if (symmetry >= 4) {
 		if (ROW(reflected_white_king_square) >= 4) {
-		    tb->reflections[white_king_square][black_king_square] |= REFLECTION_VERTICAL;
+		    reflections[white_king_square][black_king_square] |= REFLECTION_VERTICAL;
 		    reflected_white_king_square = vertical_reflection(reflected_white_king_square);
 		    reflected_black_king_square = vertical_reflection(reflected_black_king_square);
 		}
 	    }
 
-	    if (tb->symmetry == 8) {
+	    if (symmetry == 8) {
 		if (ROW(reflected_white_king_square) > COL(reflected_white_king_square)) {
-		    tb->reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
+		    reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
 		}
 		if (ROW(reflected_white_king_square) == COL(reflected_white_king_square)) {
 		    if (ROW(reflected_black_king_square) > COL(reflected_black_king_square)) {
-			tb->reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
+			reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
 		    }
 		}
 	    }
@@ -4222,37 +4213,34 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
      * if the semilegal and legal ranges of a piece differ.
      */
 
-    if (tb->index_type <= SIMPLE_INDEX) {
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->legal_squares[piece] != tb->semilegal_squares[piece]) {
-		fatal("Non-identical overlapping piece restrictions not allowed with this index type\n");
-		return nullptr;
+    if (index_type <= SIMPLE_INDEX) {
+	for (piece = 0; piece < num_pieces; piece ++) {
+	    if (legal_squares[piece] != semilegal_squares[piece]) {
+		throw "Non-identical overlapping piece restrictions not allowed with this index type";
 	    }
 	}
     }
 
-    if (tb->index_type == NO_EN_PASSANT_INDEX) {
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+    if (index_type == NO_EN_PASSANT_INDEX) {
+	for (piece = 0; piece < num_pieces; piece ++) {
 	    int col;
-	    int row1 = (tb->piece_color[piece] == WHITE) ? 1 : 6;
-	    int row3 = (tb->piece_color[piece] == WHITE) ? 3 : 4;
-	    int row4 = (tb->piece_color[piece] == WHITE) ? 4 : 3;
-	    if (tb->piece_type[piece] != PAWN) continue;
+	    int row1 = (piece_color[piece] == WHITE) ? 1 : 6;
+	    int row3 = (piece_color[piece] == WHITE) ? 3 : 4;
+	    int row4 = (piece_color[piece] == WHITE) ? 4 : 3;
+	    if (piece_type[piece] != PAWN) continue;
 	    for (col = 0; col < 8; col ++) {
-		if (tb->legal_squares[piece]
+		if (legal_squares[piece]
 		    & (BITVECTOR(rowcol2square(row1, col)) | BITVECTOR(rowcol2square(row3, col)))) {
-		    for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
-			if (tb->piece_type[piece2] != PAWN) continue;
-			if (tb->piece_color[piece2] == tb->piece_color[piece]) continue;
+		    for (piece2 = 0; piece2 < num_pieces; piece2 ++) {
+			if (piece_type[piece2] != PAWN) continue;
+			if (piece_color[piece2] == piece_color[piece]) continue;
 			if ((col > 0)
-			    && (tb->legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col-1)))) {
-			    fatal("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible\n");
-			    return nullptr;
+			    && (legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col-1)))) {
+			    throw "Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible";
 			}
 			if ((col < 7)
-			    && (tb->legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col+1)))) {
-			    fatal("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible\n");
-			    return nullptr;
+			    && (legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col+1)))) {
+			    throw "Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible";
 			}
 		    }
 		}
@@ -4260,137 +4248,140 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	}
     }
 
-    /* Compute tb->max_index (but see next section of code where it might be modified) */
+    /* Compute max_index (but see next section of code where it might be modified) */
 
-    tb->encode_stm = true;
+    encode_stm = true;
 
-    switch (tb->index_type) {
+    total_legal_king_positions = 0;
+    for (piece = 0; piece < num_pieces; piece ++) {
+	total_legal_piece_positions[piece] = 0;
+    }
+
+    switch (index_type) {
     case NAIVE_INDEX:
 
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
-	switch (tb->symmetry) {
+	switch (symmetry) {
 	case 1:
-	    tb->max_index = (2<<(6*tb->num_pieces)) - 1;
+	    max_index = (2<<(6*num_pieces)) - 1;
 	    break;
 	case 2:
-	    tb->max_index = (2<<(6*tb->num_pieces - 1)) - 1;
+	    max_index = (2<<(6*num_pieces - 1)) - 1;
 	    break;
 	case 4:
-	    tb->max_index = (2<<(6*tb->num_pieces - 2)) - 1;
+	    max_index = (2<<(6*num_pieces - 2)) - 1;
 	    break;
 	}
 	break;
 
     case NAIVE2_INDEX:
 
-	tb->max_index = 2;
+	max_index = 2;
 
 	/* do the white king "by hand" */
-	switch (tb->symmetry) {
+	switch (symmetry) {
 	case 1:
-	    tb->max_index <<= 6;
+	    max_index <<= 6;
 	    break;
 	case 2:
-	    tb->max_index <<= 5;
+	    max_index <<= 5;
 	    break;
 	case 4:
-	    tb->max_index <<= 4;
+	    max_index <<= 4;
 	    break;
 	}
 
-	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
-	tb->next_piece_in_encoding_group[tb->white_king] = -1;
+	prev_piece_in_encoding_group[white_king] = -1;
+	next_piece_in_encoding_group[white_king] = -1;
 
 	/* now do everything else */
-	for (piece = 1; piece < tb->num_pieces; piece ++) {
+	for (piece = 1; piece < num_pieces; piece ++) {
 
-	    if ((tb->prev_piece_in_semilegal_group[piece] != -1) && (tb->next_piece_in_semilegal_group[piece] != -1)) {
-		fatal("Can't have more than two identical pieces with 'naive2' index (yet)\n");
-		return nullptr;
+	    if ((prev_piece_in_semilegal_group[piece] != -1) && (next_piece_in_semilegal_group[piece] != -1)) {
+		throw "Can't have more than two identical pieces with 'naive2' index (yet)";
 	    }
 
-	    tb->prev_piece_in_encoding_group[piece] = tb->prev_piece_in_semilegal_group[piece];
-	    tb->next_piece_in_encoding_group[piece] = tb->next_piece_in_semilegal_group[piece];
+	    prev_piece_in_encoding_group[piece] = prev_piece_in_semilegal_group[piece];
+	    next_piece_in_encoding_group[piece] = next_piece_in_semilegal_group[piece];
 
-	    if (tb->prev_piece_in_encoding_group[piece] == -1) tb->max_index <<= 6;
-	    else tb->max_index <<=5;
+	    if (prev_piece_in_encoding_group[piece] == -1) max_index <<= 6;
+	    else max_index <<=5;
 	}
-	tb->max_index --;
+	max_index --;
 
 	break;
 
     case SIMPLE_INDEX:
 
 	/* The "2" is because side-to-play is part of the position */
-	tb->max_index = 2;
+	max_index = 2;
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (piece = 0; piece < num_pieces; piece ++) {
 	    for (square = 0; square < 64; square ++) {
-		if (! (tb->legal_squares[piece] & BITVECTOR(square))) continue;
-		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
-		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
-		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
-		tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = square;
-		tb->piece_index[piece][square] = tb->total_legal_piece_positions[piece];
-		tb->total_legal_piece_positions[piece] ++;
+		if (! (legal_squares[piece] & BITVECTOR(square))) continue;
+		if ((piece == white_king) && (symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == white_king) && (symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == white_king) && (symmetry == 8) && (ROW(square) > COL(square))) continue;
+		piece_position[piece][total_legal_piece_positions[piece]] = square;
+		piece_index[piece][square] = total_legal_piece_positions[piece];
+		total_legal_piece_positions[piece] ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
-		if ((tb->piece_type[piece] == PAWN)
-		    && (((tb->piece_color[piece] == WHITE) && (ROW(square) == 3))
-			|| ((tb->piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
-		    tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = COL(square);
-		    tb->piece_index[piece][COL(square)] = tb->total_legal_piece_positions[piece];
-		    tb->total_legal_piece_positions[piece] ++;
+		if ((piece_type[piece] == PAWN)
+		    && (((piece_color[piece] == WHITE) && (ROW(square) == 3))
+			|| ((piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
+		    piece_position[piece][total_legal_piece_positions[piece]] = COL(square);
+		    piece_index[piece][COL(square)] = total_legal_piece_positions[piece];
+		    total_legal_piece_positions[piece] ++;
 		}
 	    }
-	    tb->max_index *= tb->total_legal_piece_positions[piece];
+	    max_index *= total_legal_piece_positions[piece];
 	}
 
-	tb->max_index --;
+	max_index --;
 	break;
 
     case COMPACT_INDEX:
 
 	/* The "2" is because side-to-play is part of the position */
-	tb->max_index = 2;
+	max_index = 2;
 
 	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	    if (! (tb->legal_squares[tb->white_king] & BITVECTOR(white_king_square))) continue;
+	    if (! (legal_squares[white_king] & BITVECTOR(white_king_square))) continue;
 	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		if (! (tb->legal_squares[tb->black_king] & BITVECTOR(black_king_square))) continue;
-		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
-		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
-		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
-		if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+		if (! (legal_squares[black_king] & BITVECTOR(black_king_square))) continue;
+		if ((symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+		if ((symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+		if ((symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+		if ((symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
 		    && (ROW(black_king_square) > COL(black_king_square))) continue;
 
-		if (tb->positions_with_adjacent_kings_are_illegal
+		if (positions_with_adjacent_kings_are_illegal
 		    && ! check_king_legality(white_king_square, black_king_square)) continue;
 
-		tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
-		tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
-		tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
-		tb->total_legal_king_positions ++;
+		white_king_position[total_legal_king_positions] = white_king_square;
+		black_king_position[total_legal_king_positions] = black_king_square;
+		king_index[white_king_square][black_king_square] = total_legal_king_positions;
+		total_legal_king_positions ++;
 	    }
 	}
-	tb->max_index *= tb->total_legal_king_positions;
+	max_index *= total_legal_king_positions;
 
-	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
-	tb->next_piece_in_encoding_group[tb->white_king] = -1;
-	tb->prev_piece_in_encoding_group[tb->black_king] = -1;
-	tb->next_piece_in_encoding_group[tb->black_king] = -1;
+	prev_piece_in_encoding_group[white_king] = -1;
+	next_piece_in_encoding_group[white_king] = -1;
+	prev_piece_in_encoding_group[black_king] = -1;
+	next_piece_in_encoding_group[black_king] = -1;
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (piece = 0; piece < num_pieces; piece ++) {
 
-	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	    if ((piece == white_king) || (piece == black_king)) continue;
 
-	    if ((tb->prev_piece_in_semilegal_group[piece] != -1) && (tb->next_piece_in_semilegal_group[piece] != -1)) {
-		fatal("Can't have more than two identical pieces with 'compact' index (yet)\n");
-		return nullptr;
+	    if ((prev_piece_in_semilegal_group[piece] != -1) && (next_piece_in_semilegal_group[piece] != -1)) {
+		throw "Can't have more than two identical pieces with 'compact' index (yet)";
 	    }
 
-	    tb->prev_piece_in_encoding_group[piece] = tb->prev_piece_in_semilegal_group[piece];
-	    tb->next_piece_in_encoding_group[piece] = tb->next_piece_in_semilegal_group[piece];
+	    prev_piece_in_encoding_group[piece] = prev_piece_in_semilegal_group[piece];
+	    next_piece_in_encoding_group[piece] = next_piece_in_semilegal_group[piece];
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
 	     * identical pieces assumes that both pieces occupy the same range of squares.
@@ -4398,87 +4389,87 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
 	    for (square = 0; square < 64; square ++) {
 
-		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
+		if (! (semilegal_squares[piece] & BITVECTOR(square))) continue;
 
-		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
-		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
-		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
-		tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = square;
-		tb->piece_index[piece][square] = tb->total_legal_piece_positions[piece];
-		tb->total_legal_piece_positions[piece] ++;
+		if ((piece == white_king) && (symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == white_king) && (symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == white_king) && (symmetry == 8) && (ROW(square) > COL(square))) continue;
+		piece_position[piece][total_legal_piece_positions[piece]] = square;
+		piece_index[piece][square] = total_legal_piece_positions[piece];
+		total_legal_piece_positions[piece] ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
-		if ((tb->piece_type[piece] == PAWN)
-		    && (((tb->piece_color[piece] == WHITE) && (ROW(square) == 3))
-			|| ((tb->piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
-		    tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = COL(square);
-		    tb->piece_index[piece][COL(square)] = tb->total_legal_piece_positions[piece];
-		    tb->total_legal_piece_positions[piece] ++;
+		if ((piece_type[piece] == PAWN)
+		    && (((piece_color[piece] == WHITE) && (ROW(square) == 3))
+			|| ((piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
+		    piece_position[piece][total_legal_piece_positions[piece]] = COL(square);
+		    piece_index[piece][COL(square)] = total_legal_piece_positions[piece];
+		    total_legal_piece_positions[piece] ++;
 		}
 	    }
-	    if (tb->prev_piece_in_encoding_group[piece] == -1) {
-		tb->max_index *= tb->total_legal_piece_positions[piece];
-	    } else if (tb->total_legal_piece_positions[piece]
-		       != tb->total_legal_piece_positions[tb->prev_piece_in_encoding_group[piece]]) {
+	    if (prev_piece_in_encoding_group[piece] == -1) {
+		max_index *= total_legal_piece_positions[piece];
+	    } else if (total_legal_piece_positions[piece]
+		       != total_legal_piece_positions[prev_piece_in_encoding_group[piece]]) {
 		/* Semilegal positions are the union of legal positions for an entire encoding group */
 		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
 	    } else {
-		tb->max_index *= tb->total_legal_piece_positions[piece]/2;
+		max_index *= total_legal_piece_positions[piece]/2;
 	    }
 	}
 
-	tb->max_index --;
+	max_index --;
 	break;
 
     case COMBINADIC3_INDEX:
     case COMBINADIC4_INDEX:
 
-	if ((tb->index_type == COMBINADIC4_INDEX) && tablebase_is_color_symmetric(tb)) {
+	if ((index_type == COMBINADIC4_INDEX) && tablebase_is_color_symmetric(this)) {
 	    /* Don't need side-to-play for a color symetric tablebase */
-	    tb->encode_stm = false;
-	    tb->max_index = 1;
+	    encode_stm = false;
+	    max_index = 1;
 	} else {
 	    /* The "2" is because side-to-play is part of the position */
-	    tb->encode_stm = true;
-	    tb->max_index = 2;
+	    encode_stm = true;
+	    max_index = 2;
 	}
 
-	if (tb->variant != VARIANT_SUICIDE) {
+	if (variant != VARIANT_SUICIDE) {
 	    for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-		if (! (tb->legal_squares[tb->white_king] & BITVECTOR(white_king_square))) continue;
+		if (! (legal_squares[white_king] & BITVECTOR(white_king_square))) continue;
 		for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		    if (! (tb->legal_squares[tb->black_king] & BITVECTOR(black_king_square))) continue;
-		    if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
-		    if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
-		    if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
-		    if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+		    if (! (legal_squares[black_king] & BITVECTOR(black_king_square))) continue;
+		    if ((symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+		    if ((symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+		    if ((symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+		    if ((symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
 			&& (ROW(black_king_square) > COL(black_king_square))) continue;
 
-		    if (tb->positions_with_adjacent_kings_are_illegal
+		    if (positions_with_adjacent_kings_are_illegal
 			&& ! check_king_legality(white_king_square, black_king_square)) continue;
 
-		    tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
-		    tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
-		    tb->king_index[white_king_square][black_king_square] = tb->max_index * tb->total_legal_king_positions;
-		    tb->total_legal_king_positions ++;
+		    white_king_position[total_legal_king_positions] = white_king_square;
+		    black_king_position[total_legal_king_positions] = black_king_square;
+		    king_index[white_king_square][black_king_square] = max_index * total_legal_king_positions;
+		    total_legal_king_positions ++;
 		}
 	    }
-	    tb->max_index *= tb->total_legal_king_positions;
+	    max_index *= total_legal_king_positions;
 
-	    tb->prev_piece_in_encoding_group[tb->white_king] = -1;
-	    tb->next_piece_in_encoding_group[tb->white_king] = -1;
-	    tb->prev_piece_in_encoding_group[tb->black_king] = -1;
-	    tb->next_piece_in_encoding_group[tb->black_king] = -1;
+	    prev_piece_in_encoding_group[white_king] = -1;
+	    next_piece_in_encoding_group[white_king] = -1;
+	    prev_piece_in_encoding_group[black_king] = -1;
+	    next_piece_in_encoding_group[black_king] = -1;
 	}
 
 	/* Assign encoding groups, usually groups of identical pieces. */
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (piece = 0; piece < num_pieces; piece ++) {
 
-	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	    if ((piece == white_king) || (piece == black_king)) continue;
 
-	    tb->prev_piece_in_encoding_group[piece] = tb->prev_piece_in_semilegal_group[piece];
-	    tb->next_piece_in_encoding_group[piece] = tb->next_piece_in_semilegal_group[piece];
+	    prev_piece_in_encoding_group[piece] = prev_piece_in_semilegal_group[piece];
+	    next_piece_in_encoding_group[piece] = next_piece_in_semilegal_group[piece];
 
 	    /* An important special case - handle two opposing plus-pawns by combining their
 	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
@@ -4486,43 +4477,42 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	     * pieces are mutually blocking, they must be opposing plus-pawns.
 	     */
 
-	    if ((tb->blocking_piece[piece] != -1)
-		&& (tb->blocking_piece[tb->blocking_piece[piece]] == piece)) {
+	    if ((blocking_piece[piece] != -1)
+		&& (blocking_piece[blocking_piece[piece]] == piece)) {
 
 		int piece2;
 
-		if ((tb->blocking_piece[piece] > piece) && (tb->piece_color[piece] != WHITE)) {
-		    fatal("Mutually blocking pawns must currently be specified white pawn first\n");
-		    return nullptr;
+		if ((blocking_piece[piece] > piece) && (piece_color[piece] != WHITE)) {
+		    throw "Mutually blocking pawns must currently be specified white pawn first";
 		}
 
-		if (tb->blocking_piece[piece] > piece) {
-		    if (tb->next_piece_in_semilegal_group[piece] != -1) {
+		if (blocking_piece[piece] > piece) {
+		    if (next_piece_in_semilegal_group[piece] != -1) {
 			/* should never happen, we should be blocked by a pawn of opposite color */
-			fatal("BUG: not blocked right\n");
+			throw "BUG: not blocked right";
 		    } else {
-			tb->next_piece_in_encoding_group[piece] = tb->blocking_piece[piece];
-			for (piece2 = piece; piece2 != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]) {
-			    tb->semilegal_squares[piece2]
-				|= tb->semilegal_squares[tb->blocking_piece[piece]];
+			next_piece_in_encoding_group[piece] = blocking_piece[piece];
+			for (piece2 = piece; piece2 != -1; piece2 = prev_piece_in_encoding_group[piece2]) {
+			    semilegal_squares[piece2]
+				|= semilegal_squares[blocking_piece[piece]];
 			}
 		    }
 		} else {
-		    if (tb->prev_piece_in_semilegal_group[piece] != -1) {
+		    if (prev_piece_in_semilegal_group[piece] != -1) {
 			/* should never happen, we should be blocked by a pawn of opposite color */
-			fatal("BUG: not blocked right\n");
+			throw "BUG: not blocked right";
 		    } else {
-			tb->prev_piece_in_encoding_group[piece] = tb->blocking_piece[piece];
-			for (piece2 = piece; piece2 != -1; piece2 = tb->next_piece_in_encoding_group[piece2]) {
-			    tb->semilegal_squares[piece2]
-				|= tb->semilegal_squares[tb->blocking_piece[piece]];
+			prev_piece_in_encoding_group[piece] = blocking_piece[piece];
+			for (piece2 = piece; piece2 != -1; piece2 = next_piece_in_encoding_group[piece2]) {
+			    semilegal_squares[piece2]
+				|= semilegal_squares[blocking_piece[piece]];
 			}
 		    }
 		}
 	    }
 	}
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (piece = 0; piece < num_pieces; piece ++) {
 
 	    /* If our semilegal range completely contains the semilegal range of a earlier piece,
 	     * that's overlapping, and we'll be able to remove some of our positions since they must
@@ -4536,20 +4526,20 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	     * d5, e5, a later piece restricted to de, and another later piece restricted to 45.
 	     */
 
-	    tb->last_overlapping_piece[piece] = -1;
+	    last_overlapping_piece[piece] = -1;
 
 	    for (piece2 = piece-1; piece2 >= 0; piece2 --) {
-		if ((tb->semilegal_squares[piece] & tb->semilegal_squares[piece2]) == tb->semilegal_squares[piece2]) {
-		    tb->last_overlapping_piece[piece] = piece2;
+		if ((semilegal_squares[piece] & semilegal_squares[piece2]) == semilegal_squares[piece2]) {
+		    last_overlapping_piece[piece] = piece2;
 		    break;
 		}
 	    }
 
-	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	    if ((piece == white_king) || (piece == black_king)) continue;
 
-	    if (tb->prev_piece_in_encoding_group[piece] == -1) {
+	    if (prev_piece_in_encoding_group[piece] == -1) {
 		piece_in_set = 1;
-	    } else if (tb->prev_piece_in_encoding_group[piece] == piece-1) {
+	    } else if (prev_piece_in_encoding_group[piece] == piece-1) {
 		piece_in_set ++;
 	    } else {
 		fatal("Combinadic3 index requires encoding groups to be adjacent in index\n");
@@ -4565,22 +4555,22 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
 	    for (square = 0; square < 64; square ++) {
 
-		if ((tb->semilegal_squares[piece] & BITVECTOR(square))
-		    || ((tb->piece_type[piece] == PAWN)
+		if ((semilegal_squares[piece] & BITVECTOR(square))
+		    || ((piece_type[piece] == PAWN)
 			&& (square < 8)
-			&& (tb->semilegal_squares[piece]
-			    & BITVECTOR(rowcol2square(tb->piece_color[piece] == WHITE ? 3 : 4, square))))) {
+			&& (semilegal_squares[piece]
+			    & BITVECTOR(rowcol2square(piece_color[piece] == WHITE ? 3 : 4, square))))) {
 
-		    tb->piece_value[piece][square] = tb->total_legal_piece_positions[piece];
-		    tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = square;
+		    piece_value[piece][square] = total_legal_piece_positions[piece];
+		    piece_position[piece][total_legal_piece_positions[piece]] = square;
 
-		    tb->piece_index[piece][tb->total_legal_piece_positions[piece]]
-			= choose(tb->total_legal_piece_positions[piece], piece_in_set) * tb->max_index;
+		    piece_index[piece][total_legal_piece_positions[piece]]
+			= choose(total_legal_piece_positions[piece], piece_in_set) * max_index;
 
-		    tb->total_legal_piece_positions[piece] ++;
+		    total_legal_piece_positions[piece] ++;
 		} else {
 		    /* This value should never get used. */
-		    tb->piece_value[piece][square] = ILLEGAL_POSITION;
+		    piece_value[piece][square] = ILLEGAL_POSITION;
 		}
 
 	    }
@@ -4591,42 +4581,42 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	     * decremented.
 	     */
 
-	    tb->total_legal_piece_values[piece] = tb->total_legal_piece_positions[piece];
+	    total_legal_piece_values[piece] = total_legal_piece_positions[piece];
 
-	    for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
-	    for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
-		tb->total_legal_piece_values[piece] --;
+	    for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
+	    for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
+		total_legal_piece_values[piece] --;
 	    }
 
-	    if ((tb->prev_piece_in_encoding_group[piece] != -1)
-		&& (tb->total_legal_piece_positions[piece]
-		    != tb->total_legal_piece_positions[tb->prev_piece_in_encoding_group[piece]])) {
+	    if ((prev_piece_in_encoding_group[piece] != -1)
+		&& (total_legal_piece_positions[piece]
+		    != total_legal_piece_positions[prev_piece_in_encoding_group[piece]])) {
 		fatal("BUG: Identical pieces don't have the same number of total semilegal positions\n");
 	    }
 
-	    if ((tb->prev_piece_in_encoding_group[piece] != -1)
-		&& (tb->total_legal_piece_values[piece]
-		    != tb->total_legal_piece_values[tb->prev_piece_in_encoding_group[piece]])) {
+	    if ((prev_piece_in_encoding_group[piece] != -1)
+		&& (total_legal_piece_values[piece]
+		    != total_legal_piece_values[prev_piece_in_encoding_group[piece]])) {
 		fatal("BUG: Identical pieces don't have the same number of encoding values\n");
 	    }
 
-	    if (tb->next_piece_in_encoding_group[piece] == -1) {
-		tb->max_index *= choose(tb->total_legal_piece_values[piece], piece_in_set);
+	    if (next_piece_in_encoding_group[piece] == -1) {
+		max_index *= choose(total_legal_piece_values[piece], piece_in_set);
 	    }
 
 	}
 
-	tb->max_index --;
+	max_index --;
 
 	/* Now we pad the tail end of the piece_index arrays with max_index+1.  This allows us to
 	 * search the table using std::lower_bound without having to worry about where its actual
 	 * end is, which will typically be before its physical end.
 	 */
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-	    for (int value = tb->total_legal_piece_values[piece]; value < 64; value ++) {
-		tb->piece_index[piece][value] = tb->max_index + 1;
+	for (piece = 0; piece < num_pieces; piece ++) {
+	    if ((piece == white_king) || (piece == black_king)) continue;
+	    for (int value = total_legal_piece_values[piece]; value < 64; value ++) {
+		piece_index[piece][value] = max_index + 1;
 	    }
 	}
 
@@ -4635,70 +4625,67 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
     case NO_EN_PASSANT_INDEX:
 
 	/* The "2" is because side-to-play is part of the position */
-	tb->max_index = 2;
+	max_index = 2;
 
 	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	    if (! (tb->legal_squares[tb->white_king] & BITVECTOR(white_king_square))) continue;
+	    if (! (legal_squares[white_king] & BITVECTOR(white_king_square))) continue;
 	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		if (! (tb->legal_squares[tb->black_king] & BITVECTOR(black_king_square))) continue;
-		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
-		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
-		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
-		if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+		if (! (legal_squares[black_king] & BITVECTOR(black_king_square))) continue;
+		if ((symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+		if ((symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+		if ((symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+		if ((symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
 		    && (ROW(black_king_square) > COL(black_king_square))) continue;
 
-		if (tb->positions_with_adjacent_kings_are_illegal
+		if (positions_with_adjacent_kings_are_illegal
 		    && ! check_king_legality(white_king_square, black_king_square)) continue;
 
-		tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
-		tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
-		tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
-		tb->total_legal_king_positions ++;
+		white_king_position[total_legal_king_positions] = white_king_square;
+		black_king_position[total_legal_king_positions] = black_king_square;
+		king_index[white_king_square][black_king_square] = total_legal_king_positions;
+		total_legal_king_positions ++;
 	    }
 	}
-	tb->max_index *= tb->total_legal_king_positions;
+	max_index *= total_legal_king_positions;
 
-	tb->prev_piece_in_encoding_group[tb->white_king] = -1;
-	tb->next_piece_in_encoding_group[tb->white_king] = -1;
-	tb->prev_piece_in_encoding_group[tb->black_king] = -1;
-	tb->next_piece_in_encoding_group[tb->black_king] = -1;
+	prev_piece_in_encoding_group[white_king] = -1;
+	next_piece_in_encoding_group[white_king] = -1;
+	prev_piece_in_encoding_group[black_king] = -1;
+	next_piece_in_encoding_group[black_king] = -1;
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (piece = 0; piece < num_pieces; piece ++) {
 
-	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	    if ((piece == white_king) || (piece == black_king)) continue;
 
-	    if ((tb->prev_piece_in_semilegal_group[piece] != -1) && (tb->next_piece_in_semilegal_group[piece] != -1)) {
-		fatal("Can't have more than two identical pieces with 'no-en-passant' index (yet)\n");
-		return nullptr;
+	    if ((prev_piece_in_semilegal_group[piece] != -1) && (next_piece_in_semilegal_group[piece] != -1)) {
+		throw "Can't have more than two identical pieces with 'no-en-passant' index (yet)";
 	    }
 
-	    tb->prev_piece_in_encoding_group[piece] = tb->prev_piece_in_semilegal_group[piece];
-	    tb->next_piece_in_encoding_group[piece] = tb->next_piece_in_semilegal_group[piece];
+	    prev_piece_in_encoding_group[piece] = prev_piece_in_semilegal_group[piece];
+	    next_piece_in_encoding_group[piece] = next_piece_in_semilegal_group[piece];
 
 	    /* Note that we only set blocking_piece for plus-pawns, so if two pieces are mutually
 	     * blocking, they must be opposing plus-pawns.
 	     */
 
-	    if ((tb->blocking_piece[piece] != -1)
-		&& (tb->blocking_piece[tb->blocking_piece[piece]] == piece)) {
+	    if ((blocking_piece[piece] != -1)
+		&& (blocking_piece[blocking_piece[piece]] == piece)) {
 
-		if ((tb->prev_piece_in_encoding_group[piece] != -1) || (tb->next_piece_in_encoding_group[piece] != -1)) {
-		    fatal("Can't have a doubled pawn opposed by enemy pawn (yet)\n");
-		    return nullptr;
+		if ((prev_piece_in_encoding_group[piece] != -1) || (next_piece_in_encoding_group[piece] != -1)) {
+		    throw "Can't have a doubled pawn opposed by enemy pawn (yet)";
 		}
-		if ((tb->blocking_piece[piece] > piece) && (tb->piece_color[piece] != WHITE)) {
-		    fatal("Mutually blocking pawns must currently be specified white pawn first\n");
-		    return nullptr;
+		if ((blocking_piece[piece] > piece) && (piece_color[piece] != WHITE)) {
+		    throw "Mutually blocking pawns must currently be specified white pawn first";
 		}
-		if (tb->blocking_piece[piece] > piece) {
-		    tb->next_piece_in_encoding_group[piece] = tb->blocking_piece[piece];
+		if (blocking_piece[piece] > piece) {
+		    next_piece_in_encoding_group[piece] = blocking_piece[piece];
 		} else {
-		    tb->prev_piece_in_encoding_group[piece] = tb->blocking_piece[piece];
+		    prev_piece_in_encoding_group[piece] = blocking_piece[piece];
 		}
 		/* We have to extend the semilegal squares of both blocking pawns because the
 		 * pairing is based on 2 pieces on n squares using (n)(n-1)/2 numbers.
 		 */
-		tb->semilegal_squares[piece] |= tb->semilegal_squares[tb->blocking_piece[piece]];
+		semilegal_squares[piece] |= semilegal_squares[blocking_piece[piece]];
 	    }
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
@@ -4707,14 +4694,14 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 
 	    for (square = 0; square < 64; square ++) {
 
-		if (! (tb->semilegal_squares[piece] & BITVECTOR(square))) continue;
+		if (! (semilegal_squares[piece] & BITVECTOR(square))) continue;
 
-		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
-		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
-		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
-		tb->piece_position[piece][tb->total_legal_piece_positions[piece]] = square;
-		tb->piece_index[piece][square] = tb->total_legal_piece_positions[piece];
-		tb->total_legal_piece_positions[piece] ++;
+		if ((piece == white_king) && (symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == white_king) && (symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == white_king) && (symmetry == 8) && (ROW(square) > COL(square))) continue;
+		piece_position[piece][total_legal_piece_positions[piece]] = square;
+		piece_index[piece][square] = total_legal_piece_positions[piece];
+		total_legal_piece_positions[piece] ++;
 
 		/* Unlike 'compact', we don't have to consider the en-passant case here because
 		 * we've already eliminated that as a possibility.  Also unlike 'compact', we've
@@ -4723,24 +4710,24 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 		 * total number of semilegal positions to be different for two grouped pieces.
 		 */
 	    }
-	    if (tb->prev_piece_in_encoding_group[piece] == -1) {
-		tb->max_index *= tb->total_legal_piece_positions[piece];
-	    } else if (tb->total_legal_piece_positions[piece]
-		       != tb->total_legal_piece_positions[tb->prev_piece_in_encoding_group[piece]]) {
+	    if (prev_piece_in_encoding_group[piece] == -1) {
+		max_index *= total_legal_piece_positions[piece];
+	    } else if (total_legal_piece_positions[piece]
+		       != total_legal_piece_positions[prev_piece_in_encoding_group[piece]]) {
 		/* Semilegal positions are the union of legal positions for an entire encoding group */
 		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
 	    } else {
-		tb->max_index *= tb->total_legal_piece_positions[piece]/2;
+		max_index *= total_legal_piece_positions[piece]/2;
 	    }
 	}
 
-	tb->max_index --;
+	max_index --;
 	break;
 
     }
 
-    tb->max_index += tb->index_offset;
-    tb->max_uninverted_index = tb->max_index;
+    max_index += index_offset;
+    max_uninverted_index = max_index;
 
     /* Fetch any prune enable elements */
 
@@ -4755,12 +4742,12 @@ tablebase_t * parse_XML_into_tablebase(xmlpp::Document * doc)
 	    if ((color == -1) || (type == -1)) {
 		fatal("Illegal prune-enable\n");
 	    } else {
-		tb->prune_enable[color] |= type;
+		prune_enable[color] |= type;
 	    }
 	}
     }
 
-    return (fatal_errors == starting_fatal_errors) ? tb : nullptr;
+    //return (fatal_errors == starting_fatal_errors) ? tb : nullptr;
 }
 
 xmlpp::Element * create_GenStats_node(std::string name)
@@ -4777,18 +4764,12 @@ xmlpp::Element * create_GenStats_node(std::string name)
 
 tablebase_t * parse_XML_control_file(char *filename)
 {
-    xmlpp::DtdValidator dtd;
-    xmlpp::Document * doc;
     xmlpp::NodeSet result;
     tablebase_t *tb;
 
     char hostname[256];		/* XXX hardwired max */
     struct hostent *he;
     char strbuf[256];
-
-    /* load the DTD from memory */
-
-    dtd.parse_memory(tablebase_dtd);
 
     /* load the control file from the specified filename or URL */
 
@@ -4802,35 +4783,15 @@ tablebase_t * parse_XML_control_file(char *filename)
     //instream.push(io::gzip_decompressor());
     instream.push(input_file);
 
-    /* DomParser will destroy its document when it's destroyed, so we need to allocate it on the
-     * heap and keep it around with the tablebase.
-     */
     // XXX this might throw an exception
-    xmlpp::DomParser * parser = new xmlpp::DomParser;
-    parser->parse_stream(instream);
-
-    doc = parser->get_document();
-
-    /* check if validation suceeded */
-
-    if (! dtd.validate(doc)) {
-	fatal("'%s' failed XML validatation\n", filename);
-	return nullptr;
-    }
-
-    tb = parse_XML_into_tablebase(doc);
-    if (tb == nullptr) return nullptr;
-
-    /* We don't free the XML doc because the tablebase struct contains a pointer to it */
-
-    //xmlFreeDtd(dtd);
+    tb = new tablebase(& instream);
 
     /* Now, check to see if we already have a generation-statistics element, which would mean this
      * is a restart.  If so, figure out (XXX) where we're going to restart.  In any event, add a new
      * generation-statistics element for the current run, and populate it.
      */
 
-    auto tablebase = doc->get_root_node();
+    auto tablebase = tb->xml->get_root_node();
     result = tablebase->find("//generation-statistics");
 
     if (result.empty()) {
@@ -4871,7 +4832,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.868 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.869 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5068,17 +5029,7 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
     instream->push(io::gzip_decompressor());
     instream->push(*input_file);
 
-    /* DomParser will destroy its document when it's destroyed, so we need to allocate it on the
-     * heap and keep it around with the tablebase.
-     *
-     * XXX keep it around with the tablebase
-     */
-
-    xmlpp::DomParser * parser = new xmlpp::DomParser;
-
-    parser->parse_stream(*instream);
-
-    tablebase_t * tb = parse_XML_into_tablebase(parser->get_document());
+    tablebase_t * tb = new tablebase(instream);
 
     if (tb == nullptr) {
 	fatal("Futurebase preload failed: '%s'\n", filename.c_str());
@@ -5867,7 +5818,7 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
     tablebase_t fake_tb;
     local_position_t fake_position;
 
-    memset(&fake_tb, 0, sizeof(fake_tb));
+    //memset(&fake_tb, 0, sizeof(fake_tb));
     memset(&fake_position, 0, sizeof(fake_position));
 
     fake_position.side_to_move = global->side_to_move;
@@ -13671,7 +13622,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.868 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.869 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
