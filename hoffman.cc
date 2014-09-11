@@ -762,8 +762,6 @@ typedef struct tablebase {
     struct piece pieces[MAX_PIECES];
 
     uint64_t frozen_pieces_vector;
-    uint64_t illegal_white_king_squares;
-    uint64_t illegal_black_king_squares;
 
     bool encode_stm;
 
@@ -3870,6 +3868,8 @@ tablebase::tablebase(std::istream *instream)
 
     for (piece = 0; piece < num_pieces; piece ++) {
 
+	pieces[piece].permutations = nullptr;
+
 	if (pieces[piece].prev_piece_in_semilegal_group == -1 && pieces[piece].next_piece_in_semilegal_group != -1) {
 
 	    int identical_pieces = 0;
@@ -4010,9 +4010,10 @@ tablebase::tablebase(std::istream *instream)
      * piece?  Well, the answer is that if we use this as a futurebase in a later analysis, the king
      * could possibly be in check as we transition between tablebases.  So first I put an option in
      * to turn off this feature.  I'm now convinced that it was such a bad idea that I've removed it
-     * from the code (1.854).  Even though we consider positions where the king is in check, we
-     * still discard king moves into check by frozen pieces.
+     * from the code (1.854).
      */
+
+    frozen_pieces_vector = 0;
 
     for (piece = 0; piece < num_pieces; piece ++) {
 	for (square = 0; square < 64; square ++) {
@@ -4025,13 +4026,6 @@ tablebase::tablebase(std::istream *instream)
 		break;
 	    }
 	}
-    }
-
-    if (variant != VARIANT_SUICIDE) {
-	pieces[white_king].legal_squares &= ~ illegal_white_king_squares;
-	pieces[black_king].legal_squares &= ~ illegal_black_king_squares;
-	pieces[white_king].semilegal_squares &= ~ illegal_white_king_squares;
-	pieces[black_king].semilegal_squares &= ~ illegal_black_king_squares;
     }
 
     /* Strip the locations of frozen pieces off the legal squares bitvectors of all the other
@@ -4820,7 +4814,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.873 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.874 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5017,10 +5011,11 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
     instream->push(io::gzip_decompressor());
     instream->push(*input_file);
 
-    tablebase_t * tb = new tablebase(instream);
-
-    if (tb == nullptr) {
-	fatal("Futurebase preload failed: '%s'\n", filename.c_str());
+    tablebase_t * tb;
+    try {
+	tb = new tablebase(instream);
+    } catch (const char * msg) {
+	fatal("%s: futurebase preload failed: %s\n", filename.c_str(), msg);
 	return nullptr;
     }
 
@@ -10427,15 +10422,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			if (movementptr->vector & tb->frozen_pieces_vector) break;
 
-			/* Don't assign futuremoves to king moves onto illegal squares (those that
-			 * would place the king in check from a frozen piece)
-			 */
-
-			if ((piece == tb->white_king)
-			    && (tb->illegal_white_king_squares & BITVECTOR(movementptr->square))) continue;
-			if ((piece == tb->black_king)
-			    && (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
-
 			/* If the piece is moving outside its semilegal squares, it's a futuremove.
 			 * If it's moving from a legal square to a semilegal square, it's also a
 			 * futuremove... except for a special case.  Obviously the other piece in
@@ -11611,13 +11597,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
 
-			/* Completely discard king moves into check by frozen pieces */
-
-			if ((piece == tb->white_king)
-			    && (tb->illegal_white_king_squares & BITVECTOR(movementptr->square))) continue;
-			if ((piece == tb->black_king)
-			    && (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
-
 			/* Move the piece, so we can test the new position for check */
 
 			position.piece_position[piece] = movementptr->square;
@@ -11677,13 +11656,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     * We also check to see if the capture was against the enemy king! in which case
 		     * this position is a PNTM-mated.
 		     */
-
-		    /* Completely discard king moves into check by frozen pieces */
-
-		    if ((piece == tb->white_king)
-			&& (tb->illegal_white_king_squares & BITVECTOR(movementptr->square))) continue;
-		    if ((piece == tb->black_king)
-			&& (tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
 
 		    if ((movementptr->vector & position.PTM_vector) == 0) {
 
@@ -12621,13 +12593,6 @@ void verify_tablebase_internally_thread(void)
 		    for (movementptr = movements[current_tb->pieces[piece].piece_type][origin_square][dir];
 			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
-
-			/* Completely discard king moves into check by frozen pieces */
-
-			if ((piece == current_tb->white_king)
-			    && (current_tb->illegal_white_king_squares & BITVECTOR(movementptr->square))) continue;
-			if ((piece == current_tb->black_king)
-			    && (current_tb->illegal_black_king_squares & BITVECTOR(movementptr->square))) continue;
 
 			/* Move the piece, so we can test the new position for check */
 
@@ -13610,7 +13575,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.873 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.874 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
