@@ -20,5 +20,5 @@
 <prune color="black" move="PxR=?" type="concede"/>
 <prune color="black" move="P=[RNB]" type="discard"/>
 
-<output filename ="krkrp_.htb"/>
+<output filename ="ivan12.htb"/>
 </tablebase>
