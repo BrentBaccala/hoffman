@@ -646,6 +646,69 @@ bimap futurebase_types =
 std::map<Glib::ustring, int> variant_names =
     {{"", VARIANT_NORMAL}, {"normal", VARIANT_NORMAL}, {"suicide", VARIANT_SUICIDE}};
 
+struct piece {
+
+    short piece_type;
+    short color;
+
+    /* Pieces can restricted according to which squares they are allowed to move on.
+     *
+     * Legal squares are just that - squares that a piece is allowed to be on.
+     *
+     * Semilegal squares are squares that might be legal for a given piece, but we can't be sure
+     * until we've considered other pieces in the position as well.  This becomes a factor when
+     * we've got multiple identical pieces with overlapping, non-identical move restrictions.
+     * Consider, for example, a tablebase with two rooks: one unrestricted, the other restricted to
+     * its back rank.  Let's say we're moving a rook off the back rank.  If the other rook is on the
+     * back rank, then the move is legal.  If the other rook is somewhere else, then the move would
+     * be illegal.  So we make the entire board "semilegal" for both rooks, process the move
+     * normally, and only when it's time to convert the entire position to an index in the tablebase
+     * do we actually decide if the position is fully legal.
+     *
+     * Semilegal groups are groups of pieces with the same color and type, and the same semilegal
+     * squares.  For each piece type of each color, semilegal groups partition the board.  If two
+     * otherwise identical pieces have move restrictions that don't overlap (so they can't exchange
+     * places), then they're in different semilegal groups.
+     *
+     * Encoding groups are encoded together into the index.  Only their positions are encoded, not
+     * their identities.  Thus, encoding groups are usually semilegal pieces, but in the
+     * 'no-en-passant' and 'combinadic3' schemes, pawns restricted to a single file using plus
+     * syntax are grouped, even if they are not the same color.  They can't pass each other because
+     * there are no captures within a tablebase, so the color ordering of the pawns on the file
+     * can't change.
+     *
+     * Some of the combinadic indexing schemes use "overlapping" pieces, which happens when a
+     * piece's semilegal range completely contains the semilegal range of a earlier piece.  We'll be
+     * able to remove some of our positions since they must be occupied by the earlier piece.
+     */
+
+    uint64_t legal_squares;
+    uint64_t semilegal_squares;
+    int prev_piece_in_semilegal_group;
+    int next_piece_in_semilegal_group;
+    int prev_piece_in_encoding_group;
+    int next_piece_in_encoding_group;
+
+    int last_overlapping_piece;
+
+    int blocking_piece;
+
+    int color_symmetric_transpose;
+
+    int total_legal_positions;
+    int total_legal_piece_values;
+    int piece_position[64];
+    index_t index[64];
+    int value[64];
+
+    int *permutations;
+
+    /* For each square on the board and piece in the futurebase, record the first piece in the
+     * corresponding local semilegal group.
+     */
+    int matching_local_semilegal_group[64];
+};
+
 typedef struct tablebase {
     int variant;
     int index_type;
@@ -689,11 +752,6 @@ typedef struct tablebase {
     int missing_non_pawn;
     int promotion;
 
-    /* For each square on the board and piece in the futurebase, record the first piece in the
-     * corresponding local semilegal group.
-     */
-    int matching_local_semilegal_group[MAX_PIECES][64];
-
     xmlpp::DomParser parser;
     xmlpp::Document * xml;
 
@@ -701,66 +759,13 @@ typedef struct tablebase {
 
     int num_pieces;
     short num_pieces_by_color[2];
-    short piece_type[MAX_PIECES];
-    short piece_color[MAX_PIECES];
-
-    int next_identical_piece[MAX_PIECES];
-
-    /* Pieces can restricted according to which squares they are allowed to move on.
-     *
-     * Legal squares are just that - squares that a piece is allowed to be on.
-     *
-     * Semilegal squares are squares that might be legal for a given piece, but we can't be sure
-     * until we've considered other pieces in the position as well.  This becomes a factor when
-     * we've got multiple identical pieces with overlapping, non-identical move restrictions.
-     * Consider, for example, a tablebase with two rooks: one unrestricted, the other restricted to
-     * its back rank.  Let's say we're moving a rook off the back rank.  If the other rook is on the
-     * back rank, then the move is legal.  If the other rook is somewhere else, then the move would
-     * be illegal.  So we make the entire board "semilegal" for both rooks, process the move
-     * normally, and only when it's time to convert the entire position to an index in the tablebase
-     * do we actually decide if the position is fully legal.
-     *
-     * Semilegal groups are groups of pieces with the same color and type, and the same semilegal
-     * squares.  For each piece type of each color, semilegal groups partition the board.  If two
-     * otherwise identical pieces have move restrictions that don't overlap (so they can't exchange
-     * places), then they're in different semilegal groups.
-     *
-     * Encoding groups are encoded together into the index.  Only their positions are encoded, not
-     * their identities.  Thus, encoding groups are usually semilegal pieces, but in the
-     * 'no-en-passant' and 'combinadic3' schemes, pawns restricted to a single file using plus
-     * syntax are grouped, even if they are not the same color.  They can't pass each other because
-     * there are no captures within a tablebase, so the color ordering of the pawns on the file
-     * can't change.
-     *
-     * Some of the combinadic indexing schemes use "overlapping" pieces, which happens when a
-     * piece's semilegal range completely contains the semilegal range of a earlier piece.  We'll be
-     * able to remove some of our positions since they must be occupied by the earlier piece.
-     */
-
-    uint64_t legal_squares[MAX_PIECES];
-    uint64_t semilegal_squares[MAX_PIECES];
-    int prev_piece_in_semilegal_group[MAX_PIECES];
-    int next_piece_in_semilegal_group[MAX_PIECES];
-    int prev_piece_in_encoding_group[MAX_PIECES];
-    int next_piece_in_encoding_group[MAX_PIECES];
-
-    int last_overlapping_piece[MAX_PIECES];
+    struct piece pieces[MAX_PIECES];
 
     uint64_t frozen_pieces_vector;
-    int blocking_piece[MAX_PIECES];
     uint64_t illegal_white_king_squares;
     uint64_t illegal_black_king_squares;
 
     bool encode_stm;
-    int color_symmetric_transpose[MAX_PIECES];
-
-    int total_legal_piece_positions[MAX_PIECES];
-    int total_legal_piece_values[MAX_PIECES];
-    int piece_position[MAX_PIECES][64];
-    index_t piece_index[MAX_PIECES][64];
-    int piece_value[MAX_PIECES][64];
-
-    int *permutations[MAX_PIECES];
 
     int prune_enable[2];		/* one for each color */
     int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
@@ -1716,10 +1721,10 @@ index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	 * this is completely legit.
 	 */
-	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->piece_color[piece] == WHITE)
+	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+	    && (((tb->pieces[piece].color == WHITE)
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->piece_color[piece] == BLACK)
+		|| ((tb->pieces[piece].color == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 	    index |= COL(pos->en_passant_square) << shift_count;
 	    shift_count += 6;  /* because 2^6=64 */
@@ -1767,9 +1772,9 @@ bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_positio
 	}
 
 	/* En passant */
-	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
+	if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
 	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-	    if (tb->piece_color[piece] == WHITE) {
+	    if (tb->pieces[piece].color == WHITE) {
 		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = square + 2*8;
 		square += 3*8;
@@ -1785,7 +1790,7 @@ bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_positio
 	 * not.
 	 */
 
-	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
+	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
 	    return false;
 	}
 
@@ -1796,13 +1801,13 @@ bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_positio
 
 	/* Identical pieces have to appear in sorted order. */
 
-	if ((tb->prev_piece_in_semilegal_group[piece] != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->prev_piece_in_semilegal_group[piece]])) {
+	if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
 	    return false;
 	}
 
 	p->board_vector |= BITVECTOR(square);
-	if (tb->piece_color[piece] == p->side_to_move) {
+	if (tb->pieces[piece].color == p->side_to_move) {
 	    p->PTM_vector |= BITVECTOR(square);
 	}
     }
@@ -1844,10 +1849,10 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	 * this is completely legit.
 	 */
-	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->piece_color[piece] == WHITE)
+	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+	    && (((tb->pieces[piece].color == WHITE)
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->piece_color[piece] == BLACK)
+		|| ((tb->pieces[piece].color == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 	    vals[piece] = COL(pos->en_passant_square);
 	} else {
@@ -1870,17 +1875,17 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (tb->next_piece_in_encoding_group[piece] != -1) {
+	if (tb->pieces[piece].next_piece_in_encoding_group != -1) {
 
-	    if (((vals[piece] < vals[tb->next_piece_in_encoding_group[piece]])
-		 && (vals[piece] + 32 < vals[tb->next_piece_in_encoding_group[piece]]))
-		|| ((vals[tb->next_piece_in_encoding_group[piece]] < vals[piece])
-		    && (vals[tb->next_piece_in_encoding_group[piece]] + 32 >= vals[piece]))) {
+	    if (((vals[piece] < vals[tb->pieces[piece].next_piece_in_encoding_group])
+		 && (vals[piece] + 32 < vals[tb->pieces[piece].next_piece_in_encoding_group]))
+		|| ((vals[tb->pieces[piece].next_piece_in_encoding_group] < vals[piece])
+		    && (vals[tb->pieces[piece].next_piece_in_encoding_group] + 32 >= vals[piece]))) {
 
 		unsigned char val;
 		val = vals[piece];
-		vals[piece] = vals[tb->next_piece_in_encoding_group[piece]];
-		vals[tb->next_piece_in_encoding_group[piece]] = val;
+		vals[piece] = vals[tb->pieces[piece].next_piece_in_encoding_group];
+		vals[tb->pieces[piece].next_piece_in_encoding_group] = val;
 	    }
 	}
 
@@ -1896,14 +1901,14 @@ index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
 	    shift_count += 2;
 	    index |= COL(vals[piece]) << shift_count;
 	    shift_count += 2;
-	} else if (tb->prev_piece_in_encoding_group[piece] == -1) {
+	} else if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
 	    index |= vals[piece] << shift_count;
 	    shift_count += 6;  /* because 2^6=64 */
 	} else {
-	    if (vals[piece] > vals[tb->prev_piece_in_encoding_group[piece]]) {
-		index |= (vals[piece] - vals[tb->prev_piece_in_encoding_group[piece]] - 1) << shift_count;
+	    if (vals[piece] > vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
+		index |= (vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1) << shift_count;
 	    } else {
-		index |= (64 + vals[piece] - vals[tb->prev_piece_in_encoding_group[piece]] - 1) << shift_count;
+		index |= (64 + vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1) << shift_count;
 	    }
 	    shift_count += 5; /* the whole point of "naive2" */
 	}
@@ -1928,14 +1933,14 @@ bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 	} else if ((tb->symmetry == 4) && (piece == tb->white_king)) {
 	    vals[piece] = rowcol2square(index & 3, (index >> 2) & 3);
 	    index >>= 4;
-	} else if (tb->prev_piece_in_encoding_group[piece] == -1) {
+	} else if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
 	    vals[piece] = index & 63;
 	    index >>= 6;
 	} else {
-	    vals[piece] = (vals[tb->prev_piece_in_encoding_group[piece]] + (index & 31) + 1) % 64;
+	    vals[piece] = (vals[tb->pieces[piece].prev_piece_in_encoding_group] + (index & 31) + 1) % 64;
 	    index >>= 5;
 
-	    if (vals[piece] < vals[tb->prev_piece_in_encoding_group[piece]]) {
+	    if (vals[piece] < vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
 		unsigned char val;
 
 		/* One of the important tasks of any index_to_local_position() function is to return
@@ -1946,11 +1951,11 @@ bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 		 * that the "<" and the ">=" match up just right in the previous function.
 		 */
 
-		if (vals[tb->prev_piece_in_encoding_group[piece]] - vals[piece] == 32) return false;
+		if (vals[tb->pieces[piece].prev_piece_in_encoding_group] - vals[piece] == 32) return false;
 
 		val = vals[piece];
-		vals[piece] = vals[tb->prev_piece_in_encoding_group[piece]];
-		vals[tb->prev_piece_in_encoding_group[piece]] = val;
+		vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
+		vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
 	    }
 	}
 
@@ -1961,9 +1966,9 @@ bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 	int square = vals[piece];
 
 	/* En passant */
-	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
+	if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
 	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-	    if (tb->piece_color[piece] == WHITE) {
+	    if (tb->pieces[piece].color == WHITE) {
 		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = square + 2*8;
 		square += 3*8;
@@ -1979,7 +1984,7 @@ bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 	 * not.
 	 */
 
-	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
+	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
 	    return false;
 	}
 
@@ -1990,13 +1995,13 @@ bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 
 	/* Identical pieces have to appear in sorted order. */
 
-	if ((tb->prev_piece_in_semilegal_group[piece] != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->prev_piece_in_semilegal_group[piece]])) {
+	if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
 	    return false;
 	}
 
 	p->board_vector |= BITVECTOR(square);
-	if (tb->piece_color[piece] == p->side_to_move) {
+	if (tb->pieces[piece].color == p->side_to_move) {
 	    p->PTM_vector |= BITVECTOR(square);
 	}
     }
@@ -2032,20 +2037,20 @@ index_t local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	index *= tb->total_legal_piece_positions[piece];
+	index *= tb->pieces[piece].total_legal_positions;
 
 	/* The way we encode en passant capturable pawns is use the column number of the
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	 * this is completely legit.
 	 */
-	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->piece_color[piece] == WHITE)
+	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+	    && (((tb->pieces[piece].color == WHITE)
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->piece_color[piece] == BLACK)
+		|| ((tb->pieces[piece].color == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    index += tb->piece_index[piece][COL(pos->en_passant_square)];
+	    index += tb->pieces[piece].index[COL(pos->en_passant_square)];
 	} else {
-	    index += tb->piece_index[piece][pos->piece_position[piece]];
+	    index += tb->pieces[piece].index[pos->piece_position[piece]];
 	}
     }
 
@@ -2066,13 +2071,13 @@ bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
-	int square = tb->piece_position[piece][index % tb->total_legal_piece_positions[piece]];
-	index /= tb->total_legal_piece_positions[piece];
+	int square = tb->pieces[piece].piece_position[index % tb->pieces[piece].total_legal_positions];
+	index /= tb->pieces[piece].total_legal_positions;
 
 	/* En passant */
-	if ((tb->piece_type[piece] == PAWN) && (square < 8)) {
+	if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
 	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-	    if (tb->piece_color[piece] == WHITE) {
+	    if (tb->pieces[piece].color == WHITE) {
 		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = square + 2*8;
 		square += 3*8;
@@ -2085,7 +2090,7 @@ bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 
 	/* This should never happen. */
 
-	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
+	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
 	    fatal("Illegal piece position in simple_index_to_local_position!\n");
 	    return false;
 	}
@@ -2096,7 +2101,7 @@ bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 	}
 
 	p->board_vector |= BITVECTOR(square);
-	if (tb->piece_color[piece] == p->side_to_move) {
+	if (tb->pieces[piece].color == p->side_to_move) {
 	    p->PTM_vector |= BITVECTOR(square);
 	}
     }
@@ -2104,8 +2109,8 @@ bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_positi
     /* Identical pieces have to appear in sorted order. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->prev_piece_in_semilegal_group[piece] != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->prev_piece_in_semilegal_group[piece]])) {
+	if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
 	    return false;
 	}
     }
@@ -2193,14 +2198,14 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	 * this is completely legit.
 	 */
-	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->piece_color[piece] == WHITE)
+	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+	    && (((tb->pieces[piece].color == WHITE)
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->piece_color[piece] == BLACK)
+		|| ((tb->pieces[piece].color == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    vals[piece] = tb->piece_index[piece][COL(pos->en_passant_square)];
+	    vals[piece] = tb->pieces[piece].index[COL(pos->en_passant_square)];
 	} else {
-	    vals[piece] = tb->piece_index[piece][pos->piece_position[piece]];
+	    vals[piece] = tb->pieces[piece].index[pos->piece_position[piece]];
 	}
     }
 
@@ -2228,32 +2233,32 @@ index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->next_piece_in_encoding_group[piece] != -1) {
+	if (tb->pieces[piece].next_piece_in_encoding_group != -1) {
 
-	    if (((vals[piece] < vals[tb->next_piece_in_encoding_group[piece]])
-		 && (vals[piece] + tb->total_legal_piece_positions[piece]/2
-		     < vals[tb->next_piece_in_encoding_group[piece]]))
-		|| ((vals[tb->next_piece_in_encoding_group[piece]] < vals[piece])
-		    && (vals[tb->next_piece_in_encoding_group[piece]] + tb->total_legal_piece_positions[piece]/2
+	    if (((vals[piece] < vals[tb->pieces[piece].next_piece_in_encoding_group])
+		 && (vals[piece] + tb->pieces[piece].total_legal_positions/2
+		     < vals[tb->pieces[piece].next_piece_in_encoding_group]))
+		|| ((vals[tb->pieces[piece].next_piece_in_encoding_group] < vals[piece])
+		    && (vals[tb->pieces[piece].next_piece_in_encoding_group] + tb->pieces[piece].total_legal_positions/2
 			>= vals[piece]))) {
 
 		unsigned char val;
 		val = vals[piece];
-		vals[piece] = vals[tb->next_piece_in_encoding_group[piece]];
-		vals[tb->next_piece_in_encoding_group[piece]] = val;
+		vals[piece] = vals[tb->pieces[piece].next_piece_in_encoding_group];
+		vals[tb->pieces[piece].next_piece_in_encoding_group] = val;
 	    }
 	}
 
-	if (tb->prev_piece_in_encoding_group[piece] == -1) {
-	    index *= tb->total_legal_piece_positions[piece];
+	if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+	    index *= tb->pieces[piece].total_legal_positions;
 	    index += vals[piece];
 	} else {
-	    index *= tb->total_legal_piece_positions[piece] / 2;
+	    index *= tb->pieces[piece].total_legal_positions / 2;
 
-	    if (vals[piece] > vals[tb->prev_piece_in_encoding_group[piece]]) {
-		index += (vals[piece] - vals[tb->prev_piece_in_encoding_group[piece]] - 1);
+	    if (vals[piece] > vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
+		index += (vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1);
 	    } else {
-		index += (tb->total_legal_piece_positions[piece] + vals[piece] - vals[tb->prev_piece_in_encoding_group[piece]] - 1);
+		index += (tb->pieces[piece].total_legal_positions + vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1);
 	    }
 	}
     }
@@ -2286,12 +2291,12 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->prev_piece_in_encoding_group[piece] == -1) {
-	    vals[piece] = index % tb->total_legal_piece_positions[piece];
-	    index /= tb->total_legal_piece_positions[piece];
+	if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+	    vals[piece] = index % tb->pieces[piece].total_legal_positions;
+	    index /= tb->pieces[piece].total_legal_positions;
 	} else {
-	    vals[piece] = index % (tb->total_legal_piece_positions[piece]/2);
-	    index /= tb->total_legal_piece_positions[piece]/2;
+	    vals[piece] = index % (tb->pieces[piece].total_legal_positions/2);
+	    index /= tb->pieces[piece].total_legal_positions/2;
 	}
     }
 
@@ -2305,10 +2310,10 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->prev_piece_in_encoding_group[piece] != -1) {
+	if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
 
-	    vals[piece] += vals[tb->prev_piece_in_encoding_group[piece]] + 1;
-	    vals[piece] %= tb->total_legal_piece_positions[piece];
+	    vals[piece] += vals[tb->pieces[piece].prev_piece_in_encoding_group] + 1;
+	    vals[piece] %= tb->pieces[piece].total_legal_positions;
 
 	    /* One of the important tasks of any index_to_local_position() function is to return
 	     * false on all but one of the indices that correspond to identical positions.  Here,
@@ -2319,16 +2324,16 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 	     * function.
 	     */
 
-	    if (vals[tb->prev_piece_in_encoding_group[piece]] - vals[piece]
-		== tb->total_legal_piece_positions[piece]/2) return false;
+	    if (vals[tb->pieces[piece].prev_piece_in_encoding_group] - vals[piece]
+		== tb->pieces[piece].total_legal_positions/2) return false;
 	}
 
-	vals[piece] = tb->piece_position[piece][vals[piece]];
+	vals[piece] = tb->pieces[piece].piece_position[vals[piece]];
 
 	/* En passant */
-	if ((tb->piece_type[piece] == PAWN) && (vals[piece] < 8)) {
+	if ((tb->pieces[piece].piece_type == PAWN) && (vals[piece] < 8)) {
 	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-	    if (tb->piece_color[piece] == WHITE) {
+	    if (tb->pieces[piece].color == WHITE) {
 		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
 		p->en_passant_square = vals[piece] + 2*8;
 		vals[piece] += 3*8;
@@ -2357,21 +2362,21 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	if (tb->prev_piece_in_encoding_group[piece] != -1) {
+	if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
 
-	    if (vals[piece] < vals[tb->prev_piece_in_encoding_group[piece]]) {
+	    if (vals[piece] < vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
 		uint8_t val = vals[piece];
-		vals[piece] = vals[tb->prev_piece_in_encoding_group[piece]];
-		vals[tb->prev_piece_in_encoding_group[piece]] = val;
+		vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
+		vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
 	    }
 
-	    if (! (tb->legal_squares[piece] & BITVECTOR(vals[piece]))
-		|| ! (tb->legal_squares[tb->prev_piece_in_encoding_group[piece]]
-		      & BITVECTOR(vals[tb->prev_piece_in_encoding_group[piece]]))) {
+	    if (! (tb->pieces[piece].legal_squares & BITVECTOR(vals[piece]))
+		|| ! (tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].legal_squares
+		      & BITVECTOR(vals[tb->pieces[piece].prev_piece_in_encoding_group]))) {
 
 		uint8_t val = vals[piece];
-		vals[piece] = vals[tb->prev_piece_in_encoding_group[piece]];
-		vals[tb->prev_piece_in_encoding_group[piece]] = val;
+		vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
+		vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
 	    }
 	}
     }
@@ -2386,7 +2391,7 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 	 * positions to encode them with.
 	 */
 
-	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
+	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
 	    /* fprintf(stderr, "Illegal piece position in compact_index_to_local_position!\n"); */
 	    return false;
 	}
@@ -2397,7 +2402,7 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 	}
 
 	p->board_vector |= BITVECTOR(square);
-	if (tb->piece_color[piece] == p->side_to_move) {
+	if (tb->pieces[piece].color == p->side_to_move) {
 	    p->PTM_vector |= BITVECTOR(square);
 	}
     }
@@ -2417,8 +2422,8 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
     /* Identical pieces have to appear in sorted order. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->prev_piece_in_semilegal_group[piece] != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->prev_piece_in_semilegal_group[piece]])) {
+	if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+	    && (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
 	    return false;
 	}
     }
@@ -2481,15 +2486,15 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	 * this is completely legit.
 	 */
-	if ((tb->piece_type[piece] == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->piece_color[piece] == WHITE)
+	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+	    && (((tb->pieces[piece].color == WHITE)
 		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->piece_color[piece] == BLACK)
+		|| ((tb->pieces[piece].color == BLACK)
 		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    vals[piece] = tb->piece_value[piece][COL(pos->en_passant_square)];
+	    vals[piece] = tb->pieces[piece].value[COL(pos->en_passant_square)];
 	    continue;  /* Have to do this, as we never change en-passant values */
 	} else {
-	    vals[piece] = tb->piece_value[piece][pos->piece_position[piece]];
+	    vals[piece] = tb->pieces[piece].value[pos->piece_position[piece]];
 	}
 
 	/* Remove positions for overlapping pieces, but we don't touch the kings, and we don't
@@ -2507,9 +2512,9 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
+	for (piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
 
-	for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
+	for (piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
 	    if (pos->piece_position[piece] > pos->piece_position[piece2]) decrement ++;
 	}
 
@@ -2520,10 +2525,10 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
-	while ((tb->prev_piece_in_encoding_group[piece2] != -1)
-	       && (vals[piece2] < vals[tb->prev_piece_in_encoding_group[piece2]])) {
-	    transpose_array(vals, piece2, tb->prev_piece_in_encoding_group[piece2]);
-	    piece2 = tb->prev_piece_in_encoding_group[piece2];
+	while ((tb->pieces[piece2].prev_piece_in_encoding_group != -1)
+	       && (vals[piece2] < vals[tb->pieces[piece2].prev_piece_in_encoding_group])) {
+	    transpose_array(vals, piece2, tb->pieces[piece2].prev_piece_in_encoding_group);
+	    piece2 = tb->pieces[piece2].prev_piece_in_encoding_group;
 	}
     }
 
@@ -2535,7 +2540,7 @@ index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *p
 
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	index += tb->piece_index[piece][vals[piece]];
+	index += tb->pieces[piece].index[vals[piece]];
     }
 
     /* Kings have their own encoding table */
@@ -2576,7 +2581,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
 
-    /* Binary search for the largest value in piece_index[] that is less than or equal to the
+    /* Binary search for the largest value in index[] that is less than or equal to the
      * (running) index, subtract it out of the index, and store the encoding values.  This loop has
      * to run in reverse order over the pieces, since a combinadic encoding must be backed out from
      * the largest piece first.
@@ -2587,12 +2592,12 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	vals[piece]
-	    = std::lower_bound(tb->piece_index[piece], tb->piece_index[piece+1], index+1)
-	    - tb->piece_index[piece] - 1;
+	    = std::lower_bound(tb->pieces[piece].index, tb->pieces[piece+1].index, index+1)
+	    - tb->pieces[piece].index - 1;
 
-	index -= tb->piece_index[piece][vals[piece]];
+	index -= tb->pieces[piece].index[vals[piece]];
 
-	if ((tb->piece_type[piece] == PAWN) && (tb->piece_position[piece][vals[piece]] < 8)) {
+	if ((tb->pieces[piece].piece_type == PAWN) && (tb->pieces[piece].piece_position[vals[piece]] < 8)) {
 
 	    if (en_passant_pawn != -1) return false; /* can't have two en passant pawns */
 
@@ -2602,7 +2607,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	    en_passant_color = 1 - p->side_to_move;
 
 	    /* En passant pawns are encoded on the first row and never have their values reduced */
-	    p->piece_position[en_passant_pawn] = tb->piece_position[en_passant_pawn][vals[en_passant_pawn]];
+	    p->piece_position[en_passant_pawn] = tb->pieces[en_passant_pawn].piece_position[vals[en_passant_pawn]];
 
 	    if (en_passant_color == WHITE) {
 		p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
@@ -2668,15 +2673,15 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 	if (piece == en_passant_pawn) continue;
 
-	p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
+	p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
 	smallest_position = ILLEGAL_POSITION;
 
 	do {
 	    next_smallest_position = ILLEGAL_POSITION;
 
-	    for (piece2 = piece; tb->prev_piece_in_encoding_group[piece2] != -1; piece2 = tb->prev_piece_in_encoding_group[piece2]);
+	    for (piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
 
-	    for (piece2 = tb->last_overlapping_piece[piece2]; piece2 != -1; piece2 = tb->last_overlapping_piece[piece2]) {
+	    for (piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
 		if (p->piece_position[piece2] <= p->piece_position[piece]) {
 		    if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
 			if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
@@ -2690,9 +2695,9 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 		vals[piece] ++;
 
 		/* I suspect that this test never triggers */
-		if (vals[piece] >= tb->total_legal_piece_positions[piece]) return false;
+		if (vals[piece] >= tb->pieces[piece].total_legal_positions) return false;
 
-		p->piece_position[piece] = tb->piece_position[piece][vals[piece]];
+		p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
 		smallest_position = next_smallest_position;
 	    }
 
@@ -2707,12 +2712,12 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     if (en_passant_pawn != -1) {
 
-	for (piece = tb->next_piece_in_encoding_group[en_passant_pawn];
+	for (piece = tb->pieces[en_passant_pawn].next_piece_in_encoding_group;
 	     (piece != -1)
-		 && (p->piece_position[tb->prev_piece_in_encoding_group[piece]]
+		 && (p->piece_position[tb->pieces[piece].prev_piece_in_encoding_group]
 		     > p->piece_position[piece]);
-	     piece = tb->next_piece_in_encoding_group[piece]) {
-	    transpose_array(p->piece_position, piece, tb->prev_piece_in_encoding_group[piece]);
+	     piece = tb->pieces[piece].next_piece_in_encoding_group) {
+	    transpose_array(p->piece_position, piece, tb->pieces[piece].prev_piece_in_encoding_group);
 	    en_passant_pawn = piece;
 	}
 
@@ -2723,7 +2728,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	 * half of our en passant positions, which might be a place for improvement.
 	 */
 
- 	if (tb->piece_color[en_passant_pawn] != en_passant_color) {
+ 	if (tb->pieces[en_passant_pawn].color != en_passant_color) {
  	    return false;
  	}
     }
@@ -2740,16 +2745,16 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	if (tb->permutations[piece]) {
+	if (tb->pieces[piece].permutations) {
 	    int perm = 0;
 
-	    while (tb->permutations[piece][perm] != 0) {
+	    while (tb->pieces[piece].permutations[perm] != 0) {
 
 		int piece2;
 
 		/* check for legality of all pieces in this set */
-		for (piece2 = piece; piece2 != -1; piece2 = tb->next_piece_in_encoding_group[piece2]) {
-		    if (! (tb->legal_squares[piece2] & BITVECTOR(p->piece_position[piece2]))) {
+		for (piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].next_piece_in_encoding_group) {
+		    if (! (tb->pieces[piece2].legal_squares & BITVECTOR(p->piece_position[piece2]))) {
 			break;
 		    }
 		}
@@ -2761,7 +2766,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 
 		/* permute */
 		transpose_array(p->piece_position,
-				tb->permutations[piece][perm] & 0xff, tb->permutations[piece][perm] >> 8);
+				tb->pieces[piece].permutations[perm] & 0xff, tb->pieces[piece].permutations[perm] >> 8);
 		perm ++;
 	    }
 	}
@@ -2779,7 +2784,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	 * positions.
 	 */
 
-	if (!(tb->legal_squares[piece] & BITVECTOR(square))) {
+	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
 	    return false;
 	}
 
@@ -2788,7 +2793,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	}
 
 	p->board_vector |= BITVECTOR(square);
-	if (tb->piece_color[piece] == p->side_to_move) {
+	if (tb->pieces[piece].color == p->side_to_move) {
 	    p->PTM_vector |= BITVECTOR(square);
 	}
     }
@@ -2885,8 +2890,8 @@ void init_reflections(void)
 
 bool semilegal_group_is_legal(tablebase_t *tb, local_position_t *position, int first_piece_in_group)
 {
-    for (int piece = first_piece_in_group; piece != -1; piece = tb->next_piece_in_semilegal_group[piece]) {
-	if (! (tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece]))) {
+    for (int piece = first_piece_in_group; piece != -1; piece = tb->pieces[piece].next_piece_in_semilegal_group) {
+	if (! (tb->pieces[piece].legal_squares & BITVECTOR(position->piece_position[piece]))) {
 	    return false;
 	}
     }
@@ -2896,16 +2901,16 @@ bool semilegal_group_is_legal(tablebase_t *tb, local_position_t *position, int f
 bool permute_semilegal_group_until_legal(tablebase_t *tb, local_position_t *position,
 					 int first_piece_in_group, uint8_t *permutation)
 {
-    for (int perm = 0; tb->permutations[first_piece_in_group][perm] != 0; perm ++) {
+    for (int perm = 0; tb->pieces[first_piece_in_group].permutations[perm] != 0; perm ++) {
 
 	if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
 
 	transpose_array(position->piece_position,
-			tb->permutations[first_piece_in_group][perm] & 0xff,
-			tb->permutations[first_piece_in_group][perm] >> 8);
+			tb->pieces[first_piece_in_group].permutations[perm] & 0xff,
+			tb->pieces[first_piece_in_group].permutations[perm] >> 8);
 	transpose_array(permutation,
-			tb->permutations[first_piece_in_group][perm] & 0xff,
-			tb->permutations[first_piece_in_group][perm] >> 8);
+			tb->pieces[first_piece_in_group].permutations[perm] & 0xff,
+			tb->pieces[first_piece_in_group].permutations[perm] >> 8);
     }
 
     if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
@@ -2916,7 +2921,7 @@ bool permute_semilegal_group_until_legal(tablebase_t *tb, local_position_t *posi
      */
 
     transpose_array(position->piece_position,
-		    first_piece_in_group, tb->next_piece_in_semilegal_group[first_piece_in_group]);
+		    first_piece_in_group, tb->pieces[first_piece_in_group].next_piece_in_semilegal_group);
     return false;
 }
 
@@ -2935,10 +2940,10 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     if ((! tb->encode_stm) && (position->side_to_move == BLACK)) {
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    permutation[piece] = tb->color_symmetric_transpose[piece];
-	    if (tb->color_symmetric_transpose[piece] > piece) {
+	    permutation[piece] = tb->pieces[piece].color_symmetric_transpose;
+	    if (tb->pieces[piece].color_symmetric_transpose > piece) {
 		position->piece_position[piece] = 63 - position->piece_position[piece];
-		transpose_array(position->piece_position, piece, tb->color_symmetric_transpose[piece]);
+		transpose_array(position->piece_position, piece, tb->pieces[piece].color_symmetric_transpose);
 		position->piece_position[piece] = 63 - position->piece_position[piece];
 	    }
 	}
@@ -2982,12 +2987,12 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	piece2 = piece;
-	while ((tb->prev_piece_in_semilegal_group[piece2] != -1)
+	while ((tb->pieces[piece2].prev_piece_in_semilegal_group != -1)
 	       && (position->piece_position[piece2]
-		   < position->piece_position[tb->prev_piece_in_semilegal_group[piece2]])) {
-	    transpose_array(position->piece_position, piece2, tb->prev_piece_in_semilegal_group[piece2]);
-	    transpose_array(permutation, piece2, tb->prev_piece_in_semilegal_group[piece2]);
-	    piece2 = tb->prev_piece_in_semilegal_group[piece2];
+		   < position->piece_position[tb->pieces[piece2].prev_piece_in_semilegal_group])) {
+	    transpose_array(position->piece_position, piece2, tb->pieces[piece2].prev_piece_in_semilegal_group);
+	    transpose_array(permutation, piece2, tb->pieces[piece2].prev_piece_in_semilegal_group);
+	    piece2 = tb->pieces[piece2].prev_piece_in_semilegal_group;
 	}
     }
 
@@ -3012,7 +3017,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (tb->permutations[piece]) {
+	if (tb->pieces[piece].permutations) {
 	    permute_semilegal_group_until_legal(tb, position, piece, permutation);
 	}
     }
@@ -3052,7 +3057,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	if ((position->piece_position[piece] < 0) || (position->piece_position[piece] > 63)
-	    || !(tb->legal_squares[piece] & BITVECTOR(position->piece_position[piece]))) {
+	    || !(tb->pieces[piece].legal_squares & BITVECTOR(position->piece_position[piece]))) {
 	    /* This can happen if we're probing a restricted tablebase */
 	    return INVALID_INDEX;
 	}
@@ -3061,13 +3066,13 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	 * blocking it.
 	 */
 
-	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_piece[piece] != -1)) {
-	    if (tb->piece_color[piece] == WHITE) {
-		if (position->piece_position[piece] > position->piece_position[tb->blocking_piece[piece]]) {
+	if ((tb->pieces[piece].piece_type == PAWN) && (tb->pieces[piece].blocking_piece != -1)) {
+	    if (tb->pieces[piece].color == WHITE) {
+		if (position->piece_position[piece] > position->piece_position[tb->pieces[piece].blocking_piece]) {
 		    return INVALID_INDEX;
 		}
 	    } else {
-		if (position->piece_position[piece] < position->piece_position[tb->blocking_piece[piece]]) {
+		if (position->piece_position[piece] < position->piece_position[tb->pieces[piece].blocking_piece]) {
 		    return INVALID_INDEX;
 		}
 	    }
@@ -3185,13 +3190,13 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
      */
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
-	if ((tb->piece_type[piece] == PAWN) && (tb->blocking_piece[piece] != -1)) {
-	    if (tb->piece_color[piece] == WHITE) {
-		if (position->piece_position[piece] > position->piece_position[tb->blocking_piece[piece]]) {
+	if ((tb->pieces[piece].piece_type == PAWN) && (tb->pieces[piece].blocking_piece != -1)) {
+	    if (tb->pieces[piece].color == WHITE) {
+		if (position->piece_position[piece] > position->piece_position[tb->pieces[piece].blocking_piece]) {
 		    return false;
 		}
 	    } else {
-		if (position->piece_position[piece] < position->piece_position[tb->blocking_piece[piece]]) {
+		if (position->piece_position[piece] < position->piece_position[tb->pieces[piece].blocking_piece]) {
 		    return false;
 		}
 	    }
@@ -3237,7 +3242,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	position->piece_position[piece] = reverse_reflection[reflection & 7][position->piece_position[piece]];
 	position->board_vector |= BITVECTOR(position->piece_position[piece]);
-	if (tb->piece_color[piece] == position->side_to_move) {
+	if (tb->pieces[piece].color == position->side_to_move) {
 	    position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
 	}
     }
@@ -3247,9 +3252,9 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 
     if (reflection & REFLECTION_COLOR) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->color_symmetric_transpose[piece] > piece) {
+	    if (tb->pieces[piece].color_symmetric_transpose > piece) {
 		position->piece_position[piece] = 63 - position->piece_position[piece];
-		transpose_array(position->piece_position, piece, tb->color_symmetric_transpose[piece]);
+		transpose_array(position->piece_position, piece, tb->pieces[piece].color_symmetric_transpose);
 		position->piece_position[piece] = 63 - position->piece_position[piece];
 	    }
 	}
@@ -3277,10 +3282,10 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     if (tb->symmetry > 1) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    piece2 = piece;
-	    while ((tb->prev_piece_in_semilegal_group[piece2] != -1)
+	    while ((tb->pieces[piece2].prev_piece_in_semilegal_group != -1)
 		   && (position->piece_position[piece2]
-		       < position->piece_position[tb->prev_piece_in_semilegal_group[piece2]])) {
-		transpose_array(position->piece_position, piece2, tb->prev_piece_in_semilegal_group[piece2]);
+		       < position->piece_position[tb->pieces[piece2].prev_piece_in_semilegal_group])) {
+		transpose_array(position->piece_position, piece2, tb->pieces[piece2].prev_piece_in_semilegal_group);
 	    }
 	}
     }
@@ -3328,13 +3333,13 @@ int check_1000_positions(tablebase_t *tb)
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    do {
 		position1.piece_position[piece] = rand() % 64;
-	    } while (! (BITVECTOR(position1.piece_position[piece]) & tb->legal_squares[piece]));
+	    } while (! (BITVECTOR(position1.piece_position[piece]) & tb->pieces[piece].legal_squares));
 	}
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if ((tb->prev_piece_in_semilegal_group[piece] != -1) &&
+	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1) &&
 		(position1.piece_position[piece] <=
-		 position1.piece_position[tb->prev_piece_in_semilegal_group[piece]])) goto retry;
+		 position1.piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) goto retry;
 	}
 
 	normalize_position(tb, &position1);
@@ -3505,20 +3510,20 @@ bool tablebase_is_color_symmetric(tablebase_t *tb)
 
 	if (pieces_used[piece]) continue;
 
-	if ((tb->legal_squares[piece] != ALL_ONES_BITVECTOR)
-	    && (tb->legal_squares[piece] != LEGAL_PAWN_BITVECTOR))
+	if ((tb->pieces[piece].legal_squares != ALL_ONES_BITVECTOR)
+	    && (tb->pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))
 	    return false;
 
 	for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
 
 	    if (pieces_used[piece2]) continue;
 
-	    if ((tb->piece_color[piece] != tb->piece_color[piece2])
-		&& (tb->piece_type[piece] == tb->piece_type[piece2])
-		&& (tb->legal_squares[piece] == tb->legal_squares[piece2])) {
+	    if ((tb->pieces[piece].color != tb->pieces[piece2].color)
+		&& (tb->pieces[piece].piece_type == tb->pieces[piece2].piece_type)
+		&& (tb->pieces[piece].legal_squares == tb->pieces[piece2].legal_squares)) {
 
-		tb->color_symmetric_transpose[piece] = piece2;
-		tb->color_symmetric_transpose[piece2] = piece;
+		tb->pieces[piece].color_symmetric_transpose = piece2;
+		tb->pieces[piece2].color_symmetric_transpose = piece;
 		pieces_used[piece] = true;
 		pieces_used[piece2] = true;
 		break;
@@ -3630,15 +3635,15 @@ tablebase::tablebase(std::istream *instream)
 
     for (piece = 0; piece < num_pieces; piece ++) {
 
-	piece_color[piece] = colors.at(result[piece]->eval_to_string("@color"));
-	piece_type[piece] = piece_name.at(result[piece]->eval_to_string("@type"));
+	pieces[piece].color = colors.at(result[piece]->eval_to_string("@color"));
+	pieces[piece].piece_type = piece_name.at(result[piece]->eval_to_string("@type"));
 
 	if (result[piece]->eval_to_string("@index-ordering") == "reverse") {
 	    fatal("reverse index ordering no longer supported\n");
 	}
 
 #if 0
-	if ((piece_color[piece] == -1) || (piece_type[piece] == -1)) {
+	if ((pieces[piece].color == -1) || (piece_type[piece] == -1)) {
 	    fatal("Illegal piece color (%s) or type (%s)\n", color, type);
 	}
 #endif
@@ -3646,20 +3651,20 @@ tablebase::tablebase(std::istream *instream)
 	Glib::ustring location = result[piece]->eval_to_string("@location");
 
 	if (location == "") {
-	    if (piece_type[piece] == PAWN) {
-		legal_squares[piece] = LEGAL_PAWN_BITVECTOR;
+	    if (pieces[piece].piece_type == PAWN) {
+		pieces[piece].legal_squares = LEGAL_PAWN_BITVECTOR;
 	    } else {
-		legal_squares[piece] = ALL_ONES_BITVECTOR;
+		pieces[piece].legal_squares = ALL_ONES_BITVECTOR;
 	    }
 	} else {
 	    int j = 0;
-	    legal_squares[piece] = 0;
+	    pieces[piece].legal_squares = 0;
 	    while ((location[j] >= 'a') && (location[j] <= 'h')
 		   && (location[j+1] >= '1') && (location[j+1] <= '8')) {
-		legal_squares[piece]
+		pieces[piece].legal_squares
 		    |= BITVECTOR(rowcol2square(location[j+1] - '1', location[j] - 'a'));
 		j += 2;
-		if ((piece_type[piece] == PAWN) && (j == 2) && (location[j] == '+')) j++;
+		if ((pieces[piece].piece_type == PAWN) && (j == 2) && (location[j] == '+')) j++;
 		while (location[j] == ' ') j ++;
 	    }
 	    if (location[j] != '\0') {
@@ -3667,11 +3672,11 @@ tablebase::tablebase(std::istream *instream)
 	    }
 	}
 
-	num_pieces_by_color[piece_color[piece]] ++;
+	num_pieces_by_color[pieces[piece].color] ++;
 
 	if (variant != VARIANT_SUICIDE) {
 
-	    if ((piece_color[piece] == WHITE) && (piece_type[piece] == KING)) {
+	    if ((pieces[piece].color == WHITE) && (pieces[piece].piece_type == KING)) {
 		if (white_king != -1) {
 		    fatal("Must have one white king and one black one!\n");
 		} else {
@@ -3679,7 +3684,7 @@ tablebase::tablebase(std::istream *instream)
 		}
 	    }
 
-	    if ((piece_color[piece] == BLACK) && (piece_type[piece] == KING)) {
+	    if ((pieces[piece].color == BLACK) && (pieces[piece].piece_type == KING)) {
 		if (black_king != -1) {
 		    fatal("Must have one white king and one black one!\n");
 		} else {
@@ -3739,9 +3744,9 @@ tablebase::tablebase(std::istream *instream)
 
     for (piece = 0; piece < num_pieces; piece ++) {
 
-	blocking_piece[piece] = -1;
+	pieces[piece].blocking_piece = -1;
 
-	if (piece_type[piece] == PAWN) {
+	if (pieces[piece].piece_type == PAWN) {
 
 	    Glib::ustring location = result[piece]->eval_to_string("@location");
 	    uint64_t pawn_positions = 0xffffffffffffffffLL;
@@ -3749,15 +3754,15 @@ tablebase::tablebase(std::istream *instream)
 	    if ((location != "") && (location[2] == '+')) {
 
 		int square = rowcol2square(location[1] - '1', location[0] - 'a');
-		int dir = (piece_color[piece] == WHITE) ? 8 : -8;
+		int dir = (pieces[piece].color == WHITE) ? 8 : -8;
 
 		pawn_positions &= ~BITVECTOR(square);
 		square += dir;
 
-		while ((square < 56) && (square > 7) && (blocking_piece[piece] == -1)) {
+		while ((square < 56) && (square > 7) && (pieces[piece].blocking_piece == -1)) {
 		    for (piece2 = 0; piece2 < num_pieces; piece2 ++) {
-			if ((pawn_positions & legal_squares[piece2]) == BITVECTOR(square)) {
-			    blocking_piece[piece] = piece2;
+			if ((pawn_positions & pieces[piece2].legal_squares) == BITVECTOR(square)) {
+			    pieces[piece].blocking_piece = piece2;
 			}
 		    }
 		    pawn_positions &= ~BITVECTOR(square);
@@ -3770,12 +3775,12 @@ tablebase::tablebase(std::istream *instream)
 		 * in the correct order in the piece list.
 		 */
 
-		if ((blocking_piece[piece] != -1) && (piece_type[blocking_piece[piece]] == PAWN)
-		    && (piece_color[blocking_piece[piece]] == piece_color[piece])) {
-		    if ((piece_color[piece] == WHITE) && (blocking_piece[piece] < piece)) {
+		if ((pieces[piece].blocking_piece != -1) && (pieces[pieces[piece].blocking_piece].piece_type == PAWN)
+		    && (pieces[pieces[piece].blocking_piece].color == pieces[piece].color)) {
+		    if ((pieces[piece].color == WHITE) && (pieces[piece].blocking_piece < piece)) {
 			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
 		    }
-		    if ((piece_color[piece] == BLACK) && (blocking_piece[piece] > piece)) {
+		    if ((pieces[piece].color == BLACK) && (pieces[piece].blocking_piece > piece)) {
 			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
 		    }
 		}
@@ -3796,22 +3801,22 @@ tablebase::tablebase(std::istream *instream)
 
 	for (piece = 0; piece < num_pieces; piece ++) {
 
-	    if (piece_type[piece] == PAWN) {
+	    if (pieces[piece].piece_type == PAWN) {
 
 		Glib::ustring location = result[piece]->eval_to_string("@location");
 
 		if ((location != "") && (location[2] == '+')) {
 
 		    int square = rowcol2square(location[1] - '1', location[0] - 'a');
-		    int dir = (piece_color[piece] == WHITE) ? 8 : -8;
+		    int dir = (pieces[piece].color == WHITE) ? 8 : -8;
 
 		    square += dir;
 		    while ((square < 56) && (square > 7)) {
-			if ((blocking_piece[piece] != -1)
-			    && (BITVECTOR(square) & legal_squares[blocking_piece[piece]])
-			    && !(BITVECTOR(square + dir) & legal_squares[blocking_piece[piece]]))
+			if ((pieces[piece].blocking_piece != -1)
+			    && (BITVECTOR(square) & pieces[pieces[piece].blocking_piece].legal_squares)
+			    && !(BITVECTOR(square + dir) & pieces[pieces[piece].blocking_piece].legal_squares))
 			    break;
-			legal_squares[piece] |= BITVECTOR(square);
+			pieces[piece].legal_squares |= BITVECTOR(square);
 			square += dir;
 		    }
 		}
@@ -3831,30 +3836,25 @@ tablebase::tablebase(std::istream *instream)
 
     for (piece = 0; piece < num_pieces; piece ++) {
 
-	prev_piece_in_semilegal_group[piece] = -1;
-	next_piece_in_semilegal_group[piece] = -1;
-	next_identical_piece[piece] = -1;
+	pieces[piece].prev_piece_in_semilegal_group = -1;
+	pieces[piece].next_piece_in_semilegal_group = -1;
 
-	semilegal_squares[piece] = legal_squares[piece];
+	pieces[piece].semilegal_squares = pieces[piece].legal_squares;
 
 	for (piece2 = 0; piece2 < piece; piece2 ++) {
-	    if ((piece_color[piece2] == piece_color[piece])
-		&& (piece_type[piece2] == piece_type[piece])) {
+	    if ((pieces[piece2].color == pieces[piece].color)
+		&& (pieces[piece2].piece_type == pieces[piece].piece_type)) {
 
-		if (semilegal_squares[piece] & semilegal_squares[piece2]) {
-		    prev_piece_in_semilegal_group[piece] = piece2;
-		    semilegal_squares[piece2] |= semilegal_squares[piece];
-		    semilegal_squares[piece] |= semilegal_squares[piece2];
-		}
-
-		if (next_identical_piece[piece2] == -1) {
-		    next_identical_piece[piece2] = piece;
+		if (pieces[piece].semilegal_squares & pieces[piece2].semilegal_squares) {
+		    pieces[piece].prev_piece_in_semilegal_group = piece2;
+		    pieces[piece2].semilegal_squares |= pieces[piece].semilegal_squares;
+		    pieces[piece].semilegal_squares |= pieces[piece2].semilegal_squares;
 		}
 	    }
 	}
 
-	if (prev_piece_in_semilegal_group[piece] != -1) {
-	    next_piece_in_semilegal_group[prev_piece_in_semilegal_group[piece]] = piece;
+	if (pieces[piece].prev_piece_in_semilegal_group != -1) {
+	    pieces[pieces[piece].prev_piece_in_semilegal_group].next_piece_in_semilegal_group = piece;
 	}
     }
 
@@ -3870,7 +3870,7 @@ tablebase::tablebase(std::istream *instream)
 
     for (piece = 0; piece < num_pieces; piece ++) {
 
-	if (prev_piece_in_semilegal_group[piece] == -1 && next_piece_in_semilegal_group[piece] != -1) {
+	if (pieces[piece].prev_piece_in_semilegal_group == -1 && pieces[piece].next_piece_in_semilegal_group != -1) {
 
 	    int identical_pieces = 0;
 	    int piece2;
@@ -3880,14 +3880,14 @@ tablebase::tablebase(std::istream *instream)
 	    int i;
 	    int j;
 
-	    for (piece2 = piece; piece2 != -1; piece2 = next_piece_in_semilegal_group[piece2]) {
+	    for (piece2 = piece; piece2 != -1; piece2 = pieces[piece2].next_piece_in_semilegal_group) {
 		position[identical_pieces] = piece2;
 		directions[identical_pieces] = -1;
 		identical_pieces ++;
 	    }
 	    directions[0] = 0;
 
-	    permutations[piece] = (int *) calloc(factorial(identical_pieces), sizeof(int));
+	    pieces[piece].permutations = (int *) calloc(factorial(identical_pieces), sizeof(int));
 	    j = 0;
 
 	    /* Use Johnson–Trotter algorithm to generate all permutations as a series of
@@ -3914,7 +3914,7 @@ tablebase::tablebase(std::istream *instream)
 
 		if (largest_i_with_nonzero_direction == -1) break;
 
-		permutations[piece][j++] = (position[largest_i_with_nonzero_direction] << 8)
+		pieces[piece].permutations[j++] = (position[largest_i_with_nonzero_direction] << 8)
 		    | position[largest_i_with_nonzero_direction + directions[largest_i_with_nonzero_direction]];
 
 		direction = directions[largest_i_with_nonzero_direction];
@@ -3954,8 +3954,8 @@ tablebase::tablebase(std::istream *instream)
 #if DEBUG
     for (piece = 0; piece < num_pieces; piece ++) {
 	info("Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
-	     piece, piece_name[piece_type[piece]], colors[piece_color[piece]],
-	     legal_squares[piece], semilegal_squares[piece]);
+	     piece, piece_name[piece_type[piece]], colors[pieces[piece].color],
+	     pieces[piece].legal_squares, pieces[piece].semilegal_squares);
     }
 #endif
 
@@ -4016,7 +4016,7 @@ tablebase::tablebase(std::istream *instream)
 
     for (piece = 0; piece < num_pieces; piece ++) {
 	for (square = 0; square < 64; square ++) {
-	    if (BITVECTOR(square) == semilegal_squares[piece]) {
+	    if (BITVECTOR(square) == pieces[piece].semilegal_squares) {
 		if (frozen_pieces_vector & BITVECTOR(square)) {
 		    throw "More than one piece frozen on " + ('a' + COL(square)) + ('1' + ROW(square));
 		}
@@ -4028,10 +4028,10 @@ tablebase::tablebase(std::istream *instream)
     }
 
     if (variant != VARIANT_SUICIDE) {
-	legal_squares[white_king] &= ~ illegal_white_king_squares;
-	legal_squares[black_king] &= ~ illegal_black_king_squares;
-	semilegal_squares[white_king] &= ~ illegal_white_king_squares;
-	semilegal_squares[black_king] &= ~ illegal_black_king_squares;
+	pieces[white_king].legal_squares &= ~ illegal_white_king_squares;
+	pieces[black_king].legal_squares &= ~ illegal_black_king_squares;
+	pieces[white_king].semilegal_squares &= ~ illegal_white_king_squares;
+	pieces[black_king].semilegal_squares &= ~ illegal_black_king_squares;
     }
 
     /* Strip the locations of frozen pieces off the legal squares bitvectors of all the other
@@ -4043,9 +4043,9 @@ tablebase::tablebase(std::istream *instream)
      */
 
     for (piece = 0; piece < num_pieces; piece ++) {
-	if ((semilegal_squares[piece] & frozen_pieces_vector) != semilegal_squares[piece]) {
-	    legal_squares[piece] &= ~ frozen_pieces_vector;
-	    semilegal_squares[piece] &= ~ frozen_pieces_vector;
+	if ((pieces[piece].semilegal_squares & frozen_pieces_vector) != pieces[piece].semilegal_squares) {
+	    pieces[piece].legal_squares &= ~ frozen_pieces_vector;
+	    pieces[piece].semilegal_squares &= ~ frozen_pieces_vector;
 	}
     }
 
@@ -4095,11 +4095,11 @@ tablebase::tablebase(std::istream *instream)
 	    symmetry = 4;
 	}
 	for (piece = 0; piece < num_pieces; piece ++) {
-	    if (piece_type[piece] == PAWN) {
+	    if (pieces[piece].piece_type == PAWN) {
 		symmetry = 2;
 	    }
-	    if (((piece_type[piece] != PAWN) && (legal_squares[piece] != ALL_ONES_BITVECTOR))
-		|| ((piece_type[piece] == PAWN) && (legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
+	    if (((pieces[piece].piece_type != PAWN) && (pieces[piece].legal_squares != ALL_ONES_BITVECTOR))
+		|| ((pieces[piece].piece_type == PAWN) && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))) {
 		symmetry = 1;
 	    }
 	}
@@ -4137,7 +4137,7 @@ tablebase::tablebase(std::istream *instream)
 
     if (symmetry >= 4) {
 	for (piece = 0; piece < num_pieces; piece ++) {
-	    if (piece_type[piece] == PAWN) {
+	    if (pieces[piece].piece_type == PAWN) {
 		throw "Pawns not allowed with 4/8-way symmetric indices";
 	    }
 	}
@@ -4145,8 +4145,8 @@ tablebase::tablebase(std::istream *instream)
 
     if (symmetry > 1) {
 	for (piece = 0; piece < num_pieces; piece ++) {
-	    if (((piece_type[piece] != PAWN) && (legal_squares[piece] != ALL_ONES_BITVECTOR))
-		|| ((piece_type[piece] == PAWN) && (legal_squares[piece] != LEGAL_PAWN_BITVECTOR))) {
+	    if (((pieces[piece].piece_type != PAWN) && (pieces[piece].legal_squares != ALL_ONES_BITVECTOR))
+		|| ((pieces[piece].piece_type == PAWN) && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))) {
 		throw "Piece restrictions not allowed with symmetric indices (yet)";
 	    }
 	}
@@ -4206,7 +4206,7 @@ tablebase::tablebase(std::istream *instream)
 
     if (index_type <= SIMPLE_INDEX) {
 	for (piece = 0; piece < num_pieces; piece ++) {
-	    if (legal_squares[piece] != semilegal_squares[piece]) {
+	    if (pieces[piece].legal_squares != pieces[piece].semilegal_squares) {
 		throw "Non-identical overlapping piece restrictions not allowed with this index type";
 	    }
 	}
@@ -4215,22 +4215,22 @@ tablebase::tablebase(std::istream *instream)
     if (index_type == NO_EN_PASSANT_INDEX) {
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    int col;
-	    int row1 = (piece_color[piece] == WHITE) ? 1 : 6;
-	    int row3 = (piece_color[piece] == WHITE) ? 3 : 4;
-	    int row4 = (piece_color[piece] == WHITE) ? 4 : 3;
-	    if (piece_type[piece] != PAWN) continue;
+	    int row1 = (pieces[piece].color == WHITE) ? 1 : 6;
+	    int row3 = (pieces[piece].color == WHITE) ? 3 : 4;
+	    int row4 = (pieces[piece].color == WHITE) ? 4 : 3;
+	    if (pieces[piece].piece_type != PAWN) continue;
 	    for (col = 0; col < 8; col ++) {
-		if (legal_squares[piece]
+		if (pieces[piece].legal_squares
 		    & (BITVECTOR(rowcol2square(row1, col)) | BITVECTOR(rowcol2square(row3, col)))) {
 		    for (piece2 = 0; piece2 < num_pieces; piece2 ++) {
-			if (piece_type[piece2] != PAWN) continue;
-			if (piece_color[piece2] == piece_color[piece]) continue;
+			if (pieces[piece2].piece_type != PAWN) continue;
+			if (pieces[piece2].color == pieces[piece].color) continue;
 			if ((col > 0)
-			    && (legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col-1)))) {
+			    && (pieces[piece2].legal_squares & BITVECTOR(rowcol2square(row4, col-1)))) {
 			    throw "Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible";
 			}
 			if ((col < 7)
-			    && (legal_squares[piece2] & BITVECTOR(rowcol2square(row4, col+1)))) {
+			    && (pieces[piece2].legal_squares & BITVECTOR(rowcol2square(row4, col+1)))) {
 			    throw "Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible";
 			}
 		    }
@@ -4245,7 +4245,7 @@ tablebase::tablebase(std::istream *instream)
 
     total_legal_king_positions = 0;
     for (piece = 0; piece < num_pieces; piece ++) {
-	total_legal_piece_positions[piece] = 0;
+	pieces[piece].total_legal_positions = 0;
     }
 
     switch (index_type) {
@@ -4282,20 +4282,20 @@ tablebase::tablebase(std::istream *instream)
 	    break;
 	}
 
-	prev_piece_in_encoding_group[white_king] = -1;
-	next_piece_in_encoding_group[white_king] = -1;
+	pieces[white_king].prev_piece_in_encoding_group = -1;
+	pieces[white_king].next_piece_in_encoding_group = -1;
 
 	/* now do everything else */
 	for (piece = 1; piece < num_pieces; piece ++) {
 
-	    if ((prev_piece_in_semilegal_group[piece] != -1) && (next_piece_in_semilegal_group[piece] != -1)) {
+	    if ((pieces[piece].prev_piece_in_semilegal_group != -1) && (pieces[piece].next_piece_in_semilegal_group != -1)) {
 		throw "Can't have more than two identical pieces with 'naive2' index (yet)";
 	    }
 
-	    prev_piece_in_encoding_group[piece] = prev_piece_in_semilegal_group[piece];
-	    next_piece_in_encoding_group[piece] = next_piece_in_semilegal_group[piece];
+	    pieces[piece].prev_piece_in_encoding_group = pieces[piece].prev_piece_in_semilegal_group;
+	    pieces[piece].next_piece_in_encoding_group = pieces[piece].next_piece_in_semilegal_group;
 
-	    if (prev_piece_in_encoding_group[piece] == -1) max_index <<= 6;
+	    if (pieces[piece].prev_piece_in_encoding_group == -1) max_index <<= 6;
 	    else max_index <<=5;
 	}
 	max_index --;
@@ -4309,24 +4309,24 @@ tablebase::tablebase(std::istream *instream)
 
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    for (square = 0; square < 64; square ++) {
-		if (! (legal_squares[piece] & BITVECTOR(square))) continue;
+		if (! (pieces[piece].legal_squares & BITVECTOR(square))) continue;
 		if ((piece == white_king) && (symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == white_king) && (symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == white_king) && (symmetry == 8) && (ROW(square) > COL(square))) continue;
-		piece_position[piece][total_legal_piece_positions[piece]] = square;
-		piece_index[piece][square] = total_legal_piece_positions[piece];
-		total_legal_piece_positions[piece] ++;
+		pieces[piece].piece_position[pieces[piece].total_legal_positions] = square;
+		pieces[piece].index[square] = pieces[piece].total_legal_positions;
+		pieces[piece].total_legal_positions ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
-		if ((piece_type[piece] == PAWN)
-		    && (((piece_color[piece] == WHITE) && (ROW(square) == 3))
-			|| ((piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
-		    piece_position[piece][total_legal_piece_positions[piece]] = COL(square);
-		    piece_index[piece][COL(square)] = total_legal_piece_positions[piece];
-		    total_legal_piece_positions[piece] ++;
+		if ((pieces[piece].piece_type == PAWN)
+		    && (((pieces[piece].color == WHITE) && (ROW(square) == 3))
+			|| ((pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
+		    pieces[piece].piece_position[pieces[piece].total_legal_positions] = COL(square);
+		    pieces[piece].index[COL(square)] = pieces[piece].total_legal_positions;
+		    pieces[piece].total_legal_positions ++;
 		}
 	    }
-	    max_index *= total_legal_piece_positions[piece];
+	    max_index *= pieces[piece].total_legal_positions;
 	}
 
 	max_index --;
@@ -4338,9 +4338,9 @@ tablebase::tablebase(std::istream *instream)
 	max_index = 2;
 
 	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	    if (! (legal_squares[white_king] & BITVECTOR(white_king_square))) continue;
+	    if (! (pieces[white_king].legal_squares & BITVECTOR(white_king_square))) continue;
 	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		if (! (legal_squares[black_king] & BITVECTOR(black_king_square))) continue;
+		if (! (pieces[black_king].legal_squares & BITVECTOR(black_king_square))) continue;
 		if ((symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
 		if ((symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
 		if ((symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
@@ -4358,21 +4358,21 @@ tablebase::tablebase(std::istream *instream)
 	}
 	max_index *= total_legal_king_positions;
 
-	prev_piece_in_encoding_group[white_king] = -1;
-	next_piece_in_encoding_group[white_king] = -1;
-	prev_piece_in_encoding_group[black_king] = -1;
-	next_piece_in_encoding_group[black_king] = -1;
+	pieces[white_king].prev_piece_in_encoding_group = -1;
+	pieces[white_king].next_piece_in_encoding_group = -1;
+	pieces[black_king].prev_piece_in_encoding_group = -1;
+	pieces[black_king].next_piece_in_encoding_group = -1;
 
 	for (piece = 0; piece < num_pieces; piece ++) {
 
 	    if ((piece == white_king) || (piece == black_king)) continue;
 
-	    if ((prev_piece_in_semilegal_group[piece] != -1) && (next_piece_in_semilegal_group[piece] != -1)) {
+	    if ((pieces[piece].prev_piece_in_semilegal_group != -1) && (pieces[piece].next_piece_in_semilegal_group != -1)) {
 		throw "Can't have more than two identical pieces with 'compact' index (yet)";
 	    }
 
-	    prev_piece_in_encoding_group[piece] = prev_piece_in_semilegal_group[piece];
-	    next_piece_in_encoding_group[piece] = next_piece_in_semilegal_group[piece];
+	    pieces[piece].prev_piece_in_encoding_group = pieces[piece].prev_piece_in_semilegal_group;
+	    pieces[piece].next_piece_in_encoding_group = pieces[piece].next_piece_in_semilegal_group;
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
 	     * identical pieces assumes that both pieces occupy the same range of squares.
@@ -4380,32 +4380,32 @@ tablebase::tablebase(std::istream *instream)
 
 	    for (square = 0; square < 64; square ++) {
 
-		if (! (semilegal_squares[piece] & BITVECTOR(square))) continue;
+		if (! (pieces[piece].semilegal_squares & BITVECTOR(square))) continue;
 
 		if ((piece == white_king) && (symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == white_king) && (symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == white_king) && (symmetry == 8) && (ROW(square) > COL(square))) continue;
-		piece_position[piece][total_legal_piece_positions[piece]] = square;
-		piece_index[piece][square] = total_legal_piece_positions[piece];
-		total_legal_piece_positions[piece] ++;
+		pieces[piece].piece_position[pieces[piece].total_legal_positions] = square;
+		pieces[piece].index[square] = pieces[piece].total_legal_positions;
+		pieces[piece].total_legal_positions ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
-		if ((piece_type[piece] == PAWN)
-		    && (((piece_color[piece] == WHITE) && (ROW(square) == 3))
-			|| ((piece_color[piece] == BLACK) && (ROW(square) == 4)))) {
-		    piece_position[piece][total_legal_piece_positions[piece]] = COL(square);
-		    piece_index[piece][COL(square)] = total_legal_piece_positions[piece];
-		    total_legal_piece_positions[piece] ++;
+		if ((pieces[piece].piece_type == PAWN)
+		    && (((pieces[piece].color == WHITE) && (ROW(square) == 3))
+			|| ((pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
+		    pieces[piece].piece_position[pieces[piece].total_legal_positions] = COL(square);
+		    pieces[piece].index[COL(square)] = pieces[piece].total_legal_positions;
+		    pieces[piece].total_legal_positions ++;
 		}
 	    }
-	    if (prev_piece_in_encoding_group[piece] == -1) {
-		max_index *= total_legal_piece_positions[piece];
-	    } else if (total_legal_piece_positions[piece]
-		       != total_legal_piece_positions[prev_piece_in_encoding_group[piece]]) {
+	    if (pieces[piece].prev_piece_in_encoding_group == -1) {
+		max_index *= pieces[piece].total_legal_positions;
+	    } else if (pieces[piece].total_legal_positions
+		       != pieces[pieces[piece].prev_piece_in_encoding_group].total_legal_positions) {
 		/* Semilegal positions are the union of legal positions for an entire encoding group */
 		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
 	    } else {
-		max_index *= total_legal_piece_positions[piece]/2;
+		max_index *= pieces[piece].total_legal_positions/2;
 	    }
 	}
 
@@ -4427,9 +4427,9 @@ tablebase::tablebase(std::istream *instream)
 
 	if (variant != VARIANT_SUICIDE) {
 	    for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-		if (! (legal_squares[white_king] & BITVECTOR(white_king_square))) continue;
+		if (! (pieces[white_king].legal_squares & BITVECTOR(white_king_square))) continue;
 		for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		    if (! (legal_squares[black_king] & BITVECTOR(black_king_square))) continue;
+		    if (! (pieces[black_king].legal_squares & BITVECTOR(black_king_square))) continue;
 		    if ((symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
 		    if ((symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
 		    if ((symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
@@ -4447,10 +4447,10 @@ tablebase::tablebase(std::istream *instream)
 	    }
 	    max_index *= total_legal_king_positions;
 
-	    prev_piece_in_encoding_group[white_king] = -1;
-	    next_piece_in_encoding_group[white_king] = -1;
-	    prev_piece_in_encoding_group[black_king] = -1;
-	    next_piece_in_encoding_group[black_king] = -1;
+	    pieces[white_king].prev_piece_in_encoding_group = -1;
+	    pieces[white_king].next_piece_in_encoding_group = -1;
+	    pieces[black_king].prev_piece_in_encoding_group = -1;
+	    pieces[black_king].next_piece_in_encoding_group = -1;
 	}
 
 	/* Assign encoding groups, usually groups of identical pieces. */
@@ -4459,8 +4459,8 @@ tablebase::tablebase(std::istream *instream)
 
 	    if ((piece == white_king) || (piece == black_king)) continue;
 
-	    prev_piece_in_encoding_group[piece] = prev_piece_in_semilegal_group[piece];
-	    next_piece_in_encoding_group[piece] = next_piece_in_semilegal_group[piece];
+	    pieces[piece].prev_piece_in_encoding_group = pieces[piece].prev_piece_in_semilegal_group;
+	    pieces[piece].next_piece_in_encoding_group = pieces[piece].next_piece_in_semilegal_group;
 
 	    /* An important special case - handle two opposing plus-pawns by combining their
 	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
@@ -4468,35 +4468,35 @@ tablebase::tablebase(std::istream *instream)
 	     * pieces are mutually blocking, they must be opposing plus-pawns.
 	     */
 
-	    if ((blocking_piece[piece] != -1)
-		&& (blocking_piece[blocking_piece[piece]] == piece)) {
+	    if ((pieces[piece].blocking_piece != -1)
+		&& (pieces[pieces[piece].blocking_piece].blocking_piece == piece)) {
 
 		int piece2;
 
-		if ((blocking_piece[piece] > piece) && (piece_color[piece] != WHITE)) {
+		if ((pieces[piece].blocking_piece > piece) && (pieces[piece].color != WHITE)) {
 		    throw "Mutually blocking pawns must currently be specified white pawn first";
 		}
 
-		if (blocking_piece[piece] > piece) {
-		    if (next_piece_in_semilegal_group[piece] != -1) {
+		if (pieces[piece].blocking_piece > piece) {
+		    if (pieces[piece].next_piece_in_semilegal_group != -1) {
 			/* should never happen, we should be blocked by a pawn of opposite color */
 			throw "BUG: not blocked right";
 		    } else {
-			next_piece_in_encoding_group[piece] = blocking_piece[piece];
-			for (piece2 = piece; piece2 != -1; piece2 = prev_piece_in_encoding_group[piece2]) {
-			    semilegal_squares[piece2]
-				|= semilegal_squares[blocking_piece[piece]];
+			pieces[piece].next_piece_in_encoding_group = pieces[piece].blocking_piece;
+			for (piece2 = piece; piece2 != -1; piece2 = pieces[piece2].prev_piece_in_encoding_group) {
+			    pieces[piece2].semilegal_squares
+				|= pieces[pieces[piece].blocking_piece].semilegal_squares;
 			}
 		    }
 		} else {
-		    if (prev_piece_in_semilegal_group[piece] != -1) {
+		    if (pieces[piece].prev_piece_in_semilegal_group != -1) {
 			/* should never happen, we should be blocked by a pawn of opposite color */
 			throw "BUG: not blocked right";
 		    } else {
-			prev_piece_in_encoding_group[piece] = blocking_piece[piece];
-			for (piece2 = piece; piece2 != -1; piece2 = next_piece_in_encoding_group[piece2]) {
-			    semilegal_squares[piece2]
-				|= semilegal_squares[blocking_piece[piece]];
+			pieces[piece].prev_piece_in_encoding_group = pieces[piece].blocking_piece;
+			for (piece2 = piece; piece2 != -1; piece2 = pieces[piece2].next_piece_in_encoding_group) {
+			    pieces[piece2].semilegal_squares
+				|= pieces[pieces[piece].blocking_piece].semilegal_squares;
 			}
 		    }
 		}
@@ -4517,20 +4517,20 @@ tablebase::tablebase(std::istream *instream)
 	     * d5, e5, a later piece restricted to de, and another later piece restricted to 45.
 	     */
 
-	    last_overlapping_piece[piece] = -1;
+	    pieces[piece].last_overlapping_piece = -1;
 
 	    for (piece2 = piece-1; piece2 >= 0; piece2 --) {
-		if ((semilegal_squares[piece] & semilegal_squares[piece2]) == semilegal_squares[piece2]) {
-		    last_overlapping_piece[piece] = piece2;
+		if ((pieces[piece].semilegal_squares & pieces[piece2].semilegal_squares) == pieces[piece2].semilegal_squares) {
+		    pieces[piece].last_overlapping_piece = piece2;
 		    break;
 		}
 	    }
 
 	    if ((piece == white_king) || (piece == black_king)) continue;
 
-	    if (prev_piece_in_encoding_group[piece] == -1) {
+	    if (pieces[piece].prev_piece_in_encoding_group == -1) {
 		piece_in_set = 1;
-	    } else if (prev_piece_in_encoding_group[piece] == piece-1) {
+	    } else if (pieces[piece].prev_piece_in_encoding_group == piece-1) {
 		piece_in_set ++;
 	    } else {
 		fatal("Combinadic3 index requires encoding groups to be adjacent in index\n");
@@ -4546,22 +4546,22 @@ tablebase::tablebase(std::istream *instream)
 
 	    for (square = 0; square < 64; square ++) {
 
-		if ((semilegal_squares[piece] & BITVECTOR(square))
-		    || ((piece_type[piece] == PAWN)
+		if ((pieces[piece].semilegal_squares & BITVECTOR(square))
+		    || ((pieces[piece].piece_type == PAWN)
 			&& (square < 8)
-			&& (semilegal_squares[piece]
-			    & BITVECTOR(rowcol2square(piece_color[piece] == WHITE ? 3 : 4, square))))) {
+			&& (pieces[piece].semilegal_squares
+			    & BITVECTOR(rowcol2square(pieces[piece].color == WHITE ? 3 : 4, square))))) {
 
-		    piece_value[piece][square] = total_legal_piece_positions[piece];
-		    piece_position[piece][total_legal_piece_positions[piece]] = square;
+		    pieces[piece].value[square] = pieces[piece].total_legal_positions;
+		    pieces[piece].piece_position[pieces[piece].total_legal_positions] = square;
 
-		    piece_index[piece][total_legal_piece_positions[piece]]
-			= choose(total_legal_piece_positions[piece], piece_in_set) * max_index;
+		    pieces[piece].index[pieces[piece].total_legal_positions]
+			= choose(pieces[piece].total_legal_positions, piece_in_set) * max_index;
 
-		    total_legal_piece_positions[piece] ++;
+		    pieces[piece].total_legal_positions ++;
 		} else {
 		    /* This value should never get used. */
-		    piece_value[piece][square] = ILLEGAL_POSITION;
+		    pieces[piece].value[square] = ILLEGAL_POSITION;
 		}
 
 	    }
@@ -4572,42 +4572,42 @@ tablebase::tablebase(std::istream *instream)
 	     * decremented.
 	     */
 
-	    total_legal_piece_values[piece] = total_legal_piece_positions[piece];
+	    pieces[piece].total_legal_piece_values = pieces[piece].total_legal_positions;
 
-	    for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
-	    for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
-		total_legal_piece_values[piece] --;
+	    for (piece2 = piece; pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = pieces[piece2].prev_piece_in_encoding_group);
+	    for (piece2 = pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = pieces[piece2].last_overlapping_piece) {
+		pieces[piece].total_legal_piece_values --;
 	    }
 
-	    if ((prev_piece_in_encoding_group[piece] != -1)
-		&& (total_legal_piece_positions[piece]
-		    != total_legal_piece_positions[prev_piece_in_encoding_group[piece]])) {
+	    if ((pieces[piece].prev_piece_in_encoding_group != -1)
+		&& (pieces[piece].total_legal_positions
+		    != pieces[pieces[piece].prev_piece_in_encoding_group].total_legal_positions)) {
 		fatal("BUG: Identical pieces don't have the same number of total semilegal positions\n");
 	    }
 
-	    if ((prev_piece_in_encoding_group[piece] != -1)
-		&& (total_legal_piece_values[piece]
-		    != total_legal_piece_values[prev_piece_in_encoding_group[piece]])) {
+	    if ((pieces[piece].prev_piece_in_encoding_group != -1)
+		&& (pieces[piece].total_legal_piece_values
+		    != pieces[pieces[piece].prev_piece_in_encoding_group].total_legal_piece_values)) {
 		fatal("BUG: Identical pieces don't have the same number of encoding values\n");
 	    }
 
-	    if (next_piece_in_encoding_group[piece] == -1) {
-		max_index *= choose(total_legal_piece_values[piece], piece_in_set);
+	    if (pieces[piece].next_piece_in_encoding_group == -1) {
+		max_index *= choose(pieces[piece].total_legal_piece_values, piece_in_set);
 	    }
 
 	}
 
 	max_index --;
 
-	/* Now we pad the tail end of the piece_index arrays with max_index+1.  This allows us to
+	/* Now we pad the tail end of the index arrays with max_index+1.  This allows us to
 	 * search the table using std::lower_bound without having to worry about where its actual
 	 * end is, which will typically be before its physical end.
 	 */
 
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    if ((piece == white_king) || (piece == black_king)) continue;
-	    for (int value = total_legal_piece_values[piece]; value < 64; value ++) {
-		piece_index[piece][value] = max_index + 1;
+	    for (int value = pieces[piece].total_legal_piece_values; value < 64; value ++) {
+		pieces[piece].index[value] = max_index + 1;
 	    }
 	}
 
@@ -4619,9 +4619,9 @@ tablebase::tablebase(std::istream *instream)
 	max_index = 2;
 
 	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	    if (! (legal_squares[white_king] & BITVECTOR(white_king_square))) continue;
+	    if (! (pieces[white_king].legal_squares & BITVECTOR(white_king_square))) continue;
 	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		if (! (legal_squares[black_king] & BITVECTOR(black_king_square))) continue;
+		if (! (pieces[black_king].legal_squares & BITVECTOR(black_king_square))) continue;
 		if ((symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
 		if ((symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
 		if ((symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
@@ -4639,44 +4639,44 @@ tablebase::tablebase(std::istream *instream)
 	}
 	max_index *= total_legal_king_positions;
 
-	prev_piece_in_encoding_group[white_king] = -1;
-	next_piece_in_encoding_group[white_king] = -1;
-	prev_piece_in_encoding_group[black_king] = -1;
-	next_piece_in_encoding_group[black_king] = -1;
+	pieces[white_king].prev_piece_in_encoding_group = -1;
+	pieces[white_king].next_piece_in_encoding_group = -1;
+	pieces[black_king].prev_piece_in_encoding_group = -1;
+	pieces[black_king].next_piece_in_encoding_group = -1;
 
 	for (piece = 0; piece < num_pieces; piece ++) {
 
 	    if ((piece == white_king) || (piece == black_king)) continue;
 
-	    if ((prev_piece_in_semilegal_group[piece] != -1) && (next_piece_in_semilegal_group[piece] != -1)) {
+	    if ((pieces[piece].prev_piece_in_semilegal_group != -1) && (pieces[piece].next_piece_in_semilegal_group != -1)) {
 		throw "Can't have more than two identical pieces with 'no-en-passant' index (yet)";
 	    }
 
-	    prev_piece_in_encoding_group[piece] = prev_piece_in_semilegal_group[piece];
-	    next_piece_in_encoding_group[piece] = next_piece_in_semilegal_group[piece];
+	    pieces[piece].prev_piece_in_encoding_group = pieces[piece].prev_piece_in_semilegal_group;
+	    pieces[piece].next_piece_in_encoding_group = pieces[piece].next_piece_in_semilegal_group;
 
 	    /* Note that we only set blocking_piece for plus-pawns, so if two pieces are mutually
 	     * blocking, they must be opposing plus-pawns.
 	     */
 
-	    if ((blocking_piece[piece] != -1)
-		&& (blocking_piece[blocking_piece[piece]] == piece)) {
+	    if ((pieces[piece].blocking_piece != -1)
+		&& (pieces[pieces[piece].blocking_piece].blocking_piece == piece)) {
 
-		if ((prev_piece_in_encoding_group[piece] != -1) || (next_piece_in_encoding_group[piece] != -1)) {
+		if ((pieces[piece].prev_piece_in_encoding_group != -1) || (pieces[piece].next_piece_in_encoding_group != -1)) {
 		    throw "Can't have a doubled pawn opposed by enemy pawn (yet)";
 		}
-		if ((blocking_piece[piece] > piece) && (piece_color[piece] != WHITE)) {
+		if ((pieces[piece].blocking_piece > piece) && (pieces[piece].color != WHITE)) {
 		    throw "Mutually blocking pawns must currently be specified white pawn first";
 		}
-		if (blocking_piece[piece] > piece) {
-		    next_piece_in_encoding_group[piece] = blocking_piece[piece];
+		if (pieces[piece].blocking_piece > piece) {
+		    pieces[piece].next_piece_in_encoding_group = pieces[piece].blocking_piece;
 		} else {
-		    prev_piece_in_encoding_group[piece] = blocking_piece[piece];
+		    pieces[piece].prev_piece_in_encoding_group = pieces[piece].blocking_piece;
 		}
 		/* We have to extend the semilegal squares of both blocking pawns because the
 		 * pairing is based on 2 pieces on n squares using (n)(n-1)/2 numbers.
 		 */
-		semilegal_squares[piece] |= semilegal_squares[blocking_piece[piece]];
+		pieces[piece].semilegal_squares |= pieces[pieces[piece].blocking_piece].semilegal_squares;
 	    }
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
@@ -4685,14 +4685,14 @@ tablebase::tablebase(std::istream *instream)
 
 	    for (square = 0; square < 64; square ++) {
 
-		if (! (semilegal_squares[piece] & BITVECTOR(square))) continue;
+		if (! (pieces[piece].semilegal_squares & BITVECTOR(square))) continue;
 
 		if ((piece == white_king) && (symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == white_king) && (symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == white_king) && (symmetry == 8) && (ROW(square) > COL(square))) continue;
-		piece_position[piece][total_legal_piece_positions[piece]] = square;
-		piece_index[piece][square] = total_legal_piece_positions[piece];
-		total_legal_piece_positions[piece] ++;
+		pieces[piece].piece_position[pieces[piece].total_legal_positions] = square;
+		pieces[piece].index[square] = pieces[piece].total_legal_positions;
+		pieces[piece].total_legal_positions ++;
 
 		/* Unlike 'compact', we don't have to consider the en-passant case here because
 		 * we've already eliminated that as a possibility.  Also unlike 'compact', we've
@@ -4701,14 +4701,14 @@ tablebase::tablebase(std::istream *instream)
 		 * total number of semilegal positions to be different for two grouped pieces.
 		 */
 	    }
-	    if (prev_piece_in_encoding_group[piece] == -1) {
-		max_index *= total_legal_piece_positions[piece];
-	    } else if (total_legal_piece_positions[piece]
-		       != total_legal_piece_positions[prev_piece_in_encoding_group[piece]]) {
+	    if (pieces[piece].prev_piece_in_encoding_group == -1) {
+		max_index *= pieces[piece].total_legal_positions;
+	    } else if (pieces[piece].total_legal_positions
+		       != pieces[pieces[piece].prev_piece_in_encoding_group].total_legal_positions) {
 		/* Semilegal positions are the union of legal positions for an entire encoding group */
 		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
 	    } else {
-		max_index *= total_legal_piece_positions[piece]/2;
+		max_index *= pieces[piece].total_legal_positions/2;
 	    }
 	}
 
@@ -4820,7 +4820,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.872 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.873 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -5142,15 +5142,15 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 	bool found_matching_piece = false;
 
 	for (int square = 0; square < 64; square ++) {
-	    futurebase->matching_local_semilegal_group[future_piece][square] = -1;
+	    futurebase->pieces[future_piece].matching_local_semilegal_group[square] = -1;
 	}
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if ((tb->piece_type[piece] == futurebase->piece_type[future_piece])
+	    if ((tb->pieces[piece].piece_type == futurebase->pieces[future_piece].piece_type)
 		&& ((!futurebase->invert_colors &&
-		     (tb->piece_color[piece] == futurebase->piece_color[future_piece]))
+		     (tb->pieces[piece].color == futurebase->pieces[future_piece].color))
 		    || (futurebase->invert_colors &&
-			(tb->piece_color[piece] != futurebase->piece_color[future_piece])))) {
+			(tb->pieces[piece].color != futurebase->pieces[future_piece].color)))) {
 
 		/* Have we found a unassigned matching pair of localbase/futurebase pieces? */
 		if (!(local_piece_vector & (1 << piece))
@@ -5164,10 +5164,10 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 
 		for (int square = 0; square < 64; square ++) {
 
-		    if (tb->semilegal_squares[piece] & BITVECTOR(square)) {
+		    if (tb->pieces[piece].semilegal_squares & BITVECTOR(square)) {
 
-			if (futurebase->matching_local_semilegal_group[future_piece][square] == -1) {
-			    futurebase->matching_local_semilegal_group[future_piece][square] = piece;
+			if (futurebase->pieces[future_piece].matching_local_semilegal_group[square] == -1) {
+			    futurebase->pieces[future_piece].matching_local_semilegal_group[square] = piece;
 			}
 
 		    }
@@ -5176,7 +5176,7 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 	}
 
 	if (! found_matching_piece) {
-	    if ((futurebase->extra_piece == -1) && (futurebase->piece_type[future_piece] != PAWN)) {
+	    if ((futurebase->extra_piece == -1) && (futurebase->pieces[future_piece].piece_type != PAWN)) {
 		futurebase->extra_piece = future_piece;
 	    } else {
 		throw "Couldn't find future piece in local tablebase";
@@ -5186,7 +5186,7 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if (!(local_piece_vector & (1 << piece))) {
-	    if (tb->piece_type[piece] == PAWN) {
+	    if (tb->pieces[piece].piece_type == PAWN) {
 		if (futurebase->missing_pawn == -1) {
 		    futurebase->missing_pawn = piece;
 		} else {
@@ -5205,7 +5205,7 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
     if (futurebase->extra_piece != -1) {
 
 	for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-	    if (futurebase->piece_type[futurebase->extra_piece] == promoted_pieces[promotion]) break;
+	    if (futurebase->pieces[futurebase->extra_piece].piece_type == promoted_pieces[promotion]) break;
 	}
 
 	if (promotion == promotion_possibilities) {
@@ -5714,8 +5714,8 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 
 	if (invert_colors) sq = vertical_reflection(sq);
 
-	for (local_piece = foreign_tb->matching_local_semilegal_group[foreign_piece][sq];
-	     local_piece != -1; local_piece = local_tb->next_piece_in_semilegal_group[local_piece]) {
+	for (local_piece = foreign_tb->pieces[foreign_piece].matching_local_semilegal_group[sq];
+	     local_piece != -1; local_piece = local_tb->pieces[local_piece].next_piece_in_semilegal_group) {
 
 	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
 		local_position->piece_position[local_piece] = sq;
@@ -5747,17 +5747,17 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 	if (local_position->piece_position[local_piece] != ILLEGAL_POSITION) {
 
 	    local_position->board_vector |= BITVECTOR(local_position->piece_position[local_piece]);
-	    if (local_tb->piece_color[local_piece] == local_position->side_to_move)
+	    if (local_tb->pieces[local_piece].color == local_position->side_to_move)
 		local_position->PTM_vector |= BITVECTOR(local_position->piece_position[local_piece]);
 
 	} else {
 
 	    if ((result.extra_piece != NONE)
-		&& (local_tb->piece_type[local_piece] == foreign_tb->piece_type[result.extra_piece])
+		&& (local_tb->pieces[local_piece].piece_type == foreign_tb->pieces[result.extra_piece].piece_type)
 		&& ((!invert_colors
-		     && (local_tb->piece_color[local_piece] == foreign_tb->piece_color[result.extra_piece]))
+		     && (local_tb->pieces[local_piece].color == foreign_tb->pieces[result.extra_piece].color))
 		    || (invert_colors
-			&& (local_tb->piece_color[local_piece] != foreign_tb->piece_color[result.extra_piece])))) {
+			&& (local_tb->pieces[local_piece].color != foreign_tb->pieces[result.extra_piece].color)))) {
 
 		local_position->piece_position[local_piece] = extra_sq;
 		result.restricted_piece = local_piece;
@@ -5766,7 +5766,7 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 	    } else if (result.missing_piece1 == NONE) {
 		result.missing_piece1 = local_piece;
 	    } else if (result.missing_piece2 == NONE) {
-		if (local_tb->piece_type[local_piece] == PAWN) {
+		if (local_tb->pieces[local_piece].piece_type == PAWN) {
 		    result.missing_piece2 = result.missing_piece1;
 		    result.missing_piece1 = local_piece;
 		} else {
@@ -5821,9 +5821,9 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
 		for (type = KING; type <= PAWN; type ++) {
 
 		    if (global->board[square] == global_pieces[color][type]) {
-			fake_tb.piece_color[fake_tb.num_pieces] = color;
-			fake_tb.piece_type[fake_tb.num_pieces] = type;
-			fake_tb.semilegal_squares[fake_tb.num_pieces] = ALL_ONES_BITVECTOR;
+			fake_tb.pieces[fake_tb.num_pieces].color = color;
+			fake_tb.pieces[fake_tb.num_pieces].piece_type = type;
+			fake_tb.pieces[fake_tb.num_pieces].semilegal_squares = ALL_ONES_BITVECTOR;
 			fake_position.piece_position[fake_tb.num_pieces] = square;
 			fake_tb.num_pieces ++;
 		    }
@@ -5877,7 +5877,7 @@ bool index_to_global_position(tablebase_t *tb, index_t index, global_position_t 
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
 	global->board[local.piece_position[piece]]
-	    = global_pieces[tb->piece_color[piece]][tb->piece_type[piece]];
+	    = global_pieces[tb->pieces[piece].color][tb->pieces[piece].piece_type];
     }
 
     return true;
@@ -5893,7 +5893,7 @@ bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int s
     if (pos->board_vector & BITVECTOR(square)) return false;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->piece_type[piece] == type) && (tb->piece_color[piece] == color)) {
+	if ((tb->pieces[piece].piece_type == type) && (tb->pieces[piece].color == color)) {
 	    pos->piece_position[piece] = square;
 	    pos->board_vector |= BITVECTOR(square);
 	    if (color == pos->side_to_move) pos->PTM_vector |= BITVECTOR(square);
@@ -6661,8 +6661,8 @@ class EntriesTable {
 	/* Compute the moves available to each side and use this to size the movecnt field */
 
 	for (int piece = 0; piece < current_tb->num_pieces; piece ++) {
-	    unsigned int *max_moves = (current_tb->piece_color[piece] == WHITE) ? &max_white_moves : &max_black_moves;
-	    switch (current_tb->piece_type[piece]) {
+	    unsigned int *max_moves = (current_tb->pieces[piece].color == WHITE) ? &max_white_moves : &max_black_moves;
+	    switch (current_tb->pieces[piece].piece_type) {
 	    case KING:
 	    case KNIGHT:
 		*max_moves += 8; break;
@@ -8797,14 +8797,14 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if (tb->piece_color[piece] == position->side_to_move) continue;
-	    if (tb->piece_type[piece] != PAWN) continue;
+	    if (tb->pieces[piece].color == position->side_to_move) continue;
+	    if (tb->pieces[piece].piece_type != PAWN) continue;
 
 	    /* I took care in the calling routines to update board_vector specifically so we can
 	     * check for en passant legality here.
 	     */
 
-	    if ((tb->piece_color[piece] == WHITE)
+	    if ((tb->pieces[piece].color == WHITE)
 		&& (ROW(position->piece_position[piece]) == 3)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
@@ -8812,7 +8812,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
-	    if ((tb->piece_color[piece] == BLACK)
+	    if ((tb->pieces[piece].color == BLACK)
 		&& (ROW(position->piece_position[piece]) == 4)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
@@ -8873,14 +8873,14 @@ void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t 
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if (tb->piece_color[piece] == position->side_to_move) continue;
-	    if (tb->piece_type[piece] != PAWN) continue;
+	    if (tb->pieces[piece].color == position->side_to_move) continue;
+	    if (tb->pieces[piece].piece_type != PAWN) continue;
 
 	    /* I took care in normalize_position() to update board_vector specifically so we can
 	     * check for en passant legality here.
 	     */
 
-	    if ((tb->piece_color[piece] == WHITE)
+	    if ((tb->pieces[piece].color == WHITE)
 		&& (ROW(position->piece_position[piece]) == 3)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
@@ -8888,7 +8888,7 @@ void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t 
 		propagate_mini_normalized_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
-	    if ((tb->piece_color[piece] == BLACK)
+	    if ((tb->pieces[piece].color == BLACK)
 		&& (ROW(position->piece_position[piece]) == 4)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
@@ -9068,7 +9068,7 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 	if (futurebase->invert_colors)
 	    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-	int local_piece = futurebase->matching_local_semilegal_group[translation.extra_piece][promotion_sq];
+	int local_piece = futurebase->pieces[translation.extra_piece].matching_local_semilegal_group[promotion_sq];
 
 	while (true) {
 
@@ -9096,7 +9096,7 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 		 */
 
 		if (!(position.board_vector & BITVECTOR(promotion_sq - promotion_move))
-		    && (current_tb->semilegal_squares[pawn] & BITVECTOR(promotion_sq - promotion_move))) {
+		    && (current_tb->pieces[pawn].semilegal_squares & BITVECTOR(promotion_sq - promotion_move))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put the
@@ -9131,7 +9131,7 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 	    position.piece_position[local_piece] = promotion_sq;
 	    promotion_sq = new_promotion_sq;
 
-	    local_piece = current_tb->next_piece_in_semilegal_group[local_piece];
+	    local_piece = current_tb->pieces[local_piece].next_piece_in_semilegal_group;
 	}
     }
 }
@@ -9191,7 +9191,7 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 	if (futurebase->invert_colors)
 	    promotion_sq = rowcol2square(7 - ROW(promotion_sq), COL(promotion_sq));
 
-	int local_piece = futurebase->matching_local_semilegal_group[translation.extra_piece][promotion_sq];
+	int local_piece = futurebase->pieces[translation.extra_piece].matching_local_semilegal_group[promotion_sq];
 
 	while (true) {
 
@@ -9224,7 +9224,7 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 		if ((COL(promotion_sq) != 0)
 		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
-		    && (current_tb->semilegal_squares[translation.missing_piece1] & BITVECTOR(promotion_sq - promotion_move - 1))) {
+		    && (current_tb->pieces[translation.missing_piece1].semilegal_squares & BITVECTOR(promotion_sq - promotion_move - 1))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put the
@@ -9258,7 +9258,7 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 		if ((COL(promotion_sq) != 7)
 		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
-		    && (current_tb->semilegal_squares[translation.missing_piece1] & BITVECTOR(promotion_sq - promotion_move + 1))) {
+		    && (current_tb->pieces[translation.missing_piece1].semilegal_squares & BITVECTOR(promotion_sq - promotion_move + 1))) {
 
 		    /* Because the promoted piece was 'extra' it doesn't appear in the local
 		     * position, so we don't have to worry about taking it off the board.  Put
@@ -9293,7 +9293,7 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 	    position.piece_position[local_piece] = promotion_sq;
 	    promotion_sq = new_promotion_sq;
 
-	    local_piece = current_tb->next_piece_in_semilegal_group[local_piece];
+	    local_piece = current_tb->pieces[local_piece].next_piece_in_semilegal_group;
 
 	}
     }
@@ -9319,7 +9319,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
     /* We only want to consider pieces of the side which captured... */
 
-    if (current_tb->piece_color[capturing_piece] == current_tb->piece_color[captured_piece]) return;
+    if (current_tb->pieces[capturing_piece].color == current_tb->pieces[captured_piece].color) return;
 
     /* Put the captured piece on the capturing piece's square (from the future position).  */
 
@@ -9334,7 +9334,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
     /* Now consider all possible backwards movements of the capturing piece. */
 
-    if (current_tb->piece_type[capturing_piece] != PAWN) {
+    if (current_tb->pieces[capturing_piece].piece_type != PAWN) {
 
 	/* If the square we put the captured piece on isn't semilegal for it, then don't consider
 	 * this capturing piece in this future position any more.  This is after the "if" instead of
@@ -9342,14 +9342,14 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 	 * ends up on a different square from the captured piece.
 	 */
 
-	if (!(current_tb->semilegal_squares[captured_piece]
+	if (!(current_tb->pieces[captured_piece].semilegal_squares
 	      & BITVECTOR(position->piece_position[captured_piece]))) {
 	    return;
 	}
 
-	for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[capturing_piece]]; dir++) {
+	for (dir = 0; dir < number_of_movement_directions[current_tb->pieces[capturing_piece].piece_type]; dir++) {
 
-	    for (movementptr = movements[current_tb->piece_type[capturing_piece]][position->piece_position[capturing_piece]][dir];
+	    for (movementptr = movements[current_tb->pieces[capturing_piece].piece_type][position->piece_position[capturing_piece]][dir];
 		 (movementptr->vector & position->board_vector) == 0;
 		 movementptr++) {
 
@@ -9357,7 +9357,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		 * check the capturing piece.
 		 */
 
-		if (! (current_tb->semilegal_squares[capturing_piece] & movementptr->vector)) continue;
+		if (! (current_tb->pieces[capturing_piece].semilegal_squares & movementptr->vector)) continue;
 
 		/* Move the capturing piece, normalize the position, and back prop it.
 		 *
@@ -9384,7 +9384,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 	/* Yes, pawn captures are special */
 
-	for (movementptr = capture_pawn_movements_bkwd[position->piece_position[capturing_piece]][current_tb->piece_color[capturing_piece]];
+	for (movementptr = capture_pawn_movements_bkwd[position->piece_position[capturing_piece]][current_tb->pieces[capturing_piece].color];
 	     movementptr->square != -1;
 	     movementptr++) {
 
@@ -9395,11 +9395,11 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 	    /* Move back the capturing pawn and see if it came from a semilegal square for it. */
 
 	    position->piece_position[capturing_piece] = movementptr->square;
-	    if (! (current_tb->semilegal_squares[capturing_piece] & movementptr->vector)) continue;
+	    if (! (current_tb->pieces[capturing_piece].semilegal_squares & movementptr->vector)) continue;
 
 	    /* And if the captured piece is also on a semilegal square for it... */
 
-	    if ((current_tb->semilegal_squares[captured_piece]
+	    if ((current_tb->pieces[captured_piece].semilegal_squares
 		 & BITVECTOR(position->piece_position[captured_piece]))) {
 
 		normalized_position = *position;
@@ -9424,11 +9424,11 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 	     * en passant move was even possible.
 	     */
 
-	    if ((current_tb->piece_type[captured_piece] == PAWN)
+	    if ((current_tb->pieces[captured_piece].piece_type == PAWN)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]-8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]+8))) {
 
-		if ((current_tb->piece_color[capturing_piece] == BLACK) && (ROW(movementptr->square) == 3)) {
+		if ((current_tb->pieces[capturing_piece].color == BLACK) && (ROW(movementptr->square) == 3)) {
 
 		    /* A black pawn capturing a white one (en passant)
 		     *
@@ -9440,7 +9440,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		    normalized_position.en_passant_square = position->piece_position[captured_piece];
 		    normalized_position.piece_position[captured_piece] += 8;
 
-		    if ((current_tb->semilegal_squares[captured_piece]
+		    if ((current_tb->pieces[captured_piece].semilegal_squares
 			 & BITVECTOR(normalized_position.piece_position[captured_piece]))) {
 
 			normalize_position(current_tb, &normalized_position);
@@ -9456,7 +9456,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 		}
 
-		if ((current_tb->piece_color[capturing_piece] == WHITE) && (ROW(movementptr->square) == 4)) {
+		if ((current_tb->pieces[capturing_piece].color == WHITE) && (ROW(movementptr->square) == 4)) {
 
 		    /* A white pawn capturing a black one (en passant)
 		     *
@@ -9468,7 +9468,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		    normalized_position.en_passant_square = position->piece_position[captured_piece];
 		    normalized_position.piece_position[captured_piece] -= 8;
 
-		    if ((current_tb->semilegal_squares[captured_piece]
+		    if ((current_tb->pieces[captured_piece].semilegal_squares
 			 & BITVECTOR(normalized_position.piece_position[captured_piece]))) {
 
 			normalize_position(current_tb, &normalized_position);
@@ -9548,7 +9548,7 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 	 * positions where the side to move is not the side that captured.
 	 */
 
-	if (position.side_to_move != current_tb->piece_color[captured_piece]) return;
+	if (position.side_to_move != current_tb->pieces[captured_piece].color) return;
 
 	/* We're going to back step a half move now */
 
@@ -9580,9 +9580,9 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 
 	    for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
-		if ((current_tb->piece_color[piece] == current_tb->piece_color[translation.restricted_piece])
-		    && (current_tb->piece_type[piece] == current_tb->piece_type[translation.restricted_piece])
-		    && (current_tb->semilegal_squares[piece] & BITVECTOR(restricted_square))) {
+		if ((current_tb->pieces[piece].color == current_tb->pieces[translation.restricted_piece].color)
+		    && (current_tb->pieces[piece].piece_type == current_tb->pieces[translation.restricted_piece].piece_type)
+		    && (current_tb->pieces[piece].semilegal_squares & BITVECTOR(restricted_square))) {
 
 		    position.piece_position[translation.restricted_piece] = position.piece_position[piece];
 		    position.piece_position[piece] = restricted_square;
@@ -9645,7 +9645,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	if (current_tb->piece_color[piece] == current_position.side_to_move) return;
+	if (current_tb->pieces[piece].color == current_position.side_to_move) return;
 
 	/* If there are any en passant capturable pawns in the position, then the last move had to
 	 * have been a pawn move.  In fact, in this case, we already know exactly what the last move
@@ -9654,11 +9654,11 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 	if (current_position.en_passant_square != ILLEGAL_POSITION) {
 
-	    if (current_tb->piece_type[piece] != PAWN) return;
+	    if (current_tb->pieces[piece].piece_type != PAWN) return;
 
-	    if (((current_tb->piece_color[piece] == WHITE)
+	    if (((current_tb->pieces[piece].color == WHITE)
 		 && (current_position.piece_position[piece] != current_position.en_passant_square + 8))
-		|| ((current_tb->piece_color[piece] == BLACK)
+		|| ((current_tb->pieces[piece].color == BLACK)
 		    && (current_position.piece_position[piece] != current_position.en_passant_square - 8))) {
 
 		/* No reason to complain here.  Maybe some other pawn was the en passant pawn. */
@@ -9673,7 +9673,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 	     */
 
 	    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
-	    if (current_tb->piece_color[piece] == WHITE)
+	    if (current_tb->pieces[piece].color == WHITE)
 		current_position.piece_position[piece] -= 16;
 	    else
 		current_position.piece_position[piece] += 16;
@@ -9684,7 +9684,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 	     * is the only possible back-move from this point, well...
 	     */
 
-	    if (! (current_tb->semilegal_squares[piece]
+	    if (! (current_tb->pieces[piece].semilegal_squares
 		   & BITVECTOR(current_position.piece_position[piece]))) {
 		return;
 	    }
@@ -9702,9 +9702,9 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 	parent_position = current_position;
 
-	if (current_tb->piece_type[piece] != PAWN) {
+	if (current_tb->pieces[piece].piece_type != PAWN) {
 
-	    for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[piece]]; dir++) {
+	    for (dir = 0; dir < number_of_movement_directions[current_tb->pieces[piece].piece_type]; dir++) {
 
 		/* What about captures?  Well, first of all, there are no captures here!  We're
 		 * moving BACKWARDS in the game... and pieces don't appear out of thin air.
@@ -9715,13 +9715,13 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 		 */
 
 		for (movementptr
-			 = movements[current_tb->piece_type[piece]][parent_position.piece_position[piece]][dir];
+			 = movements[current_tb->pieces[piece].piece_type][parent_position.piece_position[piece]][dir];
 		     (movementptr->vector & parent_position.board_vector) == 0;
 		     movementptr++) {
 
 		    /* We never back out into a restricted position (obviously) */
 
-		    if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
+		    if (! (current_tb->pieces[piece].semilegal_squares & movementptr->vector)) continue;
 
 		    /* Back stepping a half move here involves several things: flipping the
 		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
@@ -9757,13 +9757,13 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 	    /* Usual special case for pawns */
 
-	    for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][current_tb->piece_color[piece]];
+	    for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][current_tb->pieces[piece].color];
 		 (movementptr->vector & parent_position.board_vector) == 0;
 		 movementptr++) {
 
 		/* We never back out into a restricted position (obviously) */
 
-		if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
+		if (! (current_tb->pieces[piece].semilegal_squares & movementptr->vector)) continue;
 
 		/* Do we have a backwards pawn move here?
 		 *
@@ -9884,7 +9884,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename);
 
-		promotion_color = tb->piece_color[futurebase->missing_pawn];
+		promotion_color = tb->pieces[futurebase->missing_pawn].color;
 		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
@@ -9899,7 +9899,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename);
 
-		promotion_color = tb->piece_color[futurebase->missing_pawn];
+		promotion_color = tb->pieces[futurebase->missing_pawn].color;
 		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
@@ -10189,10 +10189,10 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	     * so there's no question of whether the resulting position is fully legal or not.
 	     */
 
-	    if (tb->legal_squares[piece] & BITVECTOR(sq)) {
-		if (tb->piece_type[piece] != PAWN) {
-		    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
-			for (movementptr = movements[tb->piece_type[piece]][sq][dir];
+	    if (tb->pieces[piece].legal_squares & BITVECTOR(sq)) {
+		if (tb->pieces[piece].piece_type != PAWN) {
+		    for (dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
+			for (movementptr = movements[tb->pieces[piece].piece_type][sq][dir];
 			     movementptr->square != -1; movementptr++) {
 
 			    possible_captures[piece] |= movementptr->vector;
@@ -10202,7 +10202,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			}
 		    }
 		} else {
-		    for (movementptr = capture_pawn_movements[sq][tb->piece_color[piece]];
+		    for (movementptr = capture_pawn_movements[sq][tb->pieces[piece].color];
 			 movementptr->square != -1; movementptr++) {
 
 			possible_captures[piece] |= movementptr->vector;
@@ -10230,7 +10230,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	     * prune-enable statements, since these are the rules of the game!
 	     */
 
-	    if ((tb->variant == VARIANT_SUICIDE) && (tb->num_pieces_by_color[tb->piece_color[captured_piece]] == 1)) {
+	    if ((tb->variant == VARIANT_SUICIDE) && (tb->num_pieces_by_color[tb->pieces[captured_piece].color] == 1)) {
 
 		futurecaptures[capturing_piece][captured_piece] = RESIGN_FUTUREMOVE;
 
@@ -10247,34 +10247,34 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		promotion_captures[capturing_piece][captured_piece][promotion] = NO_FUTUREMOVE;
 	    }
 
-	    if (tb->piece_color[capturing_piece] == tb->piece_color[captured_piece]) continue;
+	    if (tb->pieces[capturing_piece].color == tb->pieces[captured_piece].color) continue;
 
-	    if (tb->piece_type[capturing_piece] != PAWN) {
+	    if (tb->pieces[capturing_piece].piece_type != PAWN) {
 
-		if (possible_captures[capturing_piece] & tb->legal_squares[captured_piece]) {
+		if (possible_captures[capturing_piece] & tb->pieces[captured_piece].legal_squares) {
 
 		    char * my_movestr
-			= movestr[tb->piece_color[capturing_piece]]
-			[num_futuremoves[tb->piece_color[capturing_piece]]];
+			= movestr[tb->pieces[capturing_piece].color]
+			[num_futuremoves[tb->pieces[capturing_piece].color]];
 
 		    sprintf(my_movestr, "%cx%c",
-			    piece_char[tb->piece_type[capturing_piece]],
-			    piece_char[tb->piece_type[captured_piece]]);
+			    piece_char[tb->pieces[capturing_piece].piece_type],
+			    piece_char[tb->pieces[captured_piece].piece_type]);
 
 		    futurecaptures[capturing_piece][captured_piece]
-			= num_futuremoves[tb->piece_color[capturing_piece]] ++;
+			= num_futuremoves[tb->pieces[capturing_piece].color] ++;
 		}
 
 	    } else {
 
 		/* if it's a pawn-takes-pawn situation, check for en passant as well */
 
-		if ((possible_captures[capturing_piece] & tb->legal_squares[captured_piece])
-		    | ((tb->piece_type[captured_piece] == PAWN)
-		       && (((tb->piece_color[capturing_piece] == WHITE)
+		if ((possible_captures[capturing_piece] & tb->pieces[captured_piece].legal_squares)
+		    | ((tb->pieces[captured_piece].piece_type == PAWN)
+		       && (((tb->pieces[capturing_piece].color == WHITE)
 			    ? ((possible_captures[capturing_piece] & 0x0000ff0000000000LL) >> 8)
 			    : ((possible_captures[capturing_piece] & 0x0000000000ff0000LL) << 8))
-			   & tb->legal_squares[captured_piece]))) {
+			   & tb->pieces[captured_piece].legal_squares))) {
 
 		    int candidate_futuremove = NO_FUTUREMOVE;
 		    char candidate_movestr[MOVESTR_CHARS];
@@ -10282,20 +10282,20 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		    /* start by dishing out a non-promotion futurecapture */
 
 		    char * my_movestr
-			= movestr[tb->piece_color[capturing_piece]]
-			[num_futuremoves[tb->piece_color[capturing_piece]]];
+			= movestr[tb->pieces[capturing_piece].color]
+			[num_futuremoves[tb->pieces[capturing_piece].color]];
 
 		    sprintf(my_movestr, "%cx%c",
-			    piece_char[tb->piece_type[capturing_piece]],
-			    piece_char[tb->piece_type[captured_piece]]);
+			    piece_char[tb->pieces[capturing_piece].piece_type],
+			    piece_char[tb->pieces[captured_piece].piece_type]);
 
 		    futurecaptures[capturing_piece][captured_piece]
-			= num_futuremoves[tb->piece_color[capturing_piece]] ++;
+			= num_futuremoves[tb->pieces[capturing_piece].color] ++;
 
 		    /* Keep going only if it's a pawn capture that results in promotion */
 
-		    if (! (possible_captures[capturing_piece] & tb->legal_squares[captured_piece]
-			   & ((tb->piece_color[capturing_piece] == WHITE)
+		    if (! (possible_captures[capturing_piece] & tb->pieces[captured_piece].legal_squares
+			   & ((tb->pieces[capturing_piece].color == WHITE)
 			      ? 0xff00000000000000LL : 0x00000000000000ffLL))) {
 			continue;
 		    }
@@ -10305,7 +10305,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			candidate_futuremove = NO_FUTUREMOVE;
 
 			sprintf(candidate_movestr, "Px%c=%c",
-				piece_char[tb->piece_type[captured_piece]],
+				piece_char[tb->pieces[captured_piece].piece_type],
 				piece_char[promoted_pieces[promotion]]);
 
 			/* Be conservative about handing out bit positions in the futurevector.
@@ -10325,10 +10325,10 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			 */
 
 			for (piece = 0; piece < capturing_piece; piece ++) {
-			    if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
+			    if (tb->pieces[piece].color != tb->pieces[capturing_piece].color) continue;
 			    if (promotion_captures[piece][captured_piece][promotion] != NO_FUTUREMOVE) {
 				if ((! (possible_captures[capturing_piece] & possible_captures[piece]))
-				    && (! strcmp(candidate_movestr, movestr[tb->piece_color[piece]][promotion_captures[piece][captured_piece][promotion]]))) {
+				    && (! strcmp(candidate_movestr, movestr[tb->pieces[piece].color][promotion_captures[piece][captured_piece][promotion]]))) {
 				    candidate_futuremove = promotion_captures[piece][captured_piece][promotion];
 				}
 			    }
@@ -10336,7 +10336,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			if (candidate_futuremove != NO_FUTUREMOVE) {
 			    for (piece = 0; piece < capturing_piece; piece ++) {
-				if (tb->piece_color[piece] != tb->piece_color[capturing_piece]) continue;
+				if (tb->pieces[piece].color != tb->pieces[capturing_piece].color) continue;
 				if (! (possible_captures[capturing_piece] & possible_captures[piece])) continue;
 				if (promotion_captures[piece][captured_piece][promotion] != NO_FUTUREMOVE) {
 				    if (promotion_captures[piece][captured_piece][promotion] == candidate_futuremove) {
@@ -10348,8 +10348,8 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			}
 
 			if (candidate_futuremove == NO_FUTUREMOVE) {
-			    candidate_futuremove = num_futuremoves[tb->piece_color[capturing_piece]] ++;
-			    strcpy(movestr[tb->piece_color[capturing_piece]][candidate_futuremove], candidate_movestr);
+			    candidate_futuremove = num_futuremoves[tb->pieces[capturing_piece].color] ++;
+			    strcpy(movestr[tb->pieces[capturing_piece].color][candidate_futuremove], candidate_movestr);
 			}
 
 			promotion_captures[capturing_piece][captured_piece][promotion] = candidate_futuremove;
@@ -10374,16 +10374,16 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 	    promotions[piece][promotion] = NO_FUTUREMOVE;
 	}
-	if (tb->piece_type[piece] == PAWN) {
-	    for (sq = (tb->piece_color[piece] == WHITE ? 48 : 8);
-		 sq <= (tb->piece_color[piece] == WHITE ? 55 : 15); sq++) {
-		if (tb->legal_squares[piece] & BITVECTOR(sq)) {
+	if (tb->pieces[piece].piece_type == PAWN) {
+	    for (sq = (tb->pieces[piece].color == WHITE ? 48 : 8);
+		 sq <= (tb->pieces[piece].color == WHITE ? 55 : 15); sq++) {
+		if (tb->pieces[piece].legal_squares & BITVECTOR(sq)) {
 
 		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-			promotions[piece][promotion] = num_futuremoves[tb->piece_color[piece]];
-			sprintf(movestr[tb->piece_color[piece]][promotions[piece][promotion]],
+			promotions[piece][promotion] = num_futuremoves[tb->pieces[piece].color];
+			sprintf(movestr[tb->pieces[piece].color][promotions[piece][promotion]],
 				"P=%c", piece_char[promoted_pieces[promotion]]);
-			num_futuremoves[tb->piece_color[piece]] ++;
+			num_futuremoves[tb->pieces[piece].color] ++;
 		    }
 
 		    break;
@@ -10412,13 +10412,13 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	    /* Consider as _starting_ squares only those within the piece's movement restriction */
 
-	    if (! (tb->legal_squares[piece] & BITVECTOR(sq))) continue;
+	    if (! (tb->pieces[piece].legal_squares & BITVECTOR(sq))) continue;
 
-	    if (tb->piece_type[piece] != PAWN) {
+	    if (tb->pieces[piece].piece_type != PAWN) {
 
-		for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+		for (dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
 
-		    for (movementptr = movements[tb->piece_type[piece]][sq][dir];
+		    for (movementptr = movements[tb->pieces[piece].piece_type][sq][dir];
 			 movementptr->square != -1; movementptr++) {
 
 			/* If we hit a frozen piece, movement has to stop.  We don't consider
@@ -10449,25 +10449,25 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			 * isn't legal.
 			 */
 
-			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))
+			if (!(tb->pieces[piece].semilegal_squares & BITVECTOR(movementptr->square))
 
-			    || (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
-				&& ( tb->semilegal_squares[piece] & ~(tb->legal_squares[piece])
+			    || (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
+				&& ( tb->pieces[piece].semilegal_squares & ~(tb->pieces[piece].legal_squares)
 				     & ~BITVECTOR(movementptr->square) & ~BITVECTOR(sq) ))) {
 
 			    if (futuremoves[piece][movementptr->square] == NO_FUTUREMOVE) {
 
-				sprintf(local_movestr, "%c%c%c", piece_char[tb->piece_type[piece]],
+				sprintf(local_movestr, "%c%c%c", piece_char[tb->pieces[piece].piece_type],
 					'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
 
 				if (futurebase_cnt > 0) {
 				    futuremoves[piece][movementptr->square]
-					= num_futuremoves[tb->piece_color[piece]];
-				    strcpy(movestr[tb->piece_color[piece]][num_futuremoves[tb->piece_color[piece]]],
+					= num_futuremoves[tb->pieces[piece].color];
+				    strcpy(movestr[tb->pieces[piece].color][num_futuremoves[tb->pieces[piece].color]],
 					   local_movestr);
-				    num_futuremoves[tb->piece_color[piece]] ++;
+				    num_futuremoves[tb->pieces[piece].color] ++;
 				} else {
-				    switch (match_pruning_statement(tb, tb->piece_color[piece],
+				    switch (match_pruning_statement(tb, tb->pieces[piece].color,
 								    local_movestr)) {
 				    case RESTRICTION_DISCARD:
 					futuremoves[piece][movementptr->square] = DISCARD_FUTUREMOVE;
@@ -10486,7 +10486,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		/* Pawns, as always, are special */
 
-		for (movementptr = normal_pawn_movements[sq][tb->piece_color[piece]];
+		for (movementptr = normal_pawn_movements[sq][tb->pieces[piece].color];
 		     movementptr->square != -1; movementptr++) {
 
 		    /* If we hit a frozen piece, movement has to stop.  We don't consider captures
@@ -10506,21 +10506,21 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			 * move outside its restriction (except via capture).
 			 */
 
-			if (!(tb->semilegal_squares[piece] & BITVECTOR(movementptr->square))
+			if (!(tb->pieces[piece].semilegal_squares & BITVECTOR(movementptr->square))
 
-			    || (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
-				&& ( tb->semilegal_squares[piece] & ~(tb->legal_squares[piece])
+			    || (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
+				&& ( tb->pieces[piece].semilegal_squares & ~(tb->pieces[piece].legal_squares)
 				     & ~BITVECTOR(movementptr->square) & ~BITVECTOR(sq) ))) {
 
-			    if (tb->blocking_piece[piece] == -1) {
+			    if (tb->pieces[piece].blocking_piece == -1) {
 
 				if (futuremoves[piece][movementptr->square] == NO_FUTUREMOVE) {
 				    futuremoves[piece][movementptr->square]
-					= num_futuremoves[tb->piece_color[piece]];
-				    sprintf(movestr[tb->piece_color[piece]][num_futuremoves[tb->piece_color[piece]]],
-					    "%c%c%c", piece_char[tb->piece_type[piece]],
+					= num_futuremoves[tb->pieces[piece].color];
+				    sprintf(movestr[tb->pieces[piece].color][num_futuremoves[tb->pieces[piece].color]],
+					    "%c%c%c", piece_char[tb->pieces[piece].piece_type],
 					    'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-				    num_futuremoves[tb->piece_color[piece]] ++;
+				    num_futuremoves[tb->pieces[piece].color] ++;
 				}
 			    }
 			}
@@ -10657,15 +10657,15 @@ bool check_pruning(tablebase_t *tb) {
 	 */
 
 	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	    if (tb->piece_type[captured_piece] == PAWN) {
+	    if (tb->pieces[captured_piece].piece_type == PAWN) {
 		if ((futurebases[fbnum]->extra_piece == -1)
 		    && (futurebases[fbnum]->missing_pawn != -1)
-		    && (tb->piece_color[futurebases[fbnum]->missing_pawn] == tb->piece_color[captured_piece])
+		    && (tb->pieces[futurebases[fbnum]->missing_pawn].color == tb->pieces[captured_piece].color)
 		    && (futurebases[fbnum]->missing_non_pawn == -1)) futurebase_cnt ++;
 	    } else {
 		if ((futurebases[fbnum]->extra_piece == -1)
 		    && (futurebases[fbnum]->missing_non_pawn != -1)
-		    && (tb->piece_color[futurebases[fbnum]->missing_non_pawn] == tb->piece_color[captured_piece])
+		    && (tb->pieces[futurebases[fbnum]->missing_non_pawn].color == tb->pieces[captured_piece].color)
 		    && (futurebases[fbnum]->missing_pawn == -1)) futurebase_cnt ++;
 	    }
 	}
@@ -10683,24 +10683,24 @@ bool check_pruning(tablebase_t *tb) {
 		 * are WHITE positions, so we don't care if the capturing piece is BLACK
 		 */
 
-		if ((! tb->encode_stm) && (tb->piece_color[capturing_piece] == BLACK)) continue;
+		if ((! tb->encode_stm) && (tb->pieces[capturing_piece].color == BLACK)) continue;
 
 		if (futurecaptures[capturing_piece][captured_piece] >= 0) {
 
-		    if (! (pruned_futuremoves[tb->piece_color[capturing_piece]]
+		    if (! (pruned_futuremoves[tb->pieces[capturing_piece].color]
 			   & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
 			fatal("No futurebase or pruning for %s move %s\n",
-			      colors[tb->piece_color[capturing_piece]].c_str(),
-			      movestr[tb->piece_color[capturing_piece]][futurecaptures[capturing_piece][captured_piece]]);
+			      colors[tb->pieces[capturing_piece].color].c_str(),
+			      movestr[tb->pieces[capturing_piece].color][futurecaptures[capturing_piece][captured_piece]]);
 			return false;
-		    } else if (discarded_futuremoves[tb->piece_color[capturing_piece]]
+		    } else if (discarded_futuremoves[tb->pieces[capturing_piece].color]
 			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
-			optimized_futuremoves[tb->piece_color[capturing_piece]]
+			optimized_futuremoves[tb->pieces[capturing_piece].color]
 			    |= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 			futurecaptures[capturing_piece][captured_piece] = DISCARD_FUTUREMOVE;
-		    } else if (conceded_futuremoves[tb->piece_color[capturing_piece]]
+		    } else if (conceded_futuremoves[tb->pieces[capturing_piece].color]
 			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
-			optimized_futuremoves[tb->piece_color[capturing_piece]]
+			optimized_futuremoves[tb->pieces[capturing_piece].color]
 			    |= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 			futurecaptures[capturing_piece][captured_piece] = CONCEDE_FUTUREMOVE;
 		    } else {
@@ -10717,9 +10717,9 @@ bool check_pruning(tablebase_t *tb) {
 
 	int promotion;
 
-	if (tb->piece_type[pawn] != PAWN) continue;
+	if (tb->pieces[pawn].piece_type != PAWN) continue;
 
-	if ((! tb->encode_stm) && (tb->piece_color[pawn] == BLACK)) continue;
+	if ((! tb->encode_stm) && (tb->pieces[pawn].color == BLACK)) continue;
 
 	/* First, we're looking for promotion capture futurebases. */
 
@@ -10731,10 +10731,10 @@ bool check_pruning(tablebase_t *tb) {
 	     * possible.
 	     */
 
-	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->legal_squares[pawn] & 0x00ff000000000000LL)) break;
+	    if (tb->pieces[pawn].color == WHITE) {
+		if (! (tb->pieces[pawn].legal_squares & 0x00ff000000000000LL)) break;
 	    } else {
-		if (! (tb->legal_squares[pawn] & 0x000000000000ff00LL)) break;
+		if (! (tb->pieces[pawn].legal_squares & 0x000000000000ff00LL)) break;
 	    }
 
 	    /* Check to see that the other piece can be on a square where it could be promotion
@@ -10745,10 +10745,10 @@ bool check_pruning(tablebase_t *tb) {
 	     * that promotion was possible in?
 	     */
 
-	    if (tb->piece_color[pawn] == WHITE) {
-		if (! (tb->legal_squares[captured_piece] & 0xff00000000000000LL)) continue;
+	    if (tb->pieces[pawn].color == WHITE) {
+		if (! (tb->pieces[captured_piece].legal_squares & 0xff00000000000000LL)) continue;
 	    } else {
-		if (! (tb->legal_squares[captured_piece] & 0x00000000000000ffLL)) continue;
+		if (! (tb->pieces[captured_piece].legal_squares & 0x00000000000000ffLL)) continue;
 	    }
 
 	    /* check all futurebases for a 'promotion capture' with captured_piece missing */
@@ -10761,16 +10761,16 @@ bool check_pruning(tablebase_t *tb) {
 
 		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		    if ((futurebases[fbnum]->extra_piece != -1)
-			&& (futurebases[fbnum]->piece_color[futurebases[fbnum]->extra_piece]
-			    == (futurebases[fbnum]->invert_colors ? 1 - tb->piece_color[pawn] : tb->piece_color[pawn]))
+			&& (futurebases[fbnum]->pieces[futurebases[fbnum]->extra_piece].color
+			    == (futurebases[fbnum]->invert_colors ? 1 - tb->pieces[pawn].color : tb->pieces[pawn].color))
 			&& (futurebases[fbnum]->missing_non_pawn != -1)
-			&& (tb->piece_color[futurebases[fbnum]->missing_non_pawn]
-			    == tb->piece_color[captured_piece])
-			&& (tb->piece_type[futurebases[fbnum]->missing_non_pawn]
-			    == tb->piece_type[captured_piece])
+			&& (tb->pieces[futurebases[fbnum]->missing_non_pawn].color
+			    == tb->pieces[captured_piece].color)
+			&& (tb->pieces[futurebases[fbnum]->missing_non_pawn].piece_type
+			    == tb->pieces[captured_piece].piece_type)
 			&& (futurebases[fbnum]->missing_pawn != -1)
-			&& (tb->piece_color[futurebases[fbnum]->missing_pawn] == tb->piece_color[pawn])
-			&& (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == promoted_pieces[promotion])) {
+			&& (tb->pieces[futurebases[fbnum]->missing_pawn].color == tb->pieces[pawn].color)
+			&& (futurebases[fbnum]->pieces[futurebases[fbnum]->extra_piece].piece_type == promoted_pieces[promotion])) {
 
 			promoted_piece_handled = 1;
 		    }
@@ -10782,19 +10782,19 @@ bool check_pruning(tablebase_t *tb) {
 
 		if (promoted_piece_handled) continue;
 
-		if (! (pruned_futuremoves[tb->piece_color[pawn]]
+		if (! (pruned_futuremoves[tb->pieces[pawn].color]
 		       & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]))) {
 		    fatal("No futurebase or pruning for %s move %s\n",
-			  colors[tb->piece_color[pawn]].c_str(),
-			  movestr[tb->piece_color[pawn]][promotion_captures[pawn][captured_piece][promotion]]);
+			  colors[tb->pieces[pawn].color].c_str(),
+			  movestr[tb->pieces[pawn].color][promotion_captures[pawn][captured_piece][promotion]]);
 		    return false;
-		} else if (discarded_futuremoves[tb->piece_color[pawn]]
+		} else if (discarded_futuremoves[tb->pieces[pawn].color]
 			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
-		    optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
+		    optimized_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
 		    promotion_captures[pawn][captured_piece][promotion] = DISCARD_FUTUREMOVE;
-		} else if (conceded_futuremoves[tb->piece_color[pawn]]
+		} else if (conceded_futuremoves[tb->pieces[pawn].color]
 			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
-		    optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
+		    optimized_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
 		    promotion_captures[pawn][captured_piece][promotion] = CONCEDE_FUTUREMOVE;
 		} else {
 		    fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
@@ -10815,7 +10815,7 @@ bool check_pruning(tablebase_t *tb) {
 		if ((futurebases[fbnum]->extra_piece != -1)
 		    && (futurebases[fbnum]->missing_non_pawn == -1)
 		    && (futurebases[fbnum]->missing_pawn != -1)
-		    && (futurebases[fbnum]->piece_type[futurebases[fbnum]->extra_piece] == promoted_pieces[promotion])) {
+		    && (futurebases[fbnum]->pieces[futurebases[fbnum]->extra_piece].piece_type == promoted_pieces[promotion])) {
 
 		    promoted_piece_handled = 1;
 		}
@@ -10824,16 +10824,16 @@ bool check_pruning(tablebase_t *tb) {
 
 	    if (promoted_piece_handled) continue;
 
-	    if (! (pruned_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion]))) {
+	    if (! (pruned_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion]))) {
 		fatal("No futurebase or pruning for %s move %s\n",
-		      colors[tb->piece_color[pawn]].c_str(),
-		      movestr[tb->piece_color[pawn]][promotions[pawn][promotion]]);
+		      colors[tb->pieces[pawn].color].c_str(),
+		      movestr[tb->pieces[pawn].color][promotions[pawn][promotion]]);
 		return false;
-	    } else if (discarded_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion])) {
-		optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotions[pawn][promotion]);
+	    } else if (discarded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
+		optimized_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotions[pawn][promotion]);
 		promotions[pawn][promotion] = DISCARD_FUTUREMOVE;
-	    } else if (conceded_futuremoves[tb->piece_color[pawn]] & FUTUREVECTOR(promotions[pawn][promotion])) {
-		optimized_futuremoves[tb->piece_color[pawn]] |= FUTUREVECTOR(promotions[pawn][promotion]);
+	    } else if (conceded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
+		optimized_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotions[pawn][promotion]);
 		promotions[pawn][promotion] = CONCEDE_FUTUREMOVE;
 	    } else {
 		fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
@@ -10862,14 +10862,14 @@ bool check_pruning(tablebase_t *tb) {
 
     if (futurebase_cnt == 0) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if ((! tb->encode_stm) && (tb->piece_color[piece] == BLACK)) continue;
+	    if ((! tb->encode_stm) && (tb->pieces[piece].color == BLACK)) continue;
 	    for (sq = 0; sq < 64; sq ++) {
 		if (futuremoves[piece][sq] >= 0) {
 
-		    if (! (pruned_futuremoves[tb->piece_color[piece]] & FUTUREVECTOR(futuremoves[piece][sq]))) {
+		    if (! (pruned_futuremoves[tb->pieces[piece].color] & FUTUREVECTOR(futuremoves[piece][sq]))) {
 			fatal("No futurebase or pruning for %s move %s\n",
-			      colors[tb->piece_color[piece]].c_str(),
-			      movestr[tb->piece_color[piece]][futuremoves[piece][sq]]);
+			      colors[tb->pieces[piece].color].c_str(),
+			      movestr[tb->pieces[piece].color][futuremoves[piece][sq]]);
 			return false;
 		    }
 		}
@@ -10905,13 +10905,13 @@ void optimize_futuremoves(tablebase_t *tb)
 
 		for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-		    if (tb->piece_color[piece] == color) {
+		    if (tb->pieces[piece].color == color) {
 
 			for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
 			    if (futurecaptures[piece][piece2] > fm) {
 				futurecaptures[piece][piece2] --;
 			    }
-			    if (tb->piece_type[piece] == PAWN) {
+			    if (tb->pieces[piece].piece_type == PAWN) {
 				for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 				    if (promotion_captures[piece][piece2][promotion] > fm) {
 					promotion_captures[piece][piece2][promotion] --;
@@ -10926,7 +10926,7 @@ void optimize_futuremoves(tablebase_t *tb)
 			    }
 			}
 
-			if (tb->piece_type[piece] == PAWN) {
+			if (tb->pieces[piece].piece_type == PAWN) {
 			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 				if (promotions[piece][promotion] > fm) {
 				    promotions[piece][promotion] --;
@@ -11027,14 +11027,14 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if (tb->piece_color[piece] == position->side_to_move) continue;
-	    if (tb->piece_type[piece] != PAWN) continue;
+	    if (tb->pieces[piece].color == position->side_to_move) continue;
+	    if (tb->pieces[piece].piece_type != PAWN) continue;
 
 	    /* I've taken care to update board_vector in the routine that calls here specifically so
 	     * we can check for en passant legality here.
 	     */
 
-	    if ((tb->piece_color[piece] == WHITE)
+	    if ((tb->pieces[piece].color == WHITE)
 		&& (ROW(position->piece_position[piece]) == 3)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
@@ -11042,7 +11042,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 		propagate_one_minimove_within_table(tb, future_index, position);
 	    }
 
-	    if ((tb->piece_color[piece] == BLACK)
+	    if ((tb->pieces[piece].color == BLACK)
 		&& (ROW(position->piece_position[piece]) == 4)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
@@ -11098,12 +11098,12 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
-	    if (current_tb->piece_color[piece] != position.side_to_move) continue;
-	    if (current_tb->piece_type[piece] != PAWN) continue;
+	    if (current_tb->pieces[piece].color != position.side_to_move) continue;
+	    if (current_tb->pieces[piece].piece_type != PAWN) continue;
 
-	    if (((current_tb->piece_color[piece] == WHITE)
+	    if (((current_tb->pieces[piece].color == WHITE)
 		 && (position.piece_position[piece] - 8 == position.en_passant_square))
-		|| ((current_tb->piece_color[piece] == BLACK)
+		|| ((current_tb->pieces[piece].color == BLACK)
 		    && (position.piece_position[piece] + 8 == position.en_passant_square))) {
 		if (en_passant_pawn != -1) fatal("Two en passant pawns in back prop?!\n");
 		en_passant_pawn = piece;
@@ -11121,7 +11121,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	    position.board_vector &= ~BITVECTOR(position.piece_position[en_passant_pawn]);
 
-	    if (current_tb->piece_color[en_passant_pawn] == WHITE)
+	    if (current_tb->pieces[en_passant_pawn].color == WHITE)
 		position.piece_position[en_passant_pawn] -= 16;
 	    else
 		position.piece_position[en_passant_pawn] += 16;
@@ -11132,7 +11132,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 	     * is the only legal back-move from this point, well...
 	     */
 
-	    if (! (current_tb->semilegal_squares[en_passant_pawn]
+	    if (! (current_tb->pieces[en_passant_pawn].semilegal_squares
 		   & BITVECTOR(position.piece_position[en_passant_pawn]))) {
 		return;
 	    }
@@ -11151,16 +11151,16 @@ void back_propagate_index_within_table(index_t index, int reflection)
 	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	if (current_tb->piece_color[piece] != position.side_to_move)
+	if (current_tb->pieces[piece].color != position.side_to_move)
 	    continue;
 
 	origin_square = position.piece_position[piece];
 
 	position.board_vector &= ~BITVECTOR(origin_square);
 
-	if (current_tb->piece_type[piece] != PAWN) {
+	if (current_tb->pieces[piece].piece_type != PAWN) {
 
-	    for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[piece]]; dir++) {
+	    for (dir = 0; dir < number_of_movement_directions[current_tb->pieces[piece].piece_type]; dir++) {
 
 		/* What about captures?  Well, first of all, there are no captures here!  We're
 		 * moving BACKWARDS in the game... and pieces don't appear out of thin air.
@@ -11170,13 +11170,13 @@ void back_propagate_index_within_table(index_t index, int reflection)
 		 * vector, there's absolutely no need to consider anything further.
 		 */
 
-		for (movementptr = movements[current_tb->piece_type[piece]][origin_square][dir];
+		for (movementptr = movements[current_tb->pieces[piece].piece_type][origin_square][dir];
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
 		    /* We never back out into a restricted position (obviously) */
 
-		    if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
+		    if (! (current_tb->pieces[piece].semilegal_squares & movementptr->vector)) continue;
 
 		    /* Back stepping a half move here involves several things: flipping the
 		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
@@ -11208,13 +11208,13 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	    /* Usual special case for pawns */
 
-	    for (movementptr = normal_pawn_movements_bkwd[origin_square][current_tb->piece_color[piece]];
+	    for (movementptr = normal_pawn_movements_bkwd[origin_square][current_tb->pieces[piece].color];
 		 (movementptr->vector & position.board_vector) == 0;
 		 movementptr++) {
 
 		/* We never back out into a restricted position (obviously) */
 
-		if (! (current_tb->semilegal_squares[piece] & movementptr->vector)) continue;
+		if (! (current_tb->pieces[piece].semilegal_squares & movementptr->vector)) continue;
 
 		/* Do we have a backwards pawn move here?
 		 *
@@ -11330,20 +11330,20 @@ bool PTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	/* We only want to consider pieces of the side which is NOT to move... */
 
-	if (tb->piece_color[piece] == position->side_to_move) continue;
+	if (tb->pieces[piece].color == position->side_to_move) continue;
 
 	/* We might have removed the piece from the position... */
 
 	if (position->piece_position[piece] == ILLEGAL_POSITION) continue;
 
-	if (tb->piece_type[piece] != PAWN) {
+	if (tb->pieces[piece].piece_type != PAWN) {
 
-	    if ((board_mask[tb->piece_type[piece]][position->piece_position[piece]][king_position]
+	    if ((board_mask[tb->pieces[piece].piece_type][position->piece_position[piece]][king_position]
 		 & position->board_vector) == 0) return true;
 
 	} else {
 
-	    if (board_mask[tb->piece_type[piece] + tb->piece_color[piece]][position->piece_position[piece]][king_position]
+	    if (board_mask[tb->pieces[piece].piece_type + tb->pieces[piece].color][position->piece_position[piece]][king_position]
 		== 0) return true;
 
 	}
@@ -11475,15 +11475,15 @@ bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	/* We only want to consider pieces of the side which is to move... */
 
-	if (tb->piece_color[piece] != position->side_to_move) continue;
+	if (tb->pieces[piece].color != position->side_to_move) continue;
 
 	origin_square = position->piece_position[piece];
 
-	if (tb->piece_type[piece] != PAWN) {
+	if (tb->pieces[piece].piece_type != PAWN) {
 
-	    for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+	    for (dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
 
-		for (movementptr = movements[tb->piece_type[piece]][origin_square][dir];
+		for (movementptr = movements[tb->pieces[piece].piece_type][origin_square][dir];
 		     (movementptr->vector & position->board_vector) == 0;
 		     movementptr++) {
 		}
@@ -11500,7 +11500,7 @@ bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	    }
 	} else {
-	    for (movementptr = capture_pawn_movements[origin_square][tb->piece_color[piece]];
+	    for (movementptr = capture_pawn_movements[origin_square][tb->pieces[piece].color];
 		 movementptr->square != -1;
 		 movementptr++) {
 
@@ -11598,16 +11598,16 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	    /* We only want to consider pieces of the side which is to move... */
 
-	    if (tb->piece_color[piece] != position.side_to_move) continue;
+	    if (tb->pieces[piece].color != position.side_to_move) continue;
 
 	    origin_square = position.piece_position[piece];
 	    position.board_vector &= ~BITVECTOR(origin_square);
 
-	    if (tb->piece_type[piece] != PAWN) {
+	    if (tb->pieces[piece].piece_type != PAWN) {
 
-		for (dir = 0; dir < number_of_movement_directions[tb->piece_type[piece]]; dir++) {
+		for (dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
 
-		    for (movementptr = movements[tb->piece_type[piece]][origin_square][dir];
+		    for (movementptr = movements[tb->pieces[piece].piece_type][origin_square][dir];
 			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
 
@@ -11634,7 +11634,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			if (! PTM_in_check(tb, &position)) {
 
-			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+			    if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
 				&& (local_position_to_index(tb, &position) == INVALID_INDEX)) {
 
 				if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
@@ -11648,7 +11648,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
 				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->piece_type[piece]],
+					  piece_char[tb->pieces[piece].piece_type],
 					  'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
 				} else if (futurevector
 					   & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
@@ -11709,8 +11709,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					      piece_char[tb->piece_type[piece]],
-					      piece_char[tb->piece_type[i]]);
+					      piece_char[tb->pieces[piece].piece_type],
+					      piece_char[tb->pieces[i].piece_type]);
 				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 					fatal("Duplicate futuremove!\n");
 				    } else {
@@ -11737,7 +11737,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		/* Pawns, as always, are special */
 
-		for (movementptr = normal_pawn_movements[origin_square][tb->piece_color[piece]];
+		for (movementptr = normal_pawn_movements[origin_square][tb->pieces[piece].color];
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
@@ -11778,12 +11778,12 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
 				    fatal("No futuremove: %s %c=%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->piece_type[piece]], piece_char[promoted_pieces[promotion]]);
+					  piece_char[tb->pieces[piece].piece_type], piece_char[promoted_pieces[promotion]]);
 				} else if (futurevector & FUTUREVECTOR(promotions[piece][promotion])) {
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
 				    fatal("Duplicate futuremove: %s %s\n", global_position_to_FEN(&global),
-					  movestr[tb->piece_color[piece]][promotions[piece][promotion]]);
+					  movestr[tb->pieces[piece].color][promotions[piece][promotion]]);
 				} else {
 				    futurevector |= FUTUREVECTOR(promotions[piece][promotion]);
 				    futuremovecnt ++;
@@ -11798,7 +11798,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			     * as a futuremove (since it will require back prop from futurebases).
 			     */
 
-			    if (!(tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+			    if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
 				&& (local_position_to_index(tb, &position) == INVALID_INDEX)) {
 
 				if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
@@ -11812,7 +11812,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
 				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->piece_type[piece]],
+					  piece_char[tb->pieces[piece].piece_type],
 					  'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
 				} else if (futurevector
 					   & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
@@ -11839,7 +11839,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		 * promotion move or not is how many futuremoves get recorded.
 		 */
 
-		for (movementptr = capture_pawn_movements[origin_square][tb->piece_color[piece]];
+		for (movementptr = capture_pawn_movements[origin_square][tb->pieces[piece].color];
 		     movementptr->square != -1;
 		     movementptr++) {
 
@@ -11856,7 +11856,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			for (i = 0; i < tb->num_pieces; i ++) {
 			    if ((i == tb->white_king) || (i == tb->black_king)) continue;
-			    if (movementptr->square + (tb->piece_color[piece] == WHITE ? -8 : 8)
+			    if (movementptr->square + (tb->pieces[piece].color == WHITE ? -8 : 8)
 				== position.piece_position[i]) {
 
 				position.piece_position[piece] = position.en_passant_square;
@@ -11875,8 +11875,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					      piece_char[tb->piece_type[piece]],
-					      piece_char[tb->piece_type[i]]);
+					      piece_char[tb->pieces[piece].piece_type],
+					      piece_char[tb->pieces[i].piece_type]);
 				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 					fatal("Duplicate futuremove!\n");
 				    } else {
@@ -11889,7 +11889,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				}
 
 				position.piece_position[i] = position.en_passant_square
-				    + (tb->piece_color[piece] == WHITE ? -8 : 8);
+				    + (tb->pieces[piece].color == WHITE ? -8 : 8);
 				position.board_vector |= BITVECTOR(position.piece_position[i]);
 				position.board_vector &= ~BITVECTOR(position.en_passant_square);
 
@@ -11924,8 +11924,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					global_position_t global;
 					index_to_global_position(tb, index, &global);
 					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					      piece_char[tb->piece_type[piece]],
-					      piece_char[tb->piece_type[i]]);
+					      piece_char[tb->pieces[piece].piece_type],
+					      piece_char[tb->pieces[i].piece_type]);
 				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
 					fatal("Duplicate futuremove!\n");
 				    } else {
@@ -11950,8 +11950,8 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 					    global_position_t global;
 					    index_to_global_position(tb, index, &global);
 					    fatal("No futuremove: %s %cx%c=%c\n", global_position_to_FEN(&global),
-						  piece_char[tb->piece_type[piece]],
-						  piece_char[tb->piece_type[i]],
+						  piece_char[tb->pieces[piece].piece_type],
+						  piece_char[tb->pieces[i].piece_type],
 						  piece_char[promoted_pieces[promotion]]);
 					} else if (futurevector & FUTUREVECTOR(promotion_captures[piece][i][promotion])) {
 					    fatal("Duplicate futuremove!\n");
@@ -12609,16 +12609,16 @@ void verify_tablebase_internally_thread(void)
 
 	    /* We only want to consider pieces of the side which is to move, but we flipped it... */
 
-	    if (current_tb->piece_color[piece] == position.side_to_move) continue;
+	    if (current_tb->pieces[piece].color == position.side_to_move) continue;
 
 	    origin_square = position.piece_position[piece];
 	    position.board_vector &= ~BITVECTOR(origin_square);
 
-	    if (current_tb->piece_type[piece] != PAWN) {
+	    if (current_tb->pieces[piece].piece_type != PAWN) {
 
-		for (dir = 0; dir < number_of_movement_directions[current_tb->piece_type[piece]]; dir++) {
+		for (dir = 0; dir < number_of_movement_directions[current_tb->pieces[piece].piece_type]; dir++) {
 
-		    for (movementptr = movements[current_tb->piece_type[piece]][origin_square][dir];
+		    for (movementptr = movements[current_tb->pieces[piece].piece_type][origin_square][dir];
 			 (movementptr->vector & position.board_vector) == 0;
 			 movementptr++) {
 
@@ -12642,7 +12642,7 @@ void verify_tablebase_internally_thread(void)
 			 */
 
 			if (! PNTM_in_check(current_tb, &position)
-			    && (current_tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+			    && (current_tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
 			    && ((next_index = local_position_to_index(current_tb, &position)) != INVALID_INDEX)) {
 
 			    /* check this position */
@@ -12675,7 +12675,7 @@ void verify_tablebase_internally_thread(void)
 
 		/* Pawns, as always, are special */
 
-		for (movementptr = normal_pawn_movements[origin_square][current_tb->piece_color[piece]];
+		for (movementptr = normal_pawn_movements[origin_square][current_tb->pieces[piece].color];
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
@@ -12690,7 +12690,7 @@ void verify_tablebase_internally_thread(void)
 
 		    if (! PNTM_in_check(current_tb, &position)
 			&& (ROW(movementptr->square) != 7) && (ROW(movementptr->square) != 0)
-			&& (current_tb->legal_squares[piece] & BITVECTOR(movementptr->square))
+			&& (current_tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
 			&& ((next_index = local_position_to_index(current_tb, &position)) != INVALID_INDEX)) {
 
 			/* check this position */
@@ -13610,7 +13610,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.872 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.873 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
