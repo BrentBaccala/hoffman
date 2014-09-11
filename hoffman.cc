@@ -5,7 +5,7 @@
  * by Brent Baccala
  *
  * begun coding    August 2006
- * last modified   October 2012
+ * last modified   September 2014
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
@@ -4814,7 +4814,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.874 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.875 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -13575,7 +13575,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.874 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.875 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -13755,9 +13755,6 @@ int main(int argc, char *argv[])
  * gonna win that round?), Freezer, FinalGen, and Hoffman.  Even if Hoffman won, it's still not
  * good enough.  At it does is play a game!
  *
- * At least Don Knuth's idea of "literate programming" let me turn it into a book, and I liked
- * writing the book a lot better than writing the program!
- *
  * My second biggest regret is writing it in C++11.  We need templates in Java, but we need dynamic,
  * run-time type checking built into the language for testing.  My code has too many bugs.  I spend
  * too much time staring at strange seg faults.
@@ -13770,8 +13767,6 @@ int main(int argc, char *argv[])
  * possible!  Right?  So we can build it when we need it and turn it off later?  Maybe they already
  * know that in grad schools but the C++ standards committee seems unaware.  They're coming out with
  * C++14!
- *
- * And I'll repeat: WE NEED TEMPLATES IN JAVA!
  *
  * You believe that?  I regret writing this program and I regret using this crazy language to do it?
  *
