@@ -1,4 +1,4 @@
-# Tablebase probe tests
+# Tablebase probe tests - FAST
 #
 # Each line starts with the MD5 hash of the expected output, then a string
 # that will be fed to hoffman (escape spaces as '\ ' and newlines as '\\n'),
