@@ -359,6 +359,39 @@ public:
     }
 };
 
+/* Sometimes we want to catch and rethrow an exception after adding some information to it.
+ * nested_exception does this, but imperfectly.  First, it carries around a pointer to the inner
+ * exception; it'd be nice to make a copy of it, but we can't do this without knowing more about its
+ * type.  So we keep a pointer to an object that could evaporate at any time, but probably won't be
+ * destroyed until after we've dealt with the nested exception, then the inner exception will be
+ * destroyed.  The most important thing we do with the exception is print a message.
+ *
+ * What I'd really like is to inherit from the actual class of the inner exception, but I see no way
+ * of doing this without knowing the inner class at compile time.  Then a higher level exception
+ * handler would see that nested_exception, or maybe nested_exception<std::bad_alloc>, can be caught
+ * as a std::bad_alloc.  Writing a templated nested_exception<T> is easy, but how to use it?
+ *
+ * It's important to catch the exception by value, too.  Example usage:
+ *
+ *	try {
+ *	    output_proptable = new proptable(format, proptable_MBs << 20);
+ *	} catch (std::exception& ex) {
+ *	    throw nested_exception("Constructing output_proptable", ex);
+ *	}
+ *
+ * See: http://stackoverflow.com/questions/6755991/catching-stdexception-by-reference
+ */
+
+class nested_exception : public std::exception {
+    std::exception * exp;
+    std::string msg;
+public:
+    nested_exception(std::string msg) : msg(msg), exp(nullptr) { }
+    nested_exception(std::string msg, std::exception &ex) : msg(msg + ":  " + ex.what()), exp(&ex) { }
+
+    const char * what() const throw() { return msg.c_str(); }
+};
+
 /* Futuremoves are moves like captures and promotions that lead to a different tablebase.
  * 'futurevectors' are bit vectors used to track which futuremoves have been handled in a particular
  * position.  They are of type futurevector_t, and the primary operations used to construct them are
@@ -784,7 +817,7 @@ int num_futurebases;
 bool using_proptables = false;		/* Proptables (see below) */
 bool compress_proptables = false;
 bool compress_entries_table = false;
-int proptable_MBs = 0;
+size_t proptable_MBs = 0;
 
 bool do_restart = false;
 int last_dtm_before_restart;
@@ -3571,9 +3604,10 @@ tablebase::tablebase(std::istream *instream)
     dtd.parse_memory(tablebase_dtd);
 
     /* check if validation suceeded */
+    // XXX add command line option to dump DTD
 
     if (! dtd.validate(xml)) {
-	throw "failed XML validatation";
+	throw nested_exception("XML failed DTD validatation");
     }
 
     /* Fetch tablebase from XML */
@@ -4814,7 +4848,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.875 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.876 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     if (! do_restart) {
@@ -8052,6 +8086,11 @@ private:
 
 public:
 
+    /* priority_queue<T>'s constructor passes all of its arguments to its MemoryContainer's
+     * constructor (remember?), and priority_queue<T>'s default MemoryContainer is std::vector<T>,
+     * which will take a size_type and build a container with that many elements.
+     */
+
     typed_proptable(proptable_format format, size_t size_in_bytes):
 	priority_queue<T>(size_in_bytes / sizeof(T)), format(format)
     {
@@ -8475,7 +8514,14 @@ void proptable_pass(int target_dtm)
     input_proptable = output_proptable;
     if (input_proptable) input_proptable->front();
 
-    output_proptable = new proptable(format, proptable_MBs << 20);
+    /* XXX std::bad_alloc is a real possibility here.  Please do something better than dying.
+     */
+
+    try {
+	output_proptable = new proptable(format, proptable_MBs << 20);
+    } catch (std::exception ex) {
+	throw nested_exception("Constructing output proptable", ex);
+    }
 
     proptable_shared_index = 0;
 
@@ -12497,9 +12543,17 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	info("Initial proptable format: %d bits index; %d bits dtm; %d bit movecnt; %d bits futuremove\n",
 	     format.index_bits, format.dtm_bits, format.movecnt_bits, format.futuremove_bits);
 
-	entriesTable = new DiskEntriesTable;
+	try {
+	    entriesTable = new DiskEntriesTable;
+	} catch (std::exception &ex) {
+	    throw nested_exception("Constructing initial disk entries table", ex);
+	}
 
-	output_proptable = new proptable(format, proptable_MBs << 20);
+	try {
+	    output_proptable = new proptable(format, proptable_MBs << 20);
+	} catch (std::exception& ex) {
+	    throw nested_exception("Constructing initial proptable", ex);
+	}
 
 	if (! do_restart) {
 	    pass_type[total_passes] = "futurebase backprop";
@@ -12538,6 +12592,7 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 
     if (using_proptables) {
 	delete entriesTable;
+	entriesTable = nullptr;
     }
 
     return true;
@@ -13575,7 +13630,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.875 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.876 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -13702,11 +13757,32 @@ int main(int argc, char *argv[])
 	terminate();
     }
 
-    /* Generating */
+    /* Generating.
+     *
+     * We want to make sure we destroy any intermediate files instead of leaving them lying around
+     * on disk.  That's the point of deleting entriesTable no matter what happens.
+     *
+     * XXX should delete proptables, too
+     *
+     * XXX verify_tablebase_internally needs to work with proptables
+     */
 
     if (generating) {
-	bool success = generate_tablebase_from_control_file(argv[optind], output_filename);
-	if (success && verify && !using_proptables) verify_tablebase_internally();
+	try {
+	    bool success = generate_tablebase_from_control_file(argv[optind], output_filename);
+	    if (success && verify && !using_proptables) verify_tablebase_internally();
+
+	    if (entriesTable != nullptr) {
+		delete entriesTable;
+		entriesTable = nullptr;
+	    }
+	} catch (std::exception) {
+	    if (entriesTable != nullptr) {
+		delete entriesTable;
+		entriesTable = nullptr;
+	    }
+	    throw;
+	}
 	terminate();
     }
 
