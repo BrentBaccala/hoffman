@@ -30,7 +30,10 @@ tablebase_dtd.h: tablebase.dtd
 	echo "\";" >> $@
 
 check:
-	make -C test check
+	@echo "Please choose between check-fast (an hour) or check-slow (days)"
+
+check-%:
+	make -C test $@
 
 tarball: docs
 	tar -czh -f hoffman.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST)
