@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Diagram 67 from Rubin Fine's "Basic Chess Endings" -->
+<!-- Problem position 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8 w -->
+
+<tablebase>
+   <prune-enable color="white" type="concede"/>
+   <prune-enable color="black" type="concede"/>
+   <dtm/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="pawn" location="b3+"/>
+   <piece color="black" type="pawn" location="b5+"/>
+   <piece color="white" type="pawn" location="c2+"/>
+   <piece color="black" type="pawn" location="c7+"/>
+   <piece color="white" type="pawn" location="d3+"/>
+   <piece color="black" type="pawn" location="d5+"/>
+   <futurebase filename="kpkp.htb"/>
+   <futurebase filename="kppk.htb"/>
+   <futurebase filename="kppk.htb" colors="invert"/>
+   <prune color="white" type="concede" move="P=?"/>
+   <prune color="black" type="concede" move="P=?"/>
+   <output filename="fine67.htb"/>
+</tablebase>
