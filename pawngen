@@ -650,7 +650,7 @@ sub genset {
     # When we save the positions, sort the black pawns in reverse order here so that doubled pawns
     # appear in board order, as is (currently) required by Hoffman.
 
-    my $files_in_play;
+    my $files_in_play = "";
 
     foreach my $file ('a' .. 'h') {
 	$files_in_play .= $file if grep /$file/, $white_pawns.$black_pawns;
