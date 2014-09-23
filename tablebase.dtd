@@ -52,14 +52,13 @@
 <!ELEMENT max-dtm (#PCDATA)>
 <!ELEMENT min-dtm (#PCDATA)>
 
-<!ELEMENT generation-statistics (host, program, args, (start-time|restart-time), (checkpoint-time|completion-time), user-time, system-time, real-time, page-faults, page-reclaims, contended-locks?, contended-indices?, proptable-writes?, proptable-write-time?, pass*)>
+<!ELEMENT generation-statistics (host, program, args, (start-time|restart-time), completion-time, user-time, system-time, real-time, page-faults, page-reclaims, contended-locks?, contended-indices?, proptable-writes?, proptable-write-time?, pass*)>
 <!ELEMENT host (#PCDATA)>
 <!ELEMENT program (#PCDATA)>
 <!ELEMENT args (#PCDATA)>
 <!ELEMENT time (#PCDATA)>
 <!ELEMENT start-time (#PCDATA)>
 <!ELEMENT restart-time (#PCDATA)>
-<!ELEMENT checkpoint-time (#PCDATA)>
 <!ELEMENT completion-time (#PCDATA)>
 <!ELEMENT user-time (#PCDATA)>
 <!ELEMENT system-time (#PCDATA)>

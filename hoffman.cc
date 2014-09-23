@@ -819,16 +819,9 @@ bool compress_proptables = false;
 bool compress_entries_table = false;
 size_t proptable_MBs = 0;
 
-bool do_restart = false;
-int last_dtm_before_restart;
-
 xmlpp::Element * generation_statistics;
-xmlpp::Element * checkpoint_time;
-xmlpp::Element * positive_passes_needed_node;
-xmlpp::Element * negative_passes_needed_node;
-xmlpp::Node * positive_passes_needed_text_node;
-xmlpp::Node * negative_passes_needed_text_node;
 
+xmlpp::Element * completion_time;
 xmlpp::Element * user_time;
 xmlpp::Element * system_time;
 xmlpp::Element * real_time;
@@ -4802,45 +4795,11 @@ tablebase_t * parse_XML_control_file(char *filename)
     // XXX this might throw an exception
     tb = new tablebase(& instream);
 
-    /* Now, check to see if we already have a generation-statistics element, which would mean this
-     * is a restart.  If so, figure out (XXX) where we're going to restart.  In any event, add a new
-     * generation-statistics element for the current run, and populate it.
-     */
-
     auto tablebase = tb->xml->get_root_node();
-    result = tablebase->find("//generation-statistics");
 
-    if (result.empty()) {
-
-	tablebase->add_child_text("   ");
-	generation_statistics = tablebase->add_child("generation-statistics");
-	tablebase->add_child_text("\n   ");
-
-    } else {
-
-#if 0
-	xmlChar * dtm;
-
-	do_restart = true;
-
-	node = xmlAddNextSibling(result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1], xmlNewText(BAD_CAST "\n   "));
-	generation_statistics = xmlAddNextSibling(node, xmlNewDocNode(tb->xml, nullptr, BAD_CAST "generation-statistics", nullptr));
-
-	xmlXPathFreeObject(result);
-	result = xmlXPathEvalExpression(BAD_CAST "//generation-statistics//pass", context);
-
-	dtm = xmlGetProp(result->nodesetval->nodeTab[result->nodesetval->nodeNr - 1], BAD_CAST "dtm");
-	if (dtm == nullptr) {
-	    /* check for futurebase pass */
-	    fatal("Last pass before checkpoint wasn't an intratable pass\n");
-	} else {
-	    last_dtm_before_restart = strtol((const char *)dtm, nullptr, 0);
-	    xmlFree(dtm);
-	}
-#else
-	fatal("Can't restart this version of hoffman (sorry)\n");
-#endif
-    }
+    tablebase->add_child_text("   ");
+    generation_statistics = tablebase->add_child("generation-statistics");
+    tablebase->add_child_text("\n   ");
 
     generation_statistics->add_child_text("\n   ");
 
@@ -4848,32 +4807,12 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.876 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.877 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
-    if (! do_restart) {
-	create_GenStats_node("start-time")->add_child_text(strbuf);
-    } else {
-	create_GenStats_node("restart-time")->add_child_text(strbuf);
-    }
+    create_GenStats_node("start-time")->add_child_text(strbuf);
 
-    checkpoint_time = create_GenStats_node("checkpoint-time");
-
-    /* We now want to add the elements positive-passes-needed and negative-passes-needed in such a
-     * way that they can be deleted when we're all done.  The problem is the whitespace used for
-     * alignment. Studying the libxml2 documentation shows that the first content added will be
-     * merged with the previous text node (from the last call to create_GenStats_node) and freed.
-     * Then we record the text nodes used to add the whitespace between and after these elements.
-     * The next call to create_GenStats_node will add more whitespace, which will get merged with
-     * negative_passes_needed_text_node.  When these nodes here are unlinked, everything lines up.
-     */
-
-    generation_statistics->add_child_text("   ");
-
-    positive_passes_needed_node = generation_statistics->add_child("positive-passes-needed");
-    positive_passes_needed_text_node = generation_statistics->add_child_text("\n      ");
-    negative_passes_needed_node = generation_statistics->add_child("negative-passes-needed");
-    negative_passes_needed_text_node = generation_statistics->add_child_text("\n   ");
+    completion_time = create_GenStats_node("completion-time");
 
     /* create global counter nodes */
 
@@ -5393,7 +5332,7 @@ void finalize_pass_statistics()
     getrusage(RUSAGE_SELF, &rusage);
 
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&timeval.tv_sec));
-    checkpoint_time->set_child_text(strbuf);
+    completion_time->set_child_text(strbuf);
 
     sprint_timeval(strbuf, &rusage.ru_utime);
     user_time->set_child_text(strbuf);
@@ -5446,32 +5385,6 @@ void finalize_pass_statistics()
 	}
 	passNode->set_attribute("positions-finalized", boost::lexical_cast<std::string>(positions_finalized[total_passes]));
 	passNode->set_attribute("moves-generated", boost::lexical_cast<std::string>(backproped_moves[total_passes]));
-    }
-
-    if (using_proptables) {
-	int i;
-
-	/* update the passes needed nodes */
-
-	positive_passes_needed_node->set_child_text("");
-
-	for (i = 1; i <= max_tracked_dtm; i ++) {
-	    if (positive_passes_needed[i]) {
-		positive_passes_needed_node->add_child_text(boost::lexical_cast<std::string>(i));
-		positive_passes_needed_node->add_child_text(" ");
-	    }
-	}
-
-	negative_passes_needed_node->set_child_text("");
-
-	for (i = -1; i >= min_tracked_dtm; i --) {
-	    if (negative_passes_needed[-i]) {
-		negative_passes_needed_node->add_child_text(boost::lexical_cast<std::string>(i));
-		negative_passes_needed_node->add_child_text(" ");
-	    }
-	}
-
-	// xmlSaveFile("checkpoint.xml", current_tb->xml);
     }
 }
 
@@ -5553,17 +5466,6 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
     }
 
     node->add_child_text("\n      ");
-
-    /* Rename the last checkpoint-time to completion-time */
-
-    checkpoint_time->set_name("completion-time");
-
-    /* Remove the passes needed nodes from the XML */
-
-    delete positive_passes_needed_node;
-    delete negative_passes_needed_node;
-    delete positive_passes_needed_text_node;
-    delete negative_passes_needed_text_node;
 
     return tb->xml;
 }
@@ -7198,33 +7100,6 @@ class DiskEntriesTable: public EntriesTable {
 
 	entries_read_device = nullptr;
 	open_new_entries_write_file();
-
-	/* if we're restarting, there should be an input entries file */
-	/* XXX not true if the restart is right after futurebase backprop */
-	/* XXX doesn't currently handled compressed entries files */
-
-#if 0
-	if (do_restart) {
-
-	    entries_read_fd = open("entries_in", O_RDONLY | O_LARGEFILE, 0666);
-
-	    if (entries_read_fd == -1) {
-		fatal("Can't open 'entries_in' for reading: %s\n", strerror(errno));
-		return;
-	    }
-
-	    ret = read(entries_read_fd, entries, sizeof(entries));
-	    if (ret != sizeof(entries)) {
-		fatal("initial entries read: %s\n", strerror(errno));
-		return;
-	    }
-
-	} else {
-
-	    entries_read_fd = -1;
-
-	}
-#endif
     }
 
     ~DiskEntriesTable(void) {
@@ -12141,14 +12016,6 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 
     positive_passes_needed[1] = false;
 
-    if (do_restart) {
-	if (last_dtm_before_restart > 0) dtm = -last_dtm_before_restart;
-	else dtm = -last_dtm_before_restart + 1;
-
-	/* we don't know, exactly, but the existance of a proptable suggests at least one */
-	positions_finalized_on_last_pass = 1;
-    }
-
     /* If we're tracking DTM, then run at least until we've looked at all the DTM values that came
      * in from the futurebases.
      */
@@ -12555,26 +12422,21 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	    throw nested_exception("Constructing initial proptable", ex);
 	}
 
-	if (! do_restart) {
-	    pass_type[total_passes] = "futurebase backprop";
+	pass_type[total_passes] = "futurebase backprop";
 
-	    if (! back_propagate_all_futurebases(tb)) return false;
+	if (! back_propagate_all_futurebases(tb)) return false;
 
-	    finalize_pass_statistics();
-	    total_passes ++;
+	finalize_pass_statistics();
+	total_passes ++;
 
-	    /* XXX should be able to handle restart just after a futurebase backprop */
+	info("Initializing tablebase\n");
+	pass_type[total_passes] = "initialization";
+	propagation_pass(0);
 
-	    info("Initializing tablebase\n");
-	    pass_type[total_passes] = "initialization";
-	    propagation_pass(0);
+	info("Total legal positions: %" PRIu64 "\n", (uint64_t) total_legal_positions);
+	info("Total moves: %" PRIu64 "\n", (uint64_t) total_moves);
 
-	    info("Total legal positions: %" PRIu64 "\n", (uint64_t) total_legal_positions);
-	    info("Total moves: %" PRIu64 "\n", (uint64_t) total_moves);
-
-	    info("All futuremoves handled under move restrictions\n");
-	}
-
+	info("All futuremoves handled under move restrictions\n");
     }
 
     unload_all_futurebases();
@@ -13630,7 +13492,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.876 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.877 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
