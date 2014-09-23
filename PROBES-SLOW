@@ -4,5 +4,8 @@
 # that will be fed to hoffman (escape spaces as '\ ' and newlines as '\\n'),
 # then a list of tablebases to be probed, which can include wildcards.
 
-# Probe a kppkp positions - forces all 3 vs 2 tablebases to build
+# Probe a kppkp position - forces all 3 vs 2 tablebases to build
 45e6229c74ed0bc4ed1a388cde2650ee 1K6/8/8/p7/2P5/8/7P/k7\ w kppkp.htb
+
+# Probe a kqqkqq position
+2f22ba61a8014bf283922894c0c0a7b9 8/7k/8/1q1q4/8/8/8/K4QQ1\ w kqqkqq.htb
