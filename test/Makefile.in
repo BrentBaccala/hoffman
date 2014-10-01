@@ -15,6 +15,9 @@
 # either have control files in the xml/ subdirectory or follow the
 # naming convention recognized by genctlfile.pl.
 #
+# Tests in the xml/ directory with a comment string "NEGATIVE BUILD"
+# are expected to fail cleanly and it's an error if they don't.
+#
 # GNU Make is required to process this makefile, along with xmllint
 # (part of libxml2) to extract dependencies from the control files.
 
@@ -24,6 +27,15 @@ NALIMOV ?= ~/Nalimov
 
 PROBES-FAST = ../PROBES-FAST
 PROBES-SLOW = ../PROBES-SLOW
+
+NEGATIVE_BUILD_TESTS = $(notdir $(subst xml,htb,$(shell grep -l "NEGATIVE BUILD" ../xml/*.xml)))
+
+check-negative:
+	@for test in $(NEGATIVE_BUILD_TESTS); do							\
+		( ! make $$test ) || exit 1;								\
+	done
+	@echo
+	@echo Negative build tests all failed as expected
 
 check-fast: $(PROBES-FAST)
 	@cat $(PROBES-FAST) | while read md5expected input files; do					\
