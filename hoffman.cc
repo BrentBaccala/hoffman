@@ -4807,7 +4807,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.878 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.879 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -13366,10 +13366,14 @@ void probe_tablebases(tablebase_t **tbs) {
 #else
 	    char buffer[256];
 
-	    printf(global_position_valid ? "Index, FEN or move? " : "FEN? ");
+	    printf(global_position_valid ? "Index, FEN or move? " : "Index or FEN? ");
 	    if (fgets(buffer, sizeof(buffer), stdin) == nullptr) {
 		printf("\n");
 		return;
+	    }
+
+	    if (strchr(buffer, '\n') != NULL) {
+		* strchr(buffer, '\n') = '\0';
 	    }
 #endif
 
@@ -13519,7 +13523,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.878 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.879 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
