@@ -4807,7 +4807,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.877 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.878 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -7260,6 +7260,14 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 	for (i=0; i<movecnt; i++) {
 	    add_one_to_PNTM_wins(index, dtm);
 	}
+    } else {
+	/* dtm == 0; just decrement movecnt */
+	nonatomic_entry expected = entriesTable[index];
+	nonatomic_entry desired;
+	do {
+	    desired = expected;
+	    desired.set_movecnt(desired.get_movecnt() - movecnt);
+	} while (!entriesTable[index].compare_exchange_weak(expected, desired));
     }
 
 }
@@ -9893,6 +9901,15 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 bool all_futuremoves_handled = true;
 
+/* finalize_futuremove()
+ *
+ * After all futurebase backpropagation is done, this function is called on each legal position to
+ * check if there are any futuremoves that weren't handled by the futurebases.  If so, we either
+ * complain or prune, depending on how we're configured.  We don't use commit_update(), and instead
+ * call finalize_update() directly, because we're making a pass through the entries array to call
+ * finalize_futuremove(), and can thus update the entry directly, without going through a proptable.
+ */
+
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
 
     unsigned int futuremove;
@@ -9911,30 +9928,40 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	all_futuremoves_handled = false;
     }
 
-    /* concede - we treat these unhandled futuremoves as forced wins for PTM */
+    /* concede - we treat these unhandled futuremoves as forced wins for PTM.  We update the entry
+     * with DTM=2 (mate in one) and movecnt=1 (doesn't matter for a PTM win).
+     */
 
     if (futurevector & conceded_futuremoves[stm]) {
-	/* PTM_wins(index, 1, 1); */
-	/* We insert here with DTM=2 (mate in one), movecnt=1 (XXX), and no futuremove */
-	/* XXX I bet we want to insert with position's multiplicity as movecnt */
-	/* XXX we can modify the entry directly here - no need to use a proptable */
-	commit_update(index, 2, 1, NO_FUTUREMOVE);
+	finalize_update(index, 2, 1, NO_FUTUREMOVE);
     }
 
-    /* discard - we ignore these unhandled futuremoves by decrementing movecnt */
+    /* discard - we ignore these unhandled futuremoves by updating with DTM=0, which decrements
+     * movecnt by position.multiplicity, because we multiplied movecnt by position.multiplicity when
+     * we initialized the entry.
+     *
+     * XXX Can't test the use of position.multiplicity because we currently can't have piece
+     * restrictions with symmetric tablebases, we need 8-way symmetry to get multiplicity, and we
+     * need piece restrictions to get a futurebase where only some futuremoves are handled.
+     */
 
     if (futurevector & discarded_futuremoves[stm]) {
 	for (futuremove = 0; futuremove < num_futuremoves[stm]; futuremove ++) {
 	    if (futurevector & FUTUREVECTOR(futuremove) & discarded_futuremoves[stm]) {
 
-		/* tb->entries[index].movecnt --; */
-		/* XXX this isn't handled right - a draw is different from a discard */
-		/* XXX we can modify the entry directly here - no need to use a proptable */
-		commit_update(index, 0, 0, NO_FUTUREMOVE);
+		local_position_t position;
+
+		index_to_local_position(tb, index, REFLECTION_NONE, &position);
+
+		finalize_update(index, 0, position.multiplicity, NO_FUTUREMOVE);
 	    }
 	}
     }
 }
+
+/* have_all_futuremoves_been_handled() - this is the non-proptable case to run through the entries
+ * table and call finalize_futuremove()
+ */
 
 bool have_all_futuremoves_been_handled(tablebase_t *tb) {
 
@@ -13492,7 +13519,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.877 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.878 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
