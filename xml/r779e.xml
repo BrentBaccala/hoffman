@@ -12,11 +12,11 @@
   <piece color="black" type="king"/>
   <piece color="white" type="queen"/>
   <piece color="white" type="pawn"/>
-  <futurebase url="kqk.htb"/>
-  <futurebase url="kpk.htb"/>
-  <futurebase url="r779b.htb"/>
-  <futurebase url="r779c.htb"/>
-  <futurebase url="r779d.htb"/>
+  <futurebase filename="kqk.htb"/>
+  <futurebase filename="kpk.htb"/>
+  <futurebase filename="r779b.htb"/>
+  <futurebase filename="r779c.htb"/>
+  <futurebase filename="r779d.htb"/>
   <prune color="white" type="discard" move="P=[RNB]"/>
   <output filename="r779e.htb"/>
 </tablebase>

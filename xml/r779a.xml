@@ -9,8 +9,8 @@
   <piece color="black" type="king"/>
   <piece color="white" type="pawn" location="f7+"/>
   <piece color="white" type="pawn" location="g7+"/>
-  <futurebase url="kqpk.htb"/>
-  <futurebase url="kpk.htb"/>
+  <futurebase filename="kqpk.htb"/>
+  <futurebase filename="kpk.htb"/>
   <prune color="white" type="discard" move="P=[RNB]"/>
   <output filename="r779a.htb"/>
 </tablebase>
