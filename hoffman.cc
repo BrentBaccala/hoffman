@@ -4807,7 +4807,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.883 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.884 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -5273,9 +5273,11 @@ bool preload_all_futurebases(tablebase_t *tb)
 	 * 'dtm' futurebases can backprop into anything
 	 *
 	 * 'basic' futurebases can backprop into anything, even though the metric resulting from a
-	 * basic->dtm backprop won't be a DTM but rather a DTC (distance to conversion)
+	 * basic-to-dtm backprop won't be DTM but rather DTC (distance to conversion)
 	 *
-	 * 'flag' futurebases can only backprop into compatible 'flag's
+	 * 'flag' futurebases can only backprop into a compatible 'flag' (compatible means either
+	 * the same type of flag with no color inversion, or the opposite type of flag with color
+	 * inversion)
 	 *
 	 * XXX distinguish between DTM and DTC tablebases
 	 */
@@ -5283,7 +5285,9 @@ bool preload_all_futurebases(tablebase_t *tb)
 	if (futurebases[fbnum]->format.flag_type != FORMAT_FLAG_NONE) {
 	    if (tb->format.flag_type == FORMAT_FLAG_NONE) {
 		fatal("'%s': bitbase unusable as futurebase for a non-bitbase format\n", filename.c_str());
-	    } else if ((tb->format.flag_type == futurebases[fbnum]->format.flag_type) != futurebases[fbnum]->invert_colors) {
+	    } else if ((tb->format.flag_type != futurebases[fbnum]->format.flag_type) && ! futurebases[fbnum]->invert_colors) {
+		fatal("'%s': bitbase unusable as futurebase due to flag type\n", filename.c_str());
+	    } else if ((tb->format.flag_type == futurebases[fbnum]->format.flag_type) && futurebases[fbnum]->invert_colors) {
 		fatal("'%s': bitbase unusable as futurebase due to color inversion\n", filename.c_str());
 	    }
 	}
@@ -13547,7 +13551,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.883 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.884 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
