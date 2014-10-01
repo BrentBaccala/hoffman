@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+
+<!-- Another bug reported by Ivan Konobeev.  A position with nothing but PNTM -->
+<!-- wins and at least some discarded futuremoves will be flagged as a draw, -->
+<!-- due to finalize_futuremove()'s failure to properly decrement movecnt. -->
+
+<!-- To test this bug, we need a prune that might be handled by a futurebase -->
+<!-- (to avoid optimization), but that isn't actually handled, to force a commit -->
+<!-- in finalize_futuremove().  Then we want a position that is lost for every -->
+<!-- possible move except (maybe) a pruned move.  So, in this test case, we -->
+<!-- have a futurebase (r879a) with the white rook restricted to the queen -->
+<!-- side of the board.  We want a position with white to move, where taking -->
+<!-- the black rook is possible but leads to a position with the white rook -->
+<!-- on the king side (thus not in the futurebase) and every other move -->
+<!-- is a loss for white.  I picked 8/8/8/8/3k4/8/7K/4R2r w -->
+
+<!-- We also need combinadic3 instead of combinadic4 to avoid optimizing out -->
+<!-- side-to-move, which would cause krk to backprop into the test position. -->
+
+<tablebase>
+   <prune-enable color="white" type="discard"/>
+   <dtm/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="rook" location="a1 a2 a3 a4 a5 a6 a7 a8 b1 b2 b3 b4 b5 b6 b7 b8 c1 c2 c3 c4 c5 c6 c7 c8 d1 d2 d3 d4 d5 d6 d7 d8"/>
+   <prune color="white" move="Re*" type="discard"/>
+   <prune color="white" move="Rf*" type="discard"/>
+   <prune color="white" move="Rg*" type="discard"/>
+   <prune color="white" move="Rh*" type="discard"/>
+   <futurebase filename="kk.htb"/>
+   <output filename="r879a.htb"/>
+</tablebase>
