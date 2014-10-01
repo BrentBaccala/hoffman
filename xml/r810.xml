@@ -1,18 +1,14 @@
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
-<!-- Created by genctlfile.pl -->
+<!-- NEGATIVE BUILD -->
+<!-- This test case is expected to fail, but cleanly, not a SEGV -->
 
 <tablebase>
   <prune-enable color="white" type="concede"/>
    <dtm/>
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
-   <piece color="white" type="pawn" location="a2 a3"/>
-   <futurebase filename="kk.htb"/>
-   <futurebase filename="kqk.htb"/>
-   <futurebase filename="krk.htb"/>
-   <futurebase filename="kbk.htb"/>
-   <futurebase filename="knk.htb"/>
-   <prune color="white" move="Pa4" type="concede"/>
-   <output filename ="ivan2.htb"/>
+   <piece color="white" type="pawn"/>
+   <futurebase filename="_DOES_NOT_EXIST_.htb"/>
+   <output filename ="r810.htb"/>
 </tablebase>
