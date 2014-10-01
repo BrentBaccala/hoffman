@@ -566,6 +566,8 @@ sub assignallpositions {
     foreach my $position (&expand_pattern_list(@pattern)) {
 	$positions{$position} = $target;
     }
+
+    #print STDERR "$target assigned to ", &expand_pattern_list(@pattern), "\n";
 }
 
 # Checks all positions resulting from a given pattern and returns either 0 (if at least one of them
@@ -987,7 +989,7 @@ sub add_futurebase_or_prune {
 	$new_futurebase = $futurebase->cloneNode(1);
     } else {
 	$new_futurebase = XML::LibXML::Element->new('futurebase');
-	$new_futurebase->addChild(XML::LibXML::Attr->new('url', $url_prefix . $futurebase . ".htb"));
+	$new_futurebase->addChild(XML::LibXML::Attr->new('filename', $url_prefix . $futurebase . ".htb"));
     }
     $XMLroot->insertAfter($new_futurebase, $next_piece_location);
     $next_piece_location = $new_futurebase;
