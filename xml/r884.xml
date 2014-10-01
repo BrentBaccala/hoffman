@@ -1,0 +1,15 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- NEGATIVE BUILD -->
+<!-- This test case is expected to fail because the futurebase format is incompatible -->
+
+<tablebase>
+   <flag type="white-wins"/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="queen"/>
+   <piece color="black" type="queen"/>
+   <futurebase filename="kqk-whitewins.htb" colors="invert"/>
+   <futurebase filename="kqk-whitewins.htb"/>
+   <output filename ="kqkq-whitewins.htb"/>
+</tablebase>
