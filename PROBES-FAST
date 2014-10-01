@@ -79,3 +79,12 @@ f1b03d7bedb122391df12f2f48858f43 KRq5/8/8/8/8/8/8/8\ w krvq.htb
 
 # problem position in Freezer fortress construction
 c21a2a5a49963fdf0d274300762c4c20 8/6k1/6p1/8/q7/4R3/5PK1/8\ w fortress.htb
+
+# test various bugs
+6ff1d8e170f972b66ac3f25ec63d4736 234 r779a.htb kqpk.htb
+8601d924b2624a814cd6fac46bed83d2 21499040 r779e.htb r779c.htb
+6217fe76dd882826da28d3de9fee7ce1 8/7K/8/8/k7/8/p7/8\ b r796.htb
+b410e6913b004034028da85887c78292 1234 r804.htb
+5c8e5ea3b29b07d7dc153418cbd50afc 1244 r808.htb kqpk.htb
+aa5575ee397e4f88794a85483ad44ec6 124 r811.htb kpk.htb
+d0dde7a2280adaec43a2deab935ec593 8/8/8/8/3k4/8/7K/4R2r\ w r879b.htb r879a.htb
