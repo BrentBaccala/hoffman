@@ -192,8 +192,19 @@ were an identical pair, then assign their colors in the same order
 they were originally specified.  En passant significantly complicates
 this and can not be handled with this scheme.
 
-\item {\tt combinadic\{2,3\}} An enhancement of {\tt naive2} that can
-encode more than two identical, overlapping pieces.
+\item {\tt combinadic} An enhancement of {\tt naive2} that can encode
+  more than two identical, overlapping pieces by using a combinadic
+  encoding scheme (see the wikipedia page ``Combinatorial number
+  system'').
+
+\item {\tt combinadic2} Like {\tt combinadic}, but later pieces wholly
+  contained within the semilegal range of earlier pieces are encoded
+  using fewer positions.  Piece order is significant.  No attempt is
+  made to reduce the encoding of pawns.
+
+\item {\tt combinadic3} Like {\tt combinadic2}, but pawn encodings are
+  also reduced, by reducing its encoding value (with en-passant
+  factored in), while using its board position to reduce other pieces..
 
 \end{description}
 
