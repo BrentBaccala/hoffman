@@ -206,6 +206,12 @@ this and can not be handled with this scheme.
   also reduced, by reducing its encoding value (with en-passant
   factored in), while using its board position to reduce other pieces..
 
+\item {\tt combinadic4} Like {\tt combinadic3}, but {\it color
+  symmetric} tablebases, those invariant under swapping colors,
+  are optimised by removing the side-to-move flag, cutting the
+  tablebase size in half.  (ex: {\tt kqkq} is color symmetric,
+  but {\tt kqkr} is not)
+
 \end{description}
 
 The optional {\tt symmetry} attribute can be used to encode multiple
@@ -222,7 +228,7 @@ Not all symmetries are compatible will all index types; for example,
 8-way symmetry can not be used with {\tt naive} or {\tt naive2}
 index types.
 
-{\bf Default:} {\tt combinadic3} with automatically selected symmetry
+{\bf Default:} {\tt combinadic4} with automatically selected symmetry
 
 \subsection{Tablebase format}
 
@@ -230,11 +236,11 @@ The next three elements specify the format of the tablebase entries.
 At most one of them can be specified.
 
 {\tt <dtm bits={\it integer}/>} specifies a {\it distance to mate}
-metric occupying either one or two bytes.  Zero is used for draws, -1
-is used for positions where the moving side is checkmated, and 1 is
-used for positions where the moving side can capture the opposing
-king, so an eight bit dtm field can record mate-in distances up to 126.
-If a field size is not specified, it is selected automatically.
+metric.  Zero is used for draws, -1 is used for positions where the
+moving side is checkmated, and 1 is used for positions where the
+moving side can capture the opposing king, so an eight bit dtm field
+can record mate-in distances up to 126.  If a field size is not
+specified, it is selected automatically.
 
 {\tt <basic/>} specifies a {\it bitbase} where two bits are used for
 each position, and no distance information is stored --- only an
@@ -244,12 +250,14 @@ effort to use, since care must be taken to avoid loops when following
 winning lines.
 
 {\tt <flag type="white-wins|white-draws"/>} specifies a {\it bitbase}
-where only a single bit is used for each position.
+where only a single bit is used for each position.  {\tt white-draws}
+includes both winning and drawing positions for white, so it is
+essentially {\tt NOT black-wins}.
 
 {\bf Default:} DTM with automatically selected field size.
 
 
-\subsection{\tt <piece color="white|black" type="king|queen|rook|bishop|knight|pawn" \hfil\break\hbox{\qquad} location="{\it string}" index-ordering="reverse"/>}
+\subsection{\tt <piece color="white|black" type="king|queen|rook|bishop|knight|pawn" \hfil\break\hbox{\qquad} location="{\it string}"/>}
 
 Multiple {\tt piece} elements are used to specify the chess pieces
 present in the tablebase. {\tt color} and {\tt type} are required and
@@ -267,18 +275,12 @@ possible.  This can be used, for example, to locate a black pawn on
 {\tt "a7+} and a white pawn on {\tt "a2+"}, indicating that both can
 move forward, but they can not ``pass'' each other.
 
-The option {\tt index-ordering="reverse"} attribute may be specified
-to indicate that the board positions should be indexed in reverse
-order.  At some point, this may be used to optimize futurebase
-back-propagation, for example, by reverse indexing a queen so that the
-last row comes first.  Currently fairly useless.
+\subsection{\tt <futurebase filename="{\it string}" colors="invert"/>}
 
-\subsection{\tt <futurebase filename="{\it string}" url="{\it string}" colors="invert"/>}
-
-One or more futurebases may be specified with this element.  Either a
-{\tt filename} or a {\tt url} may be specified (not both) to locate a
-futurebase, which must be another Hoffman tablebase.  It must be
-related to the current tablebase in one of the following ways:
+One or more futurebases may be specified with this element.  A {\tt
+  filename} must be specified to locate a futurebase, which must be
+another Hoffman tablebase.  It must be related to the current
+tablebase in one of the following ways:
 
 \begin{description}
 \item It has exactly the same piece configuration as the
@@ -312,24 +314,21 @@ and a black queen.
 {\bf Note:} Any futurebase {\tt prune-enable} elements must be a subset of
 the current tablebase's {\tt prune-enable} elements.
 
-{\bf Note:} The only {\tt url} scheme currently supported for this
-element is {\tt ftp}.
-
 \subsection{\tt <prune color="white|black" move="{\it string}" type="concede|discard" \hfil\break\hbox{\qquad} pawngen-condition="{\it perl-expression}"/>}
 
 Futuremoves not handled by specifying futurebases must be pruned using
-one or more of these elements, or an error will result.  All three
-attributes are required.  The {\tt move} is specified using regular
-expression syntax to match a move in a subset of standard algebraic
-notation.  All of the following strings are examples of legal {\tt
-move} strings in a {\tt prune} element: {\tt Pe5}, {\tt P=Q}, {\tt
-RxQ}, {\tt PxR=Q}.  The following regular expressions would all match
-{\tt Kd4}: {\tt Kd?}, {\tt K?4}, {\tt K[a-d]4}, {\tt K*}.
-The {\tt type} attribute specifies what should be done with matching
-moves: treated as wins for the moving side ({\tt concede}), or
-completely ignored ({\tt discard}).  If multiple {\tt prune}
-elements match a particular move, it is a warning if they have the
-same {\tt type}, a fatal error if their {\tt type}s differ.
+one or more of these elements, or an error will result.  The {\tt
+  move} is specified using regular expression syntax to match a move
+in a subset of standard algebraic notation.  All of the following
+strings are examples of legal {\tt move} strings in a {\tt prune}
+element: {\tt Pe5}, {\tt P=Q}, {\tt RxQ}, {\tt PxR=Q}.  The following
+regular expressions would all match {\tt Kd4}: {\tt Kd?}, {\tt K?4},
+{\tt K[a-d]4}, {\tt K*}.  The {\tt type} attribute specifies what
+should be done with matching moves: treated as wins for the moving
+side ({\tt concede}), or completely ignored ({\tt discard}).  If
+multiple {\tt prune} elements match a particular move, it is a warning
+if they have the same {\tt type}, a fatal error if their {\tt type}s
+differ.
 
 A single {\tt prune} element may be specified with {\tt
 move="stalemate"} and {\tt type="concede"}.  In this case, the {\tt
@@ -350,6 +349,10 @@ white pawns, i.e, {\tt ("a4", "c6")}; and likewise for {\tt
 @black\_pieces} and {\tt @black\_pawns}.  This context may change
 slightly in future releases.
 
+{\bf Note:} {\tt prune} elements do not affect moves within a
+tablebase.  Specifying a {\tt prune} element that only matches
+moves within a tablebase will do {\it nothing}.
+
 {\bf Note:} If a {\tt prune} element is specified for a futuremove
 handled by a futurebase, then the futurebase takes precedence.
 However, this case is handled by tracking every futuremove in every
@@ -367,28 +370,10 @@ These elements are all optional, but if {\tt output} is not specified,
 an output filename must be specified on the command line using
 the {\tt -o} switch.
 
-\subsubsection{\tt <output filename="{\it string}" url="{\it string}"/>}
+\subsubsection{\tt <output filename="{\it string}"/>}
 
-At most a single {\tt output} element should be used, with either a
-{\tt filename} or a {\tt url} (but not both), to specify where
+At most a single {\tt output} element should be used to specify where
 the finished tablebase should be written.
-
-{\bf Note:} The only {\tt url} scheme currently supported for this
-element is {\tt ftp}.
-
-\subsubsection{\tt <completion-report url="{\it string}"/> \hfil\break <error-report url="{\it string}"/>}
-
-If this is specified, the tablebase's XML prefix (without the
-tablebase data) will be written to a URL upon either a successful or
-error termination of the program.  This capability (along with the
-ability to be read and write tablebase URLs) is intended to aid the
-construction of Hoffman tablebases using a distributed cluster.
-
-{\bf Note:} In an error termination, every attempt will be made to add
-{\tt <error>} elements to the XML indicating the cause of the problem.
-
-{\bf Note:} The only {\tt url} scheme currently supported for these
-elements is {\tt http}.
 
 \vfill\eject
 
