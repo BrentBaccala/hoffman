@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Another Ivan Konobeev bug -->
+
+<!-- This bug is triggered by futurebases with disparate max-dtm and min-dtm. -->
+
+<!-- We want a position that is PNTM wins, but the best line for PTM (a -->
+<!-- large negative DTM) comes from a futurebase position with a large -->
+<!-- positive DTM, larger than the smallest negative DTM in all futurebases -->
+<!-- (min_tracked_dtm). -->
+
+<!-- Among standard four pieces tablebases, our best bet seems to be kbkp, -->
+<!-- with max-dtm 30 and min-dtm -20. -->
+
+<!-- So we need at least a 5-piece tablebase to trigger the bug. -->
+
+<!-- I played around to get a 5-piece TB with enough restrictions to make it run fast. -->
+
+<!-- k7/2Q5/8/2b5/2K5/6P1/8/8 w -->
+
+<tablebase>
+   <prune-enable color="black" type="discard"/>
+   <prune-enable color="white" type="discard"/>
+   <!-- Specify bits="6" because the bug would save as bits="5" -->
+   <dtm bits="6"/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="queen" location="b8 c7 d7"/>
+   <piece color="white" type="pawn" location="g3"/>
+   <piece color="black" type="bishop" location="c5"/>
+   <futurebase filename="kbkp.htb" colors="invert"/>
+   <prune color="white" move="*" type="discard"/>
+   <prune color="black" move="*" type="discard"/>
+   <output filename="r886.htb"/>
+</tablebase>
