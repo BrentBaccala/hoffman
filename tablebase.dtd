@@ -32,12 +32,7 @@
 	filename CDATA				#IMPLIED
 	url CDATA				#IMPLIED>
 
-<!ELEMENT completion-report EMPTY>
-<!ATTLIST completion-report url CDATA #REQUIRED>
-<!ELEMENT error-report EMPTY>
-<!ATTLIST error-report url CDATA #REQUIRED>
-
-<!ELEMENT generation-controls (output | completion-report | error-report)+ >
+<!ELEMENT generation-controls (output)+ >
 
 <!ELEMENT tablebase-statistics (indices | PNTM-mated-positions | legal-positions | stalemate-positions | white-wins-positions | black-wins-positions | forward-moves | futuremoves | backproped-moves | max-dtm | min-dtm)+ >
 <!ELEMENT indices (#PCDATA)>
