@@ -4820,7 +4820,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.886 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.887 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -8442,7 +8442,7 @@ void proptable_pass(int target_dtm)
      */
 
     input_proptable = output_proptable;
-    if (input_proptable) input_proptable->front();
+    if (input_proptable && ! input_proptable->empty()) input_proptable->front();
 
     /* XXX std::bad_alloc is a real possibility here.  Please do something better than dying.
      */
@@ -13583,7 +13583,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.886 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.887 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
