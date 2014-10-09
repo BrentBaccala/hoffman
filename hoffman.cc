@@ -240,6 +240,19 @@ std::vector<int> positions_finalized;
 std::atomic<uint64_t> backproped_moves_this_pass;
 std::vector<uint64_t> backproped_moves;
 
+/* If we're generating a DTM tablebase, then we make a series of passes, one for each DTM value in
+ * the tablebase.  A DTM 15 position, for example, won't get finalised until the DTM 15 pass, which
+ * ensures that if a better mate (say DTM 12) appears, it will change the position into a DTM 12.
+ *
+ * How, you might wonder, could a DTM 15 position appear except from the DTM -14 pass?  Futurebases.
+ * Furthermore, we don't want to waste time running passes for DTM values that don't appear at all,
+ * so we track DTMs, mainly during futurebase backpropagation, keeping a record of which DTM values
+ * have been seen, and skipping passes entirely for non-existent DTM values.
+ *
+ * If we're generating a bitbase (no DTM metric), we don't delay finalising a position, since all
+ * wins are equivalent.
+ */
+
 bool tracking_dtm = true;   // XXX should clear this variable if we're generating a bitbase
 int min_tracked_dtm = -2;
 int max_tracked_dtm = 2;
@@ -4807,7 +4820,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.884 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.885 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -5254,8 +5267,16 @@ bool preload_all_futurebases(tablebase_t *tb)
 	    continue;
 	}
 
-	if (futurebases[fbnum]->max_dtm > max_tracked_dtm) max_tracked_dtm = futurebases[fbnum]->max_dtm;
-	if (futurebases[fbnum]->min_dtm < min_tracked_dtm) min_tracked_dtm = futurebases[fbnum]->min_dtm;
+	/* Now update the range of locally tracked DTM values based on the futurebase DTM range.
+	 *
+	 * How do futurebase DTM values affect local DTM values?
+	 *
+	 * A futurebase max_dtm (ex: 5) will back propagate into -max_dtm (ex: -5) locally, and a
+	 * futurebase min_dtm (ex: -5) will back propagate into 1-min_dtm (ex: 6).
+	 */
+
+	if (1-futurebases[fbnum]->min_dtm > max_tracked_dtm) max_tracked_dtm = 1-futurebases[fbnum]->min_dtm;
+	if (-futurebases[fbnum]->max_dtm < min_tracked_dtm) min_tracked_dtm = -futurebases[fbnum]->max_dtm;
 
 	futurebases[fbnum]->invert_colors = (result[fbnum]->eval_to_string("@colors") == "invert");
 
@@ -6597,10 +6618,10 @@ class EntriesTable {
 
     void ComputeBitfields(void) {
 
-	/* We've already preloaded our futurebases, so min_tracked_dtm and max_tracked_dtm
-	 * tell us the minumum and maximum DTMs in the futurebases.  Make sure we've got
-	 * enough room in our DTM field to handle anything from our futurebases, then
-	 * we'll expand the field later if we need more space.
+	/* We've already preloaded our futurebases, so min_tracked_dtm and max_tracked_dtm tell us
+	 * the minumum and maximum DTMs we'll need during futurebase backprop.  Make sure we've got
+	 * enough room in our DTM field to handle anything from our futurebases, then we'll expand
+	 * the field later if we need more space.
 	 */
 
 	if (tracking_dtm) {
@@ -13551,7 +13572,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.884 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.885 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
