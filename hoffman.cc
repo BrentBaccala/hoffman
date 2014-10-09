@@ -4820,7 +4820,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.885 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.886 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -12326,6 +12326,7 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	if (! output_filename.empty()) {
 	    warning("Output filename specified on command line overrides <output> tag\n");
 	} else {
+	    // XXX use C++ casts
 	    output_filename = ((xmlpp::Element *) result[0])->get_attribute_value("filename");
 	    if (output_filename.empty()) {
 		output_filename = ((xmlpp::Element *) result[0])->get_attribute_value("url");
@@ -12348,6 +12349,16 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
     if (output_filename.substr(0,4) == "ftp:") {
 	fatal("ftp URLs currently unsupported for tablebase I/O\n");
 	return false;
+    }
+
+    int proptable_size_in_XML = eval_to_number_or_zero(tb->xml->get_root_node(), "//enable-proptables/@MB");
+    if (proptable_size_in_XML > 0) {
+	if (using_proptables) {
+	    warning("Proptable size specified on command line (%zd MB) overrides <enable-proptables> tag\n", proptable_MBs);
+	} else {
+	    using_proptables = true;
+	    proptable_MBs = proptable_size_in_XML;
+	}
     }
 
     if (! preload_all_futurebases(tb)) return false;
@@ -13572,7 +13583,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.885 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.886 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

@@ -120,7 +120,7 @@ sub write_cntl_file {
     my ($cntl_filename) = @_;
 
     die "Invalid control filename $cntl_filename\n"
-	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)(-basic|-whitewins|).xml$/
+	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)(-basic|-whitewins|-prop(\d+)|).xml$/
 		or $cntl_filename =~ m/^([kqrbnp]*)(v)([kqrbnp.]*).xml$/);
 
     my ($white_pieces, $black_pieces) = ($1, $3);
@@ -142,7 +142,7 @@ sub write_cntl_file {
 
     printnl '   <variant name="suicide"/>' if $suicide;
 
-    printnl '   <dtm/>' if ($option eq "");
+    printnl '   <dtm/>' if ($option ne "-basic" and $option ne '-whitewins');
     printnl '   <basic/>' if ($option eq "-basic");
     printnl '   <flag type="white-wins"/>' if ($option eq "-whitewins");
 
@@ -206,7 +206,8 @@ sub write_cntl_file {
 	}
     }
 
-    printnl '   <output filename ="' . $filename . '.htb"/>';
+    printnl '   <enable-proptables MB="' . substr($option, 5) . '"/>' if ($option =~ /^-prop/);
+    printnl '   <output filename="' . $filename . '.htb"/>';
 
     printnl '</tablebase>';
     close XMLFILE;
