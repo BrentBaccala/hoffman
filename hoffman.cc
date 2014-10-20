@@ -4820,7 +4820,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.887 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.888 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -4994,7 +4994,9 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
     io::filtering_istream * instream = new io::filtering_istream;
 
     instream->push(limiting_input_filter("</tablebase>"));
-    instream->push(io::gzip_decompressor());
+    if (input_file->peek() == '\037') {
+	instream->push(io::gzip_decompressor());
+    }
     instream->push(*input_file);
 
     tablebase_t * tb;
@@ -5022,24 +5024,36 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 
     // XXX test cases for exceptions
 
-#if 1
-    io::filtering_stream<io::input_seekable> * instream2 = new io::filtering_stream<io::input_seekable>;
+#if 0
 
-    //instream2->push(io::gzip_decompressor());
-    instream2->push(gzip_decompressor());
-    instream2->push(*input_file);
+    /* XXX This is what I'd like to do, but it doesn't work.  Boost 1.54 can't handle io::restrict
+     * on gzip_decompressor (or its stock io::gzip_decompressor).  Instead, we need to construct a
+     * new input stream, push the file and the decompressor into it, then io::restrict the stream.
+     * Yuck.
+     */
 
-    //std::cout << "offset: " << tb->offset << std::endl;
-
-    instream->push(io::restrict(*instream2, tb->offset));
+    if (input_file->peek() == '\037') {
+	instream->push(io::restrict(gzip_decompressor(), tb->offset));
+	instream->push(*input_file);
+    } else {
+	instream->push(io::restrict(*input_file, tb->offset));
+    }
     instream->exceptions(std::ifstream::failbit | std::ifstream::badbit);
 
 #else
 
-    // XXX nice idea, but doesn't work
-    //instream->push(io::restrict(io::gzip_decompressor(), tb->offset));
-    instream->push(io::restrict(gzip_decompressor(), tb->offset));
-    instream->push(*input_file);
+    if (input_file->peek() == '\037') {
+	// XXX delete instream2 when we're done with it
+	io::filtering_stream<io::input_seekable> * instream2 = new io::filtering_stream<io::input_seekable>;
+
+	instream2->push(gzip_decompressor());
+	instream2->push(*input_file);
+
+	instream->push(io::restrict(*instream2, tb->offset));
+    } else {
+	instream->push(io::restrict(*input_file, tb->offset));
+    }
+
     instream->exceptions(std::ifstream::failbit | std::ifstream::badbit);
 
 #endif
@@ -13583,7 +13597,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.887 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.888 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
