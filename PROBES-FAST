@@ -5,7 +5,7 @@
 # then a list of tablebases to be probed, which can include wildcards.
 
 # Open a non-existent tablebase
-34ec523503a92b5a8959d3eb74ad48ae 1 doesNotExist.htb
+92512a58a45a635b99123de0b18943d5 1 doesNotExist.htb
 
 # Probe an index
 80ffb5db2bcfd5e9cf437958c63b9a43 258856\\nc1xd2 kqkq.htb kqk.htb
