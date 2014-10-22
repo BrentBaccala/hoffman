@@ -756,6 +756,21 @@ struct piece {
 };
 
 typedef struct tablebase {
+
+    /* I want an xmlpp::DomParser attached to each tablebase, to hold the associated XML structures
+     * and then cleanly deallocate them when the tablebase is destroyed.  I also want tablebase to
+     * be a movable class (necessary for putting it in an array).
+     *
+     * xmlpp::DomParser is NonCopyable and libxml++ 2.6 doesn't implement C++11 move semantics, so
+     * achieving these goals are problematic.
+     *
+     * I use a unique_ptr to get around this.  It's ugly, but the net result is a xmlpp::DomParser
+     * that is attached to each tablebase, movable, and cleanly destroyed.
+     */
+
+    std::unique_ptr<xmlpp::DomParser> parser = std::unique_ptr<xmlpp::DomParser>(new xmlpp::DomParser);
+    xmlpp::Document * xml;
+
     int variant;
     int index_type;
     index_t max_index;
@@ -784,8 +799,9 @@ typedef struct tablebase {
     unsigned int get_basic(index_t index);
 
     /* for futurebases only */
-    std::istream * istream;
-    const char * filename;
+    Glib::ustring filename;
+    std::unique_ptr<io::filtering_istream> instream;
+    //const char * filename;
 
     int futurebase_type;
     index_t next_read_index;
@@ -797,9 +813,6 @@ typedef struct tablebase {
     int missing_pawn;
     int missing_non_pawn;
     int promotion;
-
-    xmlpp::DomParser parser;
-    xmlpp::Document * xml;
 
     /* Pieces */
 
@@ -820,11 +833,16 @@ typedef struct tablebase {
 
     tablebase(void) : offset(0), invert_colors(false), num_pieces(0) { }
     tablebase(std::istream *);
+    tablebase(Glib::ustring);
+
+private:
+    void parse_XML(std::istream *);
+
 } tablebase_t;
 
 tablebase_t *current_tb = nullptr;
 
-tablebase_t **futurebases;
+std::vector<tablebase_t> futurebases;
 int num_futurebases;
 
 bool using_proptables = false;		/* Proptables (see below) */
@@ -3584,7 +3602,7 @@ bool tablebase_is_color_symmetric(tablebase_t *tb)
  * distinguish between them.
  */
 
-tablebase::tablebase(std::istream *instream)
+void tablebase::parse_XML(std::istream *instream)
 {
     xmlpp::DtdValidator dtd;
 
@@ -3601,9 +3619,9 @@ tablebase::tablebase(std::istream *instream)
     int piece_in_set = 1;
 
     // XXX this might throw an exception
-    parser.parse_stream(*instream);
 
-    xml = parser.get_document();
+    parser->parse_stream(*instream);
+    xml = parser->get_document();
 
     /* load the DTD from memory */
 
@@ -3656,6 +3674,8 @@ tablebase::tablebase(std::istream *instream)
 	if (stalemate_prune_type != RESTRICTION_CONCEDE) {
 	    fatal("Stalemates can only be pruned to 'concede'\n");
 	}
+    } else {
+	stalemate_prune_type = RESTRICTION_NONE;
     }
 
     /* Fetch the pieces from the XML */
@@ -4753,6 +4773,8 @@ tablebase::tablebase(std::istream *instream)
 
     /* Fetch any prune enable elements */
 
+    prune_enable[BLACK] = 0;
+    prune_enable[WHITE] = 0;
     result = tablebase->find("//prune-enable | //move-restriction");
     if (! result.empty()) {
 	for (auto i=0U; i < result.size(); i++) {
@@ -4770,6 +4792,11 @@ tablebase::tablebase(std::istream *instream)
     }
 
     //return (fatal_errors == starting_fatal_errors) ? tb : nullptr;
+}
+
+tablebase::tablebase(std::istream *instream)
+{
+    parse_XML(instream);
 }
 
 xmlpp::Element * create_GenStats_node(std::string name)
@@ -4820,7 +4847,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.888 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.889 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -4837,16 +4864,6 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     return tb;
 }
-
-/* preload_futurebase_from_file() reads a tablebase's XML header and parses it, closing the file
- * when done.
- *
- * XXX I save the 'filename' and xmlFree it when I unload the futurebase, but that assumes that the
- * filename came from an XML attribute, which isn't the case if we're probing!  Fortunately, if
- * we're probing, we never unload the futurebases...
- *
- * XXX put ftp: and http: URL support back in
- */
 
 /* limiting_input_filter is a Boost iostreams filter that reads until it has read (and returned) a
  * particular string, then terminates reading and returns EOF.  I use it to terminate reading at the
@@ -4978,20 +4995,21 @@ public:
 
 typedef basic_gzip_decompressor<> gzip_decompressor;
 
-tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
+tablebase::tablebase(Glib::ustring filename) : offset(0), invert_colors(false), num_pieces(0), filename(filename)
 {
     std::ifstream * input_file = new std::ifstream;
 
     input_file->open(filename, std::ifstream::in | std::ifstream::binary);
 
     if (!input_file->good()) {
-	fatal("Can't open tablebase '%s'\n", filename.c_str());
-	return nullptr;
+	// XXX better way to do this?
+	throw "Can't open file";
     }
 
     input_file->exceptions(std::ifstream::failbit | std::ifstream::badbit);
 
-    io::filtering_istream * instream = new io::filtering_istream;
+    //io::filtering_istream * instream = new io::filtering_istream;
+    instream.reset(new io::filtering_istream);
 
     instream->push(limiting_input_filter("</tablebase>"));
     if (input_file->peek() == '\037') {
@@ -4999,18 +5017,9 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
     }
     instream->push(*input_file);
 
-    tablebase_t * tb;
-    try {
-	tb = new tablebase(instream);
-    } catch (const char * msg) {
-	fatal("%s: futurebase preload failed: %s\n", filename.c_str(), msg);
-	return nullptr;
-    }
+    parse_XML(instream.get());
 
-    // XXX fix this - filename will be destroyed when we return, so we need a copy here
-    tb->filename = (new Glib::ustring(filename))->c_str();
-
-    tb->offset = eval_to_number_or_zero(tb->xml->get_root_node(), "/tablebase/@offset");
+    offset = eval_to_number_or_zero(xml->get_root_node(), "/tablebase/@offset");
 
     /* We don't just destroy instream, because that would close the file.  Instead, we disassemble
      * it and reassemble it for reading the data.
@@ -5033,10 +5042,10 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
      */
 
     if (input_file->peek() == '\037') {
-	instream->push(io::restrict(gzip_decompressor(), tb->offset));
+	instream->push(io::restrict(gzip_decompressor(), offset));
 	instream->push(*input_file);
     } else {
-	instream->push(io::restrict(*input_file, tb->offset));
+	instream->push(io::restrict(*input_file, offset));
     }
     instream->exceptions(std::ifstream::failbit | std::ifstream::badbit);
 
@@ -5049,52 +5058,16 @@ tablebase_t * preload_futurebase_from_file(Glib::ustring filename)
 	instream2->push(gzip_decompressor());
 	instream2->push(*input_file);
 
-	instream->push(io::restrict(*instream2, tb->offset));
+	instream->push(io::restrict(*instream2, offset));
     } else {
-	instream->push(io::restrict(*input_file, tb->offset));
+	instream->push(io::restrict(*input_file, offset));
     }
 
     instream->exceptions(std::ifstream::failbit | std::ifstream::badbit);
 
 #endif
 
-    tb->istream = instream;
-    tb->next_read_index = 0;
-
-    return tb;
-}
-
-/* open_futurebase() reopens a preloaded futurebase, seeks to the start of the data, and leaves the
- * file open and ready to read the first entry with fetch_entry().
- */
-
-void open_futurebase(tablebase_t * tb)
-{
-}
-
-void close_futurebase(tablebase_t * tb)
-{
-#if 0
-    if (tb->file) {
-	if (zlib_close(tb->file) != 0) {
-	    warning("zlib_close failed in close_futurebase()\n");
-	}
-    }
-    tb->file = nullptr;
-#endif
-}
-
-void unload_futurebase(tablebase_t *tb)
-{
-    /* XXX tb->filename came from c_str - do we free it */
-    // if (tb->filename) xmlFree(tb->filename);
-    tb->filename = nullptr;
-
-    // if (tb->xml) xmlFreeDoc(tb->xml);
-    if (tb->xml) delete tb->xml;
-    tb->xml = nullptr;
-
-    close_futurebase(tb);
+    next_read_index = 0;
 }
 
 /* compute_extra_and_missing_pieces()
@@ -5119,7 +5092,7 @@ void unload_futurebase(tablebase_t *tb)
  * missings piece(s), the highest piece numbers will be returned.
  */
 
-void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
+void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t &futurebase)
     throw (const char *)
 {
     int piece;
@@ -5128,24 +5101,24 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
     int future_piece_vector = 0;
     int promotion;
 
-    futurebase->extra_piece = -1;
-    futurebase->missing_pawn = -1;
-    futurebase->missing_non_pawn = -1;
+    futurebase.extra_piece = -1;
+    futurebase.missing_pawn = -1;
+    futurebase.missing_non_pawn = -1;
 
-    for (future_piece = 0; future_piece < futurebase->num_pieces; future_piece ++) {
+    for (future_piece = 0; future_piece < futurebase.num_pieces; future_piece ++) {
 
 	bool found_matching_piece = false;
 
 	for (int square = 0; square < 64; square ++) {
-	    futurebase->pieces[future_piece].matching_local_semilegal_group[square] = -1;
+	    futurebase.pieces[future_piece].matching_local_semilegal_group[square] = -1;
 	}
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if ((tb->pieces[piece].piece_type == futurebase->pieces[future_piece].piece_type)
-		&& ((!futurebase->invert_colors &&
-		     (tb->pieces[piece].color == futurebase->pieces[future_piece].color))
-		    || (futurebase->invert_colors &&
-			(tb->pieces[piece].color != futurebase->pieces[future_piece].color)))) {
+	    if ((tb->pieces[piece].piece_type == futurebase.pieces[future_piece].piece_type)
+		&& ((!futurebase.invert_colors &&
+		     (tb->pieces[piece].color == futurebase.pieces[future_piece].color))
+		    || (futurebase.invert_colors &&
+			(tb->pieces[piece].color != futurebase.pieces[future_piece].color)))) {
 
 		/* Have we found a unassigned matching pair of localbase/futurebase pieces? */
 		if (!(local_piece_vector & (1 << piece))
@@ -5161,8 +5134,8 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 
 		    if (tb->pieces[piece].semilegal_squares & BITVECTOR(square)) {
 
-			if (futurebase->pieces[future_piece].matching_local_semilegal_group[square] == -1) {
-			    futurebase->pieces[future_piece].matching_local_semilegal_group[square] = piece;
+			if (futurebase.pieces[future_piece].matching_local_semilegal_group[square] == -1) {
+			    futurebase.pieces[future_piece].matching_local_semilegal_group[square] = piece;
 			}
 
 		    }
@@ -5171,8 +5144,8 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 	}
 
 	if (! found_matching_piece) {
-	    if ((futurebase->extra_piece == -1) && (futurebase->pieces[future_piece].piece_type != PAWN)) {
-		futurebase->extra_piece = future_piece;
+	    if ((futurebase.extra_piece == -1) && (futurebase.pieces[future_piece].piece_type != PAWN)) {
+		futurebase.extra_piece = future_piece;
 	    } else {
 		throw "Couldn't find future piece in local tablebase";
 	    }
@@ -5182,14 +5155,14 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if (!(local_piece_vector & (1 << piece))) {
 	    if (tb->pieces[piece].piece_type == PAWN) {
-		if (futurebase->missing_pawn == -1) {
-		    futurebase->missing_pawn = piece;
+		if (futurebase.missing_pawn == -1) {
+		    futurebase.missing_pawn = piece;
 		} else {
 		    throw "Too many missing pieces in futurebase";
 		}
 	    } else {
-		if (futurebase->missing_non_pawn == -1) {
-		    futurebase->missing_non_pawn = piece;
+		if (futurebase.missing_non_pawn == -1) {
+		    futurebase.missing_non_pawn = piece;
 		} else {
 		    throw "Too many missing pieces in futurebase";
 		}
@@ -5197,34 +5170,34 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t *futurebase)
 	}
     }
 
-    if (futurebase->extra_piece != -1) {
+    if (futurebase.extra_piece != -1) {
 
 	for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-	    if (futurebase->pieces[futurebase->extra_piece].piece_type == promoted_pieces[promotion]) break;
+	    if (futurebase.pieces[futurebase.extra_piece].piece_type == promoted_pieces[promotion]) break;
 	}
 
 	if (promotion == promotion_possibilities) {
 	    throw "Couldn't find futurebase's extra piece in promoted_pieces list";
 	}
 
-	futurebase->promotion = promotion;
+	futurebase.promotion = promotion;
     }
 }
 
-int autodetect_futurebase_type(tablebase_t *futurebase)
+int autodetect_futurebase_type(tablebase_t & futurebase)
 {
-    if (futurebase->extra_piece == -1) {
-	if ((futurebase->missing_pawn == -1) && (futurebase->missing_non_pawn == -1)) {
+    if (futurebase.extra_piece == -1) {
+	if ((futurebase.missing_pawn == -1) && (futurebase.missing_non_pawn == -1)) {
 	    return FUTUREBASE_NORMAL;
-	} else if ((futurebase->missing_pawn != -1) && (futurebase->missing_non_pawn != -1)) {
+	} else if ((futurebase.missing_pawn != -1) && (futurebase.missing_non_pawn != -1)) {
 	    return -1;
 	} else {
 	    return FUTUREBASE_CAPTURE;
 	}
     } else {
-	if (futurebase->missing_pawn == -1) {
+	if (futurebase.missing_pawn == -1) {
 	    return -1;
-	} else if (futurebase->missing_non_pawn == -1) {
+	} else if (futurebase.missing_non_pawn == -1) {
 	    return FUTUREBASE_PROMOTION;
 	} else {
 	    return FUTUREBASE_CAPTURE_PROMOTION;
@@ -5246,12 +5219,6 @@ bool preload_all_futurebases(tablebase_t *tb)
     result = tb->xml->get_root_node()->find("//futurebase");
     num_futurebases = result.size();
 
-    futurebases = (tablebase_t **) malloc(sizeof(tablebase_t *) * num_futurebases);
-    if (futurebases == nullptr) {
-	fatal("Can't malloc futurebases array\n");
-	return false;
-    }
-
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 	Glib::ustring filename = result[fbnum]->eval_to_string("@filename");
 
@@ -5266,17 +5233,19 @@ bool preload_all_futurebases(tablebase_t *tb)
 	}
 #endif
 
-	futurebases[fbnum] = preload_futurebase_from_file(filename);
+	try {
+	    futurebases.push_back(tablebase(filename));
+	} catch (const char * msg) {
+	    fatal("%s: futurebase preload failed: %s\n", filename.c_str(), msg);
+	    return nullptr;
+	}
 
-	/* load_futurebase_from_file() already printed some kind of error message */
-	if (futurebases[fbnum] == nullptr) continue;
-
-	if (futurebases[fbnum]->variant != tb->variant) {
+	if (futurebases[fbnum].variant != tb->variant) {
 	    fatal("Futurebases have to use same 'variant' as tablebase under construction!\n");
 	    continue;
 	}
 
-	if (futurebases[fbnum]->symmetry < tb->symmetry) {
+	if (futurebases[fbnum].symmetry < tb->symmetry) {
 	    fatal("Futurebases can't be less symmetric than the tablebase under construction\n");
 	    continue;
 	}
@@ -5289,15 +5258,15 @@ bool preload_all_futurebases(tablebase_t *tb)
 	 * futurebase min_dtm (ex: -5) will back propagate into 1-min_dtm (ex: 6).
 	 */
 
-	if (1-futurebases[fbnum]->min_dtm > max_tracked_dtm) max_tracked_dtm = 1-futurebases[fbnum]->min_dtm;
-	if (-futurebases[fbnum]->max_dtm < min_tracked_dtm) min_tracked_dtm = -futurebases[fbnum]->max_dtm;
+	if (1-futurebases[fbnum].min_dtm > max_tracked_dtm) max_tracked_dtm = 1-futurebases[fbnum].min_dtm;
+	if (-futurebases[fbnum].max_dtm < min_tracked_dtm) min_tracked_dtm = -futurebases[fbnum].max_dtm;
 
-	futurebases[fbnum]->invert_colors = (result[fbnum]->eval_to_string("@colors") == "invert");
+	futurebases[fbnum].invert_colors = (result[fbnum]->eval_to_string("@colors") == "invert");
 
 	/* Check futurebase to make sure its prune enable(s) match our own */
 
 	for (int color = 0; color < 2; color ++) {
-	    if (futurebases[fbnum]->prune_enable[color] & ~(tb->prune_enable[futurebases[fbnum]->invert_colors ? 1 - color : color])) {
+	    if (futurebases[fbnum].prune_enable[color] & ~(tb->prune_enable[futurebases[fbnum].invert_colors ? 1 - color : color])) {
 		fatal("'%s': Futurebase doesn't match prune-enables!\n", filename.c_str());
 		return false;
 	    }
@@ -5317,12 +5286,12 @@ bool preload_all_futurebases(tablebase_t *tb)
 	 * XXX distinguish between DTM and DTC tablebases
 	 */
 
-	if (futurebases[fbnum]->format.flag_type != FORMAT_FLAG_NONE) {
+	if (futurebases[fbnum].format.flag_type != FORMAT_FLAG_NONE) {
 	    if (tb->format.flag_type == FORMAT_FLAG_NONE) {
 		fatal("'%s': bitbase unusable as futurebase for a non-bitbase format\n", filename.c_str());
-	    } else if ((tb->format.flag_type != futurebases[fbnum]->format.flag_type) && ! futurebases[fbnum]->invert_colors) {
+	    } else if ((tb->format.flag_type != futurebases[fbnum].format.flag_type) && ! futurebases[fbnum].invert_colors) {
 		fatal("'%s': bitbase unusable as futurebase due to flag type\n", filename.c_str());
-	    } else if ((tb->format.flag_type == futurebases[fbnum]->format.flag_type) && futurebases[fbnum]->invert_colors) {
+	    } else if ((tb->format.flag_type == futurebases[fbnum].format.flag_type) && futurebases[fbnum].invert_colors) {
 		fatal("'%s': bitbase unusable as futurebase due to color inversion\n", filename.c_str());
 	    }
 	}
@@ -5337,17 +5306,17 @@ bool preload_all_futurebases(tablebase_t *tb)
 	 * for correctness if the XML (optionally now) specified the type.
 	 */
 
-	futurebases[fbnum]->futurebase_type = autodetect_futurebase_type(futurebases[fbnum]);
+	futurebases[fbnum].futurebase_type = autodetect_futurebase_type(futurebases[fbnum]);
 
-	if (futurebases[fbnum]->futurebase_type == -1) {
+	if (futurebases[fbnum].futurebase_type == -1) {
 	    fatal("'%s': Can't autodetect futurebase type\n", filename.c_str());
 	}
 
 	Glib::ustring type = exception_cast<xmlpp::Element *>(result[fbnum])->get_attribute_value("type");
 	if (type != "") {
-	    if (futurebases[fbnum]->futurebase_type != futurebase_types.at(type)) {
+	    if (futurebases[fbnum].futurebase_type != futurebase_types.at(type)) {
 		fatal("'%s': Specified futurebase type '%s' doesn't match autodetected type '%s'\n",
-		      filename.c_str(), type.c_str(), futurebase_types[futurebases[fbnum]->futurebase_type].c_str());
+		      filename.c_str(), type.c_str(), futurebase_types[futurebases[fbnum].futurebase_type].c_str());
 	    }
 	}
 
@@ -5356,16 +5325,6 @@ bool preload_all_futurebases(tablebase_t *tb)
     }
 
     return (fatal_errors == 0);
-}
-
-void unload_all_futurebases(void)
-{
-    int fbnum;
-
-    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	unload_futurebase(futurebases[fbnum]);
-    }
-
 }
 
 /* finalize_pass_statistics() - this function also collects some of the per-pass statistics,
@@ -5823,7 +5782,7 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
     }
 
     try {
-	compute_extra_and_missing_pieces(tb, &fake_tb);
+	compute_extra_and_missing_pieces(tb, fake_tb);
     } catch (const char * reason) {
 	return invalid_translation;
     }
@@ -6322,7 +6281,7 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
 
 	/* If cache is non existant, build it */
 
-	if (istream == nullptr) {
+	if (instream == nullptr) {
 	    fatal("fetch_entry() called on a non-preloaded tablebase\n");
 	    terminate();
 	}
@@ -6357,18 +6316,18 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
     }
 
     if (index != next_read_index) {
-	istream->seekg(index * format.bits / 8);
+	instream->seekg(index * format.bits / 8);
 	next_read_index = index;
     }
 
     if (next_read_index + futurebase_stride < max_index) {
-	istream->read(cached_entries, format.bits * futurebase_stride / 8);
+	instream->read(cached_entries, format.bits * futurebase_stride / 8);
 	next_read_index += futurebase_stride;
     } else {
 	/* short read at end of file */
 	int bytes_to_read = format.bits * (max_index - next_read_index + 1) / 8;
 	if ((format.bits * (max_index - next_read_index + 1)) % 8 != 0) bytes_to_read ++;
-	istream->read(cached_entries, bytes_to_read);
+	instream->read(cached_entries, bytes_to_read);
 	next_read_index = max_index + 1;
     }
 
@@ -8668,7 +8627,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
 	index_to_global_position(futurebase, future_index, &global);
 	info("propagate_index_from_futurebase; %" PRIindex " from %s %" PRIindex " %s\n",
-	     current_index, futurebase->filename, future_index, global_position_to_FEN(&global));
+	     current_index, futurebase->filename.c_str(), future_index, global_position_to_FEN(&global));
     }
 #endif
 
@@ -8678,7 +8637,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
 	index_to_global_position(futurebase, future_index, &global);
 	info("propagate_index_from_futurebase; %" PRIindex " from %s %" PRIindex " %s\n",
-	     current_index, futurebase->filename, future_index, global_position_to_FEN(&global));
+	     current_index, futurebase->filename.c_str(), future_index, global_position_to_FEN(&global));
     }
 #endif
 
@@ -9846,9 +9805,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 
-	futurebase = futurebases[fbnum];
-
-	open_futurebase(futurebase);
+	futurebase = & futurebases[fbnum];
 
 	max_reflection = compute_reflections(tb, futurebase, reflections);
 
@@ -9860,7 +9817,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FUTUREBASE_CAPTURE:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) futurebase->filename);
+		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = &propagate_moves_from_capture_futurebase;
 	    }
 
@@ -9869,7 +9826,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FUTUREBASE_PROMOTION:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) futurebase->filename);
+		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 
 		promotion_color = tb->pieces[futurebase->missing_pawn].color;
 		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
@@ -9884,7 +9841,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FUTUREBASE_CAPTURE_PROMOTION:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) futurebase->filename);
+		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 
 		promotion_color = tb->pieces[futurebase->missing_pawn].color;
 		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
@@ -9899,7 +9856,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FUTUREBASE_NORMAL:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) futurebase->filename);
+		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = propagate_moves_from_normal_futurebase;
 	    }
 
@@ -9907,7 +9864,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	default:
 
-	    fatal("Unknown back propagation type for futurebase '%s'\n", futurebase->filename);
+	    fatal("Unknown back propagation type for futurebase '%s'\n", futurebase->filename.c_str());
 	    break;
 
 	}
@@ -9925,8 +9882,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 		t[thread].join();
 	    }
 	}
-
-	close_futurebase(futurebase);
     }
 
     return (fatal_errors == 0);
@@ -10407,7 +10362,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     futurebase_cnt = 0;
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	if (futurebases[fbnum]->futurebase_type == FUTUREBASE_NORMAL) futurebase_cnt ++;
+	if (futurebases[fbnum].futurebase_type == FUTUREBASE_NORMAL) futurebase_cnt ++;
     }
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -10655,15 +10610,15 @@ bool check_pruning(tablebase_t *tb) {
 
 	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 	    if (tb->pieces[captured_piece].piece_type == PAWN) {
-		if ((futurebases[fbnum]->extra_piece == -1)
-		    && (futurebases[fbnum]->missing_pawn != -1)
-		    && (tb->pieces[futurebases[fbnum]->missing_pawn].color == tb->pieces[captured_piece].color)
-		    && (futurebases[fbnum]->missing_non_pawn == -1)) futurebase_cnt ++;
+		if ((futurebases[fbnum].extra_piece == -1)
+		    && (futurebases[fbnum].missing_pawn != -1)
+		    && (tb->pieces[futurebases[fbnum].missing_pawn].color == tb->pieces[captured_piece].color)
+		    && (futurebases[fbnum].missing_non_pawn == -1)) futurebase_cnt ++;
 	    } else {
-		if ((futurebases[fbnum]->extra_piece == -1)
-		    && (futurebases[fbnum]->missing_non_pawn != -1)
-		    && (tb->pieces[futurebases[fbnum]->missing_non_pawn].color == tb->pieces[captured_piece].color)
-		    && (futurebases[fbnum]->missing_pawn == -1)) futurebase_cnt ++;
+		if ((futurebases[fbnum].extra_piece == -1)
+		    && (futurebases[fbnum].missing_non_pawn != -1)
+		    && (tb->pieces[futurebases[fbnum].missing_non_pawn].color == tb->pieces[captured_piece].color)
+		    && (futurebases[fbnum].missing_pawn == -1)) futurebase_cnt ++;
 	    }
 	}
 
@@ -10757,17 +10712,17 @@ bool check_pruning(tablebase_t *tb) {
 		if (promotion_captures[pawn][captured_piece][promotion] < 0) continue;
 
 		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-		    if ((futurebases[fbnum]->extra_piece != -1)
-			&& (futurebases[fbnum]->pieces[futurebases[fbnum]->extra_piece].color
-			    == (futurebases[fbnum]->invert_colors ? 1 - tb->pieces[pawn].color : tb->pieces[pawn].color))
-			&& (futurebases[fbnum]->missing_non_pawn != -1)
-			&& (tb->pieces[futurebases[fbnum]->missing_non_pawn].color
+		    if ((futurebases[fbnum].extra_piece != -1)
+			&& (futurebases[fbnum].pieces[futurebases[fbnum].extra_piece].color
+			    == (futurebases[fbnum].invert_colors ? 1 - tb->pieces[pawn].color : tb->pieces[pawn].color))
+			&& (futurebases[fbnum].missing_non_pawn != -1)
+			&& (tb->pieces[futurebases[fbnum].missing_non_pawn].color
 			    == tb->pieces[captured_piece].color)
-			&& (tb->pieces[futurebases[fbnum]->missing_non_pawn].piece_type
+			&& (tb->pieces[futurebases[fbnum].missing_non_pawn].piece_type
 			    == tb->pieces[captured_piece].piece_type)
-			&& (futurebases[fbnum]->missing_pawn != -1)
-			&& (tb->pieces[futurebases[fbnum]->missing_pawn].color == tb->pieces[pawn].color)
-			&& (futurebases[fbnum]->pieces[futurebases[fbnum]->extra_piece].piece_type == promoted_pieces[promotion])) {
+			&& (futurebases[fbnum].missing_pawn != -1)
+			&& (tb->pieces[futurebases[fbnum].missing_pawn].color == tb->pieces[pawn].color)
+			&& (futurebases[fbnum].pieces[futurebases[fbnum].extra_piece].piece_type == promoted_pieces[promotion])) {
 
 			promoted_piece_handled = 1;
 		    }
@@ -10809,10 +10764,10 @@ bool check_pruning(tablebase_t *tb) {
 	    if (promotions[pawn][promotion] < 0) continue;
 
 	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-		if ((futurebases[fbnum]->extra_piece != -1)
-		    && (futurebases[fbnum]->missing_non_pawn == -1)
-		    && (futurebases[fbnum]->missing_pawn != -1)
-		    && (futurebases[fbnum]->pieces[futurebases[fbnum]->extra_piece].piece_type == promoted_pieces[promotion])) {
+		if ((futurebases[fbnum].extra_piece != -1)
+		    && (futurebases[fbnum].missing_non_pawn == -1)
+		    && (futurebases[fbnum].missing_pawn != -1)
+		    && (futurebases[fbnum].pieces[futurebases[fbnum].extra_piece].piece_type == promoted_pieces[promotion])) {
 
 		    promoted_piece_handled = 1;
 		}
@@ -10845,9 +10800,9 @@ bool check_pruning(tablebase_t *tb) {
     futurebase_cnt = 0;
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	if ((futurebases[fbnum]->extra_piece == -1)
-	    && (futurebases[fbnum]->missing_pawn == -1)
-	    && (futurebases[fbnum]->missing_non_pawn == -1)) futurebase_cnt ++;
+	if ((futurebases[fbnum].extra_piece == -1)
+	    && (futurebases[fbnum].missing_pawn == -1)
+	    && (futurebases[fbnum].missing_non_pawn == -1)) futurebase_cnt ++;
     }
 
     /* I'd like to construct a mask of all allowable squares for each color and type of piece, and
@@ -12540,7 +12495,7 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	info("All futuremoves handled under move restrictions\n");
     }
 
-    unload_all_futurebases();
+    futurebases.clear();
 
     info("Intra-table propagating\n");
     propagate_all_moves_within_tablebase(tb);
@@ -13488,7 +13443,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	    const char *ptm;
 	    const char *pntm;
 
-	    printf("Index %" PRIindex " (%s)\n", result.index, result.tb->filename);
+	    printf("Index %" PRIindex " (%s)\n", result.index, result.tb->filename.c_str());
 
 	    if (global_position.side_to_move == WHITE) {
 		ptm = "White";
@@ -13597,7 +13552,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.888 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.889 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -13765,11 +13720,10 @@ int main(int argc, char *argv[])
 
     for (argi=optind; argi<argc; argi++) {
 	info("Loading '%s'\n", argv[argi]);
-	tbs[i] = preload_futurebase_from_file(argv[argi]);
+	tbs[i] = new tablebase(argv[argi]);
 	if (tbs[i] == nullptr) {
 	    fatal("Error loading '%s'\n", argv[argi]);
 	} else {
-	    open_futurebase(tbs[i]);
 	    if (dump_info) tbs[i]->xml->write_to_stream(std::cout);
 #ifdef USE_NALIMOV
 	    if (verify) verify_tablebase_against_nalimov(tbs[i]);
