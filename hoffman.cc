@@ -757,12 +757,14 @@ struct piece {
 
 typedef struct tablebase {
 
-    /* I want an xmlpp::DomParser attached to each tablebase, to hold the associated XML structures
-     * and then cleanly deallocate them when the tablebase is destroyed.  I also want tablebase to
-     * be a movable class (necessary for putting it in an array).
+    /* I want an xmlpp::DomParser instance variable, to hold the tablebase's associated XML
+     * structures, like this:
      *
-     * xmlpp::DomParser is NonCopyable and libxml++ 2.6 doesn't implement C++11 move semantics, so
-     * achieving these goals are problematic.
+     * xmlpp::DomParser parser;
+     *
+     * Unfortunately, xmlpp::DomParser is NonCopyable and libxml++ 2.6 doesn't implement C++11 move
+     * semantics, so this would make tablebase objects non-movable and non-copyable, creating
+     * problems putting them in an array.
      *
      * I use a unique_ptr to get around this.  It's ugly, but the net result is a xmlpp::DomParser
      * that is attached to each tablebase, movable, and cleanly destroyed.
@@ -4847,7 +4849,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.892 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.893 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -13552,7 +13554,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.892 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.893 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
