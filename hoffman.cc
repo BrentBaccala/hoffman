@@ -4849,7 +4849,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.894 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.895 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -8367,9 +8367,18 @@ void proptable_pass_thread(int target_dtm)
 		 * non-proptable case, we're just keeping a bit vector in memory to make sure all
 		 * the futuremoves have been handled in some way and we don't have enough
 		 * information to check all of that.  Right now, we quietly ignore it.
+		 *
+		 * The movecnt field is only a single bit, and it isn't stored correctly if DTM is
+		 * zero, in which case movecnt is also zero.  Examine the code in
+		 * propagate_index_from_futurebase(), which is where all of these entries are
+		 * generated in the intra-table case, and notice that dtm=0 implies movecnt=0.
 		 */
 
-		finalize_update(pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
+		if (pt_entry->dtm != 0) {
+		    finalize_update(pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
+		} else {
+		    finalize_update(pt_entry->index, 0, 0, pt_entry->futuremove);
+		}
 
 		futurevector &= ~FUTUREVECTOR(pt_entry->futuremove);
 
@@ -12456,8 +12465,10 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	 *
 	 *   index - figure out from max_index
 	 *   dtm - figure out from futurebase preload, unless it isn't being tracked
-	 *   movecnt - 0 (XXX - discarded futuremove only), 1, or 2 for 8-way symmetry conversion
+	 *   movecnt - 0 (DTM 0 only), 1, or 2 for 8-way symmetry conversion
 	 *   futuremove - figure out from total_futuremoves
+	 *
+	 * Note: movecnt 0 / DTM 0 is handled as a special case in proptable_pass_thread()
 	 *
 	 * XXX turn off movecnt if we don't have 8-way symmetry
 	 */
@@ -13554,7 +13565,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.894 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.895 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
