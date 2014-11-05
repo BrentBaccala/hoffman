@@ -123,6 +123,8 @@ endef
 # from the end of the filename and then see if a matching filename
 # exists in the $(NALIMOV) directory.  If so, we verify against it.
 
+.DELETE_ON_ERROR:
+
 %.htb: %.xml
 	@echo Making $@
 	@$(if $(strip $(call futurebases, $<)), $(MAKE) $(call futurebases, $<))
