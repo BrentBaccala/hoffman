@@ -4849,7 +4849,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.893 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.894 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -12790,21 +12790,21 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		    if (dtm > 0) {
 			if ((dtm-1) != ((65536-4)/2)-score+1) {
-			    printf("%s (%" PRIindex "): Nalimov says %s (%d), but we say mate in %d\n",
-				   global_position_to_FEN(&global), index,
-				   nalimov_to_english(score), score, dtm-1);
+			    fatal("%s (%" PRIindex "): Nalimov says %s (%d), but we say mate in %d\n",
+				  global_position_to_FEN(&global), index,
+				  nalimov_to_english(score), score, dtm-1);
 			}
 		    } else if (dtm < 0) {
 			if ((-dtm-1) != ((65536-4)/2)+score) {
-			    printf("%s (%" PRIindex "): Nalimov says %s (%d), but we say mated in %d\n",
-				   global_position_to_FEN(&global), index,
-				   nalimov_to_english(score), score, -dtm-1);
+			    fatal("%s (%" PRIindex "): Nalimov says %s (%d), but we say mated in %d\n",
+				  global_position_to_FEN(&global), index,
+				  nalimov_to_english(score), score, -dtm-1);
 			}
 		    } else if (dtm == 0) {
 			if (score != 0) {
-			    printf("%s (%" PRIindex "): Nalimov says %s (%d), but we say draw\n",
-				   global_position_to_FEN(&global), index,
-				   nalimov_to_english(score), ((65536-4)/2)+score);
+			    fatal("%s (%" PRIindex "): Nalimov says %s (%d), but we say draw\n",
+				  global_position_to_FEN(&global), index,
+				  nalimov_to_english(score), ((65536-4)/2)+score);
 			}
 		    }
 		}
@@ -12815,14 +12815,14 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		    static const char * basic_meaning[3] = {"draw", "PTM wins", "PNTM wins"};
 
 		    if ((basic != 2) && (score < 0)) {
-			fprintf(stderr, "%s (%" PRIindex "): Nalimov says PNTM wins, but we say %s\n",
-				global_position_to_FEN(&global), index, basic_meaning[basic]);
+			fatal("%s (%" PRIindex "): Nalimov says PNTM wins, but we say %s\n",
+			      global_position_to_FEN(&global), index, basic_meaning[basic]);
 		    } else if ((basic != 1) && (score > 0)) {
-			fprintf(stderr, "%s (%" PRIindex "): Nalimov says PTM wins, but we say %s\n",
-				global_position_to_FEN(&global), index, basic_meaning[basic]);
+			fatal("%s (%" PRIindex "): Nalimov says PTM wins, but we say %s\n",
+			      global_position_to_FEN(&global), index, basic_meaning[basic]);
 		    } else if ((basic != 0) && (score == 0)) {
-			fprintf(stderr, "%s (%" PRIindex "): Nalimov says draw, but we say %s\n",
-				global_position_to_FEN(&global), index, basic_meaning[basic]);
+			fatal("%s (%" PRIindex "): Nalimov says draw, but we say %s\n",
+			      global_position_to_FEN(&global), index, basic_meaning[basic]);
 		    }
 
 		}
@@ -12834,22 +12834,22 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		    if (global.side_to_move == BLACK) score *= -1;
 
 		    if (flag && (score < 0)) {
-			fprintf(stderr, "%s (%" PRIindex "): Nalimov says black wins, but we say white wins or draws\n",
-				global_position_to_FEN(&global), index);
+			fatal("%s (%" PRIindex "): Nalimov says black wins, but we say white wins or draws\n",
+			      global_position_to_FEN(&global), index);
 		    } else if (flag && (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) && (score == 0)) {
-			fprintf(stderr, "%s (%" PRIindex "): Nalimov says draw, but we say white wins\n",
-				global_position_to_FEN(&global), index);
+			fatal("%s (%" PRIindex "): Nalimov says draw, but we say white wins\n",
+			      global_position_to_FEN(&global), index);
 		    } else if ((!flag) && (score > 0)) {
-			fprintf(stderr, "%s (%" PRIindex "): Nalimov says white wins, but we say black wins or draws\n",
-				global_position_to_FEN(&global), index);
+			fatal("%s (%" PRIindex "): Nalimov says white wins, but we say black wins or draws\n",
+			      global_position_to_FEN(&global), index);
 		    } else if ((!flag) && (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) && (score == 0)) {
-			fprintf(stderr, "%s (%" PRIindex "): Nalimov says draw, but we say black wins\n",
-				global_position_to_FEN(&global), index);
+			fatal("%s (%" PRIindex "): Nalimov says draw, but we say black wins\n",
+			      global_position_to_FEN(&global), index);
 		    }
 		}
 	    } else {
-		fprintf(stderr, "%s (%" PRIindex "): Nalimov says illegal, but we don't\n",
-			global_position_to_FEN(&global), index);
+		fatal("%s (%" PRIindex "): Nalimov says illegal, but we don't\n",
+		      global_position_to_FEN(&global), index);
 	    }
 	}
     }
@@ -13554,7 +13554,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.893 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.894 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
