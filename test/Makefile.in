@@ -118,12 +118,16 @@ endef
 #
 # %.htb: %.xml $$(call futurebases, %.xml)
 # 	$(HOFFMAN) -g $<
+#
+# The bizarre "wildcard" function is designed to strip off any options
+# from the end of the filename and then see if a matching filename
+# exists in the $(NALIMOV) directory.  If so, we verify against it.
 
 %.htb: %.xml
 	@echo Making $@
 	@$(if $(strip $(call futurebases, $<)), $(MAKE) $(call futurebases, $<))
 	$(HOFFMAN) -g -v $<
-	$(if $(wildcard $(NALIMOV)/$*.nbb.emd), $(HOFFMAN) -v -n $(NALIMOV) $@)
+	$(if $(wildcard $(NALIMOV)/$(filter-out -%, $(subst -,  -,$*)).nbb.emd), $(HOFFMAN) -v -n $(NALIMOV) $@)
 
 clean:
 	-rm $(wildcard *.xml) $(wildcard *.htb)
