@@ -95,13 +95,15 @@ threads specified at run-time using the {\tt -t} option.  The program
 is also designed to use multiple computers in parallel, all working
 simultaneously on an analysis.  This is accomplished by breaking the
 analysis up into smaller pieces, each with its own XML configuration
-file.  The primary support provided by the program is the ability to
-use URLs instead of filenames to reference tablebases, allowing
-tablebases to be stored on a server accessable over a network.  A
-basic Perl CGI script ({\tt hoffman.cgi}) is provided which, when
-installed on a web server and supplied with a directory full of
-Hoffman XML files, will hand them out in the proper order to Hoffman
-clients for processing.
+file.
+
+%The primary support provided by the program is the ability to
+%use URLs instead of filenames to reference tablebases, allowing
+%tablebases to be stored on a server accessable over a network.  A
+%basic Perl CGI script ({\tt hoffman.cgi}) is provided which, when
+%installed on a web server and supplied with a directory full of
+%Hoffman XML files, will hand them out in the proper order to Hoffman
+%clients for processing.
 
 \section{Propagation tables}
 
@@ -470,5 +472,18 @@ If one or more futuremoves are not handled by specifying either a
 futurebase or a prune statement, then a fatal error will result either
 immediately or after the initialization pass.  To aid in diagnosis,
 the error message includes the FEN of the offending position.
+
+\subsection{pawngen doesn't support output elements in generation-controls}
+
+Pawngen automatically generates all of its filenames.  Remove the
+output element.  After generation, all of the resulting {\tt htb}
+files can be loaded together into Hoffman's probe mode.
+
+\subsection{pawngen doesn't support any pawn restrictions other than plus pawns yet}
+
+Pawn locations should be specified to pawngen using a single algebraic
+board location, followed by a plus sign to indicate that the pawn can
+move.
+
 
 \end{document}
