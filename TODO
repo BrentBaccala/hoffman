@@ -23,32 +23,12 @@ to the LSBs and lookup in a table to get movecnt along with flags
 to indicate if has the piece moved to a restricted square.
 
 
-- a testsuite
+- improve testsuite
 
-Initially, I used the Nalimov tablebases to check Hoffman tablebases
-for accuracy, but as Hoffman has become more sophisticated, this
-solution is less and less acceptable.  Hoffman needs a capability to
-check a tablebase for integrity - Are all of its XML statistics
-correct?  Are all of the DTM values in its entries internally
-consistent?  Are they consistent with its futurebases?  This new
-feature should be used within a dejagnu framework to systematically
-verify program operation within as few runs as feasible.  Use a code
-coverage tool.
-
-
-- verify futurebase format compatibility
-
-There are actually hidden bugs here, because we don't ensure that
-futurebase formats are consistent with the one we are trying to
-generate.  For example, if we're trying to generate a 'flag' format,
-we have to make sure that any flags in the futurebases are of the
-correct "sense"... and that sense is inverted if the futurebase is
-inverted!  Also, as a sanity check, I think we shouldn't allow 'dtm'
-metrics to be created from 'flag' or 'basic' futurebases... because
-they're not really distance-to-mates!  Instead, let's go ahead and add
-a 'dtc' (distance-to-conversion) metric or maybe 'dtf'
-(distance-to-futurebase) would be a better name, to handle back
-propagation with distances from futurebases that have none.
+Internal verification code doesn't work with proptables, so we still
+have some bugs (1.896) that can only be detected by verification
+against Nalimov.  Can't verify DTM values against futurebases.  Don't
+have anywhere near complete code coverage.
 
 
 - general speed improvements
@@ -76,7 +56,8 @@ to be computed during initialization.
 The tablebase operation, the main thing right now is to insure that
 the program really becomes disk-bound.  Also want to check to see if
 keeping the input and output files (or some similar split) on seperate
-disks/controllers can be exploited.
+disks/controllers can be exploited.  Proptable code doesn't
+multi-thread very well at all.
 
 
 - use an FPGA
@@ -160,6 +141,7 @@ be to back up and start by reruning the pass that generated the last
 complete entries file, but with no input proptables, so it just
 generates a new set of output proptables.
 
+
 - Hadoop port
 
 Apache Hadoop is currently (2012) the state of the art for cluster
@@ -187,6 +169,13 @@ maybe not the best.  Distance to conversion (dtc) tracks (basically)
 how far until the next futurebase, and distance to rule (dtr)
 incorporates the 50-move rule into the calculation, but is tricky to
 implement - Guy Haworth has written some papers about this.
+
+Also, we shouldn't allow 'dtm' metrics to be created from 'flag' or
+'basic' futurebases... because they're not really distance-to-mates!
+Instead, let's go ahead and add a 'dtc' (distance-to-conversion)
+metric or maybe 'dtf' (distance-to-futurebase) would be a better name,
+to handle back propagation with distances from futurebases that have
+none.
 
 
 - be more consistent about current tablebase being a global var
@@ -242,7 +231,9 @@ handle all king-and-pawn endgames, at least up to a queening solution.
 We'd like to compute "white to queen and draw", which means that we
 only treat a promotion move as a win if we've already got a forced
 draw from that position.  So, we need to compute a drawing analysis,
-then augment that into a queening analysis.
+then augment that into a queening analysis.  This can currently be
+done with multiple files, but it would be better to have a single file
+with multiple bit flags for each position.
 
 
 - restrict range of indices we look at during a backprop
@@ -311,22 +302,50 @@ Once the analysis proper starts, you should be able to halt or pause
 it, as well as iconize it while it continues to run.
 
 
-- pawngen
+- improve pawn handling
 
-Needs to be more sophisticated.  Needs to handle restricted pieces.
-Needs to apply pruning statements selectively in different situations
-(there's already some code in it to do this using Perl expressions).
+Finalgen does a far better job of handling pawns than hoffman.
+Simplest way is to generate a B-tree with all possible pawn structures
+starting from a given pawn structure (need 12 bytes to store two
+56-bit masks, one for white pawns, one for black), sort it according
+to how many pawns are on each rank, number it, and use it as part of
+an indexing scheme.  We have to keep the tree in memory to use during
+position/index calculations.  Various parts of the tablebase can be
+processed independently of the others (i.e, all positions with one
+pawn, then all positions with two pawns, etc).
 
-Check for conflicting prune statements, so we don't have to wait until
-we get into a hoffman run before we find out about them.
+Could reduce the size of such pawn structures with an option to limit
+how many pieces the pawns are allowed to capture.  For example,
+consider generating a tablebase with a black rook and knight.  First
+we gen a futurebase with no black pieces, and two piece captures
+allowed.  Then gen two tablebases, one rook, one knight, with one
+piece capture allowed.  Finally gen the target tablebase with both
+rook and knight and no piece captures allowed.
 
-Add ability to restrict piece locations.  This should let us do the
-fortress example with a single control file.
+Pawngen needs to be more sophisticated.  Needs to handle restricted
+pieces; this would let us do the fortress example with a single
+control file.  Needs to apply pruning statements selectively in
+different situations (there's already some code in it to do this using
+Perl expressions).
+
+Pawngen should check for conflicting prune statements, so we don't
+have to wait until we get into a hoffman run before we find out about
+them.
+
+
+- 'freeze' pruning type
 
 Add 'freeze' pruning type for promotions - promote and freeze new
 piece on the promotion square.  This lets us queen a pawn and then let
 it sit there on the queening square to ensure that the other side
 can't either capture it immediately or queen right after us.
+
+This would basically require a new piece type - a pawn on ranks 2-7,
+and a queen+knight on rank 8 that wouldn't move, but if it had any
+possible move, that would be a prune.
+
+Not sure about this feature.  Complicated, error prone, and with only
+slight improvement in program accuracy.
 
 
 - improve probe mode's move parser
