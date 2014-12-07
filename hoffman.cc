@@ -2657,7 +2657,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	vals[piece]
-	    = std::lower_bound(tb->pieces[piece].index, tb->pieces[piece+1].index, index+1)
+	    = std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + 64, index+1)
 	    - tb->pieces[piece].index - 1;
 
 	index -= tb->pieces[piece].index[vals[piece]];
@@ -3395,7 +3395,7 @@ bool pawngen_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	vals[piece]
-	    = std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + sizeof(tb->pieces[piece].index), index+1)
+	    = std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + 64, index+1)
 	    - tb->pieces[piece].index - 1;
 
 	index -= tb->pieces[piece].index[vals[piece]];
@@ -5538,7 +5538,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.896 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.897 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14254,7 +14254,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.896 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.897 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
