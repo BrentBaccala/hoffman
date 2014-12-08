@@ -5539,7 +5539,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.900 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.901 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -8221,12 +8221,29 @@ struct disk_que {
     temporary_file * file;
     std::istream * is;
 
+    value_type last;
+
     int size;
     int next;
 
     disk_que(typename Container::iterator head, typename Container::iterator tail)
 	: size(tail - head), next(0)
     {
+	/* If we're compressing, convert the sorted array into a delta encoded list, which improves
+	 * gzip's ability to compress proptables dramatically.
+	 *
+	 * XXX changes contents of the data passed into the function, but we can get away with this
+	 * because we know it's about to be throw away
+	 */
+
+	if (compress_proptables) {
+	    value_type last = *head;
+	    for (auto it=head+1; it < tail; it++) {
+		*it -= last;
+		last += *it;
+	    }
+	}
+
 	file = new temporary_file("proptableXXXXXX", compress_proptables);
 
 	std::ostream * os = file->ostream();
@@ -8249,6 +8266,15 @@ struct disk_que {
 	value_type val;
 	if (empty()) throw "read past end of disk_que";
 	is->read(reinterpret_cast<char *>(&val), sizeof(value_type));
+
+	/* Back out delta encoding introduced above */
+	if (compress_proptables) {
+	    if (next > 0) {
+		val += last;
+	    }
+	    last = val;
+	}
+
 	next ++;
 	return val;
     }
@@ -14258,7 +14284,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.900 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.901 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
