@@ -139,6 +139,7 @@ namespace io = boost::iostreams;
 #include <time.h>		/* for putting timestamps on the output tablebases */
 #include <fcntl.h>		/* for O_RDONLY */
 #include <netdb.h>		/* for gethostbyname() */
+#include <getopt.h>		/* for GNU getopt_long() */
 
 #define __STDC_FORMAT_MACROS
 #include <inttypes.h>		/* C99 integer types */
@@ -5538,7 +5539,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.897 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.898 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14207,6 +14208,9 @@ void usage(char *program_name)
     fprintf(stderr, "   -h                    display this help message and exit\n");
 }
 
+struct option options[] = {{"compress-files", no_argument, NULL, 1},
+			   {NULL, 0, NULL, 0}};
+
 int main(int argc, char *argv[])
 {
     /* Make sure this tablebase array is one bigger than we need, so it can be nullptr terminated */
@@ -14254,7 +14258,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.897 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.898 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14281,7 +14285,7 @@ int main(int argc, char *argv[])
 #endif
 
     while (1) {
-	c = getopt(argc, argv, "hiqgpsvo:n:P:t:" DEBUG_FLAG);
+	c = getopt_long (argc, argv, "hiqgpsvo:n:P:t:" DEBUG_FLAG, options, NULL);
 
 	if (c == -1) break;
 
@@ -14336,6 +14340,13 @@ int main(int argc, char *argv[])
 	    break;
 	case 't':
 	    num_threads = strtol(optarg, nullptr, 0);
+	    break;
+	case 1:
+	    compress_proptables = true;
+	    compress_entries_table = true;
+	    break;
+	case '?':
+	    terminate();
 	    break;
 	}
     }
