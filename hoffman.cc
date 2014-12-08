@@ -5539,7 +5539,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.899 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.900 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -8444,6 +8444,8 @@ private:
 	disk_ques.push_back(ptr);
     }
 
+public:
+    
     void prepare_to_retrieve(void) {
 
 	/* XXX What I'd really like here is to detect when we get to the point where we can start
@@ -8486,8 +8488,6 @@ private:
 	}
     }
 
-public:
-    
     /* Our constructor passes all of its arguments to MemoryContainer's constructor */
 
     template <typename... Args>
@@ -9111,12 +9111,11 @@ void proptable_pass(int target_dtm)
     proptable_format format(current_tb->max_index, 0, 0, 0, 0);
 
     /* Swap proptables.  Our priority queue implementation is designed to do all the insertions
-     * first, then all the retrievals, and starting to retrieve can free a lot of memory, so we
-     * retrieve the first entry in the old proptable before allocing a new proptable.
+     * first, then all the retrievals, and prepare_to_retrieve() can free a lot of memory.
      */
 
     input_proptable = output_proptable;
-    if (input_proptable && ! input_proptable->empty()) input_proptable->front();
+    if (input_proptable) input_proptable->prepare_to_retrieve();
 
     /* XXX std::bad_alloc is a real possibility here.  Please do something better than dying.
      */
@@ -14259,7 +14258,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.899 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.900 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
