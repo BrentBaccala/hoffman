@@ -5539,7 +5539,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.898 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.899 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14200,6 +14200,7 @@ void usage(char *program_name)
     fprintf(stderr, "   -P PROPTABLE-SIZE     enable proptables and sets size in MBs\n");
     fprintf(stderr, "   -t NUM-THREADS        sets number of threads to use (default 1)\n");
     fprintf(stderr, "   -q                    quiet mode; suppress informational messages\n");
+    fprintf(stderr, "   --compress-files      compress intermediate files in proptable mode\n");
     fprintf(stderr, "\n");
     fprintf(stderr, "Other options:\n");
 #ifdef USE_NALIMOV
@@ -14258,7 +14259,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.898 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.899 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
