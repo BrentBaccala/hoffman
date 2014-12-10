@@ -2,6 +2,7 @@
 <!ELEMENT move-restriction EMPTY>
 <!ELEMENT prune-enable EMPTY>
 <!ELEMENT piece EMPTY>
+<!ELEMENT pawngen EMPTY>
 <!ELEMENT futurebase EMPTY>
 <!ELEMENT prune EMPTY>
 
