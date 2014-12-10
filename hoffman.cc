@@ -761,11 +761,13 @@ struct piece {
 
     int matching_local_semilegal_group[64];
 
-    piece(short color, short type) : color(color), piece_type(type), semilegal_squares(ALL_ONES_BITVECTOR) {}
+    piece(short color, short type, uint64_t semilegal_squares = ALL_ONES_BITVECTOR)
+	: color(color), piece_type(type), semilegal_squares(semilegal_squares) {}
     piece(xmlpp::Node *);
 };
 
 class pawn_position;
+int eval_to_number_or_zero(xmlpp::Node *node, std::string xpath);
 
 typedef struct tablebase {
 
@@ -855,6 +857,7 @@ typedef struct tablebase {
     tablebase(Glib::ustring);
 
 private:
+    void parse_pawngen_element(xmlpp::Node *);
     void parse_XML(std::istream *);
 
 } tablebase_t;
@@ -2897,7 +2900,8 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
  * encoded using fewer positions.
  */
 
-int pawns_required;
+int white_pawns_required = 0;
+int black_pawns_required = 0;
 
 class pawn_position {
 
@@ -2925,13 +2929,15 @@ public:
     uint8_t position[MAX_PIECES];
     int en_passant_pawn;
 
-    bool valid(void)
+    bool valid(void) const
     {
-	return (! white_queens_required && ! black_queens_required && (total_white_pawns + total_black_pawns == pawns_required));
+	return ((white_queens_required == 0) && (black_queens_required == 0) &&
+		(total_white_pawns == white_pawns_required) && (total_black_pawns == black_pawns_required));
+	// return (! white_queens_required && ! black_queens_required && (total_white_pawns + total_black_pawns == pawns_required));
 	// return (! white_queens_required && ! black_queens_required);
     }
 
-    bool white_pawn_at(int square)
+    bool white_pawn_at (int square) const
     {
 	return (white_pawns & (1ULL << square));
     }
@@ -2948,7 +2954,7 @@ public:
 	total_white_pawns ++;
     }
 
-    bool black_pawn_at(int square)
+    bool black_pawn_at(int square) const
     {
 	return (black_pawns & (1ULL << square));
     }
@@ -2965,7 +2971,7 @@ public:
 	total_black_pawns ++;
     }
 
-    bool pawn_at(int square)
+    bool pawn_at(int square) const
     {
 	return white_pawn_at(square) || black_pawn_at(square);
     }
@@ -3188,8 +3194,10 @@ void process_pawn_position(class pawn_position position)
     }
 }
 
-void initialize_pawngen_tables(tablebase_t *tb)
+void tablebase::parse_pawngen_element(xmlpp::Node * xml)
 {
+    pawn_position initial_position;
+
     for (int i=0; i < 256; i++) {
 	int bits = 0;
 	for (int bit=0; bit < 7; bit ++) {
@@ -3198,61 +3206,88 @@ void initialize_pawngen_tables(tablebase_t *tb)
 	pawns_on_rank[i] = bits;
     }
 
-    pawn_position initial_position;
+    for (short color = WHITE; color <= BLACK; color ++) {
 
-    xmlpp::NodeSet result = tb->xml->get_root_node()->find("//piece");
+	Glib::ustring location;
+	int j = 0;
 
-    for (int piece = 0; piece < tb->num_pieces; piece ++) {
-
-	if (tb->pieces[piece].piece_type == PAWN) {
-	    Glib::ustring location = result[piece]->eval_to_string("@location");
-	    if (location[0] != '\0' && location[1] != '\0' && location[2] == '+') {
-		int square = rowcol2square(location[1] - '1', location[0] - 'a');
-		if (tb->pieces[piece].color == WHITE) {
-		    initial_position.add_white_pawn(square);
-		} else {
-		    initial_position.add_black_pawn(square);
-		}
-	    }
+	if (color == WHITE) {
+	    location = xml->eval_to_string("@white-pawn-locations");
+	} else {
+	    location = xml->eval_to_string("@black-pawn-locations");
 	}
 
+	while ((location[j] >= 'a') && (location[j] <= 'h')
+	       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
+	    int square = rowcol2square(location[j+1] - '1', location[j] - 'a');
+
+	    if (color == WHITE) {
+		initial_position.add_white_pawn(square);
+	    } else {
+		initial_position.add_black_pawn(square);
+	    }
+
+	    j += 2;
+	    while (location[j] == ' ') j ++;
+	}
+
+	if (location[j] != '\0') {
+	    fatal("Illegal pawn location (%s)\n", location.c_str());
+	}
     }
+
+    white_pawns_required = eval_to_number_or_zero(xml, "@white-pawns-required");
+    black_pawns_required = eval_to_number_or_zero(xml, "@black-pawns-required");
 
     process_pawn_position(initial_position);
 
-    tb->pawn_positions.resize(valid_pawn_positions.size());
+    pawn_positions.resize(valid_pawn_positions.size());
 
-    int i=0;
+    int first_white_pawn = num_pieces;
+    int first_black_pawn = num_pieces + white_pawns_required;
+
+    uint64_t semilegal_white_squares = 0ULL;
+    uint64_t semilegal_black_squares = 0ULL;
+
+    int index=0;
     for (auto it = valid_pawn_positions.begin(); it != valid_pawn_positions.end(); it ++) {
 
-	tb->pawn_positions[i] = *it;
-	tb->pawn_positions[i].index = i;
+	pawn_positions[index] = *it;
+	pawn_positions[index].index = index;
 
-	int white_pawn = -1;
-	int black_pawn = -1;
+	int white_pawn = first_white_pawn;
+	int black_pawn = first_black_pawn;
 
 	for (int square = 0; square < 64; square ++) {
-	    if (tb->pawn_positions[i].white_pawn_at(square)) {
-		do {
-		    white_pawn ++;
-		} while ((tb->pieces[white_pawn].color != WHITE) || (tb->pieces[white_pawn].piece_type != PAWN));
-		tb->pawn_positions[i].position[white_pawn] = square;
-		if (tb->pawn_positions[i].en_passant_square == square - 8) {
-		    tb->pawn_positions[i].en_passant_pawn = white_pawn;
+	    if (it->white_pawn_at(square)) {
+		pawn_positions[index].position[white_pawn] = square;
+		if (pawn_positions[index].en_passant_square == square - 8) {
+		    pawn_positions[index].en_passant_pawn = white_pawn;
 		}
+		semilegal_white_squares |= BITVECTOR(square);
+		white_pawn ++;
 	    }
-	    if (tb->pawn_positions[i].black_pawn_at(square)) {
-		do {
-		    black_pawn ++;
-		} while ((tb->pieces[black_pawn].color != BLACK) || (tb->pieces[black_pawn].piece_type != PAWN));
-		tb->pawn_positions[i].position[black_pawn] = square;
-		if (tb->pawn_positions[i].en_passant_square == square + 8) {
-		    tb->pawn_positions[i].en_passant_pawn = black_pawn;
+	    if (it->black_pawn_at(square)) {
+		pawn_positions[index].position[black_pawn] = square;
+		if (pawn_positions[index].en_passant_square == square + 8) {
+		    pawn_positions[index].en_passant_pawn = black_pawn;
 		}
+		semilegal_black_squares |= BITVECTOR(square);
+		black_pawn ++;
 	    }
 	}
 
-	i ++;
+	index ++;
+    }
+
+    for (int i=0; i < white_pawns_required; i++) {
+	pieces.push_back(piece(WHITE, PAWN, semilegal_white_squares));
+	num_pieces ++;
+    }
+
+    for (int i=0; i < black_pawns_required; i++) {
+	pieces.push_back(piece(BLACK, PAWN, semilegal_black_squares));
+	num_pieces ++;
     }
 
     valid_pawn_positions.clear();
@@ -4163,7 +4198,7 @@ int check_1000_indices(tablebase_t *tb)
  * notation, which doesn't convert right.  This function fixes both of these problems.
  */
 
-int eval_to_number_or_zero(xmlpp::Element *node, std::string xpath)
+int eval_to_number_or_zero(xmlpp::Node *node, std::string xpath)
 {
     Glib::ustring str = node->eval_to_string(xpath);
     return (str != "") ? std::stoi(str, 0, 0) : 0;
@@ -4413,38 +4448,47 @@ void tablebase::parse_XML(std::istream *instream)
 
     /* Fetch the pieces from the XML */
 
-    result = tablebase->find("//piece");
+    result = tablebase->find("//piece | //pawngen");
 
     white_king = -1;
     black_king = -1;
 
     for (auto it = result.begin(); it != result.end(); it ++) {
 
-	struct piece new_piece(*it);
+	if ((*it)->get_name() == "piece") {
 
-	num_pieces_by_color[new_piece.color] ++;
+	    struct piece new_piece(*it);
 
-	if (variant != VARIANT_SUICIDE) {
+	    num_pieces_by_color[new_piece.color] ++;
 
-	    if ((new_piece.color == WHITE) && (new_piece.piece_type == KING)) {
-		if (white_king != -1) {
-		    fatal("Must have one white king and one black one!\n");
-		} else {
-		    white_king = pieces.size();
+	    if (variant != VARIANT_SUICIDE) {
+
+		if ((new_piece.color == WHITE) && (new_piece.piece_type == KING)) {
+		    if (white_king != -1) {
+			fatal("Must have one white king and one black one!\n");
+		    } else {
+			white_king = pieces.size();
+		    }
 		}
+
+		if ((new_piece.color == BLACK) && (new_piece.piece_type == KING)) {
+		    if (black_king != -1) {
+			fatal("Must have one white king and one black one!\n");
+		    } else {
+			black_king = pieces.size();
+		    }
+		}
+
 	    }
 
-	    if ((new_piece.color == BLACK) && (new_piece.piece_type == KING)) {
-		if (black_king != -1) {
-		    fatal("Must have one white king and one black one!\n");
-		} else {
-		    black_king = pieces.size();
-		}
-	    }
+	    pieces.push_back(new_piece);
+
+	} else {
+
+	    parse_pawngen_element(*it);
 
 	}
 
-	pieces.push_back(new_piece);
     }
 
     if ((num_pieces_by_color[WHITE] == 0) || (num_pieces_by_color[BLACK] == 0)) {
@@ -5544,7 +5588,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.903 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.904 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14287,7 +14331,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.903 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.904 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

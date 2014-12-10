@@ -1,4 +1,4 @@
-<!ELEMENT tablebase (move-restriction | prune-enable | variant | index | format | piece | futurebase | prune | generation-controls | tablebase-statistics | generation-statistics | output | enable-proptables | dtm | flag | basic)+ >
+<!ELEMENT tablebase (move-restriction | prune-enable | variant | index | format | piece | pawngen | futurebase | prune | generation-controls | tablebase-statistics | generation-statistics | output | enable-proptables | dtm | flag | basic)+ >
 <!ELEMENT move-restriction EMPTY>
 <!ELEMENT prune-enable EMPTY>
 <!ELEMENT piece EMPTY>
@@ -89,6 +89,12 @@
 	type	(king|queen|rook|bishop|knight|pawn)	#REQUIRED
 	location CDATA		#IMPLIED
 	index-ordering (reverse)			#IMPLIED>
+
+<!ATTLIST pawngen
+	  white-pawn-locations	CDATA	#REQUIRED
+	  black-pawn-locations	CDATA	#REQUIRED
+	  white-pawns-required	CDATA	#REQUIRED
+	  black-pawns-required	CDATA	#REQUIRED>
 
 <!ATTLIST futurebase
 	filename CDATA		#IMPLIED
