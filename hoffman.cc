@@ -751,10 +751,18 @@ struct piece {
 
     int *permutations;
 
+    Glib::ustring location;
+
     /* For each square on the board and piece in the futurebase, record the first piece in the
-     * corresponding local semilegal group.
+     * corresponding local semilegal group.  Unlike the previous variables, this one isn't
+     * initialized when the instance is created, but rather in compute_extra_and_missing_pieces()
+     * when a futurebase is being translated.
      */
+
     int matching_local_semilegal_group[64];
+
+    piece(short color, short type) : color(color), piece_type(type), semilegal_squares(ALL_ONES_BITVECTOR) {}
+    piece(xmlpp::Node *);
 };
 
 class pawn_position;
@@ -4294,6 +4302,39 @@ bool tablebase_is_color_symmetric(tablebase_t *tb)
  * distinguish between them.
  */
 
+piece::piece(xmlpp::Node * xml)
+{
+    color = colors.at(xml->eval_to_string("@color"));
+    piece_type = piece_name.at(xml->eval_to_string("@type"));
+    location = xml->eval_to_string("@location");
+
+    if (xml->eval_to_string("@index-ordering") == "reverse") {
+	fatal("reverse index ordering no longer supported\n");
+    }
+
+    if (location == "") {
+	if (piece_type == PAWN) {
+	    legal_squares = LEGAL_PAWN_BITVECTOR;
+	} else {
+	    legal_squares = ALL_ONES_BITVECTOR;
+	}
+    } else {
+	int j = 0;
+	legal_squares = 0;
+	while ((location[j] >= 'a') && (location[j] <= 'h')
+	       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
+	    legal_squares
+		|= BITVECTOR(rowcol2square(location[j+1] - '1', location[j] - 'a'));
+	    j += 2;
+	    if ((piece_type == PAWN) && (j == 2) && (location[j] == '+')) j++;
+	    while (location[j] == ' ') j ++;
+	}
+	if (location[j] != '\0') {
+	    fatal("Illegal piece location (%s)\n", location.c_str());
+	}
+    }
+}
+
 void tablebase::parse_XML(std::istream *instream)
 {
     xmlpp::DtdValidator dtd;
@@ -4379,44 +4420,7 @@ void tablebase::parse_XML(std::istream *instream)
 
     for (auto it = result.begin(); it != result.end(); it ++) {
 
-	struct piece new_piece;
-
-	new_piece.color = colors.at((*it)->eval_to_string("@color"));
-	new_piece.piece_type = piece_name.at((*it)->eval_to_string("@type"));
-
-	if ((*it)->eval_to_string("@index-ordering") == "reverse") {
-	    fatal("reverse index ordering no longer supported\n");
-	}
-
-#if 0
-	if ((pieces[piece].color == -1) || (piece_type[piece] == -1)) {
-	    fatal("Illegal piece color (%s) or type (%s)\n", color, type);
-	}
-#endif
-
-	Glib::ustring location = (*it)->eval_to_string("@location");
-
-	if (location == "") {
-	    if (new_piece.piece_type == PAWN) {
-		new_piece.legal_squares = LEGAL_PAWN_BITVECTOR;
-	    } else {
-		new_piece.legal_squares = ALL_ONES_BITVECTOR;
-	    }
-	} else {
-	    int j = 0;
-	    new_piece.legal_squares = 0;
-	    while ((location[j] >= 'a') && (location[j] <= 'h')
-		   && (location[j+1] >= '1') && (location[j+1] <= '8')) {
-		new_piece.legal_squares
-		    |= BITVECTOR(rowcol2square(location[j+1] - '1', location[j] - 'a'));
-		j += 2;
-		if ((new_piece.piece_type == PAWN) && (j == 2) && (location[j] == '+')) j++;
-		while (location[j] == ' ') j ++;
-	    }
-	    if (location[j] != '\0') {
-		fatal("Illegal piece location (%s)\n", location.c_str());
-	    }
-	}
+	struct piece new_piece(*it);
 
 	num_pieces_by_color[new_piece.color] ++;
 
@@ -4502,12 +4506,11 @@ void tablebase::parse_XML(std::istream *instream)
 
 	if (pieces[piece].piece_type == PAWN) {
 
-	    Glib::ustring location = result[piece]->eval_to_string("@location");
 	    uint64_t pawn_positions = 0xffffffffffffffffLL;
 
-	    if ((location != "") && (location[2] == '+')) {
+	    if ((pieces[piece].location != "") && (pieces[piece].location[2] == '+')) {
 
-		int square = rowcol2square(location[1] - '1', location[0] - 'a');
+		int square = rowcol2square(pieces[piece].location[1] - '1', pieces[piece].location[0] - 'a');
 		int dir = (pieces[piece].color == WHITE) ? 8 : -8;
 
 		pawn_positions &= ~BITVECTOR(square);
@@ -4557,11 +4560,9 @@ void tablebase::parse_XML(std::istream *instream)
 
 	    if (pieces[piece].piece_type == PAWN) {
 
-		Glib::ustring location = result[piece]->eval_to_string("@location");
+		if ((pieces[piece].location != "") && (pieces[piece].location[2] == '+')) {
 
-		if ((location != "") && (location[2] == '+')) {
-
-		    int square = rowcol2square(location[1] - '1', location[0] - 'a');
+		    int square = rowcol2square(pieces[piece].location[1] - '1', pieces[piece].location[0] - 'a');
 		    int dir = (pieces[piece].color == WHITE) ? 8 : -8;
 
 		    square += dir;
@@ -5543,7 +5544,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.902 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.903 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -6466,9 +6467,7 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
 		for (type = KING; type <= PAWN; type ++) {
 
 		    if (global->board[square] == global_pieces[color][type]) {
-			fake_tb.pieces[fake_tb.num_pieces].color = color;
-			fake_tb.pieces[fake_tb.num_pieces].piece_type = type;
-			fake_tb.pieces[fake_tb.num_pieces].semilegal_squares = ALL_ONES_BITVECTOR;
+			fake_tb.pieces.push_back(piece(color, type));
 			fake_position.piece_position[fake_tb.num_pieces] = square;
 			fake_tb.num_pieces ++;
 		    }
@@ -14288,7 +14287,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.902 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.903 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
