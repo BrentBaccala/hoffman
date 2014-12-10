@@ -829,7 +829,7 @@ typedef struct tablebase {
 
     int num_pieces;
     short num_pieces_by_color[2];
-    struct piece pieces[MAX_PIECES];
+    std::vector<piece> pieces;
 
     uint64_t frozen_pieces_vector;
 
@@ -4374,21 +4374,17 @@ void tablebase::parse_XML(std::istream *instream)
 
     result = tablebase->find("//piece");
 
-    num_pieces = result.size();
-
-    if (num_pieces > MAX_PIECES) {
-	throw "Too many pieces (" + boost::lexical_cast<std::string>(MAX_PIECES) + "compiled-in maximum)!";
-    }
-
     white_king = -1;
     black_king = -1;
 
-    for (piece = 0; piece < num_pieces; piece ++) {
+    for (auto it = result.begin(); it != result.end(); it ++) {
 
-	pieces[piece].color = colors.at(result[piece]->eval_to_string("@color"));
-	pieces[piece].piece_type = piece_name.at(result[piece]->eval_to_string("@type"));
+	struct piece new_piece;
 
-	if (result[piece]->eval_to_string("@index-ordering") == "reverse") {
+	new_piece.color = colors.at((*it)->eval_to_string("@color"));
+	new_piece.piece_type = piece_name.at((*it)->eval_to_string("@type"));
+
+	if ((*it)->eval_to_string("@index-ordering") == "reverse") {
 	    fatal("reverse index ordering no longer supported\n");
 	}
 
@@ -4398,23 +4394,23 @@ void tablebase::parse_XML(std::istream *instream)
 	}
 #endif
 
-	Glib::ustring location = result[piece]->eval_to_string("@location");
+	Glib::ustring location = (*it)->eval_to_string("@location");
 
 	if (location == "") {
-	    if (pieces[piece].piece_type == PAWN) {
-		pieces[piece].legal_squares = LEGAL_PAWN_BITVECTOR;
+	    if (new_piece.piece_type == PAWN) {
+		new_piece.legal_squares = LEGAL_PAWN_BITVECTOR;
 	    } else {
-		pieces[piece].legal_squares = ALL_ONES_BITVECTOR;
+		new_piece.legal_squares = ALL_ONES_BITVECTOR;
 	    }
 	} else {
 	    int j = 0;
-	    pieces[piece].legal_squares = 0;
+	    new_piece.legal_squares = 0;
 	    while ((location[j] >= 'a') && (location[j] <= 'h')
 		   && (location[j+1] >= '1') && (location[j+1] <= '8')) {
-		pieces[piece].legal_squares
+		new_piece.legal_squares
 		    |= BITVECTOR(rowcol2square(location[j+1] - '1', location[j] - 'a'));
 		j += 2;
-		if ((pieces[piece].piece_type == PAWN) && (j == 2) && (location[j] == '+')) j++;
+		if ((new_piece.piece_type == PAWN) && (j == 2) && (location[j] == '+')) j++;
 		while (location[j] == ' ') j ++;
 	    }
 	    if (location[j] != '\0') {
@@ -4422,27 +4418,29 @@ void tablebase::parse_XML(std::istream *instream)
 	    }
 	}
 
-	num_pieces_by_color[pieces[piece].color] ++;
+	num_pieces_by_color[new_piece.color] ++;
 
 	if (variant != VARIANT_SUICIDE) {
 
-	    if ((pieces[piece].color == WHITE) && (pieces[piece].piece_type == KING)) {
+	    if ((new_piece.color == WHITE) && (new_piece.piece_type == KING)) {
 		if (white_king != -1) {
 		    fatal("Must have one white king and one black one!\n");
 		} else {
-		    white_king = piece;
+		    white_king = pieces.size();
 		}
 	    }
 
-	    if ((pieces[piece].color == BLACK) && (pieces[piece].piece_type == KING)) {
+	    if ((new_piece.color == BLACK) && (new_piece.piece_type == KING)) {
 		if (black_king != -1) {
 		    fatal("Must have one white king and one black one!\n");
 		} else {
-		    black_king = piece;
+		    black_king = pieces.size();
 		}
 	    }
 
 	}
+
+	pieces.push_back(new_piece);
     }
 
     if ((num_pieces_by_color[WHITE] == 0) || (num_pieces_by_color[BLACK] == 0)) {
@@ -4453,6 +4451,12 @@ void tablebase::parse_XML(std::istream *instream)
 	if ((white_king == -1) || (black_king == -1)) {
 	    throw "Must have one white king and one black one!";
 	}
+    }
+
+    num_pieces = pieces.size();
+
+    if (num_pieces > MAX_PIECES) {
+	throw "Too many pieces (" + boost::lexical_cast<std::string>(MAX_PIECES) + "compiled-in maximum)!";
     }
 
     /* We quietly skipped over any plus signs after pawn locations, which mean that the pawn should
@@ -5539,7 +5543,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.901 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.902 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14284,7 +14288,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.901 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.902 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
