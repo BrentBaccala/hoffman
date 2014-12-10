@@ -761,8 +761,8 @@ struct piece {
 
     int matching_local_semilegal_group[64];
 
-    piece(short color, short type, uint64_t semilegal_squares = ALL_ONES_BITVECTOR)
-	: color(color), piece_type(type), semilegal_squares(semilegal_squares) {}
+    piece(short color, short type, uint64_t legal_squares = ALL_ONES_BITVECTOR)
+	: color(color), piece_type(type), legal_squares(legal_squares) {}
     piece(xmlpp::Node *);
 };
 
@@ -3246,8 +3246,8 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
     int first_white_pawn = num_pieces;
     int first_black_pawn = num_pieces + white_pawns_required;
 
-    uint64_t semilegal_white_squares = 0ULL;
-    uint64_t semilegal_black_squares = 0ULL;
+    uint64_t legal_white_squares = 0ULL;
+    uint64_t legal_black_squares = 0ULL;
 
     int index=0;
     for (auto it = valid_pawn_positions.begin(); it != valid_pawn_positions.end(); it ++) {
@@ -3264,7 +3264,7 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
 		if (pawn_positions[index].en_passant_square == square - 8) {
 		    pawn_positions[index].en_passant_pawn = white_pawn;
 		}
-		semilegal_white_squares |= BITVECTOR(square);
+		legal_white_squares |= BITVECTOR(square);
 		white_pawn ++;
 	    }
 	    if (it->black_pawn_at(square)) {
@@ -3272,7 +3272,7 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
 		if (pawn_positions[index].en_passant_square == square + 8) {
 		    pawn_positions[index].en_passant_pawn = black_pawn;
 		}
-		semilegal_black_squares |= BITVECTOR(square);
+		legal_black_squares |= BITVECTOR(square);
 		black_pawn ++;
 	    }
 	}
@@ -3280,13 +3280,17 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
 	index ++;
     }
 
+#if DEBUG
+    fprintf(stderr, "%" PRIx64 " %" PRIx64 "\n", legal_white_squares, legal_black_squares);
+#endif
+
     for (int i=0; i < white_pawns_required; i++) {
-	pieces.push_back(piece(WHITE, PAWN, semilegal_white_squares));
+	pieces.push_back(piece(WHITE, PAWN, legal_white_squares));
 	num_pieces ++;
     }
 
     for (int i=0; i < black_pawns_required; i++) {
-	pieces.push_back(piece(BLACK, PAWN, semilegal_black_squares));
+	pieces.push_back(piece(BLACK, PAWN, legal_black_squares));
 	num_pieces ++;
     }
 
@@ -4755,7 +4759,7 @@ void tablebase::parse_XML(std::istream *instream)
 #if DEBUG
     for (piece = 0; piece < num_pieces; piece ++) {
 	info("Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
-	     piece, piece_name[piece_type[piece]], colors[pieces[piece].color],
+	     piece, piece_name[pieces[piece].piece_type], colors[pieces[piece].color].c_str(),
 	     pieces[piece].legal_squares, pieces[piece].semilegal_squares);
     }
 #endif
@@ -5588,7 +5592,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.904 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.905 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14331,7 +14335,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.904 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.905 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
