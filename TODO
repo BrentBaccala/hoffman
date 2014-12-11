@@ -379,3 +379,9 @@ the corresponding slow encryption.
 
 - print warning if a prune statement doesn't do anything
   (like "Pe4"  if P isn't restricted)
+
+- autocompute output filename
+
+- eliminate color='invert' futurebase attribute
+
+- "Couldn't find future piece in local tablebase" - should this be a warning, not an error?
