@@ -3,6 +3,9 @@
  * <pawngen pawns-required="NUM" white-queens-required="NUM" black-queens-required="NUM"
  *          white-captures-allowed="NUM" black-captures-allowed="NUM"/>
  *
+ * <pawngen white-pawn-locations="STR" white-pawns-required="NUM" white-queens-required="NUM" white-captures-allowed="NUM"
+ *          black-pawn-locations="STR" black-pawns-required="NUM" black-queens-required="NUM" black-captures-allowed="NUM"/>
+ *
  * add stripe="RANGE" or from="NUM" to="NUM"
  *
  * what about futurebases that might invalidate part of the range?
@@ -223,6 +226,7 @@ void process(class pawn_position position)
 		if (! position2.pawn_at(square + 8) && ! position2.pawn_at(square + 16)) {
 		    if ((square != 8) && (position2.black_pawn_at(square + 16 - 1))
 			|| (square != 15) && (position2.black_pawn_at(square + 16 + 1))) {
+			position2.add_white_pawn(square + 16);
 			position2.en_passant_square = square + 8;
 			process(position2);
 		    }
@@ -282,6 +286,7 @@ void process(class pawn_position position)
 		if (! position2.pawn_at(square - 8) && ! position2.pawn_at(square - 16)) {
 		    if ((square != 48) && (position2.white_pawn_at(square - 16 - 1))
 			|| (square != 55) && (position2.white_pawn_at(square - 16 + 1))) {
+			position2.add_black_pawn(square - 16);
 			position2.en_passant_square = square - 8;
 			process(position2);
 		    }
@@ -322,73 +327,80 @@ int main(int argc, char * argv [])
      *    246 + 8 = 254
      */
 
-#if 0
-    initial_position.add_white_pawn(8);
-    initial_position.add_white_pawn(9);
-    initial_position.add_black_pawn(48);
+    switch (5) {
+    case 1:
+	initial_position.add_white_pawn(8);
+	initial_position.add_white_pawn(9);
+	initial_position.add_black_pawn(48);
+	break;
 
-#else
-#if 0
-    /* Carlsen-Anand 2014 Game 7 */
-    initial_position.add_white_pawn(9);
-    initial_position.add_white_pawn(10);
+    case 2:
+	/* Carlsen-Anand 2014 Game 7 */
+	initial_position.add_white_pawn(9);
+	initial_position.add_white_pawn(10);
 
-    initial_position.add_black_pawn(48);
-    initial_position.add_black_pawn(50);
-    initial_position.add_black_pawn(41);
-    initial_position.add_black_pawn(34);
+	initial_position.add_black_pawn(48);
+	initial_position.add_black_pawn(50);
+	initial_position.add_black_pawn(41);
+	initial_position.add_black_pawn(34);
 
-    //initial_position.white_pawn_captures_black_piece_allowed ++;
-    //initial_position.black_pawn_captures_white_piece_allowed ++;
-    //initial_position.black_pawn_captures_white_piece_allowed ++;
-#else
-#if 0
-    /* Fine Problem 68
-     *
-     * White pawns on a2, b2, c2; black pawns on f7, g7, h7: 7^6 = 117649
-     * Same thing with one white queen required: (7^2 + 7*6 + 6^2)(7^3) = 43561
-     *   7^2 = a-file empty, any possibility on b- and c- files (including empty)
-     *   7*6 = a-file occupied, b-file empty, any possibility on c- file (including empty)
-     *   6^2 = c-file empty, a- and b- files occupied
-     */
+	//initial_position.white_pawn_captures_black_piece_allowed ++;
+	//initial_position.black_pawn_captures_white_piece_allowed ++;
+	//initial_position.black_pawn_captures_white_piece_allowed ++;
 
-    initial_position.add_white_pawn(9);
-    initial_position.add_white_pawn(10);
-    initial_position.add_white_pawn(11);
+	break;
 
-    initial_position.add_black_pawn(48 + 7);
-    initial_position.add_black_pawn(48 + 6);
-    initial_position.add_black_pawn(48 + 5);
+    case 3:
+	/* Fine Problem 68
+	 *
+	 * White pawns on a2, b2, c2; black pawns on f7, g7, h7: 7^6 = 117649
+	 * Same thing with one white queen required: (7^2 + 7*6 + 6^2)(7^3) = 43561
+	 *   7^2 = a-file empty, any possibility on b- and c- files (including empty)
+	 *   7*6 = a-file occupied, b-file empty, any possibility on c- file (including empty)
+	 *   6^2 = c-file empty, a- and b- files occupied
+	 */
 
-    initial_position.white_queens_required ++;
-#else
-#if 0
-    /* Hollis-Florian */
-    initial_position.add_white_pawn(13);
-    initial_position.add_white_pawn(22);
-    initial_position.add_white_pawn(31);
-    initial_position.add_white_pawn(49);
+	initial_position.add_white_pawn(9);
+	initial_position.add_white_pawn(10);
+	initial_position.add_white_pawn(11);
 
-    initial_position.add_black_pawn(39);
-    initial_position.add_black_pawn(46);
-    initial_position.add_black_pawn(53);
-#else
-    /* Barcza-Sanchez */
-    initial_position.add_white_pawn(13);
-    initial_position.add_white_pawn(22);
-    initial_position.add_white_pawn(15);
-    initial_position.add_white_pawn(17);
+	initial_position.add_black_pawn(48 + 7);
+	initial_position.add_black_pawn(48 + 6);
+	initial_position.add_black_pawn(48 + 5);
 
-    initial_position.add_black_pawn(48+5);
-    initial_position.add_black_pawn(40+6);
-    initial_position.add_black_pawn(48+7);
-    initial_position.add_black_pawn(35);
+	initial_position.white_queens_required ++;
 
-    initial_position.white_queens_required ++;
-#endif
-#endif
-#endif
-#endif
+	break;
+
+    case 4:
+	/* Hollis-Florian */
+	initial_position.add_white_pawn(13);
+	initial_position.add_white_pawn(22);
+	initial_position.add_white_pawn(31);
+	initial_position.add_white_pawn(49);
+
+	initial_position.add_black_pawn(39);
+	initial_position.add_black_pawn(46);
+	initial_position.add_black_pawn(53);
+
+	break;
+
+    case 5:
+	/* Barcza-Sanchez */
+	initial_position.add_white_pawn(13);
+	initial_position.add_white_pawn(22);
+	initial_position.add_white_pawn(15);
+	initial_position.add_white_pawn(17);
+
+	initial_position.add_black_pawn(48+5);
+	initial_position.add_black_pawn(40+6);
+	initial_position.add_black_pawn(48+7);
+	initial_position.add_black_pawn(35);
+
+	initial_position.white_queens_required ++;
+
+	break;
+    }
 
     process(initial_position);
 
