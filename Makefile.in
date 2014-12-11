@@ -20,7 +20,7 @@ hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPT
 hoffman: $(hoffman_OBJS)
 	@LINKER@ $(CXXFLAGS) @BOOST_LDFLAGS@ -o hoffman $^ -lboost_iostreams @LIBS@ @libxml_LIBS@
 	echo set pagination 0 > .gdbinit
-	grep -Hn BREAKPOINT *.c | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
+	grep -Hn BREAKPOINT *.cc | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 
 hoffman.o: tablebase_dtd.h config.h bitlib.h
 
