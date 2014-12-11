@@ -672,12 +672,14 @@ bimap formats = {{"fourbyte", FORMAT_FOURBYTE}, {"one-byte-dtm", FORMAT_ONE_BYTE
 #define NO_EN_PASSANT_INDEX 4
 #define COMBINADIC3_INDEX 5
 #define COMBINADIC4_INDEX 6
+#define PAWNGEN_INDEX 7
 
 #define DEFAULT_INDEX COMBINADIC4_INDEX
 
 bimap index_types = {{"naive", NAIVE_INDEX}, {"naive2", NAIVE2_INDEX}, {"simple", SIMPLE_INDEX},
 		     {"compact", COMPACT_INDEX}, {"no-en-passant", NO_EN_PASSANT_INDEX},
-		     {"combinadic3", COMBINADIC3_INDEX}, {"combinadic4", COMBINADIC4_INDEX}};
+		     {"combinadic3", COMBINADIC3_INDEX}, {"combinadic4", COMBINADIC4_INDEX},
+		     {"pawngen", PAWNGEN_INDEX}};
 
 #define FUTUREBASE_CAPTURE 0
 #define FUTUREBASE_PROMOTION 1
@@ -794,7 +796,7 @@ typedef struct tablebase {
     int symmetry;
     uint8_t reflections[64][64];
 
-    /* Pawns are usually encoded together. */
+    /* Pawn are encoded together for the 'pawngen' index type */
 
     index_t pawngen_multiplier;
     std::vector<pawn_position> pawn_positions;
@@ -2898,6 +2900,10 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
  * never be adjacent, a special table of pawn positions, a combinatorial-based encoding of identical
  * pieces, and later pieces wholly contained within the semilegal positions of earlier pieces are
  * encoded using fewer positions.
+ *
+ * Current restrictions: no non-pawngen pawns allowed, encoding groups are computed according to
+ * where the pawngen element appears in the piece list, but the index is encoded as if it appears
+ * last
  */
 
 int white_pawns_required = 0;
@@ -3126,6 +3132,7 @@ void process_pawn_position(class pawn_position position)
 		if (! position2.pawn_at(square + 8) && ! position2.pawn_at(square + 16)) {
 		    if ((square != 8) && (position2.black_pawn_at(square + 16 - 1))
 			|| (square != 15) && (position2.black_pawn_at(square + 16 + 1))) {
+			position2.add_white_pawn(square + 16);
 			position2.en_passant_square = square + 8;
 			process_pawn_position(position2);
 		    }
@@ -3185,6 +3192,7 @@ void process_pawn_position(class pawn_position position)
 		if (! position2.pawn_at(square - 8) && ! position2.pawn_at(square - 16)) {
 		    if ((square != 48) && (position2.white_pawn_at(square - 16 - 1))
 			|| (square != 55) && (position2.white_pawn_at(square - 16 + 1))) {
+			position2.add_black_pawn(square - 16);
 			position2.en_passant_square = square - 8;
 			process_pawn_position(position2);
 		    }
@@ -3373,8 +3381,17 @@ index_t local_position_to_pawngen_index(tablebase_t *tb, local_position_t *pos)
 
     auto it = std::lower_bound(tb->pawn_positions.begin(), tb->pawn_positions.end(), pawns);
 
+    /* In the course of normal program operation, we should never generate invalid pawn positions,
+     * but it can happen during testing with check_1000_positions().  So invalid pawn positions just
+     * return INVALID_INDEX.
+     *
+     * XXX throw errors more aggressively here during actual program operation
+     */
+
     if (it == tb->pawn_positions.end()) {
-	fatal("Something went wrong in pawngen lookup\n");
+	return INVALID_INDEX;
+    } else if ((*it < pawns) || (pawns < *it)) {
+	return INVALID_INDEX;
     } else {
 	index += tb->pawngen_multiplier * it->index;
     }
@@ -3440,7 +3457,7 @@ bool pawngen_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+ 	if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	vals[piece]
 	    = std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + 64, index+1)
@@ -3905,6 +3922,9 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
     case COMBINADIC4_INDEX:
 	index = local_position_to_combinadic3_index(tb, position);
 	break;
+    case PAWNGEN_INDEX:
+	index = local_position_to_pawngen_index(tb, position);
+	break;
     default:
 	fatal("Unknown index type in local_position_to_index()\n");
 	return INVALID_INDEX;
@@ -3971,6 +3991,9 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     case COMBINADIC3_INDEX:
     case COMBINADIC4_INDEX:
 	ret = combinadic3_index_to_local_position(tb, index, position);
+	break;
+    case PAWNGEN_INDEX:
+	ret = pawngen_index_to_local_position(tb, index, position);
 	break;
     default:
 	fatal("Unknown index type in index_to_local_position()\n");
@@ -4463,8 +4486,6 @@ void tablebase::parse_XML(std::istream *instream)
 
 	    struct piece new_piece(*it);
 
-	    num_pieces_by_color[new_piece.color] ++;
-
 	    if (variant != VARIANT_SUICIDE) {
 
 		if ((new_piece.color == WHITE) && (new_piece.piece_type == KING)) {
@@ -4485,6 +4506,10 @@ void tablebase::parse_XML(std::istream *instream)
 
 	    }
 
+	    num_pieces_by_color[new_piece.color] ++;
+
+	    num_pieces ++;
+
 	    pieces.push_back(new_piece);
 
 	} else {
@@ -4504,8 +4529,6 @@ void tablebase::parse_XML(std::istream *instream)
 	    throw "Must have one white king and one black one!";
 	}
     }
-
-    num_pieces = pieces.size();
 
     if (num_pieces > MAX_PIECES) {
 	throw "Too many pieces (" + boost::lexical_cast<std::string>(MAX_PIECES) + "compiled-in maximum)!";
@@ -4783,20 +4806,31 @@ void tablebase::parse_XML(std::istream *instream)
     }
 
     if (index == "") {
-	index_type = DEFAULT_INDEX;
+	if (! tablebase->find("//pawngen").empty()) {
+	    index_type = PAWNGEN_INDEX;
+	} else {
+	    index_type = DEFAULT_INDEX;
+	}
 
 	tablebase->add_child_text("   ");
 	index_node = tablebase->add_child("index");
 	tablebase->add_child_text("\n");
 
-	index_node->set_attribute("type", index_types[DEFAULT_INDEX]);
+	index_node->set_attribute("type", index_types[index_type]);
     } else {
 	index_type = index_types.at(index);
     }
 
+    if (index_type == PAWNGEN_INDEX) {
+	if (! tablebase->find("//piece[@type='pawn']").empty()) {
+	    throw nested_exception("Can't have normal pawn pieces with pawngen index type");
+	}
+    }
 
     /* The other encoding schemes depend on a special encoding for the kings, which might not even
      * be present if we're doing a suicide analysis.
+     *
+     * XXX should be able to use pawngen, too, but it's untested
      */
 
     if ((variant == VARIANT_SUICIDE) && (index_type != NAIVE_INDEX)
@@ -5213,6 +5247,7 @@ void tablebase::parse_XML(std::istream *instream)
 
     case COMBINADIC3_INDEX:
     case COMBINADIC4_INDEX:
+    case PAWNGEN_INDEX:
 
 	if ((index_type == COMBINADIC4_INDEX) && tablebase_is_color_symmetric(this)) {
 	    /* Don't need side-to-play for a color symetric tablebase */
@@ -5257,6 +5292,8 @@ void tablebase::parse_XML(std::istream *instream)
 	for (piece = 0; piece < num_pieces; piece ++) {
 
 	    if ((piece == white_king) || (piece == black_king)) continue;
+
+	    if ((index_type == PAWNGEN_INDEX) && (pieces[piece].piece_type == PAWN)) continue;
 
 	    pieces[piece].prev_piece_in_encoding_group = pieces[piece].prev_piece_in_semilegal_group;
 	    pieces[piece].next_piece_in_encoding_group = pieces[piece].next_piece_in_semilegal_group;
@@ -5327,12 +5364,14 @@ void tablebase::parse_XML(std::istream *instream)
 
 	    if ((piece == white_king) || (piece == black_king)) continue;
 
+	    if ((index_type == PAWNGEN_INDEX) && (pieces[piece].piece_type == PAWN)) continue;
+
 	    if (pieces[piece].prev_piece_in_encoding_group == -1) {
 		piece_in_set = 1;
 	    } else if (pieces[piece].prev_piece_in_encoding_group == piece-1) {
 		piece_in_set ++;
 	    } else {
-		fatal("Combinadic3 index requires encoding groups to be adjacent in index\n");
+		fatal("Combinadic3/4 index requires encoding groups to be adjacent in index\n");
 	    }
 
 	    /* Now number the squares in the piece's semilegal range, and construct tables to
@@ -5405,9 +5444,17 @@ void tablebase::parse_XML(std::istream *instream)
 
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    if ((piece == white_king) || (piece == black_king)) continue;
+	    if ((index_type == PAWNGEN_INDEX) && (pieces[piece].piece_type == PAWN)) continue;
 	    for (int value = pieces[piece].total_legal_piece_values; value < 64; value ++) {
 		pieces[piece].index[value] = max_index + 1;
 	    }
+	}
+
+	if (index_type == PAWNGEN_INDEX) {
+	    max_index ++;
+	    pawngen_multiplier = max_index;
+	    max_index *= pawn_positions.size();
+	    max_index --;
 	}
 
 	break;
@@ -5592,7 +5639,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.905 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.906 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14335,7 +14382,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.905 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.906 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

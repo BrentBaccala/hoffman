@@ -12,7 +12,7 @@
 
 <!ELEMENT index EMPTY>
 <!ATTLIST index
-	type (naive|naive2|simple|standard|compact|no-en-passant|combinadic3|combinadic4)	#REQUIRED
+	type (naive|naive2|simple|standard|compact|no-en-passant|combinadic3|combinadic4|pawngen)	#REQUIRED
 	symmetry (1|2|2-way|4|8|8-way)			#IMPLIED>
 
 <!ELEMENT format (dtm | flag | basic) >
@@ -83,7 +83,7 @@
 <!ATTLIST tablebase
 	offset	CDATA		#IMPLIED
 	format	(fourbyte|one-byte-dtm)	#IMPLIED
-	index	(naive|naive2|simple|standard|compact|no-en-passant)	#IMPLIED>
+	index	(naive|naive2|simple|standard|compact|no-en-passant|combinadic3|combinadic4|pawngen)	#IMPLIED>
 
 <!ATTLIST piece
 	color	(white|black)	#REQUIRED
