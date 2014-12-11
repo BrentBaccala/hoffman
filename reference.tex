@@ -433,6 +433,13 @@ program instruction pages \cr
 % This section does not attempt to list all of Hoffman's error messages,
 % only those anticipated to cause some confusion.
 
+\subsection{Futurebases can't be less symmetric than the tablebase under construction}
+
+Symmetric tablebases collapse multiple positions into one, so
+futurebases must have the same symmetry (at least), or the futurebase
+might handle differently two positions that the more symmetric
+tablebase treats as one.
+
 \subsection{Doubled pawns must (currently) appear in board order in piece list}
 
 Currently, doubled pawns using ``plus'' locations (ex: {\tt
