@@ -83,6 +83,9 @@ c21a2a5a49963fdf0d274300762c4c20 8/6k1/6p1/8/q7/4R3/5PK1/8\ w fortress.htb
 # check basic proptable operation (tests bug fixed in 1.888)
 3927572dd046022feb53b2795845ec36 8/8/K6k/8/4Q3/8/8/8\ w kqk-prop1.htb
 
+# check pawngen operation
+6e2ca854365273cee470fdfa507687a5 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8\ w fine67-3-3.htb
+
 # test various bugs
 6ff1d8e170f972b66ac3f25ec63d4736 234 r779a.htb kqpk.htb
 8601d924b2624a814cd6fac46bed83d2 21499040 r779e.htb r779c.htb
