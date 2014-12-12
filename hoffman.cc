@@ -5639,7 +5639,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.906 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.907 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -11787,47 +11787,49 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 {
     int piece;
 
-    /* We may need to consider a bunch of additional positions here that are identical to the base
-     * position except that a single one of the pawns on the fourth or fifth ranks was capturable en
-     * passant.
-     * 
-     * We key off the en_passant flag in the position that was passed in.  If it's set, then we're
-     * back propagating a position that requires en passant, so we just do it.  Otherwise, we're
-     * back propagating a position that doesn't require en passant, so we check for additional
-     * en passant positions.
-     */
-
     propagate_one_minimove_within_table(tb, future_index, position);
 
-    if (position->en_passant_square == ILLEGAL_POSITION) {
+    /* En passant:
+     *
+     * We should never enter this function with en-passant set.
+     *
+     * However, we may need to consider a bunch of additional positions here that are identical to
+     * the base position except that a single one of the pawns on the fourth or fifth ranks was
+     * capturable en passant.  Those positions are identical to the base position except that one
+     * extra en passant capture is possible.  Since this is intra-table, we don't do captures.  Just
+     * back-prop into any extra en passant positions that might exist.
+     */
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+    if (position->en_passant_square != ILLEGAL_POSITION) {
+	fatal("position->en_passant_square != ILLEGAL_POSITION in propagate_one_move_within_table()\n");
+    }
 
-	    if (tb->pieces[piece].color == position->side_to_move) continue;
-	    if (tb->pieces[piece].piece_type != PAWN) continue;
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    /* I've taken care to update board_vector in the routine that calls here specifically so
-	     * we can check for en passant legality here.
-	     */
+	if (tb->pieces[piece].color == position->side_to_move) continue;
+	if (tb->pieces[piece].piece_type != PAWN) continue;
 
-	    if ((tb->pieces[piece].color == WHITE)
-		&& (ROW(position->piece_position[piece]) == 3)
-		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
-		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
-		position->en_passant_square = position->piece_position[piece] - 8;
-		propagate_one_minimove_within_table(tb, future_index, position);
-	    }
+	/* I've taken care to update board_vector in the routine that calls here specifically so we
+	 * can check for en passant legality here.
+	 */
 
-	    if ((tb->pieces[piece].color == BLACK)
-		&& (ROW(position->piece_position[piece]) == 4)
-		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
-		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
-		position->en_passant_square = position->piece_position[piece] + 8;
-		propagate_one_minimove_within_table(tb, future_index, position);
-	    }
-
-	    position->en_passant_square = ILLEGAL_POSITION;
+	if ((tb->pieces[piece].color == WHITE)
+	    && (ROW(position->piece_position[piece]) == 3)
+	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
+	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
+	    position->en_passant_square = position->piece_position[piece] - 8;
+	    propagate_one_minimove_within_table(tb, future_index, position);
 	}
+
+	if ((tb->pieces[piece].color == BLACK)
+	    && (ROW(position->piece_position[piece]) == 4)
+	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
+	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
+	    position->en_passant_square = position->piece_position[piece] + 8;
+	    propagate_one_minimove_within_table(tb, future_index, position);
+	}
+
+	position->en_passant_square = ILLEGAL_POSITION;
     }
 }
 
@@ -11992,30 +11994,61 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 		if (! (current_tb->pieces[piece].semilegal_squares & movementptr->vector)) continue;
 
-		/* Do we have a backwards pawn move here?
+		/* En passant.
 		 *
-		 * Back stepping a half move here involves several things: flipping the
-		 * side-to-move flag, clearing any en passant pawns into regular pawns, moving
-		 * the piece (backwards), and considering a bunch of additional positions
-		 * identical to the base position except that a single one of the pawns on the
-		 * fourth or fifth ranks was capturable en passant.
+		 * The only way we could have gotten an en passant pawn is if THIS MOVE created it.
+		 * We handle that as a special case above, so we shouldn't have to worry about
+		 * clearing en passant pawns here - there should be none.  Checking additional en
+		 * passant positions is taken care of in propagate_one_move_within_table()
 		 *
-		 * Of course, the only way we could have gotten an en passant pawn is if THIS MOVE
-		 * created it.  We handle that as a special case above, so we shouldn't have to
-		 * worry about clearing en passant pawns here - there should be none.  Checking
-		 * additional en passant positions is taken care of in
-		 * propagate_one_move_within_table()
+		 * There are three basic possibilities, depending on the index type:
 		 *
-		 * But we start with an extra check to make sure this isn't a double pawn move, in
-		 * which case it would result in an en passant position, not the non-en passant
-		 * position we are in now (en passant got taken care of in the special case
-		 * above)...  unless we are using the "no-en-passant" index type, in which case we
-		 * don't consider en passant at all, and so have to handle the double move here.
+		 * 1. Our index has en passant positions for all positions with pawns on the fourth
+		 * or fifth rank.  (most of them)
+		 *
+		 * In this case, we skip all double pawn moves here.  We only consider double pawn
+		 * moves when we handle en passant positions at the beginning of this function.
+		 *
+		 * 2. Our index has no en passant positions. (no-en-passant)
+		 *
+		 * In this case, we process all double pawn moves here, as there are no en passant
+		 * positions to process at the beginning of this function.
+		 *
+		 * 3. Our index has en passant positions only if a pawn is capturable en
+		 * passant. (pawngen)
+		 *
+		 * In this case, we process here only double pawn moves that do not create en
+		 * passant possibilities.
+		 *
+		 * In short, we're considering a position without en passant set, but from which a
+		 * backwards double pawn move is possible.  We want to know if it has a matching
+		 * position with en passant set.  If so, we do nothing here, since the double pawn
+		 * move will be handled by the en passant position.  If not, we process the double
+		 * pawn move here.
+		 *
+		 * XXX what a mess...
 		 */
 
 		if (((movementptr->square - origin_square) == 16)
 		    || ((movementptr->square - origin_square) == -16)) {
-		    if (current_tb->index_type != NO_EN_PASSANT_INDEX) continue;
+		    // if ((current_tb->index_type != NO_EN_PASSANT_INDEX) && (current_tb->index_type != PAWNGEN_INDEX)) continue;
+
+		    position.piece_position[piece] = origin_square;
+		    position.board_vector |= BITVECTOR(origin_square);
+		    if (position.side_to_move == WHITE) {
+			position.en_passant_square = origin_square - 8;
+		    } else {
+			position.en_passant_square = origin_square + 8;
+		    }
+		    flip_side_to_move_local(&position);
+
+		    bool en_passant_position_exists = (local_position_to_index(current_tb, &position) != INVALID_INDEX);
+
+		    flip_side_to_move_local(&position);
+		    position.en_passant_square = ILLEGAL_POSITION;
+		    position.board_vector &= ~BITVECTOR(origin_square);
+
+		    if (en_passant_position_exists) continue;
 		}
 
 		/* I go to the trouble to update board_vector here so we can check en passant
@@ -14382,7 +14415,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.906 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.907 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
