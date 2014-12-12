@@ -385,3 +385,5 @@ the corresponding slow encryption.
 - eliminate color='invert' futurebase attribute
 
 - "Couldn't find future piece in local tablebase" - should this be a warning, not an error?
+
+- when probing, don't print prunes as "NO DATA"
