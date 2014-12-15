@@ -5639,7 +5639,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.907 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.908 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -11275,11 +11275,14 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			/* might want to put the promotion code here */
 
-		    } else {
+		    } else if (tb->index_type != PAWNGEN_INDEX) {
 
 			/* If the pawn is moving outside its restricted squares, it's a futuremove,
 			 * unless the pawn is blocked, in which case the pawn will never be able to
 			 * move outside its restriction (except via capture).
+			 *
+			 * If we're using 'pawngen', then we never assign futuremoves here, because
+			 * pawngen has taken all possible normal pawn moves into account.
 			 */
 
 			if (!(tb->pieces[piece].semilegal_squares & BITVECTOR(movementptr->square))
@@ -14415,7 +14418,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.907 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.908 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
