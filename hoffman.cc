@@ -517,6 +517,7 @@ typedef struct {
     uint64_t board_vector;
     uint64_t PTM_vector;
     uint8_t piece_position[MAX_PIECES];
+    short   piece_color[MAX_PIECES];
     uint8_t permuted_piece[MAX_PIECES];
     uint8_t side_to_move;
     uint8_t en_passant_square;
@@ -573,6 +574,7 @@ unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 
 #define WHITE 0
 #define BLACK 1
+#define VARIABLE 2
 
 bimap colors = {{"WHITE", WHITE}, {"BLACK", BLACK}};
 
@@ -3974,6 +3976,14 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     bzero(position, sizeof(local_position_t));
     position->en_passant_square = ILLEGAL_POSITION;
 
+    /* Most index types assume piece colors are fixed, but pawngen does not, so we set piece_color[]
+     * first, then let pawngen change it.
+     */
+
+    for (piece = 0; piece < tb->num_pieces; piece++) {
+	position->piece_color[piece] = tb->pieces[piece].color;
+    }
+
     switch (tb->index_type) {
     case NAIVE_INDEX:
 	ret = naive_index_to_local_position(tb, index, position);
@@ -4059,7 +4069,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	position->piece_position[piece] = reverse_reflection[reflection & 7][position->piece_position[piece]];
 	position->board_vector |= BITVECTOR(position->piece_position[piece]);
-	if (tb->pieces[piece].color == position->side_to_move) {
+	if (position->piece_color[piece] == position->side_to_move) {
 	    position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
 	}
     }
@@ -4315,6 +4325,8 @@ int choose(int n, int k) {
  * flips, using only transpositions.
  *
  * XXX we can enhance this function to handle piece restrictions.
+ *
+ * XXX think more about how to handle pawngen
  */
 
 bool tablebase_is_color_symmetric(tablebase_t *tb)
@@ -5639,7 +5651,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.908 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.909 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -6452,14 +6464,19 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
     for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
 
 	int sq = foreign_position->piece_position[foreign_piece];
+	int color = foreign_position->piece_color[foreign_piece];
 
-	if (invert_colors) sq = vertical_reflection(sq);
+	if (invert_colors) {
+	    sq = vertical_reflection(sq);
+	    color = 1 - color;
+	}
 
 	for (local_piece = foreign_tb->pieces[foreign_piece].matching_local_semilegal_group[sq];
 	     local_piece != -1; local_piece = local_tb->pieces[local_piece].next_piece_in_semilegal_group) {
 
 	    if (local_position->piece_position[local_piece] == ILLEGAL_POSITION) {
 		local_position->piece_position[local_piece] = sq;
+		local_position->piece_color[local_piece] = color;
 		break;
 	    }
 	}
@@ -6488,19 +6505,34 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 	if (local_position->piece_position[local_piece] != ILLEGAL_POSITION) {
 
 	    local_position->board_vector |= BITVECTOR(local_position->piece_position[local_piece]);
-	    if (local_tb->pieces[local_piece].color == local_position->side_to_move)
+	    if (local_position->piece_color[local_piece] == local_position->side_to_move) {
 		local_position->PTM_vector |= BITVECTOR(local_position->piece_position[local_piece]);
+	    }
 
 	} else {
 
 	    if ((result.extra_piece != NONE)
 		&& (local_tb->pieces[local_piece].piece_type == foreign_tb->pieces[result.extra_piece].piece_type)
-		&& ((!invert_colors
-		     && (local_tb->pieces[local_piece].color == foreign_tb->pieces[result.extra_piece].color))
-		    || (invert_colors
-			&& (local_tb->pieces[local_piece].color != foreign_tb->pieces[result.extra_piece].color)))) {
+		&& (local_tb->pieces[local_piece].color == VARIABLE)) {
 
 		local_position->piece_position[local_piece] = extra_sq;
+		if (! invert_colors) {
+		    local_position->piece_color[local_piece] = foreign_position->piece_color[result.extra_piece];
+		} else {
+		    local_position->piece_color[local_piece] = 1 - foreign_position->piece_color[result.extra_piece];
+		}
+		result.restricted_piece = local_piece;
+		result.extra_piece = NONE;
+
+	    } else if ((result.extra_piece != NONE)
+		&& (local_tb->pieces[local_piece].piece_type == foreign_tb->pieces[result.extra_piece].piece_type)
+		&& ((!invert_colors
+		     && (local_tb->pieces[local_piece].color == foreign_position->piece_color[result.extra_piece]))
+		    || (invert_colors
+			&& (local_tb->pieces[local_piece].color != foreign_position->piece_color[result.extra_piece])))) {
+
+		local_position->piece_position[local_piece] = extra_sq;
+		local_position->piece_color[local_piece] = local_tb->pieces[local_piece].color;
 		result.restricted_piece = local_piece;
 		result.extra_piece = NONE;
 
@@ -6616,7 +6648,7 @@ bool index_to_global_position(tablebase_t *tb, index_t index, global_position_t 
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
 	global->board[local.piece_position[piece]]
-	    = global_pieces[tb->pieces[piece].color][tb->pieces[piece].piece_type];
+	    = global_pieces[local.piece_color[piece]][tb->pieces[piece].piece_type];
     }
 
     return true;
@@ -6632,8 +6664,10 @@ bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int s
     if (pos->board_vector & BITVECTOR(square)) return false;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->pieces[piece].piece_type == type) && (tb->pieces[piece].color == color)) {
+	if ((tb->pieces[piece].piece_type == type)
+	    && ((tb->pieces[piece].color == color) || (tb->pieces[piece].color == VARIABLE))) {
 	    pos->piece_position[piece] = square;
+	    pos->piece_color[piece] = color;
 	    pos->board_vector |= BITVECTOR(square);
 	    if (color == pos->side_to_move) pos->PTM_vector |= BITVECTOR(square);
 	    return true;
@@ -7400,18 +7434,30 @@ class EntriesTable {
 	/* Compute the moves available to each side and use this to size the movecnt field */
 
 	for (int piece = 0; piece < current_tb->num_pieces; piece ++) {
-	    unsigned int *max_moves = (current_tb->pieces[piece].color == WHITE) ? &max_white_moves : &max_black_moves;
+	    unsigned int max_moves;
 	    switch (current_tb->pieces[piece].piece_type) {
 	    case KING:
 	    case KNIGHT:
-		*max_moves += 8; break;
+		max_moves = 8; break;
 	    case QUEEN:
-		*max_moves += 28; break;
+		max_moves = 28; break;
 	    case ROOK:
 	    case BISHOP:
-		*max_moves += 14; break;
+		max_moves = 14; break;
 	    case PAWN:
-		*max_moves += 12; break;
+		max_moves = 12; break;
+	    }
+	    switch (current_tb->pieces[piece].color) {
+	    case WHITE:
+		max_white_moves += max_moves;
+		break;
+	    case BLACK:
+		max_black_moves += max_moves;
+		break;
+	    case VARIABLE:
+		max_white_moves += max_moves;
+		max_black_moves += max_moves;
+		break;
 	    }
 	}
 
@@ -9567,14 +9613,14 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if (tb->pieces[piece].color == position->side_to_move) continue;
+	    if (position->piece_color[piece] == position->side_to_move) continue;
 	    if (tb->pieces[piece].piece_type != PAWN) continue;
 
 	    /* I took care in the calling routines to update board_vector specifically so we can
 	     * check for en passant legality here.
 	     */
 
-	    if ((tb->pieces[piece].color == WHITE)
+	    if ((position->piece_color[piece] == WHITE)
 		&& (ROW(position->piece_position[piece]) == 3)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
@@ -9582,7 +9628,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
-	    if ((tb->pieces[piece].color == BLACK)
+	    if ((position->piece_color[piece] == BLACK)
 		&& (ROW(position->piece_position[piece]) == 4)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
@@ -9643,14 +9689,14 @@ void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t 
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if (tb->pieces[piece].color == position->side_to_move) continue;
+	    if (position->piece_color[piece] == position->side_to_move) continue;
 	    if (tb->pieces[piece].piece_type != PAWN) continue;
 
 	    /* I took care in normalize_position() to update board_vector specifically so we can
 	     * check for en passant legality here.
 	     */
 
-	    if ((tb->pieces[piece].color == WHITE)
+	    if ((position->piece_color[piece] == WHITE)
 		&& (ROW(position->piece_position[piece]) == 3)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
@@ -9658,7 +9704,7 @@ void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t 
 		propagate_mini_normalized_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
-	    if ((tb->pieces[piece].color == BLACK)
+	    if ((position->piece_color[piece] == BLACK)
 		&& (ROW(position->piece_position[piece]) == 4)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
@@ -10089,7 +10135,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
     /* We only want to consider pieces of the side which captured... */
 
-    if (current_tb->pieces[capturing_piece].color == current_tb->pieces[captured_piece].color) return;
+    if (position->piece_color[capturing_piece] == position->piece_color[captured_piece]) return;
 
     /* Put the captured piece on the capturing piece's square (from the future position).  */
 
@@ -10154,7 +10200,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 	/* Yes, pawn captures are special */
 
-	for (movementptr = capture_pawn_movements_bkwd[position->piece_position[capturing_piece]][current_tb->pieces[capturing_piece].color];
+	for (movementptr = capture_pawn_movements_bkwd[position->piece_position[capturing_piece]][position->piece_color[capturing_piece]];
 	     movementptr->square != -1;
 	     movementptr++) {
 
@@ -10198,7 +10244,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]-8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]+8))) {
 
-		if ((current_tb->pieces[capturing_piece].color == BLACK) && (ROW(movementptr->square) == 3)) {
+		if ((position->piece_color[capturing_piece] == BLACK) && (ROW(movementptr->square) == 3)) {
 
 		    /* A black pawn capturing a white one (en passant)
 		     *
@@ -10226,7 +10272,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 		}
 
-		if ((current_tb->pieces[capturing_piece].color == WHITE) && (ROW(movementptr->square) == 4)) {
+		if ((position->piece_color[capturing_piece] == WHITE) && (ROW(movementptr->square) == 4)) {
 
 		    /* A white pawn capturing a black one (en passant)
 		     *
@@ -10318,7 +10364,7 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 	 * positions where the side to move is not the side that captured.
 	 */
 
-	if (position.side_to_move != current_tb->pieces[captured_piece].color) return;
+	if (position.side_to_move != position.piece_color[captured_piece]) return;
 
 	/* We're going to back step a half move now */
 
@@ -10350,7 +10396,7 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 
 	    for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
-		if ((current_tb->pieces[piece].color == current_tb->pieces[translation.restricted_piece].color)
+		if ((position.piece_color[piece] == position.piece_color[translation.restricted_piece])
 		    && (current_tb->pieces[piece].piece_type == current_tb->pieces[translation.restricted_piece].piece_type)
 		    && (current_tb->pieces[piece].semilegal_squares & BITVECTOR(restricted_square))) {
 
@@ -10415,7 +10461,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	if (current_tb->pieces[piece].color == current_position.side_to_move) return;
+	if (current_position.piece_color[piece] == current_position.side_to_move) return;
 
 	/* If there are any en passant capturable pawns in the position, then the last move had to
 	 * have been a pawn move.  In fact, in this case, we already know exactly what the last move
@@ -10426,9 +10472,9 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 	    if (current_tb->pieces[piece].piece_type != PAWN) return;
 
-	    if (((current_tb->pieces[piece].color == WHITE)
+	    if (((current_position.piece_color[piece] == WHITE)
 		 && (current_position.piece_position[piece] != current_position.en_passant_square + 8))
-		|| ((current_tb->pieces[piece].color == BLACK)
+		|| ((current_position.piece_color[piece] == BLACK)
 		    && (current_position.piece_position[piece] != current_position.en_passant_square - 8))) {
 
 		/* No reason to complain here.  Maybe some other pawn was the en passant pawn. */
@@ -10443,7 +10489,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 	     */
 
 	    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
-	    if (current_tb->pieces[piece].color == WHITE)
+	    if (current_position.piece_color[piece] == WHITE)
 		current_position.piece_position[piece] -= 16;
 	    else
 		current_position.piece_position[piece] += 16;
@@ -10527,7 +10573,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 	    /* Usual special case for pawns */
 
-	    for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][current_tb->pieces[piece].color];
+	    for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][parent_position.piece_color[piece]];
 		 (movementptr->vector & parent_position.board_vector) == 0;
 		 movementptr++) {
 
@@ -10652,7 +10698,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 
-		promotion_color = tb->pieces[futurebase->missing_pawn].color;
+		promotion_color = tb->pieces[futurebase->extra_piece].color;
 		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
@@ -10667,7 +10713,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 
-		promotion_color = tb->pieces[futurebase->missing_pawn].color;
+		promotion_color = tb->pieces[futurebase->extra_piece].color;
 		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
 		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
 		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
@@ -10828,15 +10874,10 @@ bool have_all_futuremoves_been_handled(tablebase_t *tb) {
     return all_futuremoves_handled;
 }
 
-/* assign_pruning_statement() - a helper function for compute_pruned_futuremoves()
+/* match_pruning_statement() - a helper function for compute_pruned_futuremoves()
  *
  * searches the tablebase's XML pruning statements for one matching (more or less identically) the
- * specified color and string.  If there is a match, set the corresponding bit in the
- * pruned_futuremoves bit vector.  The function can be called more than once for a given bit, but
- * probably shouldn't be.  For example, the function might be called on the same bit for "PxQ=Q" if
- * there are two pawns that can promote into a queen.  UNIX-style wildcards are allowed, so "Kd4"
- * would match against "Kd4", "Kd?", "K?4", "K[a-d]4", or "K*".  The function also allows a trailing
- * "any" in the prune statement to act as a "*" wildcard for backwards compatibility.
+ * specified color and string.  If there is a match, return the prune type.
  *
  * If there are multiple prune statements that match a given futuremove, it's a warning if they are
  * of the same type; a fatal error if their types are different.
@@ -10879,6 +10920,21 @@ int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
 
     return type;
 }
+
+/* assign_pruning_statement() - a helper function for compute_pruned_futuremoves()
+ *
+ * searches the tablebase's XML pruning statements for one matching the specified color and
+ * futuremove number.  If there is a match, set the corresponding bits in the pruned_futuremoves,
+ * conceded_futuremoves, and discarded_futuremoves bit vectors.  The function can be called more
+ * than once for a given bit, but probably shouldn't be.  For example, the function might be called
+ * on the same bit for "PxQ=Q" if there are two pawns that can promote into a queen.  UNIX-style
+ * wildcards are allowed, so "Kd4" would match against "Kd4", "Kd?", "K?4", "K[a-d]4", or "K*".  The
+ * function also allows a trailing "any" in the prune statement to act as a "*" wildcard for
+ * backwards compatibility.
+ *
+ * If there are multiple prune statements that match a given futuremove, it's a warning if they are
+ * of the same type; a fatal error if their types are different.
+ */
 
 void assign_pruning_statement(tablebase_t *tb, int color, int futuremove)
 {
@@ -11809,14 +11865,14 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	if (tb->pieces[piece].color == position->side_to_move) continue;
+	if (position->piece_color[piece] == position->side_to_move) continue;
 	if (tb->pieces[piece].piece_type != PAWN) continue;
 
 	/* I've taken care to update board_vector in the routine that calls here specifically so we
 	 * can check for en passant legality here.
 	 */
 
-	if ((tb->pieces[piece].color == WHITE)
+	if ((position->piece_color[piece] == WHITE)
 	    && (ROW(position->piece_position[piece]) == 3)
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
@@ -11824,7 +11880,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 	    propagate_one_minimove_within_table(tb, future_index, position);
 	}
 
-	if ((tb->pieces[piece].color == BLACK)
+	if ((position->piece_color[piece] == BLACK)
 	    && (ROW(position->piece_position[piece]) == 4)
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
@@ -11879,12 +11935,12 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
-	    if (current_tb->pieces[piece].color != position.side_to_move) continue;
+	    if (position.piece_color[piece] != position.side_to_move) continue;
 	    if (current_tb->pieces[piece].piece_type != PAWN) continue;
 
-	    if (((current_tb->pieces[piece].color == WHITE)
+	    if (((position.piece_color[piece] == WHITE)
 		 && (position.piece_position[piece] - 8 == position.en_passant_square))
-		|| ((current_tb->pieces[piece].color == BLACK)
+		|| ((position.piece_color[piece] == BLACK)
 		    && (position.piece_position[piece] + 8 == position.en_passant_square))) {
 		if (en_passant_pawn != -1) fatal("Two en passant pawns in back prop?!\n");
 		en_passant_pawn = piece;
@@ -11902,7 +11958,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	    position.board_vector &= ~BITVECTOR(position.piece_position[en_passant_pawn]);
 
-	    if (current_tb->pieces[en_passant_pawn].color == WHITE)
+	    if (position.piece_color[en_passant_pawn] == WHITE)
 		position.piece_position[en_passant_pawn] -= 16;
 	    else
 		position.piece_position[en_passant_pawn] += 16;
@@ -11932,7 +11988,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 	 * PLAY here - this is the LAST move we're considering, not the next move.
 	 */
 
-	if (current_tb->pieces[piece].color != position.side_to_move)
+	if (position.piece_color[piece] != position.side_to_move)
 	    continue;
 
 	origin_square = position.piece_position[piece];
@@ -11989,7 +12045,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	    /* Usual special case for pawns */
 
-	    for (movementptr = normal_pawn_movements_bkwd[origin_square][current_tb->pieces[piece].color];
+	    for (movementptr = normal_pawn_movements_bkwd[origin_square][position.piece_color[piece]];
 		 (movementptr->vector & position.board_vector) == 0;
 		 movementptr++) {
 
@@ -12142,7 +12198,7 @@ bool PTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	/* We only want to consider pieces of the side which is NOT to move... */
 
-	if (tb->pieces[piece].color == position->side_to_move) continue;
+	if (position->piece_color[piece] == position->side_to_move) continue;
 
 	/* We might have removed the piece from the position... */
 
@@ -12155,7 +12211,7 @@ bool PTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	} else {
 
-	    if (board_mask[tb->pieces[piece].piece_type + tb->pieces[piece].color][position->piece_position[piece]][king_position]
+	    if (board_mask[tb->pieces[piece].piece_type + position->piece_color[piece]][position->piece_position[piece]][king_position]
 		== 0) return true;
 
 	}
@@ -12287,7 +12343,7 @@ bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	/* We only want to consider pieces of the side which is to move... */
 
-	if (tb->pieces[piece].color != position->side_to_move) continue;
+	if (position->piece_color[piece] != position->side_to_move) continue;
 
 	origin_square = position->piece_position[piece];
 
@@ -12312,7 +12368,7 @@ bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
 
 	    }
 	} else {
-	    for (movementptr = capture_pawn_movements[origin_square][tb->pieces[piece].color];
+	    for (movementptr = capture_pawn_movements[origin_square][position->piece_color[piece]];
 		 movementptr->square != -1;
 		 movementptr++) {
 
@@ -12410,7 +12466,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	    /* We only want to consider pieces of the side which is to move... */
 
-	    if (tb->pieces[piece].color != position.side_to_move) continue;
+	    if (position.piece_color[piece] != position.side_to_move) continue;
 
 	    origin_square = position.piece_position[piece];
 	    position.board_vector &= ~BITVECTOR(origin_square);
@@ -12535,7 +12591,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		/* Pawns, as always, are special */
 
-		for (movementptr = normal_pawn_movements[origin_square][tb->pieces[piece].color];
+		for (movementptr = normal_pawn_movements[origin_square][position.piece_color[piece]];
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
@@ -12581,7 +12637,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    global_position_t global;
 				    index_to_global_position(tb, index, &global);
 				    fatal("Duplicate futuremove: %s %s\n", global_position_to_FEN(&global),
-					  movestr[tb->pieces[piece].color][promotions[piece][promotion]]);
+					  movestr[position.piece_color[piece]][promotions[piece][promotion]]);
 				} else {
 				    futurevector |= FUTUREVECTOR(promotions[piece][promotion]);
 				    futuremovecnt ++;
@@ -12637,7 +12693,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		 * promotion move or not is how many futuremoves get recorded.
 		 */
 
-		for (movementptr = capture_pawn_movements[origin_square][tb->pieces[piece].color];
+		for (movementptr = capture_pawn_movements[origin_square][position.piece_color[piece]];
 		     movementptr->square != -1;
 		     movementptr++) {
 
@@ -12654,7 +12710,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			for (i = 0; i < tb->num_pieces; i ++) {
 			    if ((i == tb->white_king) || (i == tb->black_king)) continue;
-			    if (movementptr->square + (tb->pieces[piece].color == WHITE ? -8 : 8)
+			    if (movementptr->square + (position.piece_color[piece] == WHITE ? -8 : 8)
 				== position.piece_position[i]) {
 
 				position.piece_position[piece] = position.en_passant_square;
@@ -12687,7 +12743,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				}
 
 				position.piece_position[i] = position.en_passant_square
-				    + (tb->pieces[piece].color == WHITE ? -8 : 8);
+				    + (position.piece_color[piece] == WHITE ? -8 : 8);
 				position.board_vector |= BITVECTOR(position.piece_position[i]);
 				position.board_vector &= ~BITVECTOR(position.en_passant_square);
 
@@ -13416,7 +13472,7 @@ void verify_tablebase_internally_thread(void)
 
 	    /* We only want to consider pieces of the side which is to move, but we flipped it... */
 
-	    if (current_tb->pieces[piece].color == position.side_to_move) continue;
+	    if (position.piece_color[piece] == position.side_to_move) continue;
 
 	    origin_square = position.piece_position[piece];
 	    position.board_vector &= ~BITVECTOR(origin_square);
@@ -13475,7 +13531,7 @@ void verify_tablebase_internally_thread(void)
 
 		/* Pawns, as always, are special */
 
-		for (movementptr = normal_pawn_movements[origin_square][current_tb->pieces[piece].color];
+		for (movementptr = normal_pawn_movements[origin_square][position.piece_color[piece]];
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
@@ -14418,7 +14474,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.908 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.909 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
