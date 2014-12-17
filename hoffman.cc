@@ -5676,7 +5676,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.913 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.914 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -6939,12 +6939,15 @@ bool parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
     return true;
 }
 
-/* Note that the buffer in this function is static... */
+/* Note that the two buffers in this function are static, but we alternate back and forth between them,
+ * so we can use this function twice in a single debugging print statement.
+ */
 
 char * global_position_to_FEN(global_position_t *position)
 {
-    static char buffer[256];
-    char *ptr = buffer;
+    static char buffer[2][256];
+    static int which_buffer = 0;
+    char *ptr = buffer[which_buffer ^= 1];
     int empty_squares;
     int row, col;
 
@@ -6986,7 +6989,7 @@ char * global_position_to_FEN(global_position_t *position)
 
     *(ptr++) = '\0';
 
-    return buffer;
+    return buffer[which_buffer];
 }
 
 char * index_to_FEN(tablebase_t *tb, index_t index)
@@ -9521,21 +9524,23 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
 #ifdef DEBUG_FUTUREMOVE
     if (future_index == DEBUG_FUTUREMOVE) {
-	global_position_t global;
+	global_position_t global1, global2;
 
-	index_to_global_position(futurebase, future_index, &global);
-	info("propagate_index_from_futurebase; %" PRIindex " from %s %" PRIindex " %s\n",
-	     current_index, futurebase->filename.c_str(), future_index, global_position_to_FEN(&global));
+	index_to_global_position(tb, current_index, &global1);
+	index_to_global_position(futurebase, future_index, &global2);
+	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s\n",
+	     current_index, global_position_to_FEN(&global1), futurebase->filename.c_str(), future_index, global_position_to_FEN(&global2));
     }
 #endif
 
 #ifdef DEBUG_MOVE
     if (current_index == DEBUG_MOVE) {
-	global_position_t global;
+	global_position_t global1, global2;
 
-	index_to_global_position(futurebase, future_index, &global);
-	info("propagate_index_from_futurebase; %" PRIindex " from %s %" PRIindex " %s\n",
-	     current_index, futurebase->filename.c_str(), future_index, global_position_to_FEN(&global));
+	index_to_global_position(tb, current_index, &global1);
+	index_to_global_position(futurebase, future_index, &global1);
+	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s\n",
+	     current_index, global_position_to_FEN(&global1), futurebase->filename.c_str(), future_index, global_position_to_FEN(&global2));
     }
 #endif
 
@@ -14502,7 +14507,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.913 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.914 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
