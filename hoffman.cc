@@ -5676,7 +5676,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.912 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.913 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -6437,6 +6437,12 @@ void invert_colors_of_global_position(global_position_t *global)
  *
  * In addition to back-progagation, this function is also used while probing a set of tablebases to
  * see which one of them matches a given position.
+ *
+ * The 'pawngen' index type, with its variable color pawns, complicates the logic here.  Local pawns
+ * that map to foreign pawns will have their color set to the foreign pawn color.  Missing pieces,
+ * however, can be returned with VARIABLE color in the local position structure!  The calling
+ * functions either set the color to that of the promoted piece (promotion or promotion-capture
+ * futurebases), or try both color possibilities (capture futurebases).
  */
 
 #define NONE 0x80
@@ -6472,6 +6478,7 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
 	local_position->piece_position[local_piece] = ILLEGAL_POSITION;
 	local_position->permuted_piece[local_piece] = local_piece;
+	local_position->piece_color[local_piece] = local_tb->pieces[local_piece].color;
     }
 
     local_position->en_passant_square = foreign_position->en_passant_square;
@@ -14495,7 +14502,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.912 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.913 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
