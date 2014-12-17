@@ -343,10 +343,16 @@ struct casefold_compare {
     }
 };
 
-class bimap : public std::map<Glib::ustring, int, casefold_compare> {
+template<typename Type = int>
+class bimap : public std::map<Glib::ustring, Type, casefold_compare> {
+
 public:
-    using std::map<Glib::ustring, int, casefold_compare>::map;
-    Glib::ustring operator[] (int value)
+
+    using std::map<Glib::ustring, Type, casefold_compare>::map;
+    using std::map<Glib::ustring, Type, casefold_compare>::begin;
+    using std::map<Glib::ustring, Type, casefold_compare>::end;
+
+    Glib::ustring operator[] (Type value)
     {
 	for (auto it = begin(); it != end(); it++) {
 	    if (it->second == value) return it->first;
@@ -475,6 +481,30 @@ futurevector_t conceded_futuremoves[2] = {0, 0};
 futurevector_t discarded_futuremoves[2] = {0, 0};
 futurevector_t optimized_futuremoves[2] = {0, 0};
 
+/* Piece color
+ *
+ * The assumption that WHITE=0 and BLACK=1 is fairly pervasive throughout the code.  color_t is used
+ * a lot to index arrays, for example.
+ */
+
+enum color_t {WHITE=0, BLACK=1, VARIABLE};
+
+color_t operator~(const color_t x)
+{
+    return (x==WHITE) ? BLACK : WHITE;
+}
+
+color_t operator++(color_t &x, int zero)
+{
+    if (x == WHITE) {
+	return (x=BLACK);
+    } else if (x == BLACK) {
+	return (x=VARIABLE);
+    } else {
+	throw "bug";
+    }
+}
+
 /* position - the data structures that represents a board position
  *
  * There are two kinds of positions: local and global.  Locals are faster but are tied to a specific
@@ -517,9 +547,9 @@ typedef struct {
     uint64_t board_vector;
     uint64_t PTM_vector;
     uint8_t piece_position[MAX_PIECES];
-    std::array<short, MAX_PIECES> piece_color;
+    std::array<color_t, MAX_PIECES> piece_color;
     uint8_t permuted_piece[MAX_PIECES];
-    uint8_t side_to_move;
+    color_t side_to_move;
     uint8_t en_passant_square;
     uint8_t multiplicity;
 } local_position_t;
@@ -533,7 +563,7 @@ typedef struct {
 
 typedef struct {
     unsigned char board[64];
-    short side_to_move;
+    color_t side_to_move;
     short en_passant_square;
     short variant;
 } global_position_t;
@@ -572,11 +602,7 @@ const char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
 
-#define WHITE 0
-#define BLACK 1
-#define VARIABLE 2
-
-bimap colors = {{"WHITE", WHITE}, {"BLACK", BLACK}};
+bimap<color_t> colors = {{"WHITE", WHITE}, {"BLACK", BLACK}};
 
 /* Possibilities for pawn promotions.  "2" means queen and knight, but that can cause some problems,
  * as I've learned the hard (and embarrassing) way.  "4" is typical, but "5" is used for suicide
@@ -613,13 +639,13 @@ struct format {
 #define FORMAT_FIELD_FLAG 1
 #define FORMAT_FIELD_BASIC 2
 
-bimap format_fields = {{"dtm", FORMAT_FIELD_DTM}, {"flag", FORMAT_FIELD_FLAG}, {"basic", FORMAT_FIELD_BASIC}};
+bimap<int> format_fields = {{"dtm", FORMAT_FIELD_DTM}, {"flag", FORMAT_FIELD_FLAG}, {"basic", FORMAT_FIELD_BASIC}};
 
 #define FORMAT_FLAG_NONE 0
 #define FORMAT_FLAG_WHITE_WINS 1
 #define FORMAT_FLAG_WHITE_DRAWS 2
 
-bimap format_flag_types = {{"white-wins", FORMAT_FLAG_WHITE_WINS}, {"white-draws", FORMAT_FLAG_WHITE_DRAWS}};
+bimap<int> format_flag_types = {{"white-wins", FORMAT_FLAG_WHITE_WINS}, {"white-draws", FORMAT_FLAG_WHITE_DRAWS}};
 
 #define MAX_FORMAT_BYTES 16
 
@@ -660,12 +686,12 @@ struct format dtm_format = {0, 0,0, -1,FORMAT_FLAG_NONE, -1};
 #define RESTRICTION_DISCARD 1
 #define RESTRICTION_CONCEDE 2
 
-bimap restriction_types = {{"NONE", RESTRICTION_NONE}, {"DISCARD", RESTRICTION_DISCARD}, {"CONCEDE", RESTRICTION_CONCEDE}};
+bimap<int> restriction_types = {{"NONE", RESTRICTION_NONE}, {"DISCARD", RESTRICTION_DISCARD}, {"CONCEDE", RESTRICTION_CONCEDE}};
 
 #define FORMAT_FOURBYTE 0
 #define FORMAT_ONE_BYTE_DTM 1
 
-bimap formats = {{"fourbyte", FORMAT_FOURBYTE}, {"one-byte-dtm", FORMAT_ONE_BYTE_DTM}};
+bimap<int> formats = {{"fourbyte", FORMAT_FOURBYTE}, {"one-byte-dtm", FORMAT_ONE_BYTE_DTM}};
 
 #define NAIVE_INDEX 0
 #define NAIVE2_INDEX 1
@@ -678,17 +704,17 @@ bimap formats = {{"fourbyte", FORMAT_FOURBYTE}, {"one-byte-dtm", FORMAT_ONE_BYTE
 
 #define DEFAULT_INDEX COMBINADIC4_INDEX
 
-bimap index_types = {{"naive", NAIVE_INDEX}, {"naive2", NAIVE2_INDEX}, {"simple", SIMPLE_INDEX},
-		     {"compact", COMPACT_INDEX}, {"no-en-passant", NO_EN_PASSANT_INDEX},
-		     {"combinadic3", COMBINADIC3_INDEX}, {"combinadic4", COMBINADIC4_INDEX},
-		     {"pawngen", PAWNGEN_INDEX}};
+bimap<int> index_types = {{"naive", NAIVE_INDEX}, {"naive2", NAIVE2_INDEX}, {"simple", SIMPLE_INDEX},
+			  {"compact", COMPACT_INDEX}, {"no-en-passant", NO_EN_PASSANT_INDEX},
+			  {"combinadic3", COMBINADIC3_INDEX}, {"combinadic4", COMBINADIC4_INDEX},
+			  {"pawngen", PAWNGEN_INDEX}};
 
 #define FUTUREBASE_CAPTURE 0
 #define FUTUREBASE_PROMOTION 1
 #define FUTUREBASE_CAPTURE_PROMOTION 2
 #define FUTUREBASE_NORMAL 3
 
-bimap futurebase_types = 
+bimap<int> futurebase_types = 
     {{"capture", FUTUREBASE_CAPTURE}, {"promotion", FUTUREBASE_PROMOTION},
      {"capture-promotion", FUTUREBASE_CAPTURE_PROMOTION}, {"normal", FUTUREBASE_NORMAL}};
 
@@ -701,7 +727,7 @@ std::map<Glib::ustring, int> variant_names =
 struct piece {
 
     short piece_type;
-    short color;
+    color_t color;
 
     /* Pieces can restricted according to which squares they are allowed to move on.
      *
@@ -765,7 +791,7 @@ struct piece {
 
     int matching_local_semilegal_group[64];
 
-    piece(short color, short type, uint64_t legal_squares = ALL_ONES_BITVECTOR)
+    piece(color_t color, short type, uint64_t legal_squares = ALL_ONES_BITVECTOR)
 	: color(color), piece_type(type), legal_squares(legal_squares) {}
     piece(xmlpp::Node *);
 };
@@ -851,7 +877,7 @@ typedef struct tablebase {
 
     int prune_enable[2];		/* one for each color */
     int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
-    int stalemate_prune_color;
+    color_t stalemate_prune_color;
 
     char *futurevectors;
     int futurevector_bits;
@@ -1178,7 +1204,7 @@ char algebraic_notation[64][3];
 
 void init_movements()
 {
-    int square, piece, dir, mvmt, color;
+    int square, piece, dir, mvmt;
 
     for (square=0; square < NUM_SQUARES; square++) {
 	algebraic_notation[square][0] = 'a' + square%8;
@@ -1402,7 +1428,7 @@ void init_movements()
 
     for (square=0; square < NUM_SQUARES; square ++) {
 
-	for (color = WHITE; color <= BLACK; color ++) {
+	for (auto color = WHITE; color <= BLACK; color ++) {
 
 	    int forwards_pawn_move = ((color == WHITE) ? 8 : -8);
 	    int backwards_pawn_move = ((color == WHITE) ? -8 : 8);
@@ -1538,7 +1564,6 @@ void verify_movements()
     int piece;
     int squareA, squareB;
     int dir;
-    int color;
     struct movement * movementptr;
     int pawn_option;
 
@@ -1635,7 +1660,7 @@ void verify_movements()
 	struct movement * fwd_movement;
 	struct movement * rev_movement;
 
-	for (color = WHITE; color <= BLACK; color ++) {
+	for (auto color = WHITE; color <= BLACK; color ++) {
 
 	    /* fprintf(stderr, "Pawn option %d; color %s\n", pawn_option, colors[color]); */
 
@@ -1834,7 +1859,7 @@ bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_positio
 {
     int piece;
 
-    p->side_to_move = index & 1;
+    p->side_to_move = (index & 1 == 0) ? WHITE : BLACK;
     index >>= 1;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
@@ -2003,7 +2028,7 @@ bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_positi
     int piece;
     uint8_t vals[MAX_PIECES];
 
-    p->side_to_move = index & 1;
+    p->side_to_move = (index & 1 == 0) ? WHITE : BLACK;
     index >>= 1;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
@@ -2147,7 +2172,7 @@ bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_positi
 {
     int piece;
 
-    p->side_to_move = index % 2;
+    p->side_to_move = (index % 2 == 0) ? WHITE : BLACK;
     index /= 2;
 
     for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
@@ -2358,7 +2383,7 @@ bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_posit
     uint8_t vals[MAX_PIECES];
     int king_index = 0;
 
-    p->side_to_move = index % 2;
+    p->side_to_move = (index % 2 == 0) ? WHITE : BLACK;
     index /= 2;
 
     /* First, split index into an array of encoding values. */
@@ -2642,7 +2667,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 {
     int piece;
     int en_passant_pawn = -1;
-    int en_passant_color = 0;
+    color_t en_passant_color;
     uint8_t vals[MAX_PIECES];
     uint64_t overlapping_pieces[MAX_PIECES];
 
@@ -2660,7 +2685,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
     }
     bzero(overlapping_pieces, sizeof(overlapping_pieces));
 
-    if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
+    if (tb->encode_stm) p->side_to_move = (index % 2 == 0) ? WHITE : BLACK;  /* else p->side_to_move = WHITE */
 
     /* Binary search for the largest value in index[] that is less than or equal to the
      * (running) index, subtract it out of the index, and store the encoding values.  This loop has
@@ -2685,7 +2710,7 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	    en_passant_pawn = piece;
 
 	    /* If there's an en passant pawn, it must be the opposite color of PTM */
-	    en_passant_color = 1 - p->side_to_move;
+	    en_passant_color = ~ p->side_to_move;
 
 	    /* En passant pawns are encoded on the first row and never have their values reduced */
 	    p->piece_position[en_passant_pawn] = tb->pieces[en_passant_pawn].piece_position[vals[en_passant_pawn]];
@@ -3216,7 +3241,7 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
 	pawns_on_rank[i] = bits;
     }
 
-    for (short color = WHITE; color <= BLACK; color ++) {
+    for (color_t color = WHITE; color <= BLACK; color ++) {
 
 	Glib::ustring location;
 	int j = 0;
@@ -3425,7 +3450,7 @@ bool pawngen_index_to_local_position(tablebase_t *tb, index_t index, local_posit
     }
     bzero(overlapping_pieces, sizeof(overlapping_pieces));
 
-    if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
+    if (tb->encode_stm) p->side_to_move = (index % 2 == 0) ? WHITE : BLACK;  /* else p->side_to_move = WHITE */
 
     /* Extract the pawn encoding from the most significant bits */
 
@@ -4129,10 +4154,10 @@ index_t max_index(tablebase_t * tb)
     return tb->max_index;
 }
 
-int index_to_side_to_move(tablebase_t *tb, index_t index)
+color_t index_to_side_to_move(tablebase_t *tb, index_t index)
 {
     if (tb->encode_stm) {
-	return index & 1;
+	return (index & 1 == 0) ? WHITE : BLACK;
     } else {
 	return WHITE;
     }
@@ -4153,7 +4178,7 @@ int check_1000_positions(tablebase_t *tb)
 
 	memset(&position1, 0, sizeof(position1));
 
-	position1.side_to_move = rand() % 2;
+	position1.side_to_move = (rand() % 2 == 0) ? WHITE : BLACK;
 	position1.en_passant_square = ILLEGAL_POSITION;
 
     retry:
@@ -5588,14 +5613,10 @@ void tablebase::parse_XML(std::istream *instream)
 	for (auto i=0U; i < result.size(); i++) {
 	    auto color_str = ((xmlpp::Element *) result[i])->get_attribute_value("color");
 	    auto type_str = ((xmlpp::Element *) result[i])->get_attribute_value("type");
-	    int color = colors.at(color_str);
+	    color_t color = colors.at(color_str);
 	    int type = restriction_types.at(type_str);
 
-	    if ((color == -1) || (type == -1)) {
-		fatal("Illegal prune-enable\n");
-	    } else {
-		prune_enable[color] |= type;
-	    }
+	    prune_enable[color] |= type;
 	}
     }
 
@@ -5655,7 +5676,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.910 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.911 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -6073,8 +6094,8 @@ bool preload_all_futurebases(tablebase_t *tb)
 
 	/* Check futurebase to make sure its prune enable(s) match our own */
 
-	for (int color = 0; color < 2; color ++) {
-	    if (futurebases[fbnum].prune_enable[color] & ~(tb->prune_enable[futurebases[fbnum].invert_colors ? 1 - color : color])) {
+	for (color_t color = WHITE; color <= BLACK; color ++) {
+	    if (futurebases[fbnum].prune_enable[color] & ~(tb->prune_enable[futurebases[fbnum].invert_colors ? ~color : color])) {
 		fatal("'%s': Futurebase doesn't match prune-enables!\n", filename.c_str());
 		return false;
 	    }
@@ -6301,10 +6322,7 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
 
 inline void flip_side_to_move_local(local_position_t *position)
 {
-    if (position->side_to_move == WHITE)
-	position->side_to_move = BLACK;
-    else
-	position->side_to_move = WHITE;
+    position->side_to_move = ~ position->side_to_move;
 }
 
 inline void flip_side_to_move_global(global_position_t *position)
@@ -6468,11 +6486,11 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
     for (foreign_piece = 0; foreign_piece < foreign_tb->num_pieces; foreign_piece ++) {
 
 	int sq = foreign_position->piece_position[foreign_piece];
-	int color = foreign_position->piece_color[foreign_piece];
+	color_t color = foreign_position->piece_color[foreign_piece];
 
 	if (invert_colors) {
 	    sq = vertical_reflection(sq);
-	    color = 1 - color;
+	    color = ~color;
 	}
 
 	for (local_piece = foreign_tb->pieces[foreign_piece].matching_local_semilegal_group[sq];
@@ -6523,7 +6541,7 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 		if (! invert_colors) {
 		    local_position->piece_color[local_piece] = foreign_position->piece_color[result.extra_piece];
 		} else {
-		    local_position->piece_color[local_piece] = 1 - foreign_position->piece_color[result.extra_piece];
+		    local_position->piece_color[local_piece] = ~ foreign_position->piece_color[result.extra_piece];
 		}
 		result.restricted_piece = local_piece;
 		result.extra_piece = NONE;
@@ -6591,10 +6609,9 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
 
     for (square = 0; square < NUM_SQUARES; square ++) {
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
-	    int color;
 	    int type;
 
-	    for (color = WHITE; color <= BLACK; color ++) {
+	    for (auto color = WHITE; color <= BLACK; color ++) {
 		for (type = KING; type <= PAWN; type ++) {
 
 		    if (global->board[square] == global_pieces[color][type]) {
@@ -6661,7 +6678,7 @@ bool index_to_global_position(tablebase_t *tb, index_t index, global_position_t 
 
 /***** PARSING FEN TO/FROM POSITION STRUCTURES *****/
 
-bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type)
+bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, color_t color, int type)
 {
     int piece;
 
@@ -6681,7 +6698,7 @@ bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int s
     return false;
 }
 
-bool place_piece_in_global_position(global_position_t *position, int square, int color, int type)
+bool place_piece_in_global_position(global_position_t *position, int square, color_t color, int type)
 {
     position->board[square] = global_pieces[color][type];
     return true;
@@ -8198,7 +8215,7 @@ void back_propagate_index(index_t index, int target_dtm)
 	if (expected.does_PTM_win()) {
 	    if (target_dtm > 1) player_wins[index_to_side_to_move(current_tb, index)] ++;
 	} else {
-	    player_wins[1 - index_to_side_to_move(current_tb, index)] ++;
+	    player_wins[~ index_to_side_to_move(current_tb, index)] ++;
 	}
     }
 }
@@ -9546,7 +9563,7 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
     } else {
 
 	bool flag = futurebase->get_flag(future_index);
-	int stm = index_to_side_to_move(futurebase, future_index);
+	color_t stm = index_to_side_to_move(futurebase, future_index);
 
 	/* What happens if we're back propagating a flag from a color-inverted futurebase?
 	 *
@@ -9782,7 +9799,7 @@ int compute_reflections(tablebase_t *tb, tablebase_t *futurebase, int *reflectio
 int max_reflection;
 int reflections[16];
 
-int promotion_color;
+color_t promotion_color;
 int first_back_rank_square;
 int last_back_rank_square;
 int promotion_move;
@@ -10805,7 +10822,7 @@ bool all_futuremoves_handled = true;
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
 
     unsigned int futuremove;
-    int stm = index_to_side_to_move(tb, index);
+    color_t stm = index_to_side_to_move(tb, index);
 
     if (futurevector & unpruned_futuremoves[stm]) {
 	global_position_t global;
@@ -10887,7 +10904,7 @@ bool have_all_futuremoves_been_handled(tablebase_t *tb) {
  * of the same type; a fatal error if their types are different.
  */
 
-int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
+int match_pruning_statement(tablebase_t *tb, color_t color, char *pruning_statement)
 {
     xmlpp::NodeSet result;
     int type = RESTRICTION_NONE;
@@ -10940,7 +10957,7 @@ int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
  * of the same type; a fatal error if their types are different.
  */
 
-void assign_pruning_statement(tablebase_t *tb, int color, int futuremove)
+void assign_pruning_statement(tablebase_t *tb, color_t color, int futuremove)
 {
     int type;
     char * pruning_statement = movestr[color][futuremove];
@@ -11423,7 +11440,7 @@ bool compute_pruned_futuremoves(tablebase_t *tb)
 	Glib::ustring prune_color = (*prune)->eval_to_string("@color");
 	Glib::ustring prune_type = (*prune)->eval_to_string("@type");
 
-	int color = colors.at(prune_color);
+	color_t color = colors.at(prune_color);
 	int type = restriction_types.at(prune_type);
 
 	if (! (type & tb->prune_enable[color])) {
@@ -11601,7 +11618,7 @@ bool check_pruning(tablebase_t *tb) {
 		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		    if ((futurebases[fbnum].extra_piece != -1)
 			&& (futurebases[fbnum].pieces[futurebases[fbnum].extra_piece].color
-			    == (futurebases[fbnum].invert_colors ? 1 - tb->pieces[pawn].color : tb->pieces[pawn].color))
+			    == (futurebases[fbnum].invert_colors ? ~ tb->pieces[pawn].color : tb->pieces[pawn].color))
 			&& (futurebases[fbnum].missing_non_pawn != -1)
 			&& (tb->pieces[futurebases[fbnum].missing_non_pawn].color
 			    == tb->pieces[captured_piece].color)
@@ -11734,9 +11751,9 @@ void remove_futuremove(futurevector_t *fvp, int fm)
 
 void optimize_futuremoves(tablebase_t *tb)
 {
-    int color, fm, fm2, piece, piece2, sq, promotion;
+    int fm, fm2, piece, piece2, sq, promotion;
 
-    for (color = WHITE; color <= BLACK; color ++) {
+    for (auto color = WHITE; color <= BLACK; color ++) {
 
 	for (fm = 0; fm < (int) num_futuremoves[color]; fm++) {
 
@@ -12227,7 +12244,7 @@ bool PTM_in_check(tablebase_t *tb, local_position_t *position)
 bool global_PTM_in_check(global_position_t *position)
 {
     int piece_type;
-    int piece_color = 1 - position->side_to_move;
+    color_t piece_color = ~ position->side_to_move;
     int square;
     int dir;
     struct movement *movementptr;
@@ -12282,7 +12299,7 @@ bool global_PTM_in_check(global_position_t *position)
 bool global_PNTM_in_check(global_position_t *position)
 {
     int piece_type;
-    int piece_color = position->side_to_move;
+    color_t piece_color = position->side_to_move;
     int square;
     int dir;
     struct movement *movementptr;
@@ -13914,7 +13931,7 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 {
     global_position_t global_position, saved_global_position;
     int dir, square;
-    int piece_color;
+    color_t piece_color;
     int piece_type;
     int promotion;
     struct movement * movementptr;
@@ -14003,11 +14020,11 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 					algebraic_notation[movementptr->square]);
 				result.print_score(1);
 			    } else if ((tb->variant == VARIANT_SUICIDE)
-				       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+				       && (tb->num_pieces_by_color[~ piece_color] == 1)) {
 				printf("   %c%sx%s   %s WINS\n", piece_char[piece_type],
 				       algebraic_notation[square],
 				       algebraic_notation[movementptr->square],
-				       colors[1 - piece_color].c_str());
+				       colors[~ piece_color].c_str());
 			    } else {
 				printf("   %c%sx%s   NO DATA\n", piece_char[piece_type],
 				       algebraic_notation[square],
@@ -14132,11 +14149,11 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 				    algebraic_notation[movementptr->square]);
 			    result.print_score(1);
 			} else if ((tb->variant == VARIANT_SUICIDE)
-				   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+				   && (tb->num_pieces_by_color[~ piece_color] == 1)) {
 			    printf("   P%sx%s   %s WINS\n",
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square],
-				   colors[1 - piece_color].c_str());
+				   colors[~ piece_color].c_str());
 			} else {
 			    printf("   P%sx%s   NO DATA\n",
 				   algebraic_notation[square],
@@ -14194,12 +14211,12 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 					piece_char[promoted_pieces[promotion]]);
 				result.print_score(1);
 			    } else if ((tb->variant == VARIANT_SUICIDE)
-				       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+				       && (tb->num_pieces_by_color[~ piece_color] == 1)) {
 				printf("   P%sx%s=%c %s WINS\n",
 				       algebraic_notation[square],
 				       algebraic_notation[movementptr->square],
 				       piece_char[promoted_pieces[promotion]],
-				       colors[1 - piece_color].c_str());
+				       colors[~ piece_color].c_str());
 			    } else {
 				printf("   P%sx%s=%c NO DATA\n",
 				       algebraic_notation[square],
@@ -14230,11 +14247,11 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 				    algebraic_notation[movementptr->square]);
 			    result.print_score(1);
 			} else if ((tb->variant == VARIANT_SUICIDE)
-				   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
+				   && (tb->num_pieces_by_color[~ piece_color] == 1)) {
 			    printf("   P%sx%s   %s WINS\n",
 				   algebraic_notation[square],
 				   algebraic_notation[movementptr->square],
-				   colors[1 - piece_color].c_str());
+				   colors[~ piece_color].c_str());
 			} else {
 			    printf("   P%sx%s   NO DATA\n",
 				   algebraic_notation[square],
@@ -14478,7 +14495,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.910 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.911 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
