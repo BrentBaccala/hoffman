@@ -517,7 +517,7 @@ typedef struct {
     uint64_t board_vector;
     uint64_t PTM_vector;
     uint8_t piece_position[MAX_PIECES];
-    short   piece_color[MAX_PIECES];
+    std::array<short, MAX_PIECES> piece_color;
     uint8_t permuted_piece[MAX_PIECES];
     uint8_t side_to_move;
     uint8_t en_passant_square;
@@ -4190,6 +4190,7 @@ int check_1000_positions(tablebase_t *tb)
 
 		position2.PTM_vector = 0;
 		position2.board_vector = position1.board_vector;
+		position2.piece_color = position1.piece_color;
 
 		if (memcmp(&position1, &position2, sizeof(position1))) {
 		    fatal("Mismatch in check_1000_positions()\n");
@@ -4491,6 +4492,9 @@ void tablebase::parse_XML(std::istream *instream)
 
     white_king = -1;
     black_king = -1;
+
+    num_pieces_by_color[WHITE] = 0;
+    num_pieces_by_color[BLACK] = 0;
 
     for (auto it = result.begin(); it != result.end(); it ++) {
 
@@ -5651,7 +5655,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.909 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.910 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14474,7 +14478,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.909 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.910 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
