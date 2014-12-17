@@ -859,7 +859,7 @@ typedef struct tablebase {
     off_t offset;
     int max_dtm;
     int min_dtm;
-    int invert_colors;
+    bool invert_colors;
     int extra_piece;
     int missing_pawn;
     int missing_non_pawn;
@@ -5676,7 +5676,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.911 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.912 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -6460,7 +6460,7 @@ translation_result trivial_translation = {NONE, NONE, NONE, NONE};
 
 translation_result translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_position_t *foreign_position,
 								tablebase_t *local_tb, local_position_t *local_position,
-								int invert_colors)
+								bool invert_colors)
 {
     int foreign_piece;
     int local_piece;
@@ -6579,7 +6579,7 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 }
 
 translation_result translate_foreign_index_to_local_position(tablebase_t *foreign_tb, index_t index1, int reflection,
-							     tablebase_t *local_tb, local_position_t *local_position, int invert_colors)
+							     tablebase_t *local_tb, local_position_t *local_position, bool invert_colors)
 {
     local_position_t foreign_position;
 
@@ -14495,7 +14495,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.911 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.912 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
