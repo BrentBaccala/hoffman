@@ -5676,7 +5676,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.914 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.915 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -6561,7 +6561,7 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 			&& (local_tb->pieces[local_piece].color != foreign_position->piece_color[result.extra_piece])))) {
 
 		local_position->piece_position[local_piece] = extra_sq;
-		local_position->piece_color[local_piece] = local_tb->pieces[local_piece].color;
+		//local_position->piece_color[local_piece] = local_tb->pieces[local_piece].color;
 		result.restricted_piece = local_piece;
 		result.extra_piece = NONE;
 
@@ -9811,11 +9811,6 @@ int compute_reflections(tablebase_t *tb, tablebase_t *futurebase, int *reflectio
 int max_reflection;
 int reflections[16];
 
-color_t promotion_color;
-int first_back_rank_square;
-int last_back_rank_square;
-int promotion_move;
-
 tablebase_t * futurebase;
 
 std::atomic<index_t> next_future_index;
@@ -9889,6 +9884,11 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 	    || (translation.missing_piece2 != NONE) || (translation.restricted_piece != NONE)) return;
 
 	uint8_t pawn = translation.missing_piece1;
+
+	color_t promotion_color = position.piece_color[pawn];
+	int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
+	int last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
+	int promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
 	/* Since the last move had to have been a promotion move, there is absolutely no way we
 	 * could have en passant capturable pawns in the futurebase position.
@@ -10012,6 +10012,13 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 	if ((translation.extra_piece == NONE) || (translation.missing_piece1 == NONE)
 	    || (translation.missing_piece2 == NONE) || (translation.restricted_piece != NONE)) return;
+
+	uint8_t pawn = translation.missing_piece1;
+
+	color_t promotion_color = position.piece_color[pawn];
+	int first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
+	int last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
+	int promotion_move = ((promotion_color == WHITE) ? 8 : -8);
 
 	/* Since the last move had to have been a promotion move, there is absolutely no way
 	 * we could have en passant capturable pawns in the futurebase position.
@@ -10730,12 +10737,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
-
-		promotion_color = tb->pieces[futurebase->extra_piece].color;
-		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
-		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
-		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
-
 		backprop_function = &propagate_moves_from_promotion_futurebase;
 	    }
 
@@ -10745,12 +10746,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
-
-		promotion_color = tb->pieces[futurebase->extra_piece].color;
-		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
-		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
-		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
-
 		backprop_function = &propagate_moves_from_promotion_capture_futurebase;
 	    }
 
@@ -14507,7 +14502,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.914 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.915 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
