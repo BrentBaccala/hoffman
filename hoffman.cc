@@ -1859,7 +1859,7 @@ bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_positio
 {
     int piece;
 
-    p->side_to_move = (index & 1 == 0) ? WHITE : BLACK;
+    p->side_to_move = ((index & 1) == 0) ? WHITE : BLACK;
     index >>= 1;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
@@ -2028,7 +2028,7 @@ bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_positi
     int piece;
     uint8_t vals[MAX_PIECES];
 
-    p->side_to_move = (index & 1 == 0) ? WHITE : BLACK;
+    p->side_to_move = ((index & 1) == 0) ? WHITE : BLACK;
     index >>= 1;
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
@@ -4157,7 +4157,7 @@ index_t max_index(tablebase_t * tb)
 color_t index_to_side_to_move(tablebase_t *tb, index_t index)
 {
     if (tb->encode_stm) {
-	return (index & 1 == 0) ? WHITE : BLACK;
+	return ((index & 1) == 0) ? WHITE : BLACK;
     } else {
 	return WHITE;
     }
@@ -5676,7 +5676,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.915 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.916 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14502,7 +14502,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.915 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.916 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
