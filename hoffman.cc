@@ -5676,7 +5676,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.916 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.917 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -5788,7 +5788,7 @@ public:
     basic_gzip_decompressor( int buffer_size = default_device_buffer_size )
 	: base_type(buffer_size) { }
     ulong crc() { return this->filter().crc(); }
-    int total_out() {  return this->filter().total_out; }
+    ulong total_out() {  return this->filter().total_out; }
     bool eof() { return this->filter().eof(); }
 
     template <typename T>
@@ -14502,7 +14502,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.916 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.917 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
