@@ -153,8 +153,6 @@ namespace io = boost::iostreams;
 
 #include <errno.h>		/* for errno and strerror() */
 
-#include <valgrind/helgrind.h>
-
 #ifdef HAVE_LIBREADLINE
 #include <readline.h>		/* The GNU readline library (optional) */
 #include <history.h>
@@ -5676,7 +5674,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.917 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.918 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -13296,9 +13294,6 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
     positive_passes_needed = new bool[max_tracked_dtm + 1] ();
     negative_passes_needed = new bool[-min_tracked_dtm + 1] ();
 
-    VALGRIND_HG_DISABLE_CHECKING(positive_passes_needed, (max_tracked_dtm + 1)*sizeof(bool));
-    VALGRIND_HG_DISABLE_CHECKING(negative_passes_needed, (-min_tracked_dtm + 1)*sizeof(bool));
-
     if (!using_proptables) {
 
 	/* No proptables.  Allocate a futurevectors array, initialize the tablebase, back propagate
@@ -14502,7 +14497,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.917 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.918 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
