@@ -43,7 +43,7 @@ check-fast: $(PROBES-FAST)
 			if [ "$$files" != "" -a "$$files" != "doesNotExist.htb" ]; then			\
 				make $$files || exit 1;							\
 			fi;										\
-			echo $$input									\
+			echo -e $$input									\
 				| TERM=dumb $(HOFFMAN) -p $$files 2>&1 | tee /dev/stderr		\
 				| tail -n +2								\
 				| md5sum | ( read md5actual junk;					\
@@ -62,7 +62,7 @@ check-slow: $(PROBES-SLOW)
 			if [ "$$files" != "" -a "$$files" != "doesNotExist.htb" ]; then			\
 				make $$files || exit 1;							\
 			fi;										\
-			echo $$input									\
+			echo -e $$input									\
 				| TERM=dumb $(HOFFMAN) -p $$files 2>&1 | tee /dev/stderr		\
 				| tail -n +2								\
 				| md5sum | ( read md5actual junk;					\
