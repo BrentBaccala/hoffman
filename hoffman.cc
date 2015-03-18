@@ -89,6 +89,16 @@
 
 #include "config.h"	/* GNU configure script figures out our build options and writes them here */
 
+/* C99 requires a macro to be defined prior to including <inttypes.h> to obtain printf formatting
+ * macros PRIu32 and PRIu64.  Under cygwin, however, one of the other include files seems to include
+ * <inttypes.h> without this macro set, and the file's protection against multiple inclusion then
+ * prevents us from including it again to obtain the needed macros.  Therefore, we set the macro and
+ * include <inttypes.h> before almost anything else.
+ */
+
+#define __STDC_FORMAT_MACROS
+#include <inttypes.h>
+
 #include <algorithm>		/* for std::sort */
 #include <deque>
 #include <vector>
@@ -140,9 +150,6 @@ namespace io = boost::iostreams;
 #include <fcntl.h>		/* for O_RDONLY */
 #include <netdb.h>		/* for gethostbyname() */
 #include <getopt.h>		/* for GNU getopt_long() */
-
-#define __STDC_FORMAT_MACROS
-#include <inttypes.h>		/* C99 integer types */
 
 #include <fnmatch.h>		/* for glob matching of pruning statements */
 
@@ -5674,7 +5681,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.918 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.919 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14497,7 +14504,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.918 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.919 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
