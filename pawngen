@@ -1,12 +1,15 @@
 #! /usr/bin/perl
 # -*- fill-column: 100; -*-
 #
-# PAWNGEN - generates a directory full of Hoffman XML control files to analyze a particular pawn
-# configuration, with more complicated pruning operations than are possible with a single run.
-# Starting from a particular pawn configuration, this program will systematically consider all
-# possible pawn movements and promotions that can result from the position.  The 'pawngen-condition'
-# attribute on pruning statements allows them to be applied selectively at various captures and
-# promotions in the analysis.
+# PAWNGEN - expands <pawngen> elements in a Hoffman XML control file.
+#
+# The main program can only handle <pawngen> elements with a fixed number of white and black pawns.
+# This script takes a control file with a variable number of pawns and creates a set of control
+# files, each with a fixed number and color of pawns.
+#
+# The generated control files are named identically to the original file, with the addition of a
+# suffix of the form '-#WHITE-#BLACK', i.e, 'fine67.xml' generates files like 'fine67-3-2.xml',
+# which would evaluate all positions with three white pawns and two black ones.
 
 use strict;
 
@@ -21,12 +24,6 @@ $LIST_SEPARATOR = undef;
 #open(DEBUG2,">&STDOUT");
 
 my $url_prefix;
-
-# Upper limit on number of positions we'll assign to a single control file.  Hardwired now at 1 Gig.
-# Would like this to become a command-line option.  Would like to take size of entries table and
-# futuremoves table into account.
-
-my $positions_upper_limit = 1024*1024*1024;
 
 my %piece_names;
 
@@ -48,812 +45,14 @@ my $XMLparser = XML::LibXML->new();
 #$XMLparser->validation(1);
 $XMLparser->load_ext_dtd(0);
 
-my $XMLtree;
-my $XMLcontrolFile;
-
 my @white_prune_enables;
 my @black_prune_enables;
 
 my @white_XML_prunes;
 my @black_XML_prunes;
 
-# This next several hashes are indexed by a 'position', which is a colon-separated string with four
-# fields: $white_pieces, $white_pawns, $black_pieces, $black_pawns.  The pieces are strings of
-# capital characters, one for each piece, and the pawns are strings of board squares in algebraic
-# notation.  %positions is either a reference to an XML futurebase element, or a string indicating
-# the name of the generated control file that handles this position, or undef if we haven't assigned
-# a control file to this position yet.  %futurebases is an array ref to a list of XML futurebase
-# elements that we need for this position.  %prunes is an array ref to a list of XML prune elements
-# that we need for this position, and %prunes_hash is some kind of string hash of %prunes so we can
-# quickly ensure that only positions with identical prunes are grouped together in a control file.
-
-my %positions;
 my %futurebases;
-my %prunes;
-my %prunes_hash;
 
-my %white_base;
-my %white_pawns;
-my %black_base;
-my %black_pawns;
-
-# inverse sort
-
-sub isort {
-    return sort {$b cmp $a} @_;
-}
-
-# This Perl equivalent to "sort | uniq" might not be portable to other versions of Perl (I'm using
-# 5.8.8), as it modifies the array being sorted.
-
-sub uniqsort {
-#    my @copy = @_;
-#    return grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @copy;
-    my @sorted = sort @_;
-    for (my $i = 0; $i < $#sorted; $i++) {
-	splice @sorted,$i,1 while (($i < $#sorted) and ($sorted[$i] eq $sorted[$i+1]));
-    }
-    return @sorted;
-}
-
-sub debuguniqsort {
-#    return grep {defined $_ } sort { ($a cmp $b) or (($a = undef),0) } @_;
-    my @sorted = sort @_;
-    for (my $i = 0; $i < $#sorted; $i++) {
-	print " @sorted\n";
-	splice @sorted,$i,1 while (($i < $#sorted) and ($sorted[$i] eq $sorted[$i+1]));
-    }
-    return @sorted;
-}
-
-sub normalize_position {
-    my ($position) = @_;
-    my ($white_pieces, $white_pawns, $black_pieces, $black_pawns) = split(/:/, $position);
-
-    print DEBUG "Normalizing $position\n";
-
-    my @white_pawns = isort unpack "(a2)*", $white_pawns;
-    my @black_pawns = sort unpack "(a2)*", $black_pawns;
-
-    return "$white_pieces:@white_pawns:$black_pieces:@black_pawns";
-}
-
-sub pattern_to_name {
-    my @pattern = @_;
-
-    return join '', map { substr($_, 0, 1) eq "K" ? $_ : substr($_, 0, 2) } @pattern;
-}
-
-# Prune statement matching.  Given a movement and a list of prune statements (which can be shell
-# glob expressions), figure out if any of them match and return TRUE if so.
-
-sub match_prune {
-    my ($movement, @prune_list) = @_;
-
-    foreach my $prune_statement (@prune_list) {
-	$prune_statement =~ s/\?/\./g;
-	$prune_statement =~ s/\*/\.\*/g;
-	return 1 if ($movement =~ /^$prune_statement$/);
-    }
-
-    return 0;
-}
-
-# Given a particular position, in standard position format (see above), we now compute all possible
-# future positions that can arise from it.  These aren't exactly futurebases, yet, because we
-# haven't yet tried to collapse multiple positions together (using plus pawns) in a single control
-# file, but the positions that come out of this routine form the core data of this program.
-#
-# Critical to the operation of this algorithm is the sorting of the pawn positions.
-# First of all, we keep pawn positions sorted so that there's no way to confuse "a5 b6"
-# with "b6 a5".  Next, we sort white pawn in inverse sort order, so that "a5" comes
-# before "a2".  This makes plus-pawns work easy and well - we just run through
-# the pawns in (inverse) sort order, and advance each plus-pawn until it hits something.
-
-sub forward_pawn_move {
-    my ($color, $pawn) = @_;
-
-    if ($color eq 'white') {
-	$pawn =~ tr/[2-7]/[3-8]/;
-    } else {
-	$pawn =~ tr/[2-7]/[1-6]/;
-    }
-
-    return $pawn;
-}
-
-sub reverse_pawn_move {
-    my ($color, $pawn) = @_;
-
-    return &forward_pawn_move($color eq 'white' ? 'black' : 'white', $pawn);
-}
-
-sub add_piece_to_position {
-    my ($position, $color, $piece) = @_;
-    my ($white_pieces, $white_pawns, $black_pieces, $black_pawns) = split(/:/, $position);
-
-    if ($color eq 'white') {
-	$white_pieces .= $piece;
-    } else {
-	$black_pieces .= $piece;
-    }
-
-    return join(':', $white_pieces, $white_pawns, $black_pieces, $black_pawns);
-}
-
-sub remove_pawn_from_position {
-    my ($position, $pawn) = @_;
-
-    $position =~ s/$pawn//;
-
-    return $position;
-}
-
-sub replace_pawn_in_position {
-    my ($position, $oldpawn, $newpawn) = @_;
-
-    $position =~ s/$oldpawn/$newpawn/;
-
-    return $position;
-}
-
-sub remove_piece_from_position {
-    my ($position, $color, $piece) = @_;
-    my ($white_pieces, $white_pawns, $black_pieces, $black_pawns) = split(/:/, $position);
-
-    if ($color eq 'white') {
-	$white_pieces =~ s/$piece//;
-    } else {
-	$black_pieces =~ s/$piece//;
-    }
-
-    return join(':', $white_pieces, $white_pawns, $black_pieces, $black_pawns);
-}
-
-sub compute_futurebases_from_one_pawn {
-    my ($color, $position, $pawn, $prunes, $enemy_prunes) = @_;
-    my ($white_pieces, $white_pawns, $black_pieces, $black_pawns) = split(/:/, $position);
-
-    my @white_pieces = unpack "(a1)*", $white_pieces;
-    my @black_pieces = unpack "(a1)*", $black_pieces;
-    my @white_pawns = isort unpack "(a2)*", $white_pawns;
-    my @black_pawns = sort unpack "(a2)*", $black_pawns;
-
-    my @futurebases;
-
-    my $pawns = $white_pawns . $black_pawns;
-
-    my ($enemy_color, @enemy_pieces, $enemy_pawns, $friendly_pawns);
-
-    if ($color eq 'white') {
-	$enemy_color = 'black';
-	@enemy_pieces = @black_pieces;
-	$enemy_pawns = $black_pawns;
-	$friendly_pawns = $white_pawns;
-    } else {
-	$enemy_color = 'white';
-	@enemy_pieces = @white_pieces;
-	$enemy_pawns = $white_pawns;
-	$friendly_pawns = $black_pawns;
-    }
-
-    my $forward_move = &forward_pawn_move($color, $pawn);
-
-    if ($forward_move =~ /.[18]/) {
-
-	# this is a promotion situation
-
-	foreach my $promotion ('Q', 'R', 'B', 'N') {
-	    if (not &match_prune("P=$promotion", @$prunes) and not &match_prune("P$pawn=$promotion", @$prunes)) {
-		my $position2 = &add_piece_to_position($position, $color, $promotion);
-		$position2 = &remove_pawn_from_position($position2, $pawn);
-		push @futurebases, &normalize_position($position2);
-	    }
-
-	    # consider capture promotions
-
-	    foreach my $enemy_piece (@enemy_pieces) {
-		if ($enemy_piece ne 'K' and not &match_prune("Px$enemy_piece=$promotion", @$prunes)) {
-		    my $position2 = &remove_piece_from_position($position, $enemy_color, $enemy_piece);
-		    $position2 = &add_piece_to_position($position2, $color, $promotion);
-		    $position2 = &remove_pawn_from_position($position2, $pawn);
-		    push @futurebases, &normalize_position($position2);
-		}
-	    }
-	}
-
-    } else {
-
-	# not a promotion situation, try to move the pawn forward
-
-	if ($pawns !~ /$forward_move/) {
-	    if (not &match_prune("P$forward_move", @$prunes)) {
-		my $position2 = &replace_pawn_in_position($position, $pawn, $forward_move);
-		push @futurebases, &normalize_position($position2);
-	    }
-
-	    if (($color eq 'white' and $forward_move =~ /.3/) or ($color eq 'black' and $forward_move =~ /.6/)) {
-		my $forward_move2 = &forward_pawn_move($color, $forward_move);
-		if ($pawns !~ /$forward_move2/ and not &match_prune("P$forward_move2", @$prunes)) {
-		    my $position3 = &replace_pawn_in_position($position, $pawn, $forward_move2);
-		    push @futurebases, &normalize_position($position3);
-		}
-	    }
-	}
-
-	# ordinary (non-promotion) captures by the pawn
-
-	foreach my $direction ("a-to-h", "h-to-a") {
-	    next if ($direction eq "a-to-h" and $pawn =~ /h./);
-	    next if ($direction eq "h-to-a" and $pawn =~ /a./);
-
-	    my $capture_move = $forward_move;
-
-	    if ($direction eq "a-to-h") {
-		$capture_move =~ tr/[a-g]/[b-h]/;
-	    } else {
-		$capture_move =~ tr/[b-h]/[a-g]/;
-	    }
-
-	    # can the pawn capture a piece?
-
-	    # This is where we used to special case $consider_all_captures, to determine if we
-	    # should consider pawn positions that arise after we queen, then capture with a pawn
-	    # (moving the pawn to a different file), then queen, then capture again to a different
-	    # file, etc., or just those pawn positions that arise directly from the current
-	    # position?
-	    #
-	    # XXX figure how to make this work again
-
-	    foreach my $enemy_piece (@enemy_pieces) {
-		if ($enemy_piece ne 'K' and not &match_prune("Px$enemy_piece", @$prunes) and $pawns !~ /$capture_move/) {
-		    my $position2 = &remove_piece_from_position($position, $enemy_color, $enemy_piece);
-		    $position2 = &replace_pawn_in_position($position2, $pawn, $capture_move);
-		    push @futurebases, &normalize_position($position2);
-		}
-	    }
-
-	    # can the pawn capture another pawn?
-
-	    if (not &match_prune("PxP", @$prunes) and $enemy_pawns =~ /$capture_move/) {
-		# We can't use a single replace_pawn_in_position here, because that replaces it with a pawn of the same color
-		my $position4 = &remove_pawn_from_position($position, $capture_move);
-		$position4 = &replace_pawn_in_position($position4, $pawn, $capture_move);
-		push @futurebases, &normalize_position($position4);
-	    }
-
-	    # en passant capture?
-
-	    if (not &match_prune("PxP", @$prunes) and ($pawns !~ /$capture_move/)
-		and (($color eq 'white' and $capture_move =~ /.6/) or ($color eq 'black' and $capture_move =~ /.3/))) {
-
-		my $oldpawn = &reverse_pawn_move($color, $capture_move);
-		if ($enemy_pawns =~ /$oldpawn/) {
-		    my $position5 = &remove_pawn_from_position($position, $oldpawn);
-		    $position5 = &replace_pawn_in_position($position5, $pawn, $capture_move);
-		    push @futurebases, &normalize_position($position5);
-		}
-	    }
-	}
-    }
-
-    # captures of the pawn by a piece (captures by another pawn will be considered in another pass
-    # through this routine).  Special case for captures by the king (an optimization) - look to see
-    # if a friendly pawn is protecting this one, if so it can't be captured by the king.
-
-    foreach my $enemy_piece (@enemy_pieces) {
-	if (not &match_prune("${enemy_piece}xP", @$enemy_prunes)) {
-	    if ($enemy_piece eq 'K') {
-		my $protector1 = &reverse_pawn_move($color, $pawn);
-		my $protector2 = &reverse_pawn_move($color, $pawn);
-		$protector1 =~ tr/[a-h]/[b-i]/;
-		$protector2 =~ tr/abcdefgh/xabcdefg/;
-		next if ($friendly_pawns =~ /$protector1/ or $friendly_pawns =~ /$protector2/);
-	    }
-	    my $position6 = remove_pawn_from_position($position, $pawn);
-	    push @futurebases, &normalize_position($position6);
-	}
-    }
-
-    return @futurebases;
-}
-
-sub compute_futurebases {
-    my ($position) = @_;
-    my ($white_pieces, $white_pawns, $black_pieces, $black_pawns) = split(/:/, $position);
-
-    my @white_pieces = unpack "(a1)*", $white_pieces;
-    my @black_pieces = unpack "(a1)*", $black_pieces;
-    my @white_pawns = isort unpack "(a2)*", $white_pawns;
-    my @black_pawns = sort unpack "(a2)*", $black_pawns;
-
-    my @futurebases;
-    my (@prunes, @white_prunes, @black_prunes);
-
-    if ($position eq "K::K:c7d5") {
-	print VERBOSE "Considering $position\n";
-    }
-
-    # Look into the global XML control file and extract the prune statements.  Not all of them may
-    # apply to a given position; we allow arbitrary Perl code in the prune statement to selectively
-    # apply them.  XXX need to track concede/discard, too
-
-    foreach my $white_prune (@white_XML_prunes) {
-	my $condition_present = $white_prune->findnodes('@pawngen-condition')->size();
-	if ($condition_present) {
-	    my $condition = $white_prune->findvalue('@pawngen-condition');
-	    my $eval_result = eval $condition;
-	    die "Faulty pawngen-condition: $condition: $@\n" if not defined $eval_result;
-	    next unless $eval_result;
-	}
-	push @prunes, $white_prune;
-	push @white_prunes, $white_prune->findvalue('@move');
-    }
-
-    foreach my $black_prune (@black_XML_prunes) {
-	my $condition_present = $black_prune->findnodes('@pawngen-condition')->size();
-	if ($condition_present) {
-	    my $condition = $black_prune->findvalue('@pawngen-condition');
-	    my $eval_result = eval $condition;
-	    die "Faulty pawngen-condition: $condition: $@\n" if not defined $eval_result;
-	    next unless $eval_result;
-	}
-	push @prunes, $black_prune;
-	push @black_prunes, $black_prune->findvalue('@move');
-    }
-
-    # consider all pawn possibilities
-
-    foreach my $white_pawn (@white_pawns) {
-	push @futurebases, &compute_futurebases_from_one_pawn('white', $position, $white_pawn, \@white_prunes, \@black_prunes);
-    }
-
-    foreach my $black_pawn (@black_pawns) {
-	push @futurebases, &compute_futurebases_from_one_pawn('black', $position, $black_pawn, \@black_prunes, \@white_prunes);
-    }
-
-    # consider piece-on-piece captures
-
-    foreach my $white_piece (@white_pieces) {
-	if ($white_piece ne 'K') {
-	    foreach my $black_piece (@black_pieces) {
-		if (not &match_prune("${black_piece}x${white_piece}", @black_prunes)) {
-		    push @futurebases, &normalize_position(&remove_piece_from_position($position, 'white', $white_piece));
-		    last;
-		}
-	    }
-	}
-    }
-    foreach my $black_piece (@black_pieces) {
-	if ($black_piece ne 'K') {
-	    foreach my $white_piece (@white_pieces) {
-		if (not &match_prune("${white_piece}x${black_piece}", @white_prunes)) {
-		    push @futurebases, &normalize_position(&remove_piece_from_position($position, 'black', $black_piece));
-		    last;
-		}
-	    }
-	}
-    }
-
-    $futurebases{$position} = \@futurebases;
-    $prunes{$position} = \@prunes;
-    $prunes_hash{$position} = "@prunes";
-
-    #return (\@futurebases, \@white_prunes, \@black_prunes);
-    return @futurebases;
-}
-
-sub consider_position {
-    my ($position) = @_;
-
-    $position = &normalize_position($position);
-
-    return if (exists $positions{$position});
-    $positions{$position} = undef;
-
-    foreach my $new_position (&compute_futurebases($position)) {
-	&consider_position($new_position);
-    }
-}
-
-# Patterns can match multiple positions.  A pattern is a list of pieces and pawns, each pawn a
-# separate list item - white first, then black, pieces before pawns within each color.  Pieces are
-# just a string of capital characters starting with 'K'.  Pawns are a board square (like "c2") or a
-# string of board squares (like "c2c3c4") or plus syntax (like "c2+").  Returns a list of the
-# positions matching a given pattern.
-
-# N.B: This routine assumes the all pawns on a file either are or are not plus pawns.  It also
-# assumes by the very structure of a "position" that nothing other than a pawn could block a pawn
-# (because no other pieces are allowed to be restricted).  Pawngen currently rejects any
-# restrictions on non-pawns, or pawn restrictions other than simple plus pawns.  ANY MORE
-# COMPLICATED RESTRICTIONS WILL BREAK THIS CODE.
-
-# N.B: This routine REQUIRES that white pawns be 'isort'ed and black pawns be 'sort'ed.  This is
-# because we advance plus pawns forward until they hit something, and if "something" is another plus
-# pawn, of the same color (thus doubled), then we need to make sure that the leading pawn is
-# advanced first.  For white pawns, this means that an "a5+" pawn has to come before an "a4+",
-# thus isort, and for black pawns it's reversed, so sort.
-
-# XXX could be made much more efficient by considering each file separately.
-
-sub expand_pattern_list {
-    my ($prefix, $first, @sequence) = @_;
-    my @retval = ();
-
-    # If there are no colons in $prefix, it is because this routine is being called from another
-    # routine (non-recursively), so $prefix is the white piece list.  Add a colon to separate it
-    # from the white pawn list.
-
-    $prefix .= ":" if $prefix !~ /:/;
-
-    if (not defined $first) {
-
-	return &normalize_position($prefix);
-
-    } elsif ($first =~ /^K/) {
-
-	# The black piece list.  Add colons to separate it from the white pawn list and the black
-	# pawn list.
-
-	return &expand_pattern_list($prefix . ":" . $first . ":", @sequence);
-
-    } elsif ($first =~ /^(..)\+$/) {
-
-	# plus pawns - advance them as far as they can go without hitting another pawn
-
-	# This is where we assume that any other pawn on the file of a plus pawn is also a plus
-	# pawn.  If not, this logic isn't right if sequence includes a list of squares at some
-	# point, because only one of them would be enough to stop the plus pawn.
-
-	my $pawn = $1;
-	if ($prefix =~ /^K[^K]*$/) {
-	    # white plus-pawn
-	    while ($pawn !~ /8/ and "$prefix@sequence" !~ /$pawn/) {
-		push @retval, &expand_pattern_list($prefix . $pawn, @sequence);
-		$pawn =~ tr/[2-7]/[3-8]/;
-	    }
-	} else {
-	    # black plus-pawn
-	    while ($pawn !~ /1/ and "$prefix@sequence" !~ /$pawn/) {
-		push @retval, &expand_pattern_list($prefix . $pawn, @sequence);
-		$pawn =~ tr/[2-7]/[1-6]/;
-	    }
-	}
-
-    } elsif ($first ne "") {
-
-	# conventional restriction
-	#
-	# We don't include any positions with pawns on the same square, because they don't exist and
-	# would thus invalidate this pattern.  Hoffman, however, can handle them (by flaging them
-	# illegal), so we don't want to invalidate patterns just because they generate some
-	# duplicates.
-
-	foreach my $square (unpack "(a2)*", $first) {
-	    if ($prefix !~ /$square/) {
-		push @retval, &expand_pattern_list($prefix . $square, @sequence);
-	    }
-	}
-
-    } else {
-
-	# unrestricted pawn
-
-	foreach my $row ('2' .. '7') {
-	    foreach my $col ('a' .. 'h') {
-		push @retval, &expand_pattern_list($prefix . $col . $row, @sequence);
-	    }
-	}
-
-    }
-
-    return @retval;
-}
-
-#$OUTPUT_FIELD_SEPARATOR="\n";
-#print &expand_pattern_list("K", "c4+", "d3d4", "d3d4", "K"), "\n";
-#exit;
-
-# Assign all positions that match a given pattern list to a futurebase.  Can be passed in either a
-# string (for a tablebase that we're going to generate), or an XML node pointer (for a futurebase
-# specified in the original control file).  It is because of this later case that we assign whether
-# or not the position already exists in the %positions hash, since we don't know when we process a
-# futurebase which of its positions will ultimately be required.
-
-sub assignallpositions {
-    my ($target, @pattern) = @_;
-
-    foreach my $position (&expand_pattern_list(@pattern)) {
-	$positions{$position} = $target;
-    }
-
-    #print STDERR "$target assigned to ", &expand_pattern_list(@pattern), "\n";
-}
-
-# Checks all positions resulting from a given pattern and returns either 0 (if at least one of them
-# either doesn't exist in our table or has already been assigned) or a count of the number of unique
-# positions matched by the pattern.
-
-sub checkallpositions {
-
-    my @input_positions = &expand_pattern_list(@_);
-    my $prune_hash;
-
-    print DEBUG2 "Checking @_ : $#input_positions @input_positions\n";
-
-    my @unique_positions = &uniqsort(@input_positions);
-
-    print DEBUG2 "Unique: $#unique_positions @unique_positions\n";
-
-    foreach my $position (@unique_positions) {
-	if ((not exists $positions{$position}) or (defined $positions{$position})) {
-	    print DEBUG2 "Rejecting because of $position\n";
-	    return 0;
-	}
-	if (not defined $prune_hash) {
-	    $prune_hash = $prunes_hash{$position};
-	} elsif ($prune_hash ne $prunes_hash{$position}) {
-	    print DEBUG2 "Rejecting because $position doesn't match prune hash\n";
-	    return 0;
-	}
-    }
-
-    #return 1 + $#positions;
-    return 1 + $#unique_positions;
-}
-
-# Given a position, attempt to collapse a group of related positions together, using plus pawns
-# and/or pawns on multiple squares.  Doing this perfectly is probably NP-complete, so we use a
-# simple algorithm and hope for the best.  Record the results in some global hashes (%white_base,
-# %white_pawns, %black_base, %black_pawns), pick a control file name to use as a key, and assign the
-# control file name to the entries in the %positions hash that we've successfully matched.
-
-sub genset {
-    my ($position) = @_;
-
-    print DEBUG "Genset $position\n";
-
-    # We search for plus-pawn positions by trying to back up each pawn as far as it can go,
-    # going through the pawns in order, so we want them sorted so that the trailing pawn
-    # comes first.  For white pawns, this means standard sort order (a4 then a5), for
-    # black pawns this means reverse sort order (a5 then a4)
-    #
-    # Once we are testing for positions, we'll be moving the plus-pawns forward, so we want
-    # them with lead pawn first.  That means inverse sort order for white (a5 then a4),
-    # and standard sort order for black (a4 then a5).
-    #
-    # XXX - A possible problem with these regex's - the "B" for bishop could get confused
-    # with a "b" for a b-pawn, but that isn't a problem if we always use caps B for
-    # bishop and lowercase b for pawns.
-
-    my ($white_pieces, $white_pawns, $black_pieces, $black_pawns) = split(/:/, $position);
-
-    my @white_pieces = unpack "(a1)*", $white_pieces;
-    my @black_pieces = unpack "(a1)*", $black_pieces;
-
-    # Ignoring pawns for the moment, figure how many positions we've got just from the pieces.  This
-    # is roughly 64 ^ (number of fully mobile pieces), though we do the kings separately, since
-    # there's only 3612 legal king position pairs, as opposed to the naive 64^2 = 4096, and multiply
-    # by two to handle side-to-move.
-
-    my $PositionMultiple = (1 << (6*(length($white_pieces) + length($black_pieces) - 2))) * 7224;
-    my $KiloPositionMultiple = $PositionMultiple / 1024;
-
-    # Based on the number of piece positions and an upper limit on the total number of positions,
-    # compute an upper limit on the number of distinct pawn configuration.
-
-    my $count_upper_limit = int($positions_upper_limit/$PositionMultiple);
-
-    # There's two different ways we can expand the location of each pawn - by turning it into a
-    # plus-pawn, or by explicitly adding to its list of squares.  It's really not clear just what
-    # combination of these ways is best, so we try both possibilties for each file, keeping count of
-    # which of them could assign the most positions, and use that at the end.
-    #
-    # When we save the positions, sort the black pawns in reverse order here so that doubled pawns
-    # appear in board order, as is (currently) required by Hoffman.
-
-    my $files_in_play = "";
-
-    foreach my $file ('a' .. 'h') {
-	$files_in_play .= $file if grep /$file/, $white_pawns.$black_pawns;
-    }
-
-    my $num_files_in_play = length($files_in_play);
-    my $file_limit = (1 << $num_files_in_play);
-
-    my $best_count = 1;
-    my @best_white_pawns = sort unpack "(a2)*", $white_pawns;
-    my @best_black_pawns = isort unpack "(a2)*", $black_pawns;
-
-    for (my $file_types = 0; $file_types < $file_limit; $file_types ++) {
-
-	# OK, I just had to get crazy with Perl here.  We want a list of files that we're going to
-	# put plus-pawns on, corresponding to the binary number $file_types.  So we convert
-	# $file_types into a bitstring, transform it into a template (with 'x' to skip a byte and
-	# 'a' to convert it), then use that template on $files_in_play to compute $plus_files.
-
-	my $template = unpack "b$num_files_in_play", pack("i", $file_types);
-	$template =~ tr/01/xa/;
-	my $plus_files = join '', unpack $template, $files_in_play;
-
-	#print STDERR "$white_pawns$black_pawns $file_types $num_files_in_play $template $files_in_play $plus_files\n";
-
-	my @white_pawns = sort unpack "(a2)*", $white_pawns;
-	my @black_pawns = isort unpack "(a2)*", $black_pawns;
-
-	# Still crazy.  These next three loops takes advantage of the Perl-ism that foreach's local
-	# variable is actually an alias for the list item.  So modifying $white_pawn modifies
-	# @white_pawns.  Yep.
-
-	foreach my $pawn (@white_pawns, @black_pawns) {
-	    my $pawn_file = substr($pawn,0,1);
-	    $pawn .= "+" if (index($plus_files, $pawn_file) != -1);
-	}
-
-	my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
-						 $black_pieces, (sort @black_pawns));
-	if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
-	    $best_count = $candidate_count;
-	    @best_white_pawns = sort @white_pawns;
-	    @best_black_pawns = isort @black_pawns;
-	} elsif ($candidate_count == 0) {
-	    next;
-	}
-
-	foreach my $white_pawn (@white_pawns) {
-
-	    if (length($white_pawn) == 3) {
-
-		# A plus pawn.  Back it up as far as it can go.
-
-		while ($white_pawn =~ /^(.[3-7])/) {
-		    $white_pawn =~ tr/[3-7]/[2-6]/;
-
-		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
-							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
-			$best_count = $candidate_count;
-			@best_white_pawns = sort @white_pawns;
-			@best_black_pawns = isort @black_pawns;
-		    } elsif ($candidate_count == 0) {
-			$white_pawn =~ tr/[2-6]/[3-7]/;
-			last;
-		    }
-		}
-
-	    } else {
-
-		# consider advancing white pawn
-
-		while ($white_pawn =~ /(.[2-6])$/) {
-		    my $lastpawn = $1;
-		    $lastpawn =~ tr/[2-6]/[3-7]/;
-
-		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
-		    $white_pawn .= $lastpawn;
-
-		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
-							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
-			$best_count = $candidate_count;
-			@best_white_pawns = sort @white_pawns;
-			@best_black_pawns = isort @black_pawns;
-		    } elsif ($candidate_count == 0) {
-			$white_pawn = substr($white_pawn, 0, -2);
-			last;
-		    }
-		}
-
-		# consider retreating white pawn
-
-		while ($white_pawn =~ /^(.[3-7])/) {
-		    my $lastpawn = $1;
-		    $lastpawn =~ tr/[3-7]/[2-6]/;
-
-		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
-		    $white_pawn = $lastpawn . $white_pawn;
-
-		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
-							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
-			$best_count = $candidate_count;
-			@best_white_pawns = sort @white_pawns;
-			@best_black_pawns = isort @black_pawns;
-		    } elsif ($candidate_count == 0) {
-			$white_pawn = substr($white_pawn, 2);
-			last;
-		    }
-		}
-	    }
-	}
-
-	foreach my $black_pawn (@black_pawns) {
-
-	    if (length($black_pawn) == 3) {
-
-		# A plus pawn.  Back it up as far as it can go.
-
-		while ($black_pawn =~ /^(.[2-6])/) {
-		    $black_pawn =~ tr/[2-6]/[3-7]/;
-
-		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
-							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
-			$best_count = $candidate_count;
-			@best_white_pawns = sort @white_pawns;
-			@best_black_pawns = isort @black_pawns;
-		    } elsif ($candidate_count == 0) {
-			$black_pawn =~ tr/[3-7]/[2-6]/;
-			last;
-		    }
-		}
-
-	    } else {
-
-		# consider advancing black pawn
-
-		while ($black_pawn =~ /(.[3-7])$/) {
-		    my $lastpawn = $1;
-		    $lastpawn =~ tr/[3-7]/[2-6]/;
-
-		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
-		    $black_pawn .= $lastpawn;
-
-		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
-							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
-			$best_count = $candidate_count;
-			@best_white_pawns = sort @white_pawns;
-			@best_black_pawns = isort @black_pawns;
-		    } elsif ($candidate_count == 0) {
-			$black_pawn = substr($black_pawn, 0, -2);
-			last;
-		    }
-		}
-
-		# consider retreating black pawn
-
-		while ($black_pawn =~ /^(.[2-6])/) {
-		    my $lastpawn = $1;
-		    $lastpawn =~ tr/[2-6]/[3-7]/;
-
-		    last if grep /^$lastpawn$/, @white_pawns, @black_pawns;
-		    $black_pawn = $lastpawn . $black_pawn;
-
-		    my $candidate_count = &checkallpositions($white_pieces, (isort @white_pawns),
-							     $black_pieces, (sort @black_pawns));
-		    if ($candidate_count >= $best_count and $candidate_count <= $count_upper_limit) {
-			$best_count = $candidate_count;
-			@best_white_pawns = sort @white_pawns;
-			@best_black_pawns = isort @black_pawns;
-		    } elsif ($candidate_count == 0) {
-			$black_pawn = substr($black_pawn, 2);
-			last;
-		    }
-		}
-	    }
-	}
-    }
-
-    my $KiloPositions = int($best_count * $KiloPositionMultiple);
-
-    my $basename = &pattern_to_name($white_pieces, @best_white_pawns, $black_pieces, @best_black_pawns);
-
-    $white_base{$basename} = $white_pieces;
-    $white_pawns{$basename} = \@best_white_pawns;
-    $black_base{$basename} = $black_pieces;
-    $black_pawns{$basename} = \@best_black_pawns;
-
-    $LIST_SEPARATOR = " ";
-    print "$white_pieces @best_white_pawns $black_pieces @best_black_pawns $best_count ${KiloPositions}K as $basename from $position\n";
-    $LIST_SEPARATOR = undef;
-
-    &assignallpositions($basename, $white_pieces, (isort @best_white_pawns), $black_pieces, (sort @best_black_pawns));
-
-    die "$position wasn't defined" if not defined $positions{$position};
-
-    return $basename;
-}
 
 # The purpose of this little package is to eliminate a parser error that would be be generated by
 # 'extra content at the end of the document' when we're parsing a futurebase.  We use Perl's tie
@@ -946,174 +145,16 @@ sub assign_futurebase {
 	$black_pieces .= $piece_character{lc $XMLpiece->findvalue('@type')};
     }
 
-    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "white" and @type = "pawn"]')) {
-	push @white_pawns, $XMLpiece->findvalue('@location');
-    }
-
-    foreach my $XMLpiece ($XMLfuturebase->findnodes('piece[@color = "black" and @type = "pawn"]')) {
-	push @black_pawns, $XMLpiece->findvalue('@location');
-    }
+    my $white_pawn_count = $XMLfuturebase->findnodes('piece[@color = "white" and @type = "pawn"]')->size();
+    my $black_pawn_count = $XMLfuturebase->findnodes('piece[@color = "black" and @type = "pawn"]')->size();
 
     if ($invert_colors) {
-	&assignallpositions($futurebase, $black_pieces, (isort @black_pawns), $white_pieces, (sort @white_pawns));
+	$futurebases{$white_pawn_count . $black_pawn_count} = $futurebase->cloneNode(1);
     } else {
-	&assignallpositions($futurebase, $white_pieces, (isort @white_pawns), $black_pieces, (sort @black_pawns));
+	$futurebases{$black_pawn_count . $white_pawn_count} = $futurebase->cloneNode(1);
     }
 }
 
-
-my $XMLroot;
-my $next_piece_location;
-
-
-# Convenience subroutine to add a piece to the XML.
-
-sub add_piece {
-    my ($color, $type, $location) = @_;
-    my $new_piece = XML::LibXML::Element->new('piece');
-    $new_piece->addChild(XML::LibXML::Attr->new('color', $color));
-    $new_piece->addChild(XML::LibXML::Attr->new('type', $type));
-    $new_piece->addChild(XML::LibXML::Attr->new('location', $location)) if defined $location;
-    $XMLroot->insertAfter($new_piece, $next_piece_location);
-    $next_piece_location = $new_piece;
-}
-
-# Can be passed in either a string (for a tablebase that we're going to generate), or an XML node
-# pointer (for a futurebase or prune element specified in the original control file).
-
-sub add_futurebase_or_prune {
-    my ($futurebase) = @_;
-    my $new_futurebase;
-
-    if (ref $futurebase) {
-	$new_futurebase = $futurebase->cloneNode(1);
-    } else {
-	$new_futurebase = XML::LibXML::Element->new('futurebase');
-	$new_futurebase->addChild(XML::LibXML::Attr->new('filename', $url_prefix . $futurebase . ".htb"));
-    }
-    $XMLroot->insertAfter($new_futurebase, $next_piece_location);
-    $next_piece_location = $new_futurebase;
-}
-
-sub generate_control_file {
-    my ($basename) = @_;
-
-    my $cntl_filename = "$basename.xml";
-
-    # Back in &genset, we used plus pawns and pawns restricted to multiple squares to group a bunch
-    # of pawn positions together into one control file.  That information was saved into several
-    # global hashes, keyed by the basename of the control file.  Extract it now.  The pawns, in
-    # particular, can be specified as "a2a3a4" or "a2+" and thus match multiple positions.
-
-    my $white_base = $white_base{$basename};
-    my $black_base = $black_base{$basename};
-
-    my @white_pieces = unpack "(a1)*", $white_base;
-    my @black_pieces = unpack "(a1)*", $black_base;
-
-    my @white_pawns = @{$white_pawns{$basename}};
-    my @black_pawns = @{$black_pawns{$basename}};
-
-    # Make a copy of the original XML control file, then remove all existing pieces, futurebases,
-    # and whitespace-only text nodes.  We'll reinsert the ones we want below.  This destroys
-    # location restrictions, which means that we don't support location restrictions yet in pawngen.
-    # Record the previous sibling of the first piece we remove so that we know where to starting
-    # inserting new pieces back in.
-
-    $XMLroot = $XMLtree->getDocumentElement->cloneNode(1);
-
-    $_->unbindNode() foreach ($XMLroot->findnodes('text()[normalize-space(string()) = ""]'));
-
-    $next_piece_location = ($XMLroot->findnodes('piece'))[0]->previousSibling();
-
-    $_->unbindNode() foreach ($XMLroot->findnodes('piece'), $XMLroot->findnodes('futurebase'), $XMLroot->findnodes('prune'));
-
-    # Used to isort here to make sure a white queen came first... why?  I don't remember.
-    #
-    # XXX we'd get a more compact encoding if we moved the unrestricted pieces down after the pawns
-
-    foreach my $white_piece (sort @white_pieces) {
-	&add_piece('white', $piece_names{$white_piece});
-    }
-
-    foreach my $black_piece (@black_pieces) {
-	&add_piece('black', $piece_names{$black_piece});
-    }
-
-    # Sort the pawns here to make sure that doubled pawns appear in "board order" and that all pawns
-    # on a single file are grouped together, even if they are different colors.  This is required by
-    # the combinadic encoding schemes.  Note that a value in the pawns array may be undefined to
-    # indicate an unrestricted pawn, and these appear last.  &add_piece handles this correctly.
-
-    foreach my $pawn (sort @white_pawns, @black_pawns) {
-	if (defined $pawn) {
-	    if (grep /$pawn/, @white_pawns) {
-		&add_piece('white', 'pawn', $pawn);
-	    } else {
-		&add_piece('black', 'pawn', $pawn);
-	    }
-	}
-    }
-
-    foreach my $white_pawn (sort @white_pawns) {
-	&add_piece('white', 'pawn', $white_pawn) if not defined $white_pawn;
-    }
-
-    foreach my $black_pawn (sort @black_pawns) {
-	&add_piece('black', 'pawn', $black_pawn) if not defined $black_pawn;
-    }
-
-    # Now we need to figure out which futurebases we'll need to build this tablebase and add a list
-    # of them to the control file.  Look at each position handled by this control file and add any
-    # futurebases that any of them need.
-
-    my @unique_positions = &uniqsort(&expand_pattern_list($white_base, (isort @white_pawns), $black_base, (sort @black_pawns)));
-
-    my @futurebases;
-
-    foreach my $subposition (@unique_positions) {
-	push @futurebases, map { $positions{$_} } @{$futurebases{$subposition}};
-    }
-
-    my @unique_futurebases = grep {$_ ne $basename} &uniqsort(@futurebases);
-
-    foreach my $futurebase (@unique_futurebases) {
-	&add_futurebase_or_prune($futurebase);
-    }
-
-    # We selectively include prune statements based on Perl conditions specified in the XML, so
-    # different positions can have different sets of prune statements.  Back in &checkallpositions
-    # we rejected patterns that matched positions with different prune statements.  Therefore, since
-    # each control file was generated from a single pattern, all the positions in that control file
-    # share an identical set of prunes.  That's why we only need look at the first position in
-    # @unique_positions here to figure out which prune statements we need to put in the control
-    # file.  I'd also like to only include the ones actually needed in output control files, but
-    # that would require some extra housekeeping that I don't bother with now.
-
-    for my $prune (@{$prunes{$unique_positions[0]}}) {
-	&add_futurebase_or_prune($prune);
-    }
-
-    # Save the generated control file.  Using the original $XMLtree preserves the DTD header, and
-    # using format '1' inserts whitespace text nodes.
-
-    $XMLtree->setDocumentElement($XMLroot);
-    $XMLtree->toFile($cntl_filename, 1);
-
-    # Print a dependencies line to the makefile.  Don't include any futurebases that were in the
-    # original control file (they would show up as references to their XML nodes), since we assume
-    # that they are all already present and up-to-date.  Also add '.htb' extensions to everything,
-    # but leave off any URL prefixes.
-
-    my @dependencies = grep {not ref $_} @unique_futurebases;
-    map { $_ =~ s/$/.htb/ } @dependencies;
-
-    if ($#dependencies >= 0) {
-	$LIST_SEPARATOR = " ";
-	print MAKEFILE "${basename}.htb: @dependencies\n";
-	$LIST_SEPARATOR = undef;
-    }
-}
 
 sub validate_xml_control_file {
     my ($XMLcontrolFile) = @_;
@@ -1154,52 +195,22 @@ sub validate_xml_control_file {
 
 #### MAIN ROUTINE ####
 
+sub basename {
+    my ($basename, $white_pawns, $black_pawns) = @_;
+
+    $basename =~ s/.xml$//;
+
+    return $basename . "-$white_pawns-$black_pawns";
+}
+
 sub pawngen {
     my ($control_file) = @_;
 
-    # Obtain an XML copy of our control file ($XMLtree is global so other routines can copy it)
+    # Obtain an XML copy of our control file
 
-    $XMLtree = $XMLparser->parse_file($control_file);
-    $XMLcontrolFile = $XMLtree->getDocumentElement();
+    my $XMLtree = $XMLparser->parse_file($control_file);
+    my $XMLcontrolFile = $XMLtree->getDocumentElement();
     &validate_xml_control_file($XMLcontrolFile);
-
-    # Figure out our starting position
-
-    my $starting_position = "";
-
-    foreach my $white_piece ($XMLcontrolFile->findnodes('piece[@color = "white" and @type != "pawn"]')) {
-	die "pawngen doesn't support movement restrictions on non-pawns yet\n" if $white_piece->findvalue('@location');
-	$starting_position .= $piece_character{$white_piece->findvalue('@type')};
-    }
-
-    $starting_position .= ":";
-
-    foreach my $white_pawn ($XMLcontrolFile->findnodes('piece[@color = "white" and @type = "pawn"]')) {
-	die "pawngen doesn't support unrestricted pawns yet\n" if not $white_pawn->findvalue('@location');
-	my $pawn_location = $white_pawn->findvalue('@location');
-	die "pawngen doesn't support any pawn restrictions other than plus pawns yet\n" unless
-	    $pawn_location =~ s/^([a-h][1-8])\+$/\1/;
-	$starting_position .= $pawn_location;
-    }
-
-    $starting_position .= ":";
-
-    foreach my $black_piece ($XMLcontrolFile->findnodes('piece[@color = "black" and @type != "pawn"]')) {
-	die "pawngen doesn't support movement restrictions on non-pawns yet\n" if $black_piece->findvalue('@location');
-	$starting_position .= $piece_character{$black_piece->findvalue('@type')};
-    }
-
-    $starting_position .= ":";
-
-    foreach my $black_pawn ($XMLcontrolFile->findnodes('piece[@color = "black" and @type = "pawn"]')) {
-	die "pawngen doesn't support unrestricted pawns yet\n" if not $black_pawn->findvalue('@location');
-	my $pawn_location = $black_pawn->findvalue('@location');
-	die "pawngen doesn't support any pawn restrictions other than plus pawns yet\n" unless
-	    $pawn_location =~ s/^([a-h][1-8])\+$/\1/;
-	$starting_position .= $pawn_location;
-    }
-
-    $starting_position = &normalize_position($starting_position);
 
     # Extract URL prefix from the control file, if it exists.  If not, then $url_prefix will be an
     # empty string.
@@ -1207,10 +218,7 @@ sub pawngen {
     $url_prefix = $XMLcontrolFile->findvalue('generation-controls/url-prefix');
 
     # Extract any futurebases from the input control file and assign them to any positions that they
-    # match.  XXX This could probably be made more efficient by changing the position lookup code,
-    # which is currently just a Perl hash lookup, and therefore requires &assign_futurebase
-    # (actually &assignallpositions) to generate all the pawn positions that arise from a
-    # futurebase.
+    # match.
 
     foreach my $futurebase ($XMLcontrolFile->findnodes("futurebase")) {
 	&assign_futurebase($futurebase);
@@ -1222,51 +230,93 @@ sub pawngen {
     # indicating which prunes have been used in which positions, I need to make sure that those
     # addresses are also the same.  So do this once, here, and use it in &compute_futurebases.
 
-    @white_XML_prunes = $XMLcontrolFile->findnodes('prune[@color = "white"]');
-    @black_XML_prunes = $XMLcontrolFile->findnodes('prune[@color = "black"]');
+#    @white_XML_prunes = $XMLcontrolFile->findnodes('prune[@color = "white"]');
+#    @black_XML_prunes = $XMLcontrolFile->findnodes('prune[@color = "black"]');
 
-    # Starting from the position we identified above, and subject to pruning restrictions, populate
-    # the %positions hash with all possible positions that can arise from the original one.
+    # Extract pawngen element and determine how many white and black pawns it contains.
 
-    print "Starting position $starting_position\n";
-    &consider_position($starting_position);
+    die "Exactly one pawngen element is required\n" if ($XMLcontrolFile->findnodes('pawngen')->size() != 1);
 
-    # Assign all the positions to control files (using &genset), then generate the control files.
-    # Call &genset on $starting_position to ensure that it's the first one processed and therefore
-    # appears first in the makefile, so that it is the default target if the user just types "make".
-    # Note that we use 'push' in this loop (and not 'unshift'), so that we're always adding to the
-    # end of the @cntl_files_needed array.
+    my $pawngen = ($XMLcontrolFile->findnodes('pawngen'))[0];
 
-    my @cntl_files_needed = (&genset($starting_position));
+    my $white_pawn_locations = $pawngen->findvalue('@white-pawn-locations');
+    my $black_pawn_locations = $pawngen->findvalue('@black-pawn-locations');
 
-    while (my ($position, $filename) = each %positions) {
-	if (not defined $positions{$position}) {
-	    push @cntl_files_needed, &genset($position);
-	}
-    }
+    die "Illegal white pawn syntax in pawngen element\n" unless $white_pawn_locations =~ /^[a-h][1-8]( [a-h][1-8])*$/;
+    die "Illegal black pawn syntax in pawngen element\n" unless $black_pawn_locations =~ /^[a-h][1-8]( [a-h][1-8])*$/;
+
+    my $white_pawn_count = (length($white_pawn_locations)+1)/3;
+    my $black_pawn_count = (length($black_pawn_locations)+1)/3;
 
     # We'll use modified copies of the original control file to create new control files, so just
     # add a single comment right now to note their origin.
 
     $XMLtree->addChild(XML::LibXML::Comment->new(" Created by pawngen from $control_file "));
 
-    foreach my $prune (@white_XML_prunes, @black_XML_prunes) {
-	$_->unbindNode() foreach ($prune->findnodes('@pawngen-condition'));
-    }
+    #my %required_control_files;
 
-    my $for_real = 1;
+    #$required_control_files{$white_pawn_count . $black_pawn_count} = [$white_pawn_count, $black_pawn_count];
 
-    if ($for_real) {
-	open (MAKEFILE, ">makefile") || die "can't open makefile";
-	print MAKEFILE "# Created by pawngen from $control_file\n\n";
-	print MAKEFILE "HOFFMAN ?= hoffman\n\n";
-	print MAKEFILE "%.htb: %.xml\n";
-	print MAKEFILE "\t\$(HOFFMAN) -o \$@ -g \$<\n\n";
+    for (my $white_pawns = 0; $white_pawns <= $white_pawn_count; $white_pawns ++) {
+	for (my $black_pawns = 0; $black_pawns <= $black_pawn_count; $black_pawns ++) {
+	    if (not exists $futurebases{$white_pawns . $black_pawns}) {
+		# Generate control file
 
-	foreach my $cntl_file (@cntl_files_needed) {
-	    &generate_control_file($cntl_file);
+		my $cntl_filename = $control_file;
+		$cntl_filename =~ s/\.xml$/-$white_pawns-$black_pawns.xml/;
+		die "Invalid control filename\n" if ($cntl_filename eq $control_file);
+
+		# Make a copy of the original XML control file.
+
+		my $XMLroot = $XMLcontrolFile->cloneNode(1);
+
+		#print $XMLcontrolFile;
+
+		my $pawngen = ($XMLroot->findnodes('pawngen'))[0];
+
+		$pawngen->setAttribute("white-pawns-required", $white_pawns);
+		$pawngen->setAttribute("black-pawns-required", $black_pawns);
+
+		# Remove all futurebase elements
+
+		my $first_futurebase_location = ($XMLroot->findnodes('futurebase'))[0]->previousSibling();
+
+		$_->unbindNode() foreach $XMLroot->findnodes('futurebase');
+
+		# Add new futurebase elements
+
+		my $new_futurebase;
+
+		if ($white_pawns > 0) {
+		    if (exists $futurebases{($white_pawns-1) . $black_pawns}) {
+			$new_futurebase = $futurebases{($white_pawns-1) . $black_pawns}->cloneNode(1);
+		    } else {
+			$new_futurebase = XML::LibXML::Element->new('futurebase');
+			$new_futurebase->setAttribute('filename', &basename($control_file, $white_pawns-1, $black_pawns) . ".htb");
+		    }
+		    $XMLroot->insertAfter($new_futurebase, $first_futurebase_location);
+		}
+
+		if ($black_pawns > 0) {
+		    if (exists $futurebases{$white_pawns . ($black_pawns-1)}) {
+			$new_futurebase = $futurebases{$white_pawns . ($black_pawns-1)}->cloneNode(1);
+		    } else {
+			$new_futurebase = XML::LibXML::Element->new('futurebase');
+			$new_futurebase->setAttribute('filename', &basename($control_file, $white_pawns, $black_pawns-1) . ".htb");
+		    }
+		    $XMLroot->insertAfter($new_futurebase, $first_futurebase_location);
+		}
+
+		# Save the generated control file.  Using the original $XMLtree preserves the DTD header, and
+		# using format '1' inserts whitespace text nodes.
+
+		$XMLtree->setDocumentElement($XMLroot);
+		$XMLtree->toFile($cntl_filename, 1);
+
+	    }
 	}
     }
+
 }
 
 
