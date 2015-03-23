@@ -148,7 +148,7 @@ sub assign_futurebase {
     my $white_pawn_count = $XMLfuturebase->findnodes('piece[@color = "white" and @type = "pawn"]')->size();
     my $black_pawn_count = $XMLfuturebase->findnodes('piece[@color = "black" and @type = "pawn"]')->size();
 
-    if ($invert_colors) {
+    if (not $invert_colors) {
 	$futurebases{$white_pawn_count . $black_pawn_count} = $futurebase->cloneNode(1);
     } else {
 	$futurebases{$black_pawn_count . $white_pawn_count} = $futurebase->cloneNode(1);
@@ -203,6 +203,71 @@ sub basename {
     return $basename . "-$white_pawns-$black_pawns";
 }
 
+sub create_control_file {
+    my ($control_file, $XMLtree, $XMLcontrolFile, $white_pawns, $black_pawns) = @_;
+
+    # Generate control/htb filenames.
+
+    my $cntl_filename = $control_file;
+    $cntl_filename =~ s/\.xml$/-$white_pawns-$black_pawns.xml/;
+    die "Invalid control filename\n" if ($cntl_filename eq $control_file);
+
+    my $htb_filename = $cntl_filename;
+    $htb_filename =~ s/.xml$/.htb/;
+
+    # Generate a futurebase element to be used by other control files to reference this one and add
+    # it to the %futurebases hash.
+
+    my $new_futurebase = XML::LibXML::Element->new('futurebase');
+    $new_futurebase->setAttribute('filename', $htb_filename);
+    $futurebases{$white_pawns . $black_pawns} = $new_futurebase;
+
+    # Make a copy of the original XML control file.
+
+    my $XMLroot = $XMLcontrolFile->cloneNode(1);
+
+    # Set the pawngen element correctly
+
+    my $pawngen = ($XMLroot->findnodes('pawngen'))[0];
+
+    $pawngen->setAttribute("white-pawns-required", $white_pawns);
+    $pawngen->setAttribute("black-pawns-required", $black_pawns);
+
+    # Remove all futurebase elements
+
+    my $first_futurebase_location = ($XMLroot->findnodes('futurebase'))[0]->previousSibling();
+
+    $_->unbindNode() foreach $XMLroot->findnodes('futurebase');
+
+    # Add new futurebase elements
+
+    if ($white_pawns > 0) {
+	if (not exists $futurebases{($white_pawns-1) . $black_pawns}) {
+	    &create_control_file($control_file, $XMLtree, $XMLcontrolFile, $white_pawns - 1, $black_pawns);
+	}
+	$XMLroot->insertAfter($futurebases{($white_pawns-1) . $black_pawns}, $first_futurebase_location);
+    }
+
+    if ($black_pawns > 0) {
+	if (not exists $futurebases{$white_pawns . ($black_pawns-1)}) {
+	    &create_control_file($control_file, $XMLtree, $XMLcontrolFile, $white_pawns, $black_pawns - 1);
+	}
+	$XMLroot->insertAfter($futurebases{$white_pawns . ($black_pawns-1)}, $first_futurebase_location);
+    }
+
+    # Add an output element
+
+    my $output = XML::LibXML::Element->new('output');
+    $output->setAttribute('filename', $htb_filename);
+    $XMLroot->insertAfter($output, $first_futurebase_location);
+
+    # Save the generated control file.  Using the original $XMLtree preserves the DTD header, and
+    # using format '1' inserts whitespace text nodes.
+
+    $XMLtree->setDocumentElement($XMLroot);
+    $XMLtree->toFile($cntl_filename, 2);
+}
+
 sub pawngen {
     my ($control_file) = @_;
 
@@ -253,70 +318,7 @@ sub pawngen {
 
     $XMLtree->addChild(XML::LibXML::Comment->new(" Created by pawngen from $control_file "));
 
-    #my %required_control_files;
-
-    #$required_control_files{$white_pawn_count . $black_pawn_count} = [$white_pawn_count, $black_pawn_count];
-
-    for (my $white_pawns = 0; $white_pawns <= $white_pawn_count; $white_pawns ++) {
-	for (my $black_pawns = 0; $black_pawns <= $black_pawn_count; $black_pawns ++) {
-	    if (not exists $futurebases{$white_pawns . $black_pawns}) {
-		# Generate control file
-
-		my $cntl_filename = $control_file;
-		$cntl_filename =~ s/\.xml$/-$white_pawns-$black_pawns.xml/;
-		die "Invalid control filename\n" if ($cntl_filename eq $control_file);
-
-		# Make a copy of the original XML control file.
-
-		my $XMLroot = $XMLcontrolFile->cloneNode(1);
-
-		#print $XMLcontrolFile;
-
-		my $pawngen = ($XMLroot->findnodes('pawngen'))[0];
-
-		$pawngen->setAttribute("white-pawns-required", $white_pawns);
-		$pawngen->setAttribute("black-pawns-required", $black_pawns);
-
-		# Remove all futurebase elements
-
-		my $first_futurebase_location = ($XMLroot->findnodes('futurebase'))[0]->previousSibling();
-
-		$_->unbindNode() foreach $XMLroot->findnodes('futurebase');
-
-		# Add new futurebase elements
-
-		my $new_futurebase;
-
-		if ($white_pawns > 0) {
-		    if (exists $futurebases{($white_pawns-1) . $black_pawns}) {
-			$new_futurebase = $futurebases{($white_pawns-1) . $black_pawns}->cloneNode(1);
-		    } else {
-			$new_futurebase = XML::LibXML::Element->new('futurebase');
-			$new_futurebase->setAttribute('filename', &basename($control_file, $white_pawns-1, $black_pawns) . ".htb");
-		    }
-		    $XMLroot->insertAfter($new_futurebase, $first_futurebase_location);
-		}
-
-		if ($black_pawns > 0) {
-		    if (exists $futurebases{$white_pawns . ($black_pawns-1)}) {
-			$new_futurebase = $futurebases{$white_pawns . ($black_pawns-1)}->cloneNode(1);
-		    } else {
-			$new_futurebase = XML::LibXML::Element->new('futurebase');
-			$new_futurebase->setAttribute('filename', &basename($control_file, $white_pawns, $black_pawns-1) . ".htb");
-		    }
-		    $XMLroot->insertAfter($new_futurebase, $first_futurebase_location);
-		}
-
-		# Save the generated control file.  Using the original $XMLtree preserves the DTD header, and
-		# using format '1' inserts whitespace text nodes.
-
-		$XMLtree->setDocumentElement($XMLroot);
-		$XMLtree->toFile($cntl_filename, 1);
-
-	    }
-	}
-    }
-
+    &create_control_file($control_file, $XMLtree, $XMLcontrolFile, $white_pawn_count, $black_pawn_count);
 }
 
 
