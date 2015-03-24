@@ -801,7 +801,9 @@ typedef struct tablebase {
     int symmetry;
     uint8_t reflections[64][64];
 
-    /* Pawn are encoded together for the 'pawngen' index type */
+    /* Pawn are encoded together for the 'pawngen' index type, using the index in the pawn_positions
+     * array times pawngen_multiplier.
+     */
 
     index_t pawngen_multiplier;
     std::vector<pawn_position> pawn_positions;
@@ -3252,6 +3254,9 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
     white_pawns_required = eval_to_number_or_zero(xml, "@white-pawns-required");
     black_pawns_required = eval_to_number_or_zero(xml, "@black-pawns-required");
 
+    initial_position.white_queens_required = eval_to_number_or_zero(xml, "@white-queens-required");
+    initial_position.black_queens_required = eval_to_number_or_zero(xml, "@black-queens-required");
+
     process_pawn_position(initial_position);
 
     pawn_positions.resize(valid_pawn_positions.size());
@@ -5644,7 +5649,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.920 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.921 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14425,7 +14430,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.920 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.921 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
