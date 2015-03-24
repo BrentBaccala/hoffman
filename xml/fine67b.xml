@@ -4,15 +4,16 @@
 <!-- Problem position 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8 w -->
 
 <tablebase>
-   <prune-enable color="white" type="concede"/>
+   <prune-enable color="white" type="discard"/>
    <prune-enable color="black" type="concede"/>
    <dtm/>
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
    <pawngen white-pawn-locations="b3 c2 d3" black-pawn-locations="b5 c7 d5"/>
+   <futurebase filename="fine67a-*.htb"/>
    <futurebase filename="kpkp.htb"/>
    <futurebase filename="kppk.htb"/>
    <futurebase filename="kppk.htb" colors="invert"/>
-   <prune color="white" type="concede" move="P=?"/>
+   <prune color="white" type="discard" move="P=[NBR]"/>
    <prune color="black" type="concede" move="P=?"/>
 </tablebase>
