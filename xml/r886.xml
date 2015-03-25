@@ -21,8 +21,8 @@
 <tablebase>
    <prune-enable color="black" type="discard"/>
    <prune-enable color="white" type="discard"/>
-   <!-- Specify bits="6" because the bug would save as bits="5" -->
-   <dtm bits="6"/>
+   <!-- Specify bits="7" because the bug would save as bits="5" -->
+   <dtm bits="7"/>
    <piece color="white" type="king"/>
    <piece color="black" type="king"/>
    <piece color="white" type="queen" location="b8 c7 d7"/>
