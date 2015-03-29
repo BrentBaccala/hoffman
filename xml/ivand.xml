@@ -1,0 +1,24 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- FEN: 8/8/4r3/3k1K2/3p3P/8/6P1/7R b - -   -->
+<!-- We want to know if black can draw or not; analysys by FinalGen shows that the only chance for black is move Re8. But FinalGen cannot handle with move Re8 and marks it as "White wins or Draw" -->
+
+<tablebase>
+   <prune-enable color="white" type="concede"/>
+   <prune-enable color="black" type="concede"/>
+
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="rook"/>
+   <!-- <piece color="black" type="rook"/> -->
+   <pawngen white-pawn-locations="g2 h4" black-pawn-locations="d4" white-captures-allowed="1"/>
+   
+   <futurebase filename="kppkp.htb"/>  <!-- both rooks captured -->
+   <futurebase filename="krpkp.htb"/>
+   <futurebase filename="krpk.htb"/>
+   <futurebase filename="kppk.htb"/>
+
+   <prune color="white" move="P*=?" type="concede"/>
+   <prune color="black" move="P*=?" type="concede"/>
+
+</tablebase>
