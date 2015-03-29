@@ -3257,6 +3257,9 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
     initial_position.white_queens_required = eval_to_number_or_zero(xml, "@white-queens-required");
     initial_position.black_queens_required = eval_to_number_or_zero(xml, "@black-queens-required");
 
+    initial_position.white_pawn_captures_black_piece_allowed = eval_to_number_or_zero(xml, "@white-captures-allowed");
+    initial_position.black_pawn_captures_white_piece_allowed = eval_to_number_or_zero(xml, "@black-captures-allowed");
+
     process_pawn_position(initial_position);
 
     pawn_positions.resize(valid_pawn_positions.size());
@@ -5649,7 +5652,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.921 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.922 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14430,7 +14433,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.921 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.922 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 

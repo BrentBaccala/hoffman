@@ -97,7 +97,9 @@
 	  white-pawns-required	CDATA	#REQUIRED
 	  black-pawns-required	CDATA	#REQUIRED
 	  white-queens-required	CDATA	#IMPLIED
-	  black-queens-required	CDATA	#IMPLIED>
+	  black-queens-required	CDATA	#IMPLIED
+	  white-captures-allowed	CDATA	#IMPLIED
+	  black-captures-allowed	CDATA	#IMPLIED>
 
 <!ATTLIST futurebase
 	filename CDATA		#IMPLIED

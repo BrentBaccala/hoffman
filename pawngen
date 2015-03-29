@@ -222,7 +222,7 @@ sub basename {
 }
 
 sub create_control_file {
-    my ($control_file, $XMLtree, $XMLcontrolFile, $white_pieces, $white_pawns, $black_pieces, $black_pawns) = @_;
+    my ($control_file, $XMLdocument, $XMLcontrolFile, $white_pieces, $white_pawns, $black_pieces, $black_pawns) = @_;
 
     # Generate control/htb filenames.
 
@@ -261,7 +261,7 @@ sub create_control_file {
 
     if ($white_pawns > 0) {
 	if (not exists $futurebases{$white_pieces . ($white_pawns-1) . $black_pieces . $black_pawns}) {
-	    &create_control_file($control_file, $XMLtree, $XMLcontrolFile, $white_pieces, $white_pawns - 1, $black_pieces, $black_pawns);
+	    &create_control_file($control_file, $XMLdocument, $XMLcontrolFile, $white_pieces, $white_pawns - 1, $black_pieces, $black_pawns);
 	}
 	$XMLroot->insertAfter($futurebases{$white_pieces . ($white_pawns-1) . $black_pieces . $black_pawns}, $first_futurebase_location);
 
@@ -280,7 +280,7 @@ sub create_control_file {
 
     if ($black_pawns > 0) {
 	if (not exists $futurebases{$white_pieces . $white_pawns . $black_pieces . ($black_pawns-1)}) {
-	    &create_control_file($control_file, $XMLtree, $XMLcontrolFile, $white_pieces, $white_pawns, $black_pieces, $black_pawns - 1);
+	    &create_control_file($control_file, $XMLdocument, $XMLcontrolFile, $white_pieces, $white_pawns, $black_pieces, $black_pawns - 1);
 	}
 	$XMLroot->insertAfter($futurebases{$white_pieces . $white_pawns . $black_pieces . ($black_pawns-1)}, $first_futurebase_location);
 
@@ -297,17 +297,35 @@ sub create_control_file {
 	}
     }
 
+    # Consider possible piece captures.  For each piece type, consider removing one of it from the
+    # white (or black) piece list.  If there is a corresponding futurebase, include it.
+
+    foreach my $piece_char (keys %piece_names) {
+	if ($white_pieces =~ /$piece_char/) {
+	    my $key = ($white_pieces =~ s/$piece_char//r) . $white_pawns . $black_pieces . $black_pawns;
+	    if (exists $futurebases{$key}) {
+		$XMLroot->insertAfter($futurebases{$key}, $first_futurebase_location);
+	    }
+	}
+	if ($black_pieces =~ /$piece_char/) {
+	    my $key = $white_pieces . $white_pawns . ($black_pieces =~ s/$piece_char//r) . $black_pawns;
+	    if (exists $futurebases{$key}) {
+		$XMLroot->insertAfter($futurebases{$key}, $first_futurebase_location);
+	    }
+	}
+    }
+
     # Add an output element
 
     my $output = XML::LibXML::Element->new('output');
     $output->setAttribute('filename', $htb_filename);
     $XMLroot->insertAfter($output, $first_futurebase_location);
 
-    # Save the generated control file.  Using the original $XMLtree preserves the DTD header, and
+    # Save the generated control file.  Using the original $XMLdocument preserves the DTD header, and
     # using format '1' inserts whitespace text nodes.
 
-    $XMLtree->setDocumentElement($XMLroot);
-    $XMLtree->toFile($cntl_filename, 2);
+    $XMLdocument->setDocumentElement($XMLroot);
+    $XMLdocument->toFile($cntl_filename, 2);
 }
 
 sub pawngen {
@@ -316,8 +334,8 @@ sub pawngen {
 
     # Obtain an XML copy of our control file
 
-    my $XMLtree = $XMLparser->parse_file($control_file);
-    my $XMLcontrolFile = $XMLtree->getDocumentElement();
+    my $XMLdocument = $XMLparser->parse_file($control_file);
+    my $XMLcontrolFile = $XMLdocument->getDocumentElement();
     &validate_xml_control_file($XMLcontrolFile);
 
     # Extract URL prefix from the control file, if it exists.  If not, then $url_prefix will be an
@@ -379,9 +397,9 @@ sub pawngen {
     # We'll use modified copies of the original control file to create new control files, so just
     # add a single comment right now to note their origin.
 
-    $XMLtree->addChild(XML::LibXML::Comment->new(" Created by pawngen from $control_file "));
+    $XMLdocument->addChild(XML::LibXML::Comment->new(" Created by pawngen from $control_file "));
 
-    &create_control_file($control_file, $XMLtree, $XMLcontrolFile, $white_pieces, $white_pawn_count, $black_pieces, $black_pawn_count);
+    &create_control_file($control_file, $XMLdocument, $XMLcontrolFile, $white_pieces, $white_pawn_count, $black_pieces, $black_pawn_count);
 }
 
 
