@@ -5652,7 +5652,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.922 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.923 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -5881,9 +5881,6 @@ tablebase::tablebase(Glib::ustring filename) : offset(0), invert_colors(false), 
  * tablebases in translate_foreign_position_to_local_position().  That function is used extensively
  * during futurebase back-propagation, so we try to figure out as much stuff as we can here,
  * specifically:
- *
- * - for each piece in the futurebase, we store a pointer to the first identical piece in the local
- *   tablebase
  *
  * - for each piece/square pair in the futurebase, we compute the corresponding semilegal group in
  *   the local tablebase, and store a pointer to the first piece in it
@@ -14433,7 +14430,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.922 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.923 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
