@@ -806,7 +806,8 @@ typedef struct tablebase {
      */
 
     index_t pawngen_multiplier;
-    std::vector<pawn_position> pawn_positions;
+    std::vector<pawn_position> pawn_positions_by_position;
+    std::vector<pawn_position> pawn_positions_by_index;
 
     /* Kings are usually encoded together to take advantage of them never being adjacent.  Given a
      * pair of king positions, king_index[WHITE_KING_POSITION][BLACK_KING_POSITION] returns the
@@ -2919,6 +2920,7 @@ int black_pawns_required = 0;
 class pawn_position {
 
     friend bool operator< (const pawn_position & LHS, const pawn_position & RHS);
+    friend bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position & RHS);
 
     uint64_t white_pawns = 0;
     uint64_t black_pawns = 0;
@@ -3045,6 +3047,17 @@ bool operator< (const pawn_position & LHS, const pawn_position & RHS)
     }
 
     return LHS.en_passant_square < RHS.en_passant_square;
+}
+
+bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position & RHS)
+{
+    if (LHS.white_pawns != RHS.white_pawns) {
+	return LHS.white_pawns < RHS.white_pawns;
+    } else if (LHS.black_pawns != RHS.black_pawns) {
+	return LHS.black_pawns < RHS.black_pawns;
+    } else {
+	return LHS.en_passant_square < RHS.en_passant_square;
+    }
 }
 
 /* Recursively compute all possible pawn positions that can arise from a starting position.
@@ -3262,7 +3275,8 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
 
     process_pawn_position(initial_position);
 
-    pawn_positions.resize(valid_pawn_positions.size());
+    pawn_positions_by_position.resize(valid_pawn_positions.size());
+    pawn_positions_by_index.resize(valid_pawn_positions.size());
 
     int first_white_pawn = num_pieces;
     int first_black_pawn = num_pieces + white_pawns_required;
@@ -3273,33 +3287,40 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
     int index=0;
     for (auto it = valid_pawn_positions.begin(); it != valid_pawn_positions.end(); it ++) {
 
-	pawn_positions[index] = *it;
-	pawn_positions[index].index = index;
-
 	int white_pawn = first_white_pawn;
 	int black_pawn = first_black_pawn;
 
+	/* std::set doesn't allow its objects to be modified once inserted */
+
+	pawn_position pp = *it;
+
 	for (int square = 0; square < 64; square ++) {
-	    if (it->white_pawn_at(square)) {
-		pawn_positions[index].position[white_pawn] = square;
-		if (pawn_positions[index].en_passant_square == square - 8) {
-		    pawn_positions[index].en_passant_pawn = white_pawn;
+	    if (pp.white_pawn_at(square)) {
+		pp.position[white_pawn] = square;
+		if (pp.en_passant_square == square - 8) {
+		    pp.en_passant_pawn = white_pawn;
 		}
 		legal_white_squares |= BITVECTOR(square);
 		white_pawn ++;
 	    }
-	    if (it->black_pawn_at(square)) {
-		pawn_positions[index].position[black_pawn] = square;
-		if (pawn_positions[index].en_passant_square == square + 8) {
-		    pawn_positions[index].en_passant_pawn = black_pawn;
+	    if (pp.black_pawn_at(square)) {
+		pp.position[black_pawn] = square;
+		if (pp.en_passant_square == square + 8) {
+		    pp.en_passant_pawn = black_pawn;
 		}
 		legal_black_squares |= BITVECTOR(square);
 		black_pawn ++;
 	    }
 	}
 
+	pp.index = index;
+	pawn_positions_by_index[index] = pp;
+	pawn_positions_by_position[index] = pp;
+
 	index ++;
     }
+
+    std::sort(pawn_positions_by_position.begin(), pawn_positions_by_position.end(), pawn_position_fast_compare);
 
 #if DEBUG
     fprintf(stderr, "%" PRIx64 " %" PRIx64 "\n", legal_white_squares, legal_black_squares);
@@ -3351,6 +3372,7 @@ index_t local_position_to_pawngen_index(tablebase_t *tb, local_position_t *pos)
     /* Sort encoding groups so that the lowest values always come first. */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
+	if (tb->pieces[piece].piece_type == PAWN) continue;
 	piece2 = piece;
 	while ((tb->pieces[piece2].prev_piece_in_encoding_group != -1)
 	       && (vals[piece2] < vals[tb->pieces[piece2].prev_piece_in_encoding_group])) {
@@ -3392,7 +3414,8 @@ index_t local_position_to_pawngen_index(tablebase_t *tb, local_position_t *pos)
     }
     pawns.en_passant_square = pos->en_passant_square;
 
-    auto it = std::lower_bound(tb->pawn_positions.begin(), tb->pawn_positions.end(), pawns);
+    auto it = std::lower_bound(tb->pawn_positions_by_position.begin(), tb->pawn_positions_by_position.end(),
+			       pawns, pawn_position_fast_compare);
 
     /* In the course of normal program operation, we should never generate invalid pawn positions,
      * but it can happen during testing with check_1000_positions().  So invalid pawn positions just
@@ -3401,7 +3424,7 @@ index_t local_position_to_pawngen_index(tablebase_t *tb, local_position_t *pos)
      * XXX throw errors more aggressively here during actual program operation
      */
 
-    if (it == tb->pawn_positions.end()) {
+    if (it == tb->pawn_positions_by_position.end()) {
 	return INVALID_INDEX;
     } else if ((*it < pawns) || (pawns < *it)) {
 	return INVALID_INDEX;
@@ -3445,11 +3468,11 @@ bool pawngen_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if (tb->pieces[piece].piece_type == PAWN) {
-	    p->piece_position[piece] = tb->pawn_positions[pawn_index].position[piece];
+	    p->piece_position[piece] = tb->pawn_positions_by_index[pawn_index].position[piece];
 	}
     }
 
-    p->en_passant_square = tb->pawn_positions[pawn_index].en_passant_square;
+    p->en_passant_square = tb->pawn_positions_by_index[pawn_index].en_passant_square;
 
     /* If we've got an en passant pawn, make sure that it is the right color, i.e, the opposite
      * color of the side to move.  This check will reject half of our en passant positions, which
@@ -3457,7 +3480,7 @@ bool pawngen_index_to_local_position(tablebase_t *tb, index_t index, local_posit
      */
 
     if (p->en_passant_square != ILLEGAL_POSITION) {
- 	if (tb->pieces[tb->pawn_positions[pawn_index].en_passant_pawn].color == p->side_to_move) {
+ 	if (tb->pieces[tb->pawn_positions_by_index[pawn_index].en_passant_pawn].color == p->side_to_move) {
  	    return false;
  	}
     }
@@ -3569,7 +3592,7 @@ bool pawngen_index_to_local_position(tablebase_t *tb, index_t index, local_posit
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	if (tb->pieces[piece].permutations) {
+	if ((tb->pieces[piece].piece_type != PAWN) && tb->pieces[piece].permutations) {
 	    int perm = 0;
 
 	    while (tb->pieces[piece].permutations[perm] != 0) {
@@ -5466,7 +5489,7 @@ void tablebase::parse_XML(std::istream *instream)
 	if (index_type == PAWNGEN_INDEX) {
 	    max_index ++;
 	    pawngen_multiplier = max_index;
-	    max_index *= pawn_positions.size();
+	    max_index *= pawn_positions_by_index.size();
 	    max_index --;
 	}
 
@@ -5652,7 +5675,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.923 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.924 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14430,7 +14453,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.923 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.924 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
