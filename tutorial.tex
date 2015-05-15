@@ -207,7 +207,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.11 $ $Locker: root $
+Hoffman $Revision: 1.12 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -232,7 +232,7 @@ Hoffman $Revision: 1.11 $ $Locker: root $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.11 $ $Locker: root $</program>
+      <program>Hoffman $Revision: 1.12 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -304,7 +304,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.11 $ $Locker: root $
+Hoffman $Revision: 1.12 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -441,15 +441,10 @@ the moment is that if you want to promote, you need to specify EXACTLY
 the piece you're promoting into; ``b7b8=Q'' is radically different from
 ``b7b8=q''!!
 
-The {\tt xml} directory contains all of the XML configuration files
-needed to generate a complete set of three- and four-piece tablebases.
-These files were created by {\tt genctlfile.pl}, a Perl script that
-can also create control files for five- and six-piece tablebases,
-though actually generating them can be quite demanding of a computer.
-{\tt genalltb} is a shell script that will run Hoffman repeatedly on
-these files, and in the correct order, though it may take several
-hours to run.  Hoffman has also been used to generate a complete set
-of five-piece tablebases, but this takes considerably longer.
+{\tt genctlfile.pl} is a Perl script that creates control files for
+ordinary tablebases, though actually generating larger tablebases can
+be quite demanding of a computer.  Hoffman has been used to generate a
+complete set of five-piece tablebases, as well as a few sixes.
 
 Hoffman can thus duplicate much of the functionality of the Nalimov
 programs, but that's not all it can do.  It can also duplicate much of
@@ -534,7 +529,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.11 $ $Locker: root $
+Hoffman $Revision: 1.12 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
@@ -640,7 +635,7 @@ generate an error:
 
 \begin{verbatim}
 C> ./hoffman -o fine67.htb -g fine67.xml
-Hoffman $Revision: 1.11 $ $Locker: root $
+Hoffman $Revision: 1.12 $ $Locker: baccala $
 Malloced 40MB for tablebase entries
 'kpk.htb': Too many missing pieces in futurebase
 Futurebase preload failed: 'kpk.htb'
@@ -669,7 +664,7 @@ tablebases.  Once this is done, we use Hoffman to probe the tablebases:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.11 $ $Locker: root $
+Hoffman $Revision: 1.12 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
@@ -777,7 +772,7 @@ output tablebases can be queried for the original position:
 
 \begin{verbatim}
 C> ./hoffman -p *.htb
-Hoffman $Revision: 1.11 $ $Locker: root $
+Hoffman $Revision: 1.12 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'Kb3b3c4Kd5.htb'
 Loading 'Kb3b4c4K.htb'
