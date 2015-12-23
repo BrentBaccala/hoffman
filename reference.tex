@@ -277,6 +277,25 @@ possible.  This can be used, for example, to locate a black pawn on
 {\tt "a7+} and a white pawn on {\tt "a2+"}, indicating that both can
 move forward, but they can not ``pass'' each other.
 
+\subsection{\tt <pawngen white-pawn-locations="{\it string}" black-pawn-locations="{\it string}" \hfil\break\hbox{\qquad} white-pawns-required="{\it number}" black-pawns-required="{\it number}" \hfil\break\hbox{\qquad} white-queens-required="{\it number}" black-queens-required="{\it number}" \hfil\break\hbox{\qquad} white-captures-allowed="{\it number}" black-captures-allowed="{\it number}"/>}
+
+Pawn configurations can be specified using a {\tt pawngen} element
+instead of {\tt piece} elements.  A set of starting pawn locations is
+specified for each color using {\tt *-pawn-locations} attributes, and
+all possible pawn moves from that initial configuration are
+calculated.  Since the number and types of pieces is fixed for each
+run of the program, the {\tt *-pawns-required} attributes must be
+specified to indicate how many pawns of each color are allowed.
+Optionally, the {\tt *-queens-required} attributes can specified to
+force consideration of positions where a certain number of pawns have
+queened, and the {\tt *-captures-allowed} attributes include
+consideration of positions where a certain number of non-pawn pieces
+have been captured (pawn captures are already considered).
+
+The auxiliary Perl script {\tt pawngen} can accept control files
+without {\tt *-pawns-required} attributes, and generates new,
+interlinked control files with the required attributes added.
+
 \subsection{\tt <futurebase filename="{\it string}" colors="invert"/>}
 
 One or more futurebases may be specified with this element.  A {\tt
