@@ -1,6 +1,6 @@
 dnl Process this file with autoconf to produce a configure script.
 
-AC_INIT([hoffman],[1.5])
+AC_INIT([hoffman],[1.6])
 
 if test x"$CXXFLAGS" = x; then
         CXXFLAGS="-O3 -march=native"
