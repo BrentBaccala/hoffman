@@ -398,7 +398,7 @@ private:
 //      gzip format.
 //
 template<typename Alloc = std::allocator<char> >
-class basic_gzip_decompressor : basic_zlib_decompressor<Alloc> {
+class basic_gzip_decompressor : public basic_zlib_decompressor<Alloc> {
 private:
     typedef basic_zlib_decompressor<Alloc>   base_type;
     typedef typename base_type::string_type  string_type;
