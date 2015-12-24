@@ -207,7 +207,7 @@ tablebase using {\tt -i}:
 
 {\small\begin{verbatim}
 C> hoffman -i kqk.htb
-Hoffman $Revision: 1.14 $ $Locker: baccala $
+Hoffman $Revision: 1.15 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
@@ -232,7 +232,7 @@ Hoffman $Revision: 1.14 $ $Locker: baccala $
    </tablebase-statistics>
    <generation-statistics>
       <host>debian.freesoft.org</host>
-      <program>Hoffman $Revision: 1.14 $ $Locker: baccala $</program>
+      <program>Hoffman $Revision: 1.15 $ $Locker: baccala $</program>
       <args>./hoffman -g -o kqk.htb kqk.xml </args>
       <start-time>Sat Dec 16 02:11:28 2006 EST</start-time>
       <completion-time>Sat Dec 16 02:11:36 2006 EST</completion-time>
@@ -304,7 +304,7 @@ directory}'' (location of Nalimov files) options, like this:
 
 \begin{verbatim}
 C> ./hoffman -v -n Nalimov/ kpk.htb
-Hoffman $Revision: 1.14 $ $Locker: baccala $
+Hoffman $Revision: 1.15 $ $Locker: baccala $
 5 piece Nalimov tablebases found
 Loading 'kpk.htb'
 Verifying tablebase against Nalimov
@@ -529,7 +529,7 @@ tablebase for the original problem position:
 
 \begin{verbatim}
 C> ./hoffman -p lasker1901.htb
-Hoffman $Revision: 1.14 $ $Locker: baccala $
+Hoffman $Revision: 1.15 $ $Locker: baccala $
 0 piece Nalimov tablebases found
 Loading 'lasker1901.htb'
 FEN? 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7 w
@@ -634,7 +634,7 @@ directly produces an error message:
 
 \begin{verbatim}
 C> ./hoffman -o fine67.htb -g fine67.xml
-Hoffman $Revision: 1.14 $ $Locker: baccala $
+Hoffman $Revision: 1.15 $ $Locker: baccala $
 terminate called after throwing an instance of 'xmlpp::validity_error'
   what():  
 Validity error:
@@ -663,7 +663,7 @@ tablebases.  Once this is done, we use Hoffman to probe the tablebases:
 
 \begin{verbatim}
 C> ./hoffman -p fine67-*.htb
-Hoffman $Revision: 1.14 $ $Locker: baccala $
+Hoffman $Revision: 1.15 $ $Locker: baccala $
 Loading 'fine67-0-3.htb'
 Loading 'fine67-1-2.htb'
 Loading 'fine67-1-3.htb'
@@ -772,7 +772,7 @@ tablebases can be queried for the original position:
 
 \begin{verbatim}
 C> ./hoffman -p fine67[ab]*.htb
-Hoffman $Revision: 1.14 $ $Locker: baccala $
+Hoffman $Revision: 1.15 $ $Locker: baccala $
 Loading 'fine67a-0-2.htb'
 Loading 'fine67a-0-3.htb'
 Loading 'fine67a-1-1.htb'
@@ -841,7 +841,7 @@ as wins.  Hoffman reaches a similar conclusion as FinalGen:
 
 \begin{verbatim}
 C> ./hoffman -p test/ivan[def]*.htb
-Hoffman $Revision: 1.925 $ $Locker:  $
+Hoffman $Revision: 1.15 $ $Locker: baccala $
 Loading 'test/ivand-2-0.htb'
 Loading 'test/ivand-2-1.htb'
 Loading 'test/ivane-2-0.htb'
@@ -876,7 +876,18 @@ Index, FEN or move?
 \end{verbatim}
 
 Specifically, all black moves other than Re8 allow white to force
-a queen before black.
+a queen before black, while Re8 allows each side to prevent the
+other from promoting.
+
+The files {\tt ivana.xml}, {\tt ivanb.xml}, and {\tt ivanc.xml}
+contain a Hoffman analysis with black promotions discarded, but since
+white has the advantage in this position, this isn't a very
+enlightening analysis.  More interesting would be to discard white
+promotions, but an intuitive evaluation of the diagrammed position
+suggests that white is unlikely to mate without promoting.
+
+A more detailed analysis would require allowing queens into
+the position along with the rooks.
 
 
 See the Hoffman Reference Guide for more details on these and other
