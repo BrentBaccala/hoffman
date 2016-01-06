@@ -4516,6 +4516,9 @@ void tablebase::parse_XML(std::istream *instream)
     white_king = -1;
     black_king = -1;
 
+    num_pieces_by_color[WHITE] = 0;
+    num_pieces_by_color[BLACK] = 0;
+
     for (auto it = result.begin(); it != result.end(); it ++) {
 
 	if ((*it)->get_name() == "piece") {
@@ -5675,7 +5678,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.924 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.925 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -12289,10 +12292,12 @@ bool global_PNTM_in_check(global_position_t *position)
 		 * of the opposite color.  If so, we're in check.
 		 */
 
-		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'k'))
-		    return true;
-		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'K'))
-		    return true;
+		if (movementptr->square != -1) {
+		    if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'k'))
+			return true;
+		    if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'K'))
+			return true;
+		}
 
 	    }
 	} else {
@@ -14453,7 +14458,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.924 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.925 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
