@@ -4131,31 +4131,9 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	position->side_to_move = BLACK;
     }
 
-    /* Sort any identical pieces so that the lowest square number always comes first.
-     *
-     * The various index-to-position routines returned sorted piece arrays, but the various symmetry
-     * reflections might have upset this.  Some places, particularly the translate_... routines in
-     * futurebase back propagation, depend on the pieces being sorted.
-     *
-     * Note that we initialize the permuted_piece array AFTER this sort.  That's because
-     * permuted_piece is used to track the changes that happen after index-to-position and before
-     * position-to-index, NOT the changes that happen internally in index-to-position.
-     *
-     * Also, I don't even attempt to do this if there is no tablebase symmetry.  Not only is it
-     * unnecessary in that case, but this can really screw up overlapping piece restrictions.  Since
-     * we don't (currently) allow piece restrictions and symmetry at the same time...
+    /* permuted_piece is used to track the changes that happen after index-to-position and before
+     * position-to-index.
      */
-
-    if (tb->symmetry > 1) {
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    piece2 = piece;
-	    while ((tb->pieces[piece2].prev_piece_in_semilegal_group != -1)
-		   && (position->piece_position[piece2]
-		       < position->piece_position[tb->pieces[piece2].prev_piece_in_semilegal_group])) {
-		transpose_array(position->piece_position, piece2, tb->pieces[piece2].prev_piece_in_semilegal_group);
-	    }
-	}
-    }
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	position->permuted_piece[piece] = piece;
@@ -5693,7 +5671,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.927 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.928 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14480,7 +14458,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.927 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.928 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
