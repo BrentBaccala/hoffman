@@ -986,38 +986,52 @@ void info (const char * format, ...)
 }
 
 /* We aim to print progress_dots progress dots as we move through a tablebase.  That means one
- * progress dot every tb->max_index/progress_dots indices.  Since we're using integer arithmetic,
- * that result is rounded DOWN, so the result of dividing by it gets shifted UP.  That could result
- * in an extra dot or two getting printed, so we limit ourselves to progress_dot dots.
- *
- * XXX lots of problems in this routine, starting with the divisions that get done every time it
- * runs
+ * progress dot every tb->max_index/progress_dots indices.  We keep an internal count of how many
+ * times this routine gets called, expecting it to be called once for each index in the tablebase.
+ * I also take care to precompute next_target_index to avoid division every time this routine gets
+ * called.
  */
 
-void print_progress_dot(tablebase_t *tb, index_t index)
+void print_progress_dot(tablebase_t *tb, bool reset)
 {
-    static std::mutex mutex;
     static std::atomic<unsigned int> progress_dots_printed(0);
-
-    if (index == 0) progress_dots_printed = 0;
+    static std::atomic<index_t> indices_processed(0);
+    static std::atomic<index_t> next_target_index(0);
 
     if (progress_dots > 0) {
-	if ((index + 1) % (tb->max_index / progress_dots) == 0) {
-	    if (progress_dots_printed < progress_dots) {
-		std::lock_guard<std::mutex> _(mutex);
 
-		if (! printing_progress_dots) {
-		    for (auto i=1U; i <= progress_dots_printed; i++) {
-			fputc(' ', stderr);
-		    }
+	if (reset) {
+	    progress_dots_printed = 0;
+	    indices_processed = 0;
+	    next_target_index = tb->max_index / progress_dots;
+	    return;
+	}
+
+	if ((++ indices_processed) == next_target_index) {
+
+	    if (! printing_progress_dots) {
+		for (auto i=1U; i <= progress_dots_printed; i++) {
+		    fputc(' ', stderr);
 		}
-		fputc('.', stderr);
-		printing_progress_dots = true;
-		progress_dots_printed ++;
 	    }
+	    fputc('.', stderr);
+	    printing_progress_dots = true;
+	    progress_dots_printed ++;
+
+	    next_target_index = tb->max_index * (progress_dots_printed + 1) / progress_dots;
 	}
     }
 
+}
+
+void print_progress_dot(tablebase_t *tb)
+{
+    print_progress_dot(tb, false);
+}
+
+void reset_progress_dots(tablebase_t *tb)
+{
+    print_progress_dot(tb, true);
 }
 
 void sigaction_user_interrupt (int signal, siginfo_t * siginfo, void * ucontext)
@@ -5679,7 +5693,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.926 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.927 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -8212,7 +8226,7 @@ void back_propagate_section(index_t start_index, index_t end_index, int target_d
     index_t index;
 
     for (index = start_index; index <= end_index; index++) {
-	print_progress_dot(current_tb, index);
+	print_progress_dot(current_tb);
 	back_propagate_index(index, target_dtm);
     }
 }
@@ -8224,6 +8238,8 @@ void non_proptable_pass(int target_dtm)
     index_t block_size = (current_tb->max_index+1)/num_threads;
 
     entriesTable->set_threads(num_threads);
+
+    reset_progress_dots(current_tb);
 
     for (thread = 0; thread < num_threads; thread ++) {
 	index_t start_index = thread*block_size;
@@ -10654,7 +10670,7 @@ void back_propagate_futurebase_thread(void (* backprop_function)(index_t, int))
 		 * to do that is to run this loop even for draws.
 		 */
 
-		print_progress_dot(futurebase, future_index + i);
+		print_progress_dot(futurebase);
 
 		for (reflection = 0; reflection < max_reflection; reflection ++) {
 		    (*backprop_function)(future_index + i, reflection);
@@ -10739,6 +10755,8 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    std::thread t[num_threads];
 	    unsigned int thread;
+
+	    reset_progress_dots(futurebase);
 
 	    for (thread = 0; thread < num_threads; thread ++) {
 		t[thread] = std::thread(back_propagate_futurebase_thread, backprop_function);
@@ -12421,7 +12439,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 	info("Initializing %" PRIindex "\n", index);
 #endif
 
-    print_progress_dot(current_tb, index);
+    print_progress_dot(current_tb);
 
     if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 
@@ -12921,6 +12939,8 @@ void initialize_tablebase(void)
     std::thread t[num_threads];
     unsigned int thread;
     index_t block_size = (current_tb->max_index+1)/num_threads;
+
+    reset_progress_dots(current_tb);
 
     for (thread = 0; thread < num_threads; thread ++) {
 	index_t start_index = thread*block_size;
@@ -13446,7 +13466,7 @@ void verify_tablebase_internally_thread(void)
 
 	if (index > current_tb->max_index) break;
 
-	print_progress_dot(current_tb, index);
+	print_progress_dot(current_tb);
 
 	if (!index_to_local_position(current_tb, index, REFLECTION_NONE, &position)) continue;
 
@@ -13579,6 +13599,7 @@ bool verify_tablebase_internally(void)
     info("Verifying internal consistency of tablebase\n");
 
     entriesTable->set_threads(num_threads);
+    reset_progress_dots(current_tb);
     next_verify_index = 0;
 
     for (thread = 0; thread < num_threads; thread ++) {
@@ -14459,7 +14480,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.926 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.927 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
