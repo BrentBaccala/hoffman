@@ -2762,49 +2762,58 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
      */
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
+ 
+	/* Back out to the first piece of this encoding group. */
 
- 	int piece2;
- 	uint8_t smallest_position, next_smallest_position;
-  
- 	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	int piece2;
+	for (piece2=piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1;
+	     piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
 
-	/* En passant positions are never changed, since they are encoded using the first row,
-	 * which isn't part of a pawn's legal range, so skip en passant pawns.
+	/* Find the last overlapping piece for this encoding group and retrieve its cumulative
+	 * overlapping piece vector.
 	 */
 
-	if (piece == en_passant_pawn) continue;
+	uint64_t overlapping_this_group = 0;
+	if (tb->pieces[piece2].last_overlapping_piece != -1) {
+ 	    overlapping_this_group = overlapping_pieces[tb->pieces[piece2].last_overlapping_piece];
+ 	}
 
-	p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
-	smallest_position = ILLEGAL_POSITION;
+ 	if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
+ 	    overlapping_pieces[piece] = overlapping_pieces[tb->pieces[piece].prev_piece_in_encoding_group];
+ 	} else if (tb->pieces[piece].last_overlapping_piece != -1) {
+ 	    overlapping_pieces[piece] = overlapping_pieces[tb->pieces[piece].last_overlapping_piece];
+ 	}
+ 
+ 	/* Kings and en passant pawns have their own encoding schemes and have already been decoded */
+ 
+ 	if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)) {
+ 
+ 	    p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
 
-	do {
-	    next_smallest_position = ILLEGAL_POSITION;
+	    /* Form a bitvector of the piece on smaller squares than this one, that were earlier and
+	     * are overlapped by this group.
+	     *
+	     * XXX smaller_pieces needs to take restricted locations into account
+	     */
 
-	    for (piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
-
-	    for (piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
-		if (p->piece_position[piece2] <= p->piece_position[piece]) {
-		    if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
-			if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
-			    next_smallest_position = p->piece_position[piece2];
-			}
-		    }
-		}
-	    }
-
-	    if (next_smallest_position != ILLEGAL_POSITION) {
-		vals[piece] ++;
-
-		/* I suspect that this test never triggers */
-		if (vals[piece] >= tb->pieces[piece].total_legal_positions) return false;
-
-		p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
-		smallest_position = next_smallest_position;
-	    }
-
-	} while (next_smallest_position != ILLEGAL_POSITION);
-
-    }
+ 	    uint64_t increments = (overlapping_this_group & smaller_pieces[p->piece_position[piece]]);
+ 
+ 	    /* Loop once for each bit set in "increments".  Brian Kernighan's way of counting bits.
+	     * Increment the encoding value and decode a new position, continuing to increment if
+	     * the new position also overlaps an earlier piece.
+	     */
+ 
+ 	    while (increments) {
+ 		increments &= increments - 1;
+ 		do {
+ 		    vals[piece] ++;
+ 		    p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
+ 		} while (overlapping_this_group & (1ULL << (p->piece_position[piece])));
+ 	    }
+ 	}
+ 
+ 	overlapping_pieces[piece] |= (1ULL << (p->piece_position[piece]));
+     }
 
     /* En passant pawns always trail on a file, since they just moved from their starting positions.
      * So, white en passant pawns are still sorted, but black ones have to be moved to the end of
@@ -5671,7 +5680,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.928 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.929 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14458,7 +14467,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.928 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.929 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
