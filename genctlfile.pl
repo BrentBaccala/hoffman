@@ -9,10 +9,10 @@
 #
 # Filename format for standard chess is kWkB-option.xml, where W is a
 # list of white pieces and B is a list of black pieces, both from the
-# set qrnbp, and the optional option is either 'basic' or 'whitewins',
-# to obtain bitbases instead of DTM (the default), or 'propNUM' to
-# generate using proptables with the specified size (i.e, prop1
-# generates using 1 MB proptables).
+# set qrnbp, and the optional option are:
+#     'basic' or 'whitewins' to obtain bitbases instead of DTM
+#     'propNUM' to generate using proptables with the specified size in MB
+#     '4x4' to restrict to a 4x4 board
 #
 # Filename format for suicide chess is WvB-option.xml where W and B
 # now come from the set kqrnbp.
@@ -78,8 +78,8 @@ sub mkfilename {
 	$black_value += $values{$black_piece};
     }
 
-    if ((length($black_pieces) > length($white_pieces)) or
-	((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value))) {
+    if (($option !~ /^-4x4/) && ((length($black_pieces) > length($white_pieces)) or
+				 ((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value)))) {
 	$invert = 1;
 	if ($suicide) {
 	    $filename = $black_pieces . "v" . $white_pieces . $option;
@@ -122,7 +122,7 @@ sub write_cntl_file {
     my ($cntl_filename) = @_;
 
     die "Invalid control filename $cntl_filename\n"
-	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)(-basic|-whitewins|-prop(\d+)|).xml$/
+	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)(-basic|-whitewins|-prop(\d+)|-4x4|).xml$/
 		or $cntl_filename =~ m/^([kqrbnp]*)(v)([kqrbnp.]*).xml$/);
 
     my ($white_pieces, $black_pieces) = ($1, $3);
@@ -144,19 +144,41 @@ sub write_cntl_file {
 
     printnl '   <variant name="suicide"/>' if $suicide;
 
+    if ($option =~ /^-4x4/) {
+	printnl '    <prune-enable color="white" type="discard"/>';
+	printnl '    <prune-enable color="black" type="discard"/>';
+    }
+
     printnl '   <dtm/>' if ($option ne "-basic" and $option ne '-whitewins');
     printnl '   <basic/>' if ($option eq "-basic");
     printnl '   <flag type="white-wins"/>' if ($option eq "-whitewins");
 
-    if (not $suicide) {
-	printnl '   <piece color="white" type="king"/>';
-	printnl '   <piece color="black" type="king"/>';
+    my $location = "";
+    my $pawn_location = "";
+
+    if ($option =~ /^-4x4/) {
+	$location = " location='a1 a2 a3 a4 b1 b2 b3 b4 c1 c2 c3 c4 d1 d2 d3 d4'";
+	$pawn_location = " location='a2 a3 a4 b2 b3 b4 c2 c3 c4 d2 d3 d4'";
     }
+
+    if (not $suicide) {
+	printnl '   <piece color="white" type="king"' . $location . '/>';
+	printnl '   <piece color="black" type="king"' . $location . '/>';
+    }
+
     for my $piece (split(//, $white_pieces)) {
-	printnl '   <piece color="white" type="' . $pieces{$piece} . '"/>';
+	if ($piece eq 'p') {
+	    printnl '   <piece color="white" type="' . $pieces{$piece} . '"' . $pawn_location . '/>';
+	} else {
+	    printnl '   <piece color="white" type="' . $pieces{$piece} . '"' . $location . '/>';
+	}
     }
     for my $piece (split(//, $black_pieces)) {
-	printnl '   <piece color="black" type="' . $pieces{$piece} . '"/>';
+	if ($piece eq 'p') {
+	    printnl '   <piece color="black" type="' . $pieces{$piece} . '"' . $pawn_location . '/>';
+	} else {
+	    printnl '   <piece color="black" type="' . $pieces{$piece} . '"' . $location . '/>';
+	}
     }
 
     # These are global variables that will updated by the various
@@ -210,6 +232,13 @@ sub write_cntl_file {
 
     printnl '   <enable-proptables MB="' . substr($option, 5) . '"/>' if ($option =~ /^-prop/);
     printnl '   <output filename="' . $filename . '.htb"/>';
+
+    if ($option =~ /^-4x4/) {
+	printnl '    <prune color="white" type="discard" move="*[e-h]*"/>';
+	printnl '    <prune color="white" type="discard" move="*[a-d][5-8]*"/>';
+	printnl '    <prune color="black" type="discard" move="*[e-h]*"/>';
+	printnl '    <prune color="black" type="discard" move="*[a-d][5-8]*"/>';
+    }
 
     printnl '</tablebase>';
     close XMLFILE;
