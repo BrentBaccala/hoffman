@@ -91,7 +91,7 @@ check-slow: $(PROBES-SLOW)
 # i.e, $(call strip_options, fine67-3-3.xml) returns fine67
 
 define strip_options
-$(strip $(filter-out -%, $(subst -,  -,$(1))))
+$(strip $(filter-out -%, $(subst -,  -,$(subst .xml,,$(1)))))
 endef
 
 # Generate XML files by either copying them from the xml directory or
