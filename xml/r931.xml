@@ -1,0 +1,21 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- NEGATIVE BUILD -->
+<!-- This test case is expected to fail because the pawn location is illegal -->
+
+<tablebase>
+    <prune-enable color="white" type="discard"/>
+    <prune-enable color="black" type="discard"/>
+   <dtm/>
+   <piece color="white" type="king" location='a1 a2 a3 a4 b1 b2 b3 b4 c1 c2 c3 c4 d1 d2 d3 d4'/>
+   <piece color="black" type="king" location='a1 a2 a3 a4 b1 b2 b3 b4 c1 c2 c3 c4 d1 d2 d3 d4'/>
+   <piece color="white" type="queen" location='a1 a2 a3 a4 b1 b2 b3 b4 c1 c2 c3 c4 d1 d2 d3 d4'/>
+   <piece color="white" type="pawn" location='a1 a2 a3 a4 b1 b2 b3 b4 c1 c2 c3 c4 d1 d2 d3 d4'/>
+   <output filename="r931.htb"/>
+    <prune color="white" type="discard" move="*[e-h]*"/>
+    <prune color="white" type="discard" move="*[a-d][5-8]*"/>
+    <prune color="black" type="discard" move="*[e-h]*"/>
+    <prune color="black" type="discard" move="*[a-d][5-8]*"/>
+    <prune color="white" type="discard" move="*x*"/>
+    <prune color="black" type="discard" move="*x*"/>
+</tablebase>
