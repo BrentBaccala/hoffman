@@ -158,7 +158,7 @@ of the rules of chess apply to this tablebase.
 {\bf Default:} {\tt normal}
 
 
-\subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant|combinadic \hfil\break\hbox{\qquad} |combinadic2|combinadic3" symmetry="1|2|4|8"/>}
+\subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant|combinadic \hfil\break\hbox{\qquad\qquad\qquad\qquad} |combinadic2|combinadic3|combinadic4|pawngen" \hfil\break\hbox{\qquad} symmetry="1|2|4|8"/>}
 
 The {\tt <index>} element specifies the algorithm that will be used to
 compute the index numbers in the tablebase; i.e, the algorithm that
@@ -214,6 +214,10 @@ this and can not be handled with this scheme.
   tablebase size in half.  (ex: {\tt kqkq} is color symmetric,
   but {\tt kqkr} is not)
 
+\item {\tt pawngen} Like {\tt combinadic4}, but pawns are handled
+  separately by building a table of all possible pawn positions that
+  can result from a given initial pawn configuration.
+
 \end{description}
 
 The optional {\tt symmetry} attribute can be used to encode multiple
@@ -230,7 +234,9 @@ Not all symmetries are compatible will all index types; for example,
 8-way symmetry can not be used with {\tt naive} or {\tt naive2}
 index types.
 
-{\bf Default:} {\tt combinadic4} with automatically selected symmetry
+{\bf Default:} {\tt combinadic4} with automatically selected symmetry,
+unless a {\tt pawngen} element is present in the XML, which triggers
+{\tt pawngen}
 
 \subsection{Tablebase format}
 
@@ -335,7 +341,7 @@ and a black queen.
 {\bf Note:} Any futurebase {\tt prune-enable} elements must be a subset of
 the current tablebase's {\tt prune-enable} elements.
 
-\subsection{\tt <prune color="white|black" move="{\it string}" type="concede|discard" \hfil\break\hbox{\qquad} pawngen-condition="{\it perl-expression}"/>}
+\subsection{\tt <prune color="white|black" move="{\it string}" type="concede|discard"/>}
 
 Futuremoves not handled by specifying futurebases must be pruned using
 one or more of these elements, or an error will result.  The {\tt
@@ -356,20 +362,6 @@ move="stalemate"} and {\tt type="concede"}.  In this case, the {\tt
 color} attribute indicates to which side stalemates should be conceded
 as wins.
 
-The optional {\tt pawngen-condition} attribute is not allowed directly
-by Hoffman, but can be present on control files input to pawngen.  It
-specifies a Perl expression to be tested on each position considered
-by pawngen --- i.e, every distinct pawn formation with an associated
-set of non-pawn pieces.  The prune statement will be included in the
-resulting Hoffman control file only if the Perl expression evaluates
-true.  The Perl expression is evaluated in the following context: {\tt
-@white\_pieces} is an array of one-character strings listing the
-non-pawn white pieces, i.e, {\tt ("K", "Q")}; {\tt @white\_pawns} is
-an array of two-character strings listing the board squares of the
-white pawns, i.e, {\tt ("a4", "c6")}; and likewise for {\tt
-@black\_pieces} and {\tt @black\_pawns}.  This context may change
-slightly in future releases.
-
 {\bf Note:} {\tt prune} elements do not affect moves within a
 tablebase.  Specifying a {\tt prune} element that only matches
 moves within a tablebase will do {\it nothing}.
@@ -384,6 +376,9 @@ handle the rest by default.
 {\bf Note:} {\tt prune} elements are only allowed if they match a {\tt
 prune-enable} element.  If no {\tt prune-enable} elements were
 specified, then no {\tt prune} elements will be permitted.
+
+{\bf Note:} Earlier versions of Hoffman allowed a {\tt pawngen-condition}
+attribute that is no longer supported.
 
 \subsection{Generation Controls}
 
