@@ -40,6 +40,10 @@ PROBES-SLOW = ../PROBES-SLOW
 
 NEGATIVE_BUILD_TESTS = $(notdir $(subst xml,htb,$(shell grep -l "NEGATIVE BUILD" ../xml/*.xml)))
 
+default:
+	@echo test Makefile called with no target
+	@exit 1
+
 check-negative:
 	@for test in $(NEGATIVE_BUILD_TESTS); do							\
 		( ! make $$test ) || exit 1;								\
@@ -106,6 +110,8 @@ endef
 		echo ln -s ../xml/$$BASE .;								\
 		ln -s ../xml/$$BASE .;									\
 		if grep -q pawngen $$BASE; then								\
+			echo $(MAKE) $$BASE.futurebases;						\
+			$(MAKE) $$BASE.futurebases;							\
 			echo $(PAWNGEN) $$BASE;								\
 			$(PAWNGEN) $$BASE;								\
 		fi;											\
@@ -140,6 +146,13 @@ define futurebases
    $(shell xmllint --xpath "//futurebase/@filename" $(1) | sed -e 's/[^"]*"//' -e ':a' -e 's/"[^"]*"/ /' -e 'ta' -e 's/".*/\n/')
 endef
 
+# This target builds all the futurebases that a given xml file depends
+# on.  For example, assuming the standard kqqkq.xml exists, calling
+# 'make kqqkq.xml.futurebases' will build kqkq.htb and kqqk.htb.
+
+%.futurebases:
+	$(if $(strip $(call futurebases, $*)), $(MAKE) $(call futurebases, $*))
+
 # We may need to build other tablebases that the target depends
 # on. This next idea doesn't work because make won't use implicit
 # rules multiple times in a chain.  So we recursively call make
@@ -156,9 +169,8 @@ endef
 
 .DELETE_ON_ERROR:
 
-%.htb: %.xml
+%.htb: %.xml %.xml.futurebases
 	@echo Making $@
-	@$(if $(strip $(call futurebases, $<)), $(MAKE) $(call futurebases, $<))
 	$(HOFFMAN) -g -v $<
 	$(if $(wildcard $(NALIMOV)/$(strip_options, $*).nbb.emd), $(HOFFMAN) -v -n $(NALIMOV) $@)
 
