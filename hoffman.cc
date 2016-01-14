@@ -2770,7 +2770,8 @@ bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_p
 	     piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
 
 	/* Find the last overlapping piece for this encoding group and retrieve its cumulative
-	 * overlapping piece vector.
+	 * overlapping piece vector.  Not doing this was the bug in 1.759 exposed by attempting
+	 * to build kqqk.
 	 */
 
 	uint64_t overlapping_this_group = 0;
@@ -4431,6 +4432,9 @@ piece::piece(xmlpp::Node * xml)
 	if (location[j] != '\0') {
 	    fatal("Illegal piece location (%s)\n", location.c_str());
 	}
+	if ((piece_type == PAWN) && (legal_squares & ~LEGAL_PAWN_BITVECTOR)) {
+	    fatal("Illegal pawn location (%s)\n", location.c_str());
+	}
     }
 }
 
@@ -5680,7 +5684,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.929 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.930 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14467,7 +14471,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.929 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.930 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
