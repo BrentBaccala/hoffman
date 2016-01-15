@@ -13,6 +13,7 @@
 #     'basic' or 'whitewins' to obtain bitbases instead of DTM
 #     'propNUM' to generate using proptables with the specified size in MB
 #     '4x4' to restrict to a 4x4 board
+#     '2x8' to restrict to a 2x8 board
 #
 # Filename format for suicide chess is WvB-option.xml where W and B
 # now come from the set kqrnbp.
@@ -78,8 +79,8 @@ sub mkfilename {
 	$black_value += $values{$black_piece};
     }
 
-    if (($option !~ /^-4x4/) && ((length($black_pieces) > length($white_pieces)) or
-				 ((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value)))) {
+    if (($option !~ /^-[24]x[48]/) && ((length($black_pieces) > length($white_pieces)) or
+				       ((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value)))) {
 	$invert = 1;
 	if ($suicide) {
 	    $filename = $black_pieces . "v" . $white_pieces . $option;
@@ -122,7 +123,7 @@ sub write_cntl_file {
     my ($cntl_filename) = @_;
 
     die "Invalid control filename $cntl_filename\n"
-	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)(-basic|-whitewins|-prop(\d+)|-4x4|).xml$/
+	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)(-basic|-whitewins|-prop(\d+)|-4x4|-2x8|).xml$/
 		or $cntl_filename =~ m/^([kqrbnp]*)(v)([kqrbnp.]*).xml$/);
 
     my ($white_pieces, $black_pieces) = ($1, $3);
@@ -144,7 +145,7 @@ sub write_cntl_file {
 
     printnl '   <variant name="suicide"/>' if $suicide;
 
-    if ($option =~ /^-4x4/) {
+    if ($option =~ /^-[24]x[48]/) {
 	printnl '    <prune-enable color="white" type="discard"/>';
 	printnl '    <prune-enable color="black" type="discard"/>';
     }
@@ -159,6 +160,11 @@ sub write_cntl_file {
     if ($option =~ /^-4x4/) {
 	$location = " location='a1 a2 a3 a4 b1 b2 b3 b4 c1 c2 c3 c4 d1 d2 d3 d4'";
 	$pawn_location = " location='a2 a3 a4 b2 b3 b4 c2 c3 c4 d2 d3 d4'";
+    }
+
+    if ($option =~ /^-2x8/) {
+	$location = " location='a1 a2 a3 a4 a5 a6 a7 a8 b1 b2 b3 b4 b5 b6 b7 b8'";
+	$pawn_location = " location='a2 a3 a4 a5 a6 a7 b2 b3 b4 b5 b6 b7'";
     }
 
     if (not $suicide) {
@@ -238,6 +244,11 @@ sub write_cntl_file {
 	printnl '    <prune color="white" type="discard" move="*[a-d][5-8]*"/>';
 	printnl '    <prune color="black" type="discard" move="*[e-h]*"/>';
 	printnl '    <prune color="black" type="discard" move="*[a-d][5-8]*"/>';
+    }
+
+    if ($option =~ /^-2x8/) {
+	printnl '    <prune color="white" type="discard" move="*[c-h]*"/>';
+	printnl '    <prune color="black" type="discard" move="*[c-h]*"/>';
     }
 
     printnl '</tablebase>';
