@@ -776,6 +776,8 @@ struct piece {
 class pawn_position;
 int eval_to_number_or_zero(xmlpp::Node *node, std::string xpath);
 
+class index_encoding;
+
 typedef struct tablebase {
 
     /* I want an xmlpp::DomParser instance variable, to hold the tablebase's associated XML
@@ -814,6 +816,8 @@ typedef struct tablebase {
      * associated index, while white_king_position[INDEX] and black_king_position[INDEX] reverse
      * that function.  white_king and black_king are the piece numbers of the two kings.
      */
+
+    index_encoding * encoding;
 
     int white_king;
     int black_king;
@@ -861,6 +865,8 @@ typedef struct tablebase {
 
     char *futurevectors;
     int futurevector_bits;
+
+    bool is_color_symmetric(void);
 
     tablebase(void) : offset(0), invert_colors(false), num_pieces(0) { }
     tablebase(std::istream *);
@@ -1804,131 +1810,167 @@ bool check_king_legality(int kingA, int kingB) {
     return false;
 }
 
+class index_encoding {
+public:
+    virtual index_t position_to_index(local_position_t *pos) = 0;
+    virtual bool index_to_position(index_t index, local_position_t *pos) = 0;
+#if 0
+    virtual bool move_piece(local_position_t *pos, int piece, int destination_square) {
+	// move piece and recompute index
+    }
+#endif
+    index_encoding(tablebase_t *tb) : tb(tb) { }
+    // XXX virtual destructor; copy assignment?
+protected:
+    tablebase_t *tb;
+};
+
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and multiplies
  * them together for the various pieces.  Simple and fast.  Actually is now a little more complex in
  * its white king encoding, since it works with 2-way and 4-way symmetry.
  */
 
-index_t local_position_to_naive_index(tablebase_t *tb, local_position_t *pos)
-{
-    int shift_count = 1;
-    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
-    index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-    int piece;
+class naive_index : public index_encoding {
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+public:
 
-	/* The way we encode en passant capturable pawns is use the column number of the
-	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
-	 * this is completely legit.
-	 */
-	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->pieces[piece].color == WHITE)
-		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->pieces[piece].color == BLACK)
-		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    index |= COL(pos->en_passant_square) << shift_count;
-	    shift_count += 6;  /* because 2^6=64 */
-	} else if ((piece == tb->white_king) && (tb->symmetry == 2)) {
-	    /* white king is in left half of board */
-	    index |= ROW(pos->piece_position[piece]) << shift_count;
-	    shift_count += 3;
-	    index |= COL(pos->piece_position[piece]) << shift_count;
-	    shift_count += 2;
-	} else if ((piece == tb->white_king) && (tb->symmetry == 4)) {
-	    /* white king is in lower left quarter of board */
-	    index |= ROW(pos->piece_position[piece]) << shift_count;
-	    shift_count += 2;
-	    index |= COL(pos->piece_position[piece]) << shift_count;
-	    shift_count += 2;
-	} else {
-	    index |= pos->piece_position[piece] << shift_count;
-	    shift_count += 6;  /* because 2^6=64 */
-	}
-    }
+    index_t position_to_index(local_position_t *pos)
+    {
+	int shift_count = 1;
+	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
+	index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+	int piece;
 
-    return index;
-}
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
-{
-    int piece;
-
-    p->side_to_move = index & 1;
-    index >>= 1;
-
-    for (piece = 0; piece < tb->num_pieces; piece++) {
-
-	int square;
-
-	if ((tb->symmetry == 2) && (piece == tb->white_king)) {
-	    square = rowcol2square(index & 7, (index >> 3) & 3);
-	    index >>= 5;
-	} else if ((tb->symmetry == 4) && (piece == tb->white_king)) {
-	    square = rowcol2square(index & 3, (index >> 2) & 3);
-	    index >>= 4;
-	} else {
-	    square = index & 63;
-	    index >>= 6;
-	}
-
-	/* En passant */
-	if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-	    if (tb->pieces[piece].color == WHITE) {
-		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 2*8;
-		square += 3*8;
+	    /* The way we encode en passant capturable pawns is use the column number of the
+	     * pawn.  Since there can never be a pawn (of either color) on the first rank,
+	     * this is completely legit.
+	     */
+	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == WHITE)
+		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		    || ((tb->pieces[piece].color == BLACK)
+			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+		index |= COL(pos->en_passant_square) << shift_count;
+		shift_count += 6;  /* because 2^6=64 */
+	    } else if ((piece == tb->white_king) && (tb->symmetry == 2)) {
+		/* white king is in left half of board */
+		index |= ROW(pos->piece_position[piece]) << shift_count;
+		shift_count += 3;
+		index |= COL(pos->piece_position[piece]) << shift_count;
+		shift_count += 2;
+	    } else if ((piece == tb->white_king) && (tb->symmetry == 4)) {
+		/* white king is in lower left quarter of board */
+		index |= ROW(pos->piece_position[piece]) << shift_count;
+		shift_count += 2;
+		index |= COL(pos->piece_position[piece]) << shift_count;
+		shift_count += 2;
 	    } else {
-		if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 5*8;
-		square += 4*8;
+		index |= pos->piece_position[piece] << shift_count;
+		shift_count += 6;  /* because 2^6=64 */
 	    }
 	}
 
-	/* The first place we handle restricted pieces, and one of most important, too, because this
-	 * function is used during initialization to decide which indices are legal and which are
-	 * not.
+	return index;
+    }
+
+    bool index_to_position(index_t index, local_position_t *p)
+    {
+	int piece;
+
+	p->side_to_move = index & 1;
+	index >>= 1;
+
+	for (piece = 0; piece < tb->num_pieces; piece++) {
+
+	    int square;
+
+	    if ((tb->symmetry == 2) && (piece == tb->white_king)) {
+		square = rowcol2square(index & 7, (index >> 3) & 3);
+		index >>= 5;
+	    } else if ((tb->symmetry == 4) && (piece == tb->white_king)) {
+		square = rowcol2square(index & 3, (index >> 2) & 3);
+		index >>= 4;
+	    } else {
+		square = index & 63;
+		index >>= 6;
+	    }
+
+	    /* En passant */
+	    if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
+		if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
+		if (tb->pieces[piece].color == WHITE) {
+		    if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
+		    p->en_passant_square = square + 2*8;
+		    square += 3*8;
+		} else {
+		    if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
+		    p->en_passant_square = square + 5*8;
+		    square += 4*8;
+		}
+	    }
+
+	    /* The first place we handle restricted pieces, and one of most important, too, because
+	     * this function is used during initialization to decide which indices are legal and
+	     * which are not.
+	     */
+
+	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
+		return false;
+	    }
+
+	    p->piece_position[piece] = square;
+	    if (p->board_vector & BITVECTOR(square)) {
+		return false;
+	    }
+
+	    /* Identical pieces have to appear in sorted order. */
+
+	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+		&& (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
+		return false;
+	    }
+
+	    p->board_vector |= BITVECTOR(square);
+	    if (tb->pieces[piece].color == p->side_to_move) {
+		p->PTM_vector |= BITVECTOR(square);
+	    }
+	}
+
+	/* If there is an en passant capturable pawn in this position, then there can't be anything
+	 * on the capture square or on the square right behind it (where the pawn just came from),
+	 * or its an illegal position.
 	 */
 
-	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-	    return false;
+	if (p->en_passant_square != ILLEGAL_POSITION) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
+	    if (p->side_to_move == WHITE) {
+		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
+	    } else {
+		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
+	    }
 	}
 
-	p->piece_position[piece] = square;
-	if (p->board_vector & BITVECTOR(square)) {
-	    return false;
-	}
-
-	/* Identical pieces have to appear in sorted order. */
-
-	if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
-	    return false;
-	}
-
-	p->board_vector |= BITVECTOR(square);
-	if (tb->pieces[piece].color == p->side_to_move) {
-	    p->PTM_vector |= BITVECTOR(square);
-	}
+	return true;
     }
 
-    /* If there is an en passant capturable pawn in this position, then there can't be anything
-     * on the capture square or on the square right behind it (where the pawn just came from),
-     * or its an illegal position.
-     */
-
-    if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
+    naive_index(tablebase_t *tb) : index_encoding(tb)
+    {
+	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
+	switch (tb->symmetry) {
+	case 1:
+	    tb->max_index = (2<<(6*tb->num_pieces)) - 1;
+	    break;
+	case 2:
+	    tb->max_index = (2<<(6*tb->num_pieces - 1)) - 1;
+	    break;
+	case 4:
+	    tb->max_index = (2<<(6*tb->num_pieces - 2)) - 1;
+	    break;
 	}
     }
-
-    return true;
-}
+};
 
 /* "Naive2" index.  Assigns a number from 0 to 63 to each square on the board and multiplies them
  * together for the various pieces.  Differs from "naive" in its handling of multiple identical
@@ -1936,307 +1978,390 @@ bool naive_index_to_local_position(tablebase_t *tb, index_t index, local_positio
  * pairs of identical pieces are correctly handled.
  */
 
-index_t local_position_to_naive2_index(tablebase_t *tb, local_position_t *pos)
-{
-    int shift_count = 1;
-    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
-    index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-    int piece;
-    uint8_t vals[MAX_PIECES];
+class naive2_index : public index_encoding {
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+public:
 
-	/* The way we encode en passant capturable pawns is use the column number of the
-	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
-	 * this is completely legit.
-	 */
-	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->pieces[piece].color == WHITE)
-		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->pieces[piece].color == BLACK)
-		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    vals[piece] = COL(pos->en_passant_square);
-	} else {
-	    vals[piece] = pos->piece_position[piece];
-	}
-    }
+    index_t position_to_index(local_position_t *pos)
+    {
+	int shift_count = 1;
+	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
+	index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+	int piece;
+	uint8_t vals[MAX_PIECES];
 
-    /* What's all this?
-     *
-     * The idea is to encode two identical pieces using one less bit than needed for encoding them
-     * separately, because n identical pieces introduce n! (n factorial) multiplicity.
-     *
-     * We encode the first piece "normally" and the second piece using a number from 1 to 32
-     * (encoded from 0 to 31) that should be added to the square number of the first piece to obtain
-     * the square number of the second.  We wrap around when doing that math, so if the first piece
-     * is on square 50 and the offset is 20, then the second piece is at square 50+20-64=6.
-     *
-     * What if the second piece is further away than 32 squares?  Then we swap the pieces with each
-     * other before doing anything else...
-     */
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (tb->pieces[piece].next_piece_in_encoding_group != -1) {
-
-	    if (((vals[piece] < vals[tb->pieces[piece].next_piece_in_encoding_group])
-		 && (vals[piece] + 32 < vals[tb->pieces[piece].next_piece_in_encoding_group]))
-		|| ((vals[tb->pieces[piece].next_piece_in_encoding_group] < vals[piece])
-		    && (vals[tb->pieces[piece].next_piece_in_encoding_group] + 32 >= vals[piece]))) {
-
-		unsigned char val;
-		val = vals[piece];
-		vals[piece] = vals[tb->pieces[piece].next_piece_in_encoding_group];
-		vals[tb->pieces[piece].next_piece_in_encoding_group] = val;
-	    }
-	}
-
-	if ((piece == tb->white_king) && (tb->symmetry == 2)) {
-	    /* white king is in left half of board */
-	    index |= ROW(vals[piece]) << shift_count;
-	    shift_count += 3;
-	    index |= COL(vals[piece]) << shift_count;
-	    shift_count += 2;
-	} else if ((piece == tb->white_king) && (tb->symmetry == 4)) {
-	    /* white king is in lower left quarter of board */
-	    index |= ROW(vals[piece]) << shift_count;
-	    shift_count += 2;
-	    index |= COL(vals[piece]) << shift_count;
-	    shift_count += 2;
-	} else if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
-	    index |= vals[piece] << shift_count;
-	    shift_count += 6;  /* because 2^6=64 */
-	} else {
-	    if (vals[piece] > vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
-		index |= (vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1) << shift_count;
+	    /* The way we encode en passant capturable pawns is use the column number of the
+	     * pawn.  Since there can never be a pawn (of either color) on the first rank,
+	     * this is completely legit.
+	     */
+	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == WHITE)
+		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		    || ((tb->pieces[piece].color == BLACK)
+			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+		vals[piece] = COL(pos->en_passant_square);
 	    } else {
-		index |= (64 + vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1) << shift_count;
-	    }
-	    shift_count += 5; /* the whole point of "naive2" */
-	}
-    }
-
-    return index;
-}
-
-bool naive2_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
-{
-    int piece;
-    uint8_t vals[MAX_PIECES];
-
-    p->side_to_move = index & 1;
-    index >>= 1;
-
-    for (piece = 0; piece < tb->num_pieces; piece++) {
-
-	if ((tb->symmetry == 2) && (piece == tb->white_king)) {
-	    vals[piece] = rowcol2square(index & 7, (index >> 3) & 3);
-	    index >>= 5;
-	} else if ((tb->symmetry == 4) && (piece == tb->white_king)) {
-	    vals[piece] = rowcol2square(index & 3, (index >> 2) & 3);
-	    index >>= 4;
-	} else if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
-	    vals[piece] = index & 63;
-	    index >>= 6;
-	} else {
-	    vals[piece] = (vals[tb->pieces[piece].prev_piece_in_encoding_group] + (index & 31) + 1) % 64;
-	    index >>= 5;
-
-	    if (vals[piece] < vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
-		unsigned char val;
-
-		/* One of the important tasks of any index_to_local_position() function is to return
-		 * false on all but one of the indices that correspond to identical positions.
-		 * Here, that can only happen when two grouped pieces are exactly 32 squares apart,
-		 * which can be encoded using either piece first.  In this case, we toss out the
-		 * index with the larger of the two squares encoded as the base value, and make sure
-		 * that the "<" and the ">=" match up just right in the previous function.
-		 */
-
-		if (vals[tb->pieces[piece].prev_piece_in_encoding_group] - vals[piece] == 32) return false;
-
-		val = vals[piece];
-		vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
-		vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
+		vals[piece] = pos->piece_position[piece];
 	    }
 	}
 
-    }
-
-    for (piece = 0; piece < tb->num_pieces; piece++) {
-
-	int square = vals[piece];
-
-	/* En passant */
-	if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-	    if (tb->pieces[piece].color == WHITE) {
-		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 2*8;
-		square += 3*8;
-	    } else {
-		if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 5*8;
-		square += 4*8;
-	    }
-	}
-
-	/* The first place we handle restricted pieces, and one of most important, too, because this
-	 * function is used during initialization to decide which indices are legal and which are
-	 * not.
+	/* What's all this?
+	 *
+	 * The idea is to encode two identical pieces using one less bit than needed for encoding
+	 * them separately, because n identical pieces introduce n! (n factorial) multiplicity.
+	 *
+	 * We encode the first piece "normally" and the second piece using a number from 1 to 32
+	 * (encoded from 0 to 31) that should be added to the square number of the first piece to
+	 * obtain the square number of the second.  We wrap around when doing that math, so if the
+	 * first piece is on square 50 and the offset is 20, then the second piece is at square
+	 * 50+20-64=6.
+	 *
+	 * What if the second piece is further away than 32 squares?  Then we swap the pieces with
+	 * each other before doing anything else...
 	 */
 
-	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-	    return false;
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->pieces[piece].next_piece_in_encoding_group != -1) {
+
+		if (((vals[piece] < vals[tb->pieces[piece].next_piece_in_encoding_group])
+		     && (vals[piece] + 32 < vals[tb->pieces[piece].next_piece_in_encoding_group]))
+		    || ((vals[tb->pieces[piece].next_piece_in_encoding_group] < vals[piece])
+			&& (vals[tb->pieces[piece].next_piece_in_encoding_group] + 32 >= vals[piece]))) {
+
+		    unsigned char val;
+		    val = vals[piece];
+		    vals[piece] = vals[tb->pieces[piece].next_piece_in_encoding_group];
+		    vals[tb->pieces[piece].next_piece_in_encoding_group] = val;
+		}
+	    }
+
+	    if ((piece == tb->white_king) && (tb->symmetry == 2)) {
+		/* white king is in left half of board */
+		index |= ROW(vals[piece]) << shift_count;
+		shift_count += 3;
+		index |= COL(vals[piece]) << shift_count;
+		shift_count += 2;
+	    } else if ((piece == tb->white_king) && (tb->symmetry == 4)) {
+		/* white king is in lower left quarter of board */
+		index |= ROW(vals[piece]) << shift_count;
+		shift_count += 2;
+		index |= COL(vals[piece]) << shift_count;
+		shift_count += 2;
+	    } else if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+		index |= vals[piece] << shift_count;
+		shift_count += 6;  /* because 2^6=64 */
+	    } else {
+		if (vals[piece] > vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
+		    index |= (vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1) << shift_count;
+		} else {
+		    index |= (64 + vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1) << shift_count;
+		}
+		shift_count += 5; /* the whole point of "naive2" */
+	    }
 	}
 
-	p->piece_position[piece] = square;
-	if (p->board_vector & BITVECTOR(square)) {
-	    return false;
-	}
-
-	/* Identical pieces have to appear in sorted order. */
-
-	if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
-	    return false;
-	}
-
-	p->board_vector |= BITVECTOR(square);
-	if (tb->pieces[piece].color == p->side_to_move) {
-	    p->PTM_vector |= BITVECTOR(square);
-	}
+	return index;
     }
 
-    /* If there is an en passant capturable pawn in this position, then there can't be anything
-     * on the capture square or on the square right behind it (where the pawn just came from),
-     * or its an illegal position.
-     */
+    bool index_to_position(index_t index, local_position_t *p)
+    {
+	int piece;
+	uint8_t vals[MAX_PIECES];
 
-    if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
-	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
-	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	p->side_to_move = index & 1;
+	index >>= 1;
+
+	for (piece = 0; piece < tb->num_pieces; piece++) {
+
+	    if ((tb->symmetry == 2) && (piece == tb->white_king)) {
+		vals[piece] = rowcol2square(index & 7, (index >> 3) & 3);
+		index >>= 5;
+	    } else if ((tb->symmetry == 4) && (piece == tb->white_king)) {
+		vals[piece] = rowcol2square(index & 3, (index >> 2) & 3);
+		index >>= 4;
+	    } else if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+		vals[piece] = index & 63;
+		index >>= 6;
+	    } else {
+		vals[piece] = (vals[tb->pieces[piece].prev_piece_in_encoding_group] + (index & 31) + 1) % 64;
+		index >>= 5;
+
+		if (vals[piece] < vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
+		    unsigned char val;
+
+		    /* One of the important tasks of any index_to_position() function is to return
+		     * false on all but one of the indices that correspond to identical positions.
+		     * Here, that can only happen when two grouped pieces are exactly 32 squares
+		     * apart, which can be encoded using either piece first.  In this case, we toss
+		     * out the index with the larger of the two squares encoded as the base value,
+		     * and make sure that the "<" and the ">=" match up just right in the previous
+		     * function.
+		     */
+
+		    if (vals[tb->pieces[piece].prev_piece_in_encoding_group] - vals[piece] == 32) return false;
+
+		    val = vals[piece];
+		    vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
+		    vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
+		}
+	    }
+
 	}
+
+	for (piece = 0; piece < tb->num_pieces; piece++) {
+
+	    int square = vals[piece];
+
+	    /* En passant */
+	    if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
+		if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
+		if (tb->pieces[piece].color == WHITE) {
+		    if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
+		    p->en_passant_square = square + 2*8;
+		    square += 3*8;
+		} else {
+		    if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		    p->en_passant_square = square + 5*8;
+		    square += 4*8;
+		}
+	    }
+
+	    /* The first place we handle restricted pieces, and one of most important, too, because
+	     * this function is used during initialization to decide which indices are legal and
+	     * which are not.
+	     */
+
+	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
+		return false;
+	    }
+
+	    p->piece_position[piece] = square;
+	    if (p->board_vector & BITVECTOR(square)) {
+		return false;
+	    }
+
+	    /* Identical pieces have to appear in sorted order. */
+
+	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+		&& (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
+		return false;
+	    }
+
+	    p->board_vector |= BITVECTOR(square);
+	    if (tb->pieces[piece].color == p->side_to_move) {
+		p->PTM_vector |= BITVECTOR(square);
+	    }
+	}
+
+	/* If there is an en passant capturable pawn in this position, then there can't be anything
+	 * on the capture square or on the square right behind it (where the pawn just came from),
+	 * or its an illegal position.
+	 */
+
+	if (p->en_passant_square != ILLEGAL_POSITION) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
+	    if (p->side_to_move == WHITE) {
+		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
+	    } else {
+		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
+	    }
+	}
+
+	return true;
     }
 
-    return true;
-}
+    naive2_index(tablebase_t *tb) : index_encoding(tb)
+    {
+	tb->max_index = 2;
+
+	/* do the white king "by hand" */
+	switch (tb->symmetry) {
+	case 1:
+	    tb->max_index <<= 6;
+	    break;
+	case 2:
+	    tb->max_index <<= 5;
+	    break;
+	case 4:
+	    tb->max_index <<= 4;
+	    break;
+	}
+
+	tb->pieces[tb->white_king].prev_piece_in_encoding_group = -1;
+	tb->pieces[tb->white_king].next_piece_in_encoding_group = -1;
+
+	/* now do everything else */
+	for (int piece = 1; piece < tb->num_pieces; piece ++) {
+
+	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+		&& (tb->pieces[piece].next_piece_in_semilegal_group != -1)) {
+		throw "Can't have more than two identical pieces with 'naive2' index";
+	    }
+
+	    tb->pieces[piece].prev_piece_in_encoding_group = tb->pieces[piece].prev_piece_in_semilegal_group;
+	    tb->pieces[piece].next_piece_in_encoding_group = tb->pieces[piece].next_piece_in_semilegal_group;
+
+	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) tb->max_index <<= 6;
+	    else tb->max_index <<=5;
+	}
+
+	tb->max_index --;
+    }
+
+};
 
 /* "Simple" index.  Like naive, but only assigns numbers to squares that are legal for a particular
  * piece.  Slower to compute than naive, but more compact for tablebases with lots of movement
  * restrictions on the pieces.
  */
 
-index_t local_position_to_simple_index(tablebase_t *tb, local_position_t *pos)
+class simple_index : public index_encoding
 {
-    index_t index;
-    int piece;
 
-    index = 0;
+public:
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    index_t position_to_index(local_position_t *pos)
+    {
+	index_t index;
+	int piece;
 
-	index *= tb->pieces[piece].total_legal_positions;
+	index = 0;
 
-	/* The way we encode en passant capturable pawns is use the column number of the
-	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
-	 * this is completely legit.
-	 */
-	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->pieces[piece].color == WHITE)
-		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->pieces[piece].color == BLACK)
-		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    index += tb->pieces[piece].index[COL(pos->en_passant_square)];
-	} else {
-	    index += tb->pieces[piece].index[pos->piece_position[piece]];
-	}
-    }
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-    /* We've still got code that assumes flipping the index's LSB flip side-to-move */
+	    index *= tb->pieces[piece].total_legal_positions;
 
-    index *= 2;
-    index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-
-    return index;
-}
-
-bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
-{
-    int piece;
-
-    p->side_to_move = index % 2;
-    index /= 2;
-
-    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
-
-	int square = tb->pieces[piece].piece_position[index % tb->pieces[piece].total_legal_positions];
-	index /= tb->pieces[piece].total_legal_positions;
-
-	/* En passant */
-	if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-	    if (tb->pieces[piece].color == WHITE) {
-		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 2*8;
-		square += 3*8;
+	    /* The way we encode en passant capturable pawns is use the column number of the pawn.
+	     * Since there can never be a pawn (of either color) on the first rank, this is
+	     * completely legit.
+	     */
+	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == WHITE)
+		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		    || ((tb->pieces[piece].color == BLACK)
+			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+		index += tb->pieces[piece].index[COL(pos->en_passant_square)];
 	    } else {
-		if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
-		p->en_passant_square = square + 5*8;
-		square += 4*8;
+		index += tb->pieces[piece].index[pos->piece_position[piece]];
 	    }
 	}
 
-	/* This should never happen. */
+	/* We've still got code that assumes flipping the index's LSB flip side-to-move */
 
-	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-	    fatal("Illegal piece position in simple_index_to_local_position!\n");
+	index *= 2;
+	index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+
+	return index;
+    }
+
+    bool index_to_position(index_t index, local_position_t *p)
+    {
+	int piece;
+
+	p->side_to_move = index % 2;
+	index /= 2;
+
+	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	    int square = tb->pieces[piece].piece_position[index % tb->pieces[piece].total_legal_positions];
+	    index /= tb->pieces[piece].total_legal_positions;
+
+	    /* En passant */
+	    if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
+		if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
+		if (tb->pieces[piece].color == WHITE) {
+		    if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
+		    p->en_passant_square = square + 2*8;
+		    square += 3*8;
+		} else {
+		    if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
+		    p->en_passant_square = square + 5*8;
+		    square += 4*8;
+		}
+	    }
+
+	    /* This should never happen. */
+
+	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
+		fatal("Illegal piece position in simple_index_to_local_position!\n");
+		return false;
+	    }
+
+	    p->piece_position[piece] = square;
+	    if (p->board_vector & BITVECTOR(square)) {
+		return false;
+	    }
+
+	    p->board_vector |= BITVECTOR(square);
+	    if (tb->pieces[piece].color == p->side_to_move) {
+		p->PTM_vector |= BITVECTOR(square);
+	    }
+	}
+
+	/* Identical pieces have to appear in sorted order. */
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+		&& (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
+		return false;
+	    }
+	}
+
+	if (index != 0) {
+	    fatal("index != 0 at end of simple_index::index_to_position!\n");
 	    return false;
 	}
 
-	p->piece_position[piece] = square;
-	if (p->board_vector & BITVECTOR(square)) {
-	    return false;
+	/* If there is an en passant capturable pawn in this position, then there can't be anything
+	 * on the capture square or on the square right behind it (where the pawn just came from),
+	 * or its an illegal position.
+	 */
+
+	if (p->en_passant_square != ILLEGAL_POSITION) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
+	    if (p->side_to_move == WHITE) {
+		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
+	    } else {
+		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
+	    }
 	}
 
-	p->board_vector |= BITVECTOR(square);
-	if (tb->pieces[piece].color == p->side_to_move) {
-	    p->PTM_vector |= BITVECTOR(square);
+	return true;
+    }
+
+    simple_index(tablebase_t *tb) : index_encoding(tb)
+    {
+	/* The "2" is because side-to-play is part of the position */
+	tb->max_index = 2;
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+	    for (int square = 0; square < 64; square ++) {
+		if (! (tb->pieces[piece].legal_squares & BITVECTOR(square))) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
+		tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = square;
+		tb->pieces[piece].index[square] = tb->pieces[piece].total_legal_positions;
+		tb->pieces[piece].total_legal_positions ++;
+
+		/* if the pawn is en-passant capturable, add an index for that */
+		if ((tb->pieces[piece].piece_type == PAWN)
+		    && (((tb->pieces[piece].color == WHITE) && (ROW(square) == 3))
+			|| ((tb->pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
+		    tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = COL(square);
+		    tb->pieces[piece].index[COL(square)] = tb->pieces[piece].total_legal_positions;
+		    tb->pieces[piece].total_legal_positions ++;
+		}
+	    }
+	    tb->max_index *= tb->pieces[piece].total_legal_positions;
 	}
+
+	tb->max_index --;
     }
 
-    /* Identical pieces have to appear in sorted order. */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
-	    return false;
-	}
-    }
-
-    if (index != 0) {
-	fatal("index != 0 at end of simple_index_to_local_position!\n");
-	return false;
-    }
-
-    /* If there is an en passant capturable pawn in this position, then there can't be anything
-     * on the capture square or on the square right behind it (where the pawn just came from),
-     * or its an illegal position.
-     */
-
-    if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
-	}
-    }
-
-    return true;
-}
+};
 
 /* "compact" index
  *
@@ -2283,274 +2408,363 @@ bool simple_index_to_local_position(tablebase_t *tb, index_t index, local_positi
  * the two pawns wouldn't be identical in their ranges.
  */
 
-index_t local_position_to_compact_index(tablebase_t *tb, local_position_t *pos)
+class compact_index : public index_encoding
 {
-    index_t index;
-    int piece;
-    uint8_t vals[MAX_PIECES];
 
-    index = 0;
+public:
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    index_t position_to_index(local_position_t *pos)
+    {
+	index_t index;
+	int piece;
+	uint8_t vals[MAX_PIECES];
 
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	index = 0;
 
-	/* The way we encode en passant capturable pawns is use the column number of the
-	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
-	 * this is completely legit.
-	 */
-	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->pieces[piece].color == WHITE)
-		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->pieces[piece].color == BLACK)
-		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    vals[piece] = tb->pieces[piece].index[COL(pos->en_passant_square)];
-	} else {
-	    vals[piece] = tb->pieces[piece].index[pos->piece_position[piece]];
-	}
-    }
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-    /* Compute the index.
-     *
-     * We encode two identical pieces using one less bit than needed for encoding them separately,
-     * because n identical pieces introduce n! (n factorial) multiplicity.
-     *
-     * We encode the first piece "normally" and the second piece using a number from 1 to 32
-     * (encoded from 0 to 31) that should be added to the square number of the first piece to obtain
-     * the square number of the second.  We wrap around when doing that math, so if the first piece
-     * is on square 50 and the offset is 20, then the second piece is at square 50+20-64=6.
-     *
-     * What if the second piece is further away than 32 squares?  Then we swap the pieces with each
-     * other before doing anything else...
-     */
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	if (piece == tb->white_king) {
-	    index *= tb->total_legal_king_positions;
-	    index += tb->king_index[pos->piece_position[tb->white_king]]
-		[pos->piece_position[tb->black_king]];
-	}
-
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-
-	if (tb->pieces[piece].next_piece_in_encoding_group != -1) {
-
-	    if (((vals[piece] < vals[tb->pieces[piece].next_piece_in_encoding_group])
-		 && (vals[piece] + tb->pieces[piece].total_legal_positions/2
-		     < vals[tb->pieces[piece].next_piece_in_encoding_group]))
-		|| ((vals[tb->pieces[piece].next_piece_in_encoding_group] < vals[piece])
-		    && (vals[tb->pieces[piece].next_piece_in_encoding_group] + tb->pieces[piece].total_legal_positions/2
-			>= vals[piece]))) {
-
-		unsigned char val;
-		val = vals[piece];
-		vals[piece] = vals[tb->pieces[piece].next_piece_in_encoding_group];
-		vals[tb->pieces[piece].next_piece_in_encoding_group] = val;
-	    }
-	}
-
-	if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
-	    index *= tb->pieces[piece].total_legal_positions;
-	    index += vals[piece];
-	} else {
-	    index *= tb->pieces[piece].total_legal_positions / 2;
-
-	    if (vals[piece] > vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
-		index += (vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1);
+	    /* The way we encode en passant capturable pawns is use the column number of the
+	     * pawn.  Since there can never be a pawn (of either color) on the first rank,
+	     * this is completely legit.
+	     */
+	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == WHITE)
+		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		    || ((tb->pieces[piece].color == BLACK)
+			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+		vals[piece] = tb->pieces[piece].index[COL(pos->en_passant_square)];
 	    } else {
-		index += (tb->pieces[piece].total_legal_positions + vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1);
+		vals[piece] = tb->pieces[piece].index[pos->piece_position[piece]];
 	    }
 	}
-    }
 
-    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
+	/* Compute the index.
+	 *
+	 * We encode two identical pieces using one less bit than needed for encoding them
+	 * separately, because n identical pieces introduce n! (n factorial) multiplicity.
+	 *
+	 * We encode the first piece "normally" and the second piece using a number from 1 to 32
+	 * (encoded from 0 to 31) that should be added to the square number of the first piece to
+	 * obtain the square number of the second.  We wrap around when doing that math, so if the
+	 * first piece is on square 50 and the offset is 20, then the second piece is at square
+	 * 50+20-64=6.
+	 *
+	 * What if the second piece is further away than 32 squares?  Then we swap the pieces with
+	 * each other before doing anything else...
+	 */
 
-    index *= 2;
-    index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-    return index;
-}
+	    if (piece == tb->white_king) {
+		index *= tb->total_legal_king_positions;
+		index += tb->king_index[pos->piece_position[tb->white_king]]
+		    [pos->piece_position[tb->black_king]];
+	    }
 
-bool compact_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
-{
-    int piece;
-    uint8_t vals[MAX_PIECES];
-    int king_index = 0;
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-    p->side_to_move = index % 2;
-    index /= 2;
+	    if (tb->pieces[piece].next_piece_in_encoding_group != -1) {
 
-    /* First, split index into an array of encoding values. */
+		if (((vals[piece] < vals[tb->pieces[piece].next_piece_in_encoding_group])
+		     && (vals[piece] + tb->pieces[piece].total_legal_positions/2
+			 < vals[tb->pieces[piece].next_piece_in_encoding_group]))
+		    || ((vals[tb->pieces[piece].next_piece_in_encoding_group] < vals[piece])
+			&& (vals[tb->pieces[piece].next_piece_in_encoding_group] + tb->pieces[piece].total_legal_positions/2
+			    >= vals[piece]))) {
 
-    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+		    unsigned char val;
+		    val = vals[piece];
+		    vals[piece] = vals[tb->pieces[piece].next_piece_in_encoding_group];
+		    vals[tb->pieces[piece].next_piece_in_encoding_group] = val;
+		}
+	    }
 
-	if (piece == tb->white_king) {
-	    king_index = index % tb->total_legal_king_positions;
-	    index /= tb->total_legal_king_positions;
+	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+		index *= tb->pieces[piece].total_legal_positions;
+		index += vals[piece];
+	    } else {
+		index *= tb->pieces[piece].total_legal_positions / 2;
+
+		if (vals[piece] > vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
+		    index += (vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1);
+		} else {
+		    index += (tb->pieces[piece].total_legal_positions + vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1);
+		}
+	    }
 	}
 
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
 
-	if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
-	    vals[piece] = index % tb->pieces[piece].total_legal_positions;
-	    index /= tb->pieces[piece].total_legal_positions;
-	} else {
-	    vals[piece] = index % (tb->pieces[piece].total_legal_positions/2);
-	    index /= tb->pieces[piece].total_legal_positions/2;
-	}
+	index *= 2;
+	index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+
+	return index;
     }
 
-    /* Next, back out any delta encoding and convert the encoding numbers to square numbers on the
-     * board.  This loop has to run in reverse order over the pieces, since the delta encodings are
-     * based on previous encoding numbers, and we're converting to square numbers as we go.  We run
-     * a seperate loop here because we might need previous encoding values to back out the deltas.
-     */
+    bool index_to_position(index_t index, local_position_t *p)
+    {
+	int piece;
+	uint8_t vals[MAX_PIECES];
+	int king_index = 0;
 
-    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+	p->side_to_move = index % 2;
+	index /= 2;
 
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	/* First, split index into an array of encoding values. */
 
-	if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
+	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
-	    vals[piece] += vals[tb->pieces[piece].prev_piece_in_encoding_group] + 1;
-	    vals[piece] %= tb->pieces[piece].total_legal_positions;
+	    if (piece == tb->white_king) {
+		king_index = index % tb->total_legal_king_positions;
+		index /= tb->total_legal_king_positions;
+	    }
 
-	    /* One of the important tasks of any index_to_local_position() function is to return
-	     * false on all but one of the indices that correspond to identical positions.  Here,
-	     * that can only happen when two grouped pieces are exactly half their total legal piece
-	     * positions squares apart, which can be encoded using either piece first.  In this
-	     * case, we toss out the index with the larger of the two squares encoded as the base
-	     * value, and make sure that the "<" and the ">=" match up just right in the previous
-	     * function.
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+		vals[piece] = index % tb->pieces[piece].total_legal_positions;
+		index /= tb->pieces[piece].total_legal_positions;
+	    } else {
+		vals[piece] = index % (tb->pieces[piece].total_legal_positions/2);
+		index /= tb->pieces[piece].total_legal_positions/2;
+	    }
+	}
+
+	/* Next, back out any delta encoding and convert the encoding numbers to square numbers on
+	 * the board.  This loop has to run in reverse order over the pieces, since the delta
+	 * encodings are based on previous encoding numbers, and we're converting to square numbers
+	 * as we go.  We run a seperate loop here because we might need previous encoding values to
+	 * back out the deltas.
+	 */
+
+	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
+
+		vals[piece] += vals[tb->pieces[piece].prev_piece_in_encoding_group] + 1;
+		vals[piece] %= tb->pieces[piece].total_legal_positions;
+
+		/* One of the important tasks of any index_to_local_position() function is to return
+		 * false on all but one of the indices that correspond to identical positions.
+		 * Here, that can only happen when two grouped pieces are exactly half their total
+		 * legal piece positions squares apart, which can be encoded using either piece
+		 * first.  In this case, we toss out the index with the larger of the two squares
+		 * encoded as the base value, and make sure that the "<" and the ">=" match up just
+		 * right in the previous function.
+		 */
+
+		if (vals[tb->pieces[piece].prev_piece_in_encoding_group] - vals[piece]
+		    == tb->pieces[piece].total_legal_positions/2) return false;
+	    }
+
+	    vals[piece] = tb->pieces[piece].piece_position[vals[piece]];
+
+	    /* En passant */
+	    if ((tb->pieces[piece].piece_type == PAWN) && (vals[piece] < 8)) {
+		if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
+		if (tb->pieces[piece].color == WHITE) {
+		    if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
+		    p->en_passant_square = vals[piece] + 2*8;
+		    vals[piece] += 3*8;
+		} else {
+		    if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
+		    p->en_passant_square = vals[piece] + 5*8;
+		    vals[piece] += 4*8;
+		}
+	    }
+
+	}
+
+	/* Now we have to decide the actual ordering in the piece array.  Right now, since we only
+	 * use this code for pairs of identical pieces, we swap if the higher numbered piece is
+	 * first, then swap (maybe again) if the pieces aren't on legal squares.  The net result is
+	 * to put them both on legal squares, if possible, and to put the lower numbered square
+	 * first if both possibilities are legal.
+	 *
+	 * This loop also has to run in reverse order for the swap code to work right.  We run a
+	 * seperate loop here because the legality checks are based on square numbers and not
+	 * encoding values, and we need for all the previous encoding values to have been converted
+	 * into square numbers first.
+	 */
+
+	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
+
+		if (vals[piece] < vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
+		    uint8_t val = vals[piece];
+		    vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
+		    vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
+		}
+
+		if (! (tb->pieces[piece].legal_squares & BITVECTOR(vals[piece]))
+		    || ! (tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].legal_squares
+			  & BITVECTOR(vals[tb->pieces[piece].prev_piece_in_encoding_group]))) {
+
+		    uint8_t val = vals[piece];
+		    vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
+		    vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
+		}
+	    }
+	}
+
+	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	    int square = vals[piece];
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    /* This can happen if we have multiple identical pieces because we counted semilegal
+	     * positions to encode them with.
 	     */
 
-	    if (vals[tb->pieces[piece].prev_piece_in_encoding_group] - vals[piece]
-		== tb->pieces[piece].total_legal_positions/2) return false;
-	}
+	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
+		/* fprintf(stderr, "Illegal piece position in compact_index_to_local_position!\n"); */
+		return false;
+	    }
 
-	vals[piece] = tb->pieces[piece].piece_position[vals[piece]];
+	    p->piece_position[piece] = square;
+	    if (p->board_vector & BITVECTOR(square)) {
+		return false;
+	    }
 
-	/* En passant */
-	if ((tb->pieces[piece].piece_type == PAWN) && (vals[piece] < 8)) {
-	    if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-	    if (tb->pieces[piece].color == WHITE) {
-		if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
-		p->en_passant_square = vals[piece] + 2*8;
-		vals[piece] += 3*8;
-	    } else {
-		if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
-		p->en_passant_square = vals[piece] + 5*8;
-		vals[piece] += 4*8;
+	    p->board_vector |= BITVECTOR(square);
+	    if (tb->pieces[piece].color == p->side_to_move) {
+		p->PTM_vector |= BITVECTOR(square);
 	    }
 	}
 
-    }
-
-    /* Now we have to decide the actual ordering in the piece array.  Right now, since we only use
-     * this code for pairs of identical pieces, we swap if the higher numbered piece is first, then
-     * swap (maybe again) if the pieces aren't on legal squares.  The net result is to put them both
-     * on legal squares, if possible, and to put the lower numbered square first if both
-     * possibilities are legal.
-     *
-     * This loop also has to run in reverse order for the swap code to work right.  We run a
-     * seperate loop here because the legality checks are based on square numbers and not encoding
-     * values, and we need for all the previous encoding values to have been converted into square
-     * numbers first.
-     */
-
-    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
-
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-
-	if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
-
-	    if (vals[piece] < vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
-		uint8_t val = vals[piece];
-		vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
-		vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
-	    }
-
-	    if (! (tb->pieces[piece].legal_squares & BITVECTOR(vals[piece]))
-		|| ! (tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].legal_squares
-		      & BITVECTOR(vals[tb->pieces[piece].prev_piece_in_encoding_group]))) {
-
-		uint8_t val = vals[piece];
-		vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
-		vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
-	    }
-	}
-    }
-
-    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
-
-	int square = vals[piece];
-
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-
-	/* This can happen if we have multiple identical pieces because we counted semilegal
-	 * positions to encode them with.
-	 */
-
-	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-	    /* fprintf(stderr, "Illegal piece position in compact_index_to_local_position!\n"); */
-	    return false;
-	}
-
-	p->piece_position[piece] = square;
-	if (p->board_vector & BITVECTOR(square)) {
-	    return false;
-	}
-
-	p->board_vector |= BITVECTOR(square);
-	if (tb->pieces[piece].color == p->side_to_move) {
-	    p->PTM_vector |= BITVECTOR(square);
-	}
-    }
-
-    p->piece_position[tb->white_king] = tb->white_king_position[king_index];
-    p->piece_position[tb->black_king] = tb->black_king_position[king_index];
-    if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return false;
-    if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return false;
-    p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
-    p->board_vector |= BITVECTOR(p->piece_position[tb->black_king]);
-    if (p->side_to_move == WHITE)
-	p->PTM_vector |= BITVECTOR(p->piece_position[tb->white_king]);
-    else
-	p->PTM_vector |= BITVECTOR(p->piece_position[tb->black_king]);
+	p->piece_position[tb->white_king] = tb->white_king_position[king_index];
+	p->piece_position[tb->black_king] = tb->black_king_position[king_index];
+	if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return false;
+	if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return false;
+	p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
+	p->board_vector |= BITVECTOR(p->piece_position[tb->black_king]);
+	if (p->side_to_move == WHITE)
+	    p->PTM_vector |= BITVECTOR(p->piece_position[tb->white_king]);
+	else
+	    p->PTM_vector |= BITVECTOR(p->piece_position[tb->black_king]);
 
 #if 0
-    /* Identical pieces have to appear in sorted order. */
+	/* Identical pieces have to appear in sorted order. */
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
-	    && (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
-	    return false;
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+		&& (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
+		return false;
+	    }
 	}
-    }
 #endif
 
-    if (index != 0) {
-	fatal("index != 0 at end of compact_index_to_local_position!\n");
-	return false;
-    }
-
-    /* If there is an en passant capturable pawn in this position, then there can't be anything
-     * on the capture square or on the square right behind it (where the pawn just came from),
-     * or its an illegal position.
-     */
-
-    if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
+	if (index != 0) {
+	    fatal("index != 0 at end of compact_index::index_to_position!\n");
+	    return false;
 	}
+
+	/* If there is an en passant capturable pawn in this position, then there can't be anything
+	 * on the capture square or on the square right behind it (where the pawn just came from),
+	 * or its an illegal position.
+	 */
+
+	if (p->en_passant_square != ILLEGAL_POSITION) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
+	    if (p->side_to_move == WHITE) {
+		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
+	    } else {
+		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
+	    }
+	}
+
+	return true;
     }
 
-    return true;
-}
+    compact_index(tablebase_t *tb) : index_encoding(tb)
+    {
+	/* The "2" is because side-to-play is part of the position */
+	tb->max_index = 2;
+
+	for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
+	    if (! (tb->pieces[tb->white_king].legal_squares & BITVECTOR(white_king_square))) continue;
+	    for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
+		if (! (tb->pieces[tb->black_king].legal_squares & BITVECTOR(black_king_square))) continue;
+		if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+		if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+		if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+		if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+		    && (ROW(black_king_square) > COL(black_king_square))) continue;
+
+		if (tb->positions_with_adjacent_kings_are_illegal
+		    && ! check_king_legality(white_king_square, black_king_square)) continue;
+
+		tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
+		tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
+		tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
+		tb->total_legal_king_positions ++;
+	    }
+	}
+	tb->max_index *= tb->total_legal_king_positions;
+
+	tb->pieces[tb->white_king].prev_piece_in_encoding_group = -1;
+	tb->pieces[tb->white_king].next_piece_in_encoding_group = -1;
+	tb->pieces[tb->black_king].prev_piece_in_encoding_group = -1;
+	tb->pieces[tb->black_king].next_piece_in_encoding_group = -1;
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
+		&& (tb->pieces[piece].next_piece_in_semilegal_group != -1)) {
+		throw "Can't have more than two identical pieces with 'compact' index";
+	    }
+
+	    tb->pieces[piece].prev_piece_in_encoding_group = tb->pieces[piece].prev_piece_in_semilegal_group;
+	    tb->pieces[piece].next_piece_in_encoding_group = tb->pieces[piece].next_piece_in_semilegal_group;
+
+	    /* We count semilegal and not legal squares here because the pair encoding used for
+	     * identical pieces assumes that both pieces occupy the same range of squares.
+	     */
+
+	    for (int square = 0; square < 64; square ++) {
+
+		if (! (tb->pieces[piece].semilegal_squares & BITVECTOR(square))) continue;
+
+		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
+		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
+		tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = square;
+		tb->pieces[piece].index[square] = tb->pieces[piece].total_legal_positions;
+		tb->pieces[piece].total_legal_positions ++;
+
+		/* if the pawn is en-passant capturable, add an index for that */
+		if ((tb->pieces[piece].piece_type == PAWN)
+		    && (((tb->pieces[piece].color == WHITE) && (ROW(square) == 3))
+			|| ((tb->pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
+		    tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = COL(square);
+		    tb->pieces[piece].index[COL(square)] = tb->pieces[piece].total_legal_positions;
+		    tb->pieces[piece].total_legal_positions ++;
+		}
+	    }
+	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+		tb->max_index *= tb->pieces[piece].total_legal_positions;
+	    } else if (tb->pieces[piece].total_legal_positions
+		       != tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].total_legal_positions) {
+		/* Semilegal positions are the union of legal positions for an entire encoding group */
+		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
+	    } else {
+		tb->max_index *= tb->pieces[piece].total_legal_positions/2;
+	    }
+	}
+
+	tb->max_index --;
+    }
+};
 
 /* "combinadic3/4" index
  *
@@ -2573,358 +2787,589 @@ void transpose_array(uint8_t *array, int index1, int index2)
     array[index1] = tmp;
 }
 
-index_t local_position_to_combinadic3_index(tablebase_t *tb, local_position_t *pos)
-{
-    index_t index;
-    int piece, piece2;
-    uint8_t vals[MAX_PIECES];
+int choose(int n, int k) {
+    long retval = 1;
+    int i;
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+    for (i=0; i<k; i++) retval *= (n-i);
+    for (i=1; i<=k; i++) retval /= i;
 
-	int decrement = 0;
-
-	/* The way we encode en passant capturable pawns is use the column number of the
-	 * pawn.  Since there can never be a pawn (of either color) on the first rank,
-	 * this is completely legit.
-	 */
-	if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-	    && (((tb->pieces[piece].color == WHITE)
-		 && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		|| ((tb->pieces[piece].color == BLACK)
-		    && (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-	    vals[piece] = tb->pieces[piece].value[COL(pos->en_passant_square)];
-	    continue;  /* Have to do this, as we never change en-passant values */
-	} else {
-	    vals[piece] = tb->pieces[piece].value[pos->piece_position[piece]];
-	}
-
-	/* Remove positions for overlapping pieces, but we don't touch the kings, and we don't
-	 * consider anything in the current encoding group, because the combinadic encoding already
-	 * takes care of them.  For all other overlapping pieces before us in the piece list, if
-	 * that piece is earlier than us in board order, decrement our position by one.
-	 *
-	 * Pawns require special consideration, as we encode en-passant capturable pawns using the
-	 * squares on the first rank.  When using a pawn to reduce the encoding value of a later
-	 * piece, we ignore the en-passant status of the pawn and use its board position.  When
-	 * reducing the encoding value of a pawn, we use the encoding value, with en-passant
-	 * factored in.  A consequence of this is that we never change the value of an en-passant
-	 * encoded pawn.
-	 */
-
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-
-	for (piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
-
-	for (piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
-	    if (pos->piece_position[piece] > pos->piece_position[piece2]) decrement ++;
-	}
-
-	vals[piece] -= decrement;
-    }
-
-    /* Sort encoding groups so that the lowest values always come first. */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	piece2 = piece;
-	while ((tb->pieces[piece2].prev_piece_in_encoding_group != -1)
-	       && (vals[piece2] < vals[tb->pieces[piece2].prev_piece_in_encoding_group])) {
-	    transpose_array(vals, piece2, tb->pieces[piece2].prev_piece_in_encoding_group);
-	    piece2 = tb->pieces[piece2].prev_piece_in_encoding_group;
-	}
-    }
-
-    /* Encode the pieces */
-
-    index = 0;
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-
-	index += tb->pieces[piece].index[vals[piece]];
-    }
-
-    /* Kings have their own encoding table */
-
-    if (tb->white_king != -1) {
-	index += tb->king_index[pos->piece_position[tb->white_king]]
-	    [pos->piece_position[tb->black_king]];
-    }
-
-    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
-
-    if (tb->encode_stm) index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-
-    return index;
+    return retval;
 }
 
-bool combinadic3_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
+class combinadic_index : public index_encoding
 {
-    int piece;
-    int en_passant_pawn = -1;
-    int en_passant_color = 0;
-    uint8_t vals[MAX_PIECES];
-    uint64_t overlapping_pieces[MAX_PIECES];
 
-    static uint64_t smaller_pieces[64];
-    static bool do_once = false;
+public:
 
-    if (!do_once) {
-	bzero(smaller_pieces, sizeof(smaller_pieces));
-	for (int i=0; i<64; i++) {
-	    for (int j=0; j<=i; j++) {
-		smaller_pieces[i] |= (1ULL << j);
-	    }
-	}
-	do_once = true;
-    }
-    bzero(overlapping_pieces, sizeof(overlapping_pieces));
+    index_t position_to_index(local_position_t *pos)
+    {
+	index_t index;
+	int piece, piece2;
+	uint8_t vals[MAX_PIECES];
 
-    if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-    /* Binary search for the largest value in index[] that is less than or equal to the
-     * (running) index, subtract it out of the index, and store the encoding values.  This loop has
-     * to run in reverse order over the pieces, since a combinadic encoding must be backed out from
-     * the largest piece first.
-     */
+	    int decrement = 0;
 
-    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
-
-	if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-
-	vals[piece]
-	    = std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + 64, index+1)
-	    - tb->pieces[piece].index - 1;
-
-	index -= tb->pieces[piece].index[vals[piece]];
-
-	if ((tb->pieces[piece].piece_type == PAWN) && (tb->pieces[piece].piece_position[vals[piece]] < 8)) {
-
-	    if (en_passant_pawn != -1) return false; /* can't have two en passant pawns */
-
-	    en_passant_pawn = piece;
-
-	    /* If there's an en passant pawn, it must be the opposite color of PTM */
-	    en_passant_color = 1 - p->side_to_move;
-
-	    /* En passant pawns are encoded on the first row and never have their values reduced */
-	    p->piece_position[en_passant_pawn] = tb->pieces[en_passant_pawn].piece_position[vals[en_passant_pawn]];
-
-	    if (en_passant_color == WHITE) {
-		p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
-		p->piece_position[en_passant_pawn] += 3*8;
+	    /* The way we encode en passant capturable pawns is use the column number of the pawn.
+	     * Since there can never be a pawn (of either color) on the first rank, this is
+	     * completely legit.
+	     */
+	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == WHITE)
+		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
+		    || ((tb->pieces[piece].color == BLACK)
+			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
+		vals[piece] = tb->pieces[piece].value[COL(pos->en_passant_square)];
+		continue;  /* Have to do this, as we never change en-passant values */
 	    } else {
-		p->en_passant_square = p->piece_position[en_passant_pawn] + 5*8;
-		p->piece_position[en_passant_pawn] += 4*8;
+		vals[piece] = tb->pieces[piece].value[pos->piece_position[piece]];
+	    }
+
+	    /* Remove positions for overlapping pieces, but we don't touch the kings, and we don't
+	     * consider anything in the current encoding group, because the combinadic encoding
+	     * already takes care of them.  For all other overlapping pieces before us in the piece
+	     * list, if that piece is earlier than us in board order, decrement our position by one.
+	     *
+	     * Pawns require special consideration, as we encode en-passant capturable pawns using
+	     * the squares on the first rank.  When using a pawn to reduce the encoding value of a
+	     * later piece, we ignore the en-passant status of the pawn and use its board position.
+	     * When reducing the encoding value of a pawn, we use the encoding value, with
+	     * en-passant factored in.  A consequence of this is that we never change the value of
+	     * an en-passant encoded pawn.
+	     */
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    for (piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
+
+	    for (piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
+		if (pos->piece_position[piece] > pos->piece_position[piece2]) decrement ++;
+	    }
+
+	    vals[piece] -= decrement;
+	}
+
+	/* Sort encoding groups so that the lowest values always come first. */
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    piece2 = piece;
+	    while ((tb->pieces[piece2].prev_piece_in_encoding_group != -1)
+		   && (vals[piece2] < vals[tb->pieces[piece2].prev_piece_in_encoding_group])) {
+		transpose_array(vals, piece2, tb->pieces[piece2].prev_piece_in_encoding_group);
+		piece2 = tb->pieces[piece2].prev_piece_in_encoding_group;
+	    }
+	}
+
+	/* Encode the pieces */
+
+	index = 0;
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    index += tb->pieces[piece].index[vals[piece]];
+	}
+
+	/* Kings have their own encoding table */
+
+	if (tb->white_king != -1) {
+	    index += tb->king_index[pos->piece_position[tb->white_king]]
+		[pos->piece_position[tb->black_king]];
+	}
+
+	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
+
+	if (tb->encode_stm) index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+
+	return index;
+    }
+
+    bool index_to_position(index_t index, local_position_t *p)
+    {
+	int piece;
+	int en_passant_pawn = -1;
+	int en_passant_color = 0;
+	uint8_t vals[MAX_PIECES];
+	uint64_t overlapping_pieces[MAX_PIECES];
+
+	static uint64_t smaller_pieces[64];
+	static bool do_once = false;
+
+	if (!do_once) {
+	    bzero(smaller_pieces, sizeof(smaller_pieces));
+	    for (int i=0; i<64; i++) {
+		for (int j=0; j<=i; j++) {
+		    smaller_pieces[i] |= (1ULL << j);
+		}
+	    }
+	    do_once = true;
+	}
+	bzero(overlapping_pieces, sizeof(overlapping_pieces));
+
+	if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
+
+	/* Binary search for the largest value in index[] that is less than or equal to the
+	 * (running) index, subtract it out of the index, and store the encoding values.  This loop
+	 * has to run in reverse order over the pieces, since a combinadic encoding must be backed
+	 * out from the largest piece first.
+	 */
+
+	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    vals[piece]
+		= std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + 64, index+1)
+		- tb->pieces[piece].index - 1;
+
+	    index -= tb->pieces[piece].index[vals[piece]];
+
+	    if ((tb->pieces[piece].piece_type == PAWN) && (tb->pieces[piece].piece_position[vals[piece]] < 8)) {
+
+		if (en_passant_pawn != -1) return false; /* can't have two en passant pawns */
+
+		en_passant_pawn = piece;
+
+		/* If there's an en passant pawn, it must be the opposite color of PTM */
+		en_passant_color = 1 - p->side_to_move;
+
+		/* En passant pawns are encoded on the first row and never have their values reduced */
+		p->piece_position[en_passant_pawn] = tb->pieces[en_passant_pawn].piece_position[vals[en_passant_pawn]];
+
+		if (en_passant_color == WHITE) {
+		    p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
+		    p->piece_position[en_passant_pawn] += 3*8;
+		} else {
+		    p->en_passant_square = p->piece_position[en_passant_pawn] + 5*8;
+		    p->piece_position[en_passant_pawn] += 4*8;
+		}
+
 	    }
 
 	}
 
-    }
+	if (tb->encode_stm) index /= 2;
 
-    if (tb->encode_stm) index /= 2;
+	if (tb->variant != VARIANT_SUICIDE) {
 
-    if (tb->variant != VARIANT_SUICIDE) {
+	    if (index >= tb->total_legal_king_positions) {
+		fatal("index >= total legal king positions in combinadic3_index_to_local_position!\n");
+		return false;
+	    }
 
-	if (index >= tb->total_legal_king_positions) {
-	    fatal("index >= total legal king positions in combinadic3_index_to_local_position!\n");
-	    return false;
+	    p->piece_position[tb->white_king] = tb->white_king_position[index];
+	    p->piece_position[tb->black_king] = tb->black_king_position[index];
+
+	} else {
+
+	    if (index != 0) {
+		fatal("index > 0 in combinadic3_index_to_local_position!\n");
+		return false;
+	    }
+
 	}
 
-	p->piece_position[tb->white_king] = tb->white_king_position[index];
-	p->piece_position[tb->black_king] = tb->black_king_position[index];
-
-    } else {
-
-	if (index != 0) {
-	    fatal("index > 0 in combinadic3_index_to_local_position!\n");
-	    return false;
-	}
-
-    }
-
-    /* "You've got to be kidding me"
-     *
-     * If we have overlapping pieces, some of the position numbers of the later pieces might have
-     * been reduced.  We fix up the positions by going back through the earlier overlapping pieces
-     * and incrementing our position if we're past them.  This has to be done in order from the
-     * smallest position to the largest.  Consider unrestricted pieces; kings on squares 12 and 33,
-     * and a queen on square 34 that got encoded as 32.  We need to increment 32 to 33 for 12, then
-     * increment 33 to 34 for 33, and if we try to handle the king on 33 first, we won't increment
-     * because 32 is less than 33.
-     *
-     * I've tried to minimize the number of loops by maintaining a bit vector (overlapping_pieces)
-     * for each piece that has a bit set both for that piece's position and for the positions of any
-     * earlier overlapping pieces.  For each piece, we count the bits set at earlier positions in
-     * the bit vector, but we have to be careful to check additional bits as we increment.  In the
-     * example above, we can count all the bits from 0 to 32, find that 12 is set, but then we have
-     * to check 33 as we increment to know that we need to increment again to 34.
-     */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
- 
-	/* Back out to the first piece of this encoding group. */
-
-	int piece2;
-	for (piece2=piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1;
-	     piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
-
-	/* Find the last overlapping piece for this encoding group and retrieve its cumulative
-	 * overlapping piece vector.  Not doing this was the bug in 1.759 exposed by attempting
-	 * to build kqqk.
+	/* "You've got to be kidding me"
+	 *
+	 * If we have overlapping pieces, some of the position numbers of the later pieces might
+	 * have been reduced.  We fix up the positions by going back through the earlier overlapping
+	 * pieces and incrementing our position if we're past them.  This has to be done in order
+	 * from the smallest position to the largest.  Consider unrestricted pieces; kings on
+	 * squares 12 and 33, and a queen on square 34 that got encoded as 32.  We need to increment
+	 * 32 to 33 for 12, then increment 33 to 34 for 33, and if we try to handle the king on 33
+	 * first, we won't increment because 32 is less than 33.
+	 *
+	 * I've tried to minimize the number of loops by maintaining a bit vector
+	 * (overlapping_pieces) for each piece that has a bit set both for that piece's position and
+	 * for the positions of any earlier overlapping pieces.  For each piece, we count the bits
+	 * set at earlier positions in the bit vector, but we have to be careful to check additional
+	 * bits as we increment.  In the example above, we can count all the bits from 0 to 32, find
+	 * that 12 is set, but then we have to check 33 as we increment to know that we need to
+	 * increment again to 34.
 	 */
 
-	uint64_t overlapping_this_group = 0;
-	if (tb->pieces[piece2].last_overlapping_piece != -1) {
- 	    overlapping_this_group = overlapping_pieces[tb->pieces[piece2].last_overlapping_piece];
- 	}
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+ 
+	    /* Back out to the first piece of this encoding group. */
 
- 	if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
- 	    overlapping_pieces[piece] = overlapping_pieces[tb->pieces[piece].prev_piece_in_encoding_group];
- 	} else if (tb->pieces[piece].last_overlapping_piece != -1) {
- 	    overlapping_pieces[piece] = overlapping_pieces[tb->pieces[piece].last_overlapping_piece];
- 	}
- 
- 	/* Kings and en passant pawns have their own encoding schemes and have already been decoded */
- 
- 	if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)) {
- 
- 	    p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
+	    int piece2;
+	    for (piece2=piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1;
+		 piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
 
-	    /* Form a bitvector of the piece on smaller squares than this one, that were earlier and
-	     * are overlapped by this group.
-	     *
-	     * XXX smaller_pieces needs to take restricted locations into account
+	    /* Find the last overlapping piece for this encoding group and retrieve its cumulative
+	     * overlapping piece vector.  Not doing this was the bug in 1.759 exposed by attempting
+	     * to build kqqk.
 	     */
 
- 	    uint64_t increments = (overlapping_this_group & smaller_pieces[p->piece_position[piece]]);
- 
- 	    /* Loop once for each bit set in "increments".  Brian Kernighan's way of counting bits.
-	     * Increment the encoding value and decode a new position, continuing to increment if
-	     * the new position also overlaps an earlier piece.
-	     */
- 
- 	    while (increments) {
- 		increments &= increments - 1;
- 		do {
- 		    vals[piece] ++;
- 		    p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
- 		} while (overlapping_this_group & (1ULL << (p->piece_position[piece])));
- 	    }
- 	}
- 
- 	overlapping_pieces[piece] |= (1ULL << (p->piece_position[piece]));
-     }
+	    uint64_t overlapping_this_group = 0;
+	    if (tb->pieces[piece2].last_overlapping_piece != -1) {
+		overlapping_this_group = overlapping_pieces[tb->pieces[piece2].last_overlapping_piece];
+	    }
 
-    /* En passant pawns always trail on a file, since they just moved from their starting positions.
-     * So, white en passant pawns are still sorted, but black ones have to be moved to the end of
-     * their group.
-     */
+	    if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
+		overlapping_pieces[piece] = overlapping_pieces[tb->pieces[piece].prev_piece_in_encoding_group];
+	    } else if (tb->pieces[piece].last_overlapping_piece != -1) {
+		overlapping_pieces[piece] = overlapping_pieces[tb->pieces[piece].last_overlapping_piece];
+	    }
+ 
+	    /* Kings and en passant pawns have their own encoding schemes and have already been decoded */
+ 
+	    if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)) {
+ 
+		p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
 
-    if (en_passant_pawn != -1) {
+		/* Form a bitvector of the piece on smaller squares than this one, that were earlier and
+		 * are overlapped by this group.
+		 *
+		 * XXX smaller_pieces needs to take restricted locations into account
+		 */
 
-	for (piece = tb->pieces[en_passant_pawn].next_piece_in_encoding_group;
-	     (piece != -1)
-		 && (p->piece_position[tb->pieces[piece].prev_piece_in_encoding_group]
-		     > p->piece_position[piece]);
-	     piece = tb->pieces[piece].next_piece_in_encoding_group) {
-	    transpose_array(p->piece_position, piece, tb->pieces[piece].prev_piece_in_encoding_group);
-	    en_passant_pawn = piece;
+		uint64_t increments = (overlapping_this_group & smaller_pieces[p->piece_position[piece]]);
+ 
+		/* Loop once for each bit set in "increments".  Brian Kernighan's way of counting
+		 * bits.  Increment the encoding value and decode a new position, continuing to
+		 * increment if the new position also overlaps an earlier piece.
+		 */
+ 
+		while (increments) {
+		    increments &= increments - 1;
+		    do {
+			vals[piece] ++;
+			p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
+		    } while (overlapping_this_group & (1ULL << (p->piece_position[piece])));
+		}
+	    }
+ 
+	    overlapping_pieces[piece] |= (1ULL << (p->piece_position[piece]));
 	}
 
-	/* We've figured out which pawn is the en passant pawn, now make sure that it is the right
-	 * color.  We earlier decided on en_passant_color based solely on side-to-move.  If we're
-	 * encoding a group of plus-pawns of mixed color, then this should always come out right.
-	 * Otherwise, our encoding group is of uniform color, and this check will reject
-	 * half of our en passant positions, which might be a place for improvement.
+	/* En passant pawns always trail on a file, since they just moved from their starting
+	 * positions.  So, white en passant pawns are still sorted, but black ones have to be moved
+	 * to the end of their group.
 	 */
 
- 	if (tb->pieces[en_passant_pawn].color != en_passant_color) {
- 	    return false;
- 	}
+	if (en_passant_pawn != -1) {
+
+	    for (piece = tb->pieces[en_passant_pawn].next_piece_in_encoding_group;
+		 (piece != -1)
+		     && (p->piece_position[tb->pieces[piece].prev_piece_in_encoding_group]
+			 > p->piece_position[piece]);
+		 piece = tb->pieces[piece].next_piece_in_encoding_group) {
+		transpose_array(p->piece_position, piece, tb->pieces[piece].prev_piece_in_encoding_group);
+		en_passant_pawn = piece;
+	    }
+
+	    /* We've figured out which pawn is the en passant pawn, now make sure that it is the
+	     * right color.  We earlier decided on en_passant_color based solely on side-to-move.
+	     * If we're encoding a group of plus-pawns of mixed color, then this should always come
+	     * out right.  Otherwise, our encoding group is of uniform color, and this check will
+	     * reject half of our en passant positions, which might be a place for improvement.
+	     */
+
+	    if (tb->pieces[en_passant_pawn].color != en_passant_color) {
+		return false;
+	    }
+	}
+
+	/* We've got all the numbers right, but maybe not in the right order, since each encoding
+	 * group is sorted in ascending order.
+	 *
+	 * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
+	 * encoding groups of identical pieces into ascending order, then permutes until all the
+	 * pieces are on legal squares.  Mimic this action here.
+	 *
+	 * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
+	 */
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if (tb->pieces[piece].permutations) {
+		int perm = 0;
+
+		while (tb->pieces[piece].permutations[perm] != 0) {
+
+		    int piece2;
+
+		    /* check for legality of all pieces in this set */
+		    for (piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].next_piece_in_encoding_group) {
+			if (! (tb->pieces[piece2].legal_squares & BITVECTOR(p->piece_position[piece2]))) {
+			    break;
+			}
+		    }
+
+		    if (piece2 == -1) {
+			/* we're legal */
+			break;
+		    }
+
+		    /* permute */
+		    transpose_array(p->piece_position,
+				    tb->pieces[piece].permutations[perm] & 0xff, tb->pieces[piece].permutations[perm] >> 8);
+		    perm ++;
+		}
+	    }
+	}
+
+	/* Final checks for an illegally positioned piece, two pieces on the same square, setting
+	 * bits in the board vectors
+	 */
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    int square = p->piece_position[piece];
+
+	    /* This can happen because we counted semilegal positions to encode with, not legal
+	     * positions.
+	     */
+
+	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
+		return false;
+	    }
+
+	    if (p->board_vector & BITVECTOR(square)) {
+		return false;
+	    }
+
+	    p->board_vector |= BITVECTOR(square);
+	    if (tb->pieces[piece].color == p->side_to_move) {
+		p->PTM_vector |= BITVECTOR(square);
+	    }
+	}
+
+	/* If there is an en passant capturable pawn in this position, then there can't be anything
+	 * on the capture square or on the square right behind it (where the pawn just came from),
+	 * or its an illegal position.
+	 */
+
+	if (p->en_passant_square != ILLEGAL_POSITION) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
+	    if (p->side_to_move == WHITE) {
+		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
+	    } else {
+		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
+	    }
+	}
+
+	return true;
     }
 
-    /* We've got all the numbers right, but maybe not in the right order, since each encoding group
-     * is sorted in ascending order.
-     *
-     * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
-     * encoding groups of identical pieces into ascending order, then permutes until all the pieces
-     * are on legal squares.  Mimic this action here.
-     *
-     * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
-     */
+    combinadic_index(tablebase_t *tb) : index_encoding(tb)
+    {
+	if ((tb->index_type == COMBINADIC4_INDEX) && tb->is_color_symmetric()) {
+	    /* Don't need side-to-play for a color symetric tablebase */
+	    tb->encode_stm = false;
+	    tb->max_index = 1;
+	} else {
+	    /* The "2" is because side-to-play is part of the position */
+	    tb->encode_stm = true;
+	    tb->max_index = 2;
+	}
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	if (tb->variant != VARIANT_SUICIDE) {
+	    for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
+		if (! (tb->pieces[tb->white_king].legal_squares & BITVECTOR(white_king_square))) continue;
+		for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
+		    if (! (tb->pieces[tb->black_king].legal_squares & BITVECTOR(black_king_square))) continue;
+		    if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+		    if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+		    if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+		    if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+			&& (ROW(black_king_square) > COL(black_king_square))) continue;
 
-	if (tb->pieces[piece].permutations) {
-	    int perm = 0;
+		    if (tb->positions_with_adjacent_kings_are_illegal
+			&& ! check_king_legality(white_king_square, black_king_square)) continue;
 
-	    while (tb->pieces[piece].permutations[perm] != 0) {
+		    tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
+		    tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
+		    tb->king_index[white_king_square][black_king_square] = tb->max_index * tb->total_legal_king_positions;
+		    tb->total_legal_king_positions ++;
+		}
+	    }
+	    tb->max_index *= tb->total_legal_king_positions;
+
+	    tb->pieces[tb->white_king].prev_piece_in_encoding_group = -1;
+	    tb->pieces[tb->white_king].next_piece_in_encoding_group = -1;
+	    tb->pieces[tb->black_king].prev_piece_in_encoding_group = -1;
+	    tb->pieces[tb->black_king].next_piece_in_encoding_group = -1;
+	}
+
+	/* Assign encoding groups, usually groups of identical pieces. */
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+
+	    tb->pieces[piece].prev_piece_in_encoding_group = tb->pieces[piece].prev_piece_in_semilegal_group;
+	    tb->pieces[piece].next_piece_in_encoding_group = tb->pieces[piece].next_piece_in_semilegal_group;
+
+	    /* An important special case - handle two opposing plus-pawns by combining their
+	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
+	     * range of each group.  Note that we only set blocking_piece for plus-pawns, so if two
+	     * pieces are mutually blocking, they must be opposing plus-pawns.
+	     */
+
+	    if ((tb->pieces[piece].blocking_piece != -1)
+		&& (tb->pieces[tb->pieces[piece].blocking_piece].blocking_piece == piece)) {
 
 		int piece2;
 
-		/* check for legality of all pieces in this set */
-		for (piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].next_piece_in_encoding_group) {
-		    if (! (tb->pieces[piece2].legal_squares & BITVECTOR(p->piece_position[piece2]))) {
-			break;
+		if ((tb->pieces[piece].blocking_piece > piece) && (tb->pieces[piece].color != WHITE)) {
+		    throw "Mutually blocking pawns must currently be specified white pawn first";
+		}
+
+		if (tb->pieces[piece].blocking_piece > piece) {
+		    if (tb->pieces[piece].next_piece_in_semilegal_group != -1) {
+			/* should never happen, we should be blocked by a pawn of opposite color */
+			throw "BUG: not blocked right";
+		    } else {
+			tb->pieces[piece].next_piece_in_encoding_group = tb->pieces[piece].blocking_piece;
+			for (piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group) {
+			    tb->pieces[piece2].semilegal_squares
+				|= tb->pieces[tb->pieces[piece].blocking_piece].semilegal_squares;
+			}
+		    }
+		} else {
+		    if (tb->pieces[piece].prev_piece_in_semilegal_group != -1) {
+			/* should never happen, we should be blocked by a pawn of opposite color */
+			throw "BUG: not blocked right";
+		    } else {
+			tb->pieces[piece].prev_piece_in_encoding_group = tb->pieces[piece].blocking_piece;
+			for (piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].next_piece_in_encoding_group) {
+			    tb->pieces[piece2].semilegal_squares
+				|= tb->pieces[tb->pieces[piece].blocking_piece].semilegal_squares;
+			}
 		    }
 		}
-
-		if (piece2 == -1) {
-		    /* we're legal */
-		    break;
-		}
-
-		/* permute */
-		transpose_array(p->piece_position,
-				tb->pieces[piece].permutations[perm] & 0xff, tb->pieces[piece].permutations[perm] >> 8);
-		perm ++;
 	    }
 	}
-    }
 
-    /* Final checks for an illegally positioned piece, two pieces on the same square,
-     * setting bits in the board vectors
-     */
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    /* If our semilegal range completely contains the semilegal range of a earlier piece,
+	     * that's overlapping, and we'll be able to remove some of our positions since they must
+	     * be occupied by the earlier piece.  Later pieces in a set of identical pieces record
+	     * the last identical piece as the last overlapping piece.  We remove indices by backing
+	     * out to the beginning of our identical set, then going backwards through the earlier
+	     * overlapping pieces, decrementing if our piece position is greater than theirs.
+	     *
+	     * This is not (and can not be) a doubly linked list, since multiple later pieces can
+	     * have the same last_overlapping_piece.  Consider an early piece restricted to d4, e4,
+	     * d5, e5, a later piece restricted to de, and another later piece restricted to 45.
+	     */
 
-	int square = p->piece_position[piece];
+	    tb->pieces[piece].last_overlapping_piece = -1;
 
-	/* This can happen because we counted semilegal positions to encode with, not legal
-	 * positions.
+	    for (int piece2 = piece-1; piece2 >= 0; piece2 --) {
+		if ((tb->pieces[piece].semilegal_squares & tb->pieces[piece2].semilegal_squares) == tb->pieces[piece2].semilegal_squares) {
+		    tb->pieces[piece].last_overlapping_piece = piece2;
+		    break;
+		}
+	    }
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+
+	    int piece_in_set;
+
+	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+		piece_in_set = 1;
+	    } else if (tb->pieces[piece].prev_piece_in_encoding_group == piece-1) {
+		piece_in_set ++;
+	    } else {
+		fatal("Combinadic3/4 index requires encoding groups to be adjacent in index\n");
+	    }
+
+	    /* Now number the squares in the piece's semilegal range, and construct tables to
+	     * translate back and forth between this numbering and the board squares.  We count
+	     * semilegal and not legal squares here because the pair encoding used for identical
+	     * pieces assumes that both pieces occupy the same range of squares.  We also assign
+	     * squares for en passant capturable pawns by using square numbers in the first row
+	     * (i.e, less than 8), since pawns can never be there.
+	     */
+
+	    for (int square = 0; square < 64; square ++) {
+
+		if ((tb->pieces[piece].semilegal_squares & BITVECTOR(square))
+		    || ((tb->pieces[piece].piece_type == PAWN)
+			&& (square < 8)
+			&& (tb->pieces[piece].semilegal_squares
+			    & BITVECTOR(rowcol2square(tb->pieces[piece].color == WHITE ? 3 : 4, square))))) {
+
+		    tb->pieces[piece].value[square] = tb->pieces[piece].total_legal_positions;
+		    tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = square;
+
+		    tb->pieces[piece].index[tb->pieces[piece].total_legal_positions]
+			= choose(tb->pieces[piece].total_legal_positions, piece_in_set) * tb->max_index;
+
+		    tb->pieces[piece].total_legal_positions ++;
+		} else {
+		    /* This value should never get used. */
+		    tb->pieces[piece].value[square] = ILLEGAL_POSITION;
+		}
+
+	    }
+
+	    /* Now back out any values that we saved because of any earlier overlapping pieces.  If
+	     * we have a single earlier overlapping piece, for example, we'll never encode with the
+	     * last value because the presence of the other piece would force that value to be
+	     * decremented.
+	     */
+
+	    tb->pieces[piece].total_legal_piece_values = tb->pieces[piece].total_legal_positions;
+
+	    for (int piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
+	    for (int piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
+		tb->pieces[piece].total_legal_piece_values --;
+	    }
+
+	    if ((tb->pieces[piece].prev_piece_in_encoding_group != -1)
+		&& (tb->pieces[piece].total_legal_positions
+		    != tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].total_legal_positions)) {
+		fatal("BUG: Identical pieces don't have the same number of total semilegal positions\n");
+	    }
+
+	    if ((tb->pieces[piece].prev_piece_in_encoding_group != -1)
+		&& (tb->pieces[piece].total_legal_piece_values
+		    != tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].total_legal_piece_values)) {
+		fatal("BUG: Identical pieces don't have the same number of encoding values\n");
+	    }
+
+	    if (tb->pieces[piece].next_piece_in_encoding_group == -1) {
+		tb->max_index *= choose(tb->pieces[piece].total_legal_piece_values, piece_in_set);
+	    }
+
+	}
+
+	tb->max_index --;
+
+	/* Now we pad the tail end of the index arrays with max_index+1.  This allows us to
+	 * search the table using std::lower_bound without having to worry about where its actual
+	 * end is, which will typically be before its physical end.
 	 */
 
-	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-	    return false;
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    for (int value = tb->pieces[piece].total_legal_piece_values; value < 64; value ++) {
+		tb->pieces[piece].index[value] = tb->max_index + 1;
+	    }
 	}
 
-	if (p->board_vector & BITVECTOR(square)) {
-	    return false;
+	if (tb->index_type == PAWNGEN_INDEX) {
+	    tb->max_index ++;
+	    tb->pawngen_multiplier = tb->max_index;
+	    tb->max_index *= tb->pawn_positions_by_index.size();
+	    tb->max_index --;
 	}
 
-	p->board_vector |= BITVECTOR(square);
-	if (tb->pieces[piece].color == p->side_to_move) {
-	    p->PTM_vector |= BITVECTOR(square);
-	}
     }
-
-    /* If there is an en passant capturable pawn in this position, then there can't be anything
-     * on the capture square or on the square right behind it (where the pawn just came from),
-     * or its an illegal position.
-     */
-
-    if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
-	}
-    }
-
-    return true;
-}
+};
 
 /* "pawngen" index
  *
@@ -3364,327 +3809,337 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
     invalid_pawn_positions.clear();
 }
 
-index_t local_position_to_pawngen_index(tablebase_t *tb, local_position_t *pos)
+class pawngen_index : public combinadic_index
 {
-    index_t index;
-    int piece, piece2;
-    uint8_t vals[MAX_PIECES];
 
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
+public:
 
-	int decrement = 0;
+    index_t position_to_index(local_position_t *pos)
+    {
+	index_t index;
+	int piece, piece2;
+	uint8_t vals[MAX_PIECES];
 
-	vals[piece] = tb->pieces[piece].value[pos->piece_position[piece]];
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 
-	/* Remove positions for overlapping pieces, but we don't touch the kings or pawns, and we
-	 * don't consider anything in the current encoding group, because the combinadic encoding
-	 * already takes care of them.  For all other overlapping pieces before us in the piece
-	 * list, if that piece is earlier than us in board order, decrement our position by one.
-	 */
+	    int decrement = 0;
 
-	if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
+	    vals[piece] = tb->pieces[piece].value[pos->piece_position[piece]];
 
-	for (piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
+	    /* Remove positions for overlapping pieces, but we don't touch the kings or pawns, and
+	     * we don't consider anything in the current encoding group, because the combinadic
+	     * encoding already takes care of them.  For all other overlapping pieces before us in
+	     * the piece list, if that piece is earlier than us in board order, decrement our
+	     * position by one.
+	     */
 
-	for (piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
-	    if (pos->piece_position[piece] > pos->piece_position[piece2]) decrement ++;
-	}
-
-	vals[piece] -= decrement;
-    }
-
-    /* Sort encoding groups so that the lowest values always come first. */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (tb->pieces[piece].piece_type == PAWN) continue;
-	piece2 = piece;
-	while ((tb->pieces[piece2].prev_piece_in_encoding_group != -1)
-	       && (vals[piece2] < vals[tb->pieces[piece2].prev_piece_in_encoding_group])) {
-	    transpose_array(vals, piece2, tb->pieces[piece2].prev_piece_in_encoding_group);
-	    piece2 = tb->pieces[piece2].prev_piece_in_encoding_group;
-	}
-    }
-
-    /* Encode the pieces */
-
-    index = 0;
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
-
-	index += tb->pieces[piece].index[vals[piece]];
-    }
-
-    /* Kings have their own encoding table */
-
-    if (tb->white_king != -1) {
-	index += tb->king_index[pos->piece_position[tb->white_king]]
-	    [pos->piece_position[tb->black_king]];
-    }
-
-    /* Pawns have their own encoding table */
-
-    pawn_position pawns;
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (tb->pieces[piece].piece_type == PAWN) {
-	    if (tb->pieces[piece].color == WHITE) {
-		pawns.add_white_pawn(pos->piece_position[piece]);
-	    } else {
-		pawns.add_black_pawn(pos->piece_position[piece]);
-	    }
-	}
-    }
-    pawns.en_passant_square = pos->en_passant_square;
-
-    auto it = std::lower_bound(tb->pawn_positions_by_position.begin(), tb->pawn_positions_by_position.end(),
-			       pawns, pawn_position_fast_compare);
-
-    /* In the course of normal program operation, we should never generate invalid pawn positions,
-     * but it can happen during testing with check_1000_positions().  So invalid pawn positions just
-     * return INVALID_INDEX.
-     *
-     * XXX throw errors more aggressively here during actual program operation
-     */
-
-    if (it == tb->pawn_positions_by_position.end()) {
-	return INVALID_INDEX;
-    } else if ((*it < pawns) || (pawns < *it)) {
-	return INVALID_INDEX;
-    } else {
-	index += tb->pawngen_multiplier * it->index;
-    }
-
-    /* index_to_side_to_move() assumes that side-to-move is the index's LSB */
-
-    if (tb->encode_stm) index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-
-    return index;
-}
-
-bool pawngen_index_to_local_position(tablebase_t *tb, index_t index, local_position_t *p)
-{
-    int piece;
-    uint8_t vals[MAX_PIECES];
-    uint64_t overlapping_pieces[MAX_PIECES];
-
-    static uint64_t smaller_pieces[64];
-    static bool do_once = false;
-
-    if (!do_once) {
-	bzero(smaller_pieces, sizeof(smaller_pieces));
-	for (int i=0; i<64; i++) {
-	    for (int j=0; j<=i; j++) {
-		smaller_pieces[i] |= (1ULL << j);
-	    }
-	}
-	do_once = true;
-    }
-    bzero(overlapping_pieces, sizeof(overlapping_pieces));
-
-    if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
-
-    /* Extract the pawn encoding from the most significant bits */
-
-    int pawn_index = index / tb->pawngen_multiplier;
-    index -= pawn_index * tb->pawngen_multiplier;
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (tb->pieces[piece].piece_type == PAWN) {
-	    p->piece_position[piece] = tb->pawn_positions_by_index[pawn_index].position[piece];
-	}
-    }
-
-    p->en_passant_square = tb->pawn_positions_by_index[pawn_index].en_passant_square;
-
-    /* If we've got an en passant pawn, make sure that it is the right color, i.e, the opposite
-     * color of the side to move.  This check will reject half of our en passant positions, which
-     * might be a place for improvement.
-     */
-
-    if (p->en_passant_square != ILLEGAL_POSITION) {
- 	if (tb->pieces[tb->pawn_positions_by_index[pawn_index].en_passant_pawn].color == p->side_to_move) {
- 	    return false;
- 	}
-    }
-
-    /* Binary search for the largest value in index[] that is less than or equal to the
-     * (running) index, subtract it out of the index, and store the encoding values.  This loop has
-     * to run in reverse order over the pieces, since a combinadic encoding must be backed out from
-     * the largest piece first.
-     */
-
-    for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
-
- 	if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
-
-	vals[piece]
-	    = std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + 64, index+1)
-	    - tb->pieces[piece].index - 1;
-
-	index -= tb->pieces[piece].index[vals[piece]];
-    }
-
-    if (tb->encode_stm) index /= 2;
-
-    if (tb->variant != VARIANT_SUICIDE) {
-
-	if (index >= tb->total_legal_king_positions) {
-	    fatal("index >= total legal king positions in pawngen_index_to_local_position!\n");
-	    return false;
-	}
-
-	p->piece_position[tb->white_king] = tb->white_king_position[index];
-	p->piece_position[tb->black_king] = tb->black_king_position[index];
-
-    } else {
-
-	if (index != 0) {
-	    fatal("index > 0 in pawngen_index_to_local_position!\n");
-	    return false;
-	}
-
-    }
-
-    /* "You've got to be kidding me"
-     *
-     * If we have overlapping pieces, some of the position numbers of the later pieces might have
-     * been reduced.  We fix up the positions by going back through the earlier overlapping pieces
-     * and incrementing our position if we're past them.  This has to be done in order from the
-     * smallest position to the largest.  Consider unrestricted pieces; kings on squares 12 and 33,
-     * and a queen on square 34 that got encoded as 32.  We need to increment 32 to 33 for 12, then
-     * increment 33 to 34 for 33, and if we try to handle the king on 33 first, we won't increment
-     * because 32 is less than 33.
-     *
-     * I've tried to minimize the number of loops by maintaining a bit vector (overlapping_pieces)
-     * for each piece that has a bit set both for that piece's position and for the positions of any
-     * earlier overlapping pieces.  For each piece, we count the bits set at earlier positions in
-     * the bit vector, but we have to be careful to check additional bits as we increment.  In the
-     * example above, we can count all the bits from 0 to 32, find that 12 is set, but then we have
-     * to check 33 as we increment to know that we need to increment again to 34.
-     */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-
- 	int piece2;
- 	uint8_t smallest_position, next_smallest_position;
-  
- 	if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
-
-	p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
-	smallest_position = ILLEGAL_POSITION;
-
-	do {
-	    next_smallest_position = ILLEGAL_POSITION;
+	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    for (piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
 
 	    for (piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
-		if (p->piece_position[piece2] <= p->piece_position[piece]) {
-		    if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
-			if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
-			    next_smallest_position = p->piece_position[piece2];
+		if (pos->piece_position[piece] > pos->piece_position[piece2]) decrement ++;
+	    }
+
+	    vals[piece] -= decrement;
+	}
+
+	/* Sort encoding groups so that the lowest values always come first. */
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->pieces[piece].piece_type == PAWN) continue;
+	    piece2 = piece;
+	    while ((tb->pieces[piece2].prev_piece_in_encoding_group != -1)
+		   && (vals[piece2] < vals[tb->pieces[piece2].prev_piece_in_encoding_group])) {
+		transpose_array(vals, piece2, tb->pieces[piece2].prev_piece_in_encoding_group);
+		piece2 = tb->pieces[piece2].prev_piece_in_encoding_group;
+	    }
+	}
+
+	/* Encode the pieces */
+
+	index = 0;
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
+
+	    index += tb->pieces[piece].index[vals[piece]];
+	}
+
+	/* Kings have their own encoding table */
+
+	if (tb->white_king != -1) {
+	    index += tb->king_index[pos->piece_position[tb->white_king]]
+		[pos->piece_position[tb->black_king]];
+	}
+
+	/* Pawns have their own encoding table */
+
+	pawn_position pawns;
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->pieces[piece].piece_type == PAWN) {
+		if (tb->pieces[piece].color == WHITE) {
+		    pawns.add_white_pawn(pos->piece_position[piece]);
+		} else {
+		    pawns.add_black_pawn(pos->piece_position[piece]);
+		}
+	    }
+	}
+	pawns.en_passant_square = pos->en_passant_square;
+
+	auto it = std::lower_bound(tb->pawn_positions_by_position.begin(), tb->pawn_positions_by_position.end(),
+				   pawns, pawn_position_fast_compare);
+
+	/* In the course of normal program operation, we should never generate invalid pawn
+	 * positions, but it can happen during testing with check_1000_positions().  So invalid pawn
+	 * positions just return INVALID_INDEX.
+	 *
+	 * XXX throw errors more aggressively here during actual program operation
+	 */
+
+	if (it == tb->pawn_positions_by_position.end()) {
+	    return INVALID_INDEX;
+	} else if ((*it < pawns) || (pawns < *it)) {
+	    return INVALID_INDEX;
+	} else {
+	    index += tb->pawngen_multiplier * it->index;
+	}
+
+	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
+
+	if (tb->encode_stm) index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+
+	return index;
+    }
+
+    bool index_to_position(index_t index, local_position_t *p)
+    {
+	int piece;
+	uint8_t vals[MAX_PIECES];
+	uint64_t overlapping_pieces[MAX_PIECES];
+
+	static uint64_t smaller_pieces[64];
+	static bool do_once = false;
+
+	if (!do_once) {
+	    bzero(smaller_pieces, sizeof(smaller_pieces));
+	    for (int i=0; i<64; i++) {
+		for (int j=0; j<=i; j++) {
+		    smaller_pieces[i] |= (1ULL << j);
+		}
+	    }
+	    do_once = true;
+	}
+	bzero(overlapping_pieces, sizeof(overlapping_pieces));
+
+	if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
+
+	/* Extract the pawn encoding from the most significant bits */
+
+	int pawn_index = index / tb->pawngen_multiplier;
+	index -= pawn_index * tb->pawngen_multiplier;
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->pieces[piece].piece_type == PAWN) {
+		p->piece_position[piece] = tb->pawn_positions_by_index[pawn_index].position[piece];
+	    }
+	}
+
+	p->en_passant_square = tb->pawn_positions_by_index[pawn_index].en_passant_square;
+
+	/* If we've got an en passant pawn, make sure that it is the right color, i.e, the opposite
+	 * color of the side to move.  This check will reject half of our en passant positions, which
+	 * might be a place for improvement.
+	 */
+
+	if (p->en_passant_square != ILLEGAL_POSITION) {
+	    if (tb->pieces[tb->pawn_positions_by_index[pawn_index].en_passant_pawn].color == p->side_to_move) {
+		return false;
+	    }
+	}
+
+	/* Binary search for the largest value in index[] that is less than or equal to the
+	 * (running) index, subtract it out of the index, and store the encoding values.  This loop has
+	 * to run in reverse order over the pieces, since a combinadic encoding must be backed out from
+	 * the largest piece first.
+	 */
+
+	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
+
+	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
+
+	    vals[piece]
+		= std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + 64, index+1)
+		- tb->pieces[piece].index - 1;
+
+	    index -= tb->pieces[piece].index[vals[piece]];
+	}
+
+	if (tb->encode_stm) index /= 2;
+
+	if (tb->variant != VARIANT_SUICIDE) {
+
+	    if (index >= tb->total_legal_king_positions) {
+		fatal("index >= total legal king positions in pawngen_index_to_local_position!\n");
+		return false;
+	    }
+
+	    p->piece_position[tb->white_king] = tb->white_king_position[index];
+	    p->piece_position[tb->black_king] = tb->black_king_position[index];
+
+	} else {
+
+	    if (index != 0) {
+		fatal("index > 0 in pawngen_index_to_local_position!\n");
+		return false;
+	    }
+
+	}
+
+	/* "You've got to be kidding me"
+	 *
+	 * If we have overlapping pieces, some of the position numbers of the later pieces might
+	 * have been reduced.  We fix up the positions by going back through the earlier overlapping
+	 * pieces and incrementing our position if we're past them.  This has to be done in order
+	 * from the smallest position to the largest.  Consider unrestricted pieces; kings on
+	 * squares 12 and 33, and a queen on square 34 that got encoded as 32.  We need to increment
+	 * 32 to 33 for 12, then increment 33 to 34 for 33, and if we try to handle the king on 33
+	 * first, we won't increment because 32 is less than 33.
+	 *
+	 * I've tried to minimize the number of loops by maintaining a bit vector
+	 * (overlapping_pieces) for each piece that has a bit set both for that piece's position and
+	 * for the positions of any earlier overlapping pieces.  For each piece, we count the bits
+	 * set at earlier positions in the bit vector, but we have to be careful to check additional
+	 * bits as we increment.  In the example above, we can count all the bits from 0 to 32, find
+	 * that 12 is set, but then we have to check 33 as we increment to know that we need to
+	 * increment again to 34.
+	 */
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    int piece2;
+	    uint8_t smallest_position, next_smallest_position;
+  
+	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
+
+	    p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
+	    smallest_position = ILLEGAL_POSITION;
+
+	    do {
+		next_smallest_position = ILLEGAL_POSITION;
+
+		for (int piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
+
+		for (int piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
+		    if (p->piece_position[piece2] <= p->piece_position[piece]) {
+			if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
+			    if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
+				next_smallest_position = p->piece_position[piece2];
+			    }
 			}
 		    }
 		}
-	    }
 
-	    if (next_smallest_position != ILLEGAL_POSITION) {
-		vals[piece] ++;
+		if (next_smallest_position != ILLEGAL_POSITION) {
+		    vals[piece] ++;
 
-		/* I suspect that this test never triggers */
-		if (vals[piece] >= tb->pieces[piece].total_legal_positions) return false;
+		    /* I suspect that this test never triggers */
+		    if (vals[piece] >= tb->pieces[piece].total_legal_positions) return false;
 
-		p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
-		smallest_position = next_smallest_position;
-	    }
-
-	} while (next_smallest_position != ILLEGAL_POSITION);
-
-    }
-
-    /* We've got all the numbers right, but maybe not in the right order, since each encoding group
-     * is sorted in ascending order.
-     *
-     * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
-     * encoding groups of identical pieces into ascending order, then permutes until all the pieces
-     * are on legal squares.  Mimic this action here.
-     *
-     * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
-     */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	if ((tb->pieces[piece].piece_type != PAWN) && tb->pieces[piece].permutations) {
-	    int perm = 0;
-
-	    while (tb->pieces[piece].permutations[perm] != 0) {
-
-		int piece2;
-
-		/* check for legality of all pieces in this set */
-		for (piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].next_piece_in_encoding_group) {
-		    if (! (tb->pieces[piece2].legal_squares & BITVECTOR(p->piece_position[piece2]))) {
-			break;
-		    }
+		    p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
+		    smallest_position = next_smallest_position;
 		}
 
-		if (piece2 == -1) {
-		    /* we're legal */
-		    break;
-		}
+	    } while (next_smallest_position != ILLEGAL_POSITION);
 
-		/* permute */
-		transpose_array(p->piece_position,
-				tb->pieces[piece].permutations[perm] & 0xff, tb->pieces[piece].permutations[perm] >> 8);
-		perm ++;
-	    }
 	}
-    }
 
-    /* Final checks for an illegally positioned piece, two pieces on the same square,
-     * setting bits in the board vectors
-     */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	int square = p->piece_position[piece];
-
-	/* This can happen because we counted semilegal positions to encode with, not legal
-	 * positions.
+	/* We've got all the numbers right, but maybe not in the right order, since each encoding
+	 * group is sorted in ascending order.
+	 *
+	 * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
+	 * encoding groups of identical pieces into ascending order, then permutes until all the
+	 * pieces are on legal squares.  Mimic this action here.
+	 *
+	 * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
 	 */
 
-	if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-	    return false;
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((tb->pieces[piece].piece_type != PAWN) && tb->pieces[piece].permutations) {
+		int perm = 0;
+
+		while (tb->pieces[piece].permutations[perm] != 0) {
+
+		    int piece2;
+
+		    /* check for legality of all pieces in this set */
+		    for (int piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].next_piece_in_encoding_group) {
+			if (! (tb->pieces[piece2].legal_squares & BITVECTOR(p->piece_position[piece2]))) {
+			    break;
+			}
+		    }
+
+		    if (piece2 == -1) {
+			/* we're legal */
+			break;
+		    }
+
+		    /* permute */
+		    transpose_array(p->piece_position,
+				    tb->pieces[piece].permutations[perm] & 0xff, tb->pieces[piece].permutations[perm] >> 8);
+		    perm ++;
+		}
+	    }
 	}
 
-	if (p->board_vector & BITVECTOR(square)) {
-	    return false;
+	/* Final checks for an illegally positioned piece, two pieces on the same square,
+	 * setting bits in the board vectors
+	 */
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    int square = p->piece_position[piece];
+
+	    /* This can happen because we counted semilegal positions to encode with, not legal
+	     * positions.
+	     */
+
+	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
+		return false;
+	    }
+
+	    if (p->board_vector & BITVECTOR(square)) {
+		return false;
+	    }
+
+	    p->board_vector |= BITVECTOR(square);
+	    if (tb->pieces[piece].color == p->side_to_move) {
+		p->PTM_vector |= BITVECTOR(square);
+	    }
 	}
 
-	p->board_vector |= BITVECTOR(square);
-	if (tb->pieces[piece].color == p->side_to_move) {
-	    p->PTM_vector |= BITVECTOR(square);
+	/* If there is an en passant capturable pawn in this position, then there can't be anything
+	 * on the capture square or on the square right behind it (where the pawn just came from),
+	 * or its an illegal position.
+	 */
+
+	if (p->en_passant_square != ILLEGAL_POSITION) {
+	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
+	    if (p->side_to_move == WHITE) {
+		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
+	    } else {
+		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
+	    }
 	}
+
+	return true;
     }
 
-    /* If there is an en passant capturable pawn in this position, then there can't be anything
-     * on the capture square or on the square right behind it (where the pawn just came from),
-     * or its an illegal position.
-     */
-
-    if (p->en_passant_square != ILLEGAL_POSITION) {
-	if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	if (p->side_to_move == WHITE) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	} else {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
-	}
-    }
-
-    return true;
-}
+    pawngen_index(tablebase_t *tb) : combinadic_index(tb) { }
+};
 
 /* Normalization
  *
@@ -3964,31 +4419,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	}
     }
 
-    switch (tb->index_type) {
-    case NAIVE_INDEX:
-	index = local_position_to_naive_index(tb, position);
-	break;
-    case NAIVE2_INDEX:
-	index = local_position_to_naive2_index(tb, position);
-	break;
-    case SIMPLE_INDEX:
-	index = local_position_to_simple_index(tb, position);
-	break;
-    case COMPACT_INDEX:
-    case NO_EN_PASSANT_INDEX:
-	index = local_position_to_compact_index(tb, position);
-	break;
-    case COMBINADIC3_INDEX:
-    case COMBINADIC4_INDEX:
-	index = local_position_to_combinadic3_index(tb, position);
-	break;
-    case PAWNGEN_INDEX:
-	index = local_position_to_pawngen_index(tb, position);
-	break;
-    default:
-	fatal("Unknown index type in local_position_to_index()\n");
-	return INVALID_INDEX;
-    }
+    index = tb->encoding->position_to_index(position);
 
     /* Multiplicity - number of non-identical positions that this index corresponds to.  We want to
      * update the original position structure that got passed in.
@@ -4034,31 +4465,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     bzero(position, sizeof(local_position_t));
     position->en_passant_square = ILLEGAL_POSITION;
 
-    switch (tb->index_type) {
-    case NAIVE_INDEX:
-	ret = naive_index_to_local_position(tb, index, position);
-	break;
-    case NAIVE2_INDEX:
-	ret = naive2_index_to_local_position(tb, index, position);
-	break;
-    case SIMPLE_INDEX:
-	ret = simple_index_to_local_position(tb, index, position);
-	break;
-    case COMPACT_INDEX:
-    case NO_EN_PASSANT_INDEX:
-	ret = compact_index_to_local_position(tb, index, position);
-	break;
-    case COMBINADIC3_INDEX:
-    case COMBINADIC4_INDEX:
-	ret = combinadic3_index_to_local_position(tb, index, position);
-	break;
-    case PAWNGEN_INDEX:
-	ret = pawngen_index_to_local_position(tb, index, position);
-	break;
-    default:
-	fatal("Unknown index type in index_to_local_position()\n");
-	return false;
-    }
+    ret = tb->encoding->index_to_position(index, position);
 
     if (!ret) return false;
 
@@ -4335,16 +4742,6 @@ int factorial(int n) {
     return (n <= 2) ? n : (n * factorial(n-1));
 }
 
-int choose(int n, int k) {
-    long retval = 1;
-    int i;
-
-    for (i=0; i<k; i++) retval *= (n-i);
-    for (i=1; i<=k; i++) retval /= i;
-
-    return retval;
-}
-
 /* Determine whether the tablebase is color symmetric, meaning that we can flip the colors of all of
  * the pieces and get a position in the same tablebase.  kqkq is color symmetric (barring piece
  * restrictions), while kqqkq is not (it would flip into kqkqq).  Color symmetric tablebases do not
@@ -4355,37 +4752,37 @@ int choose(int n, int k) {
  * XXX we can enhance this function to handle piece restrictions.
  */
 
-bool tablebase_is_color_symmetric(tablebase_t *tb)
+bool tablebase_t::is_color_symmetric()
 {
     bool pieces_used[MAX_PIECES] = {false};
 
-    for (int piece = 0; piece < tb->num_pieces; piece ++) {
+    for (int piece = 0; piece < num_pieces; piece ++) {
 
 	int piece2;
 
 	if (pieces_used[piece]) continue;
 
-	if ((tb->pieces[piece].legal_squares != ALL_ONES_BITVECTOR)
-	    && (tb->pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))
+	if ((pieces[piece].legal_squares != ALL_ONES_BITVECTOR)
+	    && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))
 	    return false;
 
-	for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
+	for (piece2 = 0; piece2 < num_pieces; piece2 ++) {
 
 	    if (pieces_used[piece2]) continue;
 
-	    if ((tb->pieces[piece].color != tb->pieces[piece2].color)
-		&& (tb->pieces[piece].piece_type == tb->pieces[piece2].piece_type)
-		&& (tb->pieces[piece].legal_squares == tb->pieces[piece2].legal_squares)) {
+	    if ((pieces[piece].color != pieces[piece2].color)
+		&& (pieces[piece].piece_type == pieces[piece2].piece_type)
+		&& (pieces[piece].legal_squares == pieces[piece2].legal_squares)) {
 
-		tb->pieces[piece].color_symmetric_transpose = piece2;
-		tb->pieces[piece2].color_symmetric_transpose = piece;
+		pieces[piece].color_symmetric_transpose = piece2;
+		pieces[piece2].color_symmetric_transpose = piece;
 		pieces_used[piece] = true;
 		pieces_used[piece2] = true;
 		break;
 	    }
 	}
 
-	if (piece2 == tb->num_pieces) return false;
+	if (piece2 == num_pieces) return false;
     }
 
     return true;
@@ -4452,7 +4849,6 @@ void tablebase::parse_XML(std::istream *instream)
 
     int piece, piece2, square, white_king_square, black_king_square;
     int pass;
-    int piece_in_set = 1;
 
     // XXX this might throw an exception
 
@@ -5128,484 +5524,37 @@ void tablebase::parse_XML(std::istream *instream)
 
     switch (index_type) {
     case NAIVE_INDEX:
-
-	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
-	switch (symmetry) {
-	case 1:
-	    max_index = (2<<(6*num_pieces)) - 1;
-	    break;
-	case 2:
-	    max_index = (2<<(6*num_pieces - 1)) - 1;
-	    break;
-	case 4:
-	    max_index = (2<<(6*num_pieces - 2)) - 1;
-	    break;
-	}
+	encoding = new naive_index(this);
 	break;
 
     case NAIVE2_INDEX:
-
-	max_index = 2;
-
-	/* do the white king "by hand" */
-	switch (symmetry) {
-	case 1:
-	    max_index <<= 6;
-	    break;
-	case 2:
-	    max_index <<= 5;
-	    break;
-	case 4:
-	    max_index <<= 4;
-	    break;
-	}
-
-	pieces[white_king].prev_piece_in_encoding_group = -1;
-	pieces[white_king].next_piece_in_encoding_group = -1;
-
-	/* now do everything else */
-	for (piece = 1; piece < num_pieces; piece ++) {
-
-	    if ((pieces[piece].prev_piece_in_semilegal_group != -1) && (pieces[piece].next_piece_in_semilegal_group != -1)) {
-		throw "Can't have more than two identical pieces with 'naive2' index (yet)";
-	    }
-
-	    pieces[piece].prev_piece_in_encoding_group = pieces[piece].prev_piece_in_semilegal_group;
-	    pieces[piece].next_piece_in_encoding_group = pieces[piece].next_piece_in_semilegal_group;
-
-	    if (pieces[piece].prev_piece_in_encoding_group == -1) max_index <<= 6;
-	    else max_index <<=5;
-	}
-	max_index --;
-
+	encoding = new naive2_index(this);
 	break;
 
     case SIMPLE_INDEX:
-
-	/* The "2" is because side-to-play is part of the position */
-	max_index = 2;
-
-	for (piece = 0; piece < num_pieces; piece ++) {
-	    for (square = 0; square < 64; square ++) {
-		if (! (pieces[piece].legal_squares & BITVECTOR(square))) continue;
-		if ((piece == white_king) && (symmetry >= 2) && (COL(square) >= 4)) continue;
-		if ((piece == white_king) && (symmetry >= 4) && (ROW(square) >= 4)) continue;
-		if ((piece == white_king) && (symmetry == 8) && (ROW(square) > COL(square))) continue;
-		pieces[piece].piece_position[pieces[piece].total_legal_positions] = square;
-		pieces[piece].index[square] = pieces[piece].total_legal_positions;
-		pieces[piece].total_legal_positions ++;
-
-		/* if the pawn is en-passant capturable, add an index for that */
-		if ((pieces[piece].piece_type == PAWN)
-		    && (((pieces[piece].color == WHITE) && (ROW(square) == 3))
-			|| ((pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
-		    pieces[piece].piece_position[pieces[piece].total_legal_positions] = COL(square);
-		    pieces[piece].index[COL(square)] = pieces[piece].total_legal_positions;
-		    pieces[piece].total_legal_positions ++;
-		}
-	    }
-	    max_index *= pieces[piece].total_legal_positions;
-	}
-
-	max_index --;
+	encoding = new simple_index(this);
 	break;
 
     case COMPACT_INDEX:
-
-	/* The "2" is because side-to-play is part of the position */
-	max_index = 2;
-
-	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	    if (! (pieces[white_king].legal_squares & BITVECTOR(white_king_square))) continue;
-	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		if (! (pieces[black_king].legal_squares & BITVECTOR(black_king_square))) continue;
-		if ((symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
-		if ((symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
-		if ((symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
-		if ((symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
-		    && (ROW(black_king_square) > COL(black_king_square))) continue;
-
-		if (positions_with_adjacent_kings_are_illegal
-		    && ! check_king_legality(white_king_square, black_king_square)) continue;
-
-		white_king_position[total_legal_king_positions] = white_king_square;
-		black_king_position[total_legal_king_positions] = black_king_square;
-		king_index[white_king_square][black_king_square] = total_legal_king_positions;
-		total_legal_king_positions ++;
-	    }
-	}
-	max_index *= total_legal_king_positions;
-
-	pieces[white_king].prev_piece_in_encoding_group = -1;
-	pieces[white_king].next_piece_in_encoding_group = -1;
-	pieces[black_king].prev_piece_in_encoding_group = -1;
-	pieces[black_king].next_piece_in_encoding_group = -1;
-
-	for (piece = 0; piece < num_pieces; piece ++) {
-
-	    if ((piece == white_king) || (piece == black_king)) continue;
-
-	    if ((pieces[piece].prev_piece_in_semilegal_group != -1) && (pieces[piece].next_piece_in_semilegal_group != -1)) {
-		throw "Can't have more than two identical pieces with 'compact' index (yet)";
-	    }
-
-	    pieces[piece].prev_piece_in_encoding_group = pieces[piece].prev_piece_in_semilegal_group;
-	    pieces[piece].next_piece_in_encoding_group = pieces[piece].next_piece_in_semilegal_group;
-
-	    /* We count semilegal and not legal squares here because the pair encoding used for
-	     * identical pieces assumes that both pieces occupy the same range of squares.
-	     */
-
-	    for (square = 0; square < 64; square ++) {
-
-		if (! (pieces[piece].semilegal_squares & BITVECTOR(square))) continue;
-
-		if ((piece == white_king) && (symmetry >= 2) && (COL(square) >= 4)) continue;
-		if ((piece == white_king) && (symmetry >= 4) && (ROW(square) >= 4)) continue;
-		if ((piece == white_king) && (symmetry == 8) && (ROW(square) > COL(square))) continue;
-		pieces[piece].piece_position[pieces[piece].total_legal_positions] = square;
-		pieces[piece].index[square] = pieces[piece].total_legal_positions;
-		pieces[piece].total_legal_positions ++;
-
-		/* if the pawn is en-passant capturable, add an index for that */
-		if ((pieces[piece].piece_type == PAWN)
-		    && (((pieces[piece].color == WHITE) && (ROW(square) == 3))
-			|| ((pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
-		    pieces[piece].piece_position[pieces[piece].total_legal_positions] = COL(square);
-		    pieces[piece].index[COL(square)] = pieces[piece].total_legal_positions;
-		    pieces[piece].total_legal_positions ++;
-		}
-	    }
-	    if (pieces[piece].prev_piece_in_encoding_group == -1) {
-		max_index *= pieces[piece].total_legal_positions;
-	    } else if (pieces[piece].total_legal_positions
-		       != pieces[pieces[piece].prev_piece_in_encoding_group].total_legal_positions) {
-		/* Semilegal positions are the union of legal positions for an entire encoding group */
-		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
-	    } else {
-		max_index *= pieces[piece].total_legal_positions/2;
-	    }
-	}
-
-	max_index --;
+	encoding = new compact_index(this);
 	break;
 
     case COMBINADIC3_INDEX:
     case COMBINADIC4_INDEX:
+	encoding = new combinadic_index(this);
+	break;
+
     case PAWNGEN_INDEX:
-
-	if ((index_type == COMBINADIC4_INDEX) && tablebase_is_color_symmetric(this)) {
-	    /* Don't need side-to-play for a color symetric tablebase */
-	    encode_stm = false;
-	    max_index = 1;
-	} else {
-	    /* The "2" is because side-to-play is part of the position */
-	    encode_stm = true;
-	    max_index = 2;
-	}
-
-	if (variant != VARIANT_SUICIDE) {
-	    for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-		if (! (pieces[white_king].legal_squares & BITVECTOR(white_king_square))) continue;
-		for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		    if (! (pieces[black_king].legal_squares & BITVECTOR(black_king_square))) continue;
-		    if ((symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
-		    if ((symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
-		    if ((symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
-		    if ((symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
-			&& (ROW(black_king_square) > COL(black_king_square))) continue;
-
-		    if (positions_with_adjacent_kings_are_illegal
-			&& ! check_king_legality(white_king_square, black_king_square)) continue;
-
-		    white_king_position[total_legal_king_positions] = white_king_square;
-		    black_king_position[total_legal_king_positions] = black_king_square;
-		    king_index[white_king_square][black_king_square] = max_index * total_legal_king_positions;
-		    total_legal_king_positions ++;
-		}
-	    }
-	    max_index *= total_legal_king_positions;
-
-	    pieces[white_king].prev_piece_in_encoding_group = -1;
-	    pieces[white_king].next_piece_in_encoding_group = -1;
-	    pieces[black_king].prev_piece_in_encoding_group = -1;
-	    pieces[black_king].next_piece_in_encoding_group = -1;
-	}
-
-	/* Assign encoding groups, usually groups of identical pieces. */
-
-	for (piece = 0; piece < num_pieces; piece ++) {
-
-	    if ((piece == white_king) || (piece == black_king)) continue;
-
-	    if ((index_type == PAWNGEN_INDEX) && (pieces[piece].piece_type == PAWN)) continue;
-
-	    pieces[piece].prev_piece_in_encoding_group = pieces[piece].prev_piece_in_semilegal_group;
-	    pieces[piece].next_piece_in_encoding_group = pieces[piece].next_piece_in_semilegal_group;
-
-	    /* An important special case - handle two opposing plus-pawns by combining their
-	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
-	     * range of each group.  Note that we only set blocking_piece for plus-pawns, so if two
-	     * pieces are mutually blocking, they must be opposing plus-pawns.
-	     */
-
-	    if ((pieces[piece].blocking_piece != -1)
-		&& (pieces[pieces[piece].blocking_piece].blocking_piece == piece)) {
-
-		int piece2;
-
-		if ((pieces[piece].blocking_piece > piece) && (pieces[piece].color != WHITE)) {
-		    throw "Mutually blocking pawns must currently be specified white pawn first";
-		}
-
-		if (pieces[piece].blocking_piece > piece) {
-		    if (pieces[piece].next_piece_in_semilegal_group != -1) {
-			/* should never happen, we should be blocked by a pawn of opposite color */
-			throw "BUG: not blocked right";
-		    } else {
-			pieces[piece].next_piece_in_encoding_group = pieces[piece].blocking_piece;
-			for (piece2 = piece; piece2 != -1; piece2 = pieces[piece2].prev_piece_in_encoding_group) {
-			    pieces[piece2].semilegal_squares
-				|= pieces[pieces[piece].blocking_piece].semilegal_squares;
-			}
-		    }
-		} else {
-		    if (pieces[piece].prev_piece_in_semilegal_group != -1) {
-			/* should never happen, we should be blocked by a pawn of opposite color */
-			throw "BUG: not blocked right";
-		    } else {
-			pieces[piece].prev_piece_in_encoding_group = pieces[piece].blocking_piece;
-			for (piece2 = piece; piece2 != -1; piece2 = pieces[piece2].next_piece_in_encoding_group) {
-			    pieces[piece2].semilegal_squares
-				|= pieces[pieces[piece].blocking_piece].semilegal_squares;
-			}
-		    }
-		}
-	    }
-	}
-
-	for (piece = 0; piece < num_pieces; piece ++) {
-
-	    /* If our semilegal range completely contains the semilegal range of a earlier piece,
-	     * that's overlapping, and we'll be able to remove some of our positions since they must
-	     * be occupied by the earlier piece.  Later pieces in a set of identical pieces record
-	     * the last identical piece as the last overlapping piece.  We remove indices by backing
-	     * out to the beginning of our identical set, then going backwards through the earlier
-	     * overlapping pieces, decrementing if our piece position is greater than theirs.
-	     *
-	     * This is not (and can not be) a doubly linked list, since multiple later pieces can
-	     * have the same last_overlapping_piece.  Consider an early piece restricted to d4, e4,
-	     * d5, e5, a later piece restricted to de, and another later piece restricted to 45.
-	     */
-
-	    pieces[piece].last_overlapping_piece = -1;
-
-	    for (piece2 = piece-1; piece2 >= 0; piece2 --) {
-		if ((pieces[piece].semilegal_squares & pieces[piece2].semilegal_squares) == pieces[piece2].semilegal_squares) {
-		    pieces[piece].last_overlapping_piece = piece2;
-		    break;
-		}
-	    }
-
-	    if ((piece == white_king) || (piece == black_king)) continue;
-
-	    if ((index_type == PAWNGEN_INDEX) && (pieces[piece].piece_type == PAWN)) continue;
-
-	    if (pieces[piece].prev_piece_in_encoding_group == -1) {
-		piece_in_set = 1;
-	    } else if (pieces[piece].prev_piece_in_encoding_group == piece-1) {
-		piece_in_set ++;
-	    } else {
-		fatal("Combinadic3/4 index requires encoding groups to be adjacent in index\n");
-	    }
-
-	    /* Now number the squares in the piece's semilegal range, and construct tables to
-	     * translate back and forth between this numbering and the board squares.  We count
-	     * semilegal and not legal squares here because the pair encoding used for identical
-	     * pieces assumes that both pieces occupy the same range of squares.  We also assign
-	     * squares for en passant capturable pawns by using square numbers in the first row
-	     * (i.e, less than 8), since pawns can never be there.
-	     */
-
-	    for (square = 0; square < 64; square ++) {
-
-		if ((pieces[piece].semilegal_squares & BITVECTOR(square))
-		    || ((pieces[piece].piece_type == PAWN)
-			&& (square < 8)
-			&& (pieces[piece].semilegal_squares
-			    & BITVECTOR(rowcol2square(pieces[piece].color == WHITE ? 3 : 4, square))))) {
-
-		    pieces[piece].value[square] = pieces[piece].total_legal_positions;
-		    pieces[piece].piece_position[pieces[piece].total_legal_positions] = square;
-
-		    pieces[piece].index[pieces[piece].total_legal_positions]
-			= choose(pieces[piece].total_legal_positions, piece_in_set) * max_index;
-
-		    pieces[piece].total_legal_positions ++;
-		} else {
-		    /* This value should never get used. */
-		    pieces[piece].value[square] = ILLEGAL_POSITION;
-		}
-
-	    }
-
-	    /* Now back out any values that we saved because of any earlier overlapping pieces.  If
-	     * we have a single earlier overlapping piece, for example, we'll never encode with the
-	     * last value because the presence of the other piece would force that value to be
-	     * decremented.
-	     */
-
-	    pieces[piece].total_legal_piece_values = pieces[piece].total_legal_positions;
-
-	    for (piece2 = piece; pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = pieces[piece2].prev_piece_in_encoding_group);
-	    for (piece2 = pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = pieces[piece2].last_overlapping_piece) {
-		pieces[piece].total_legal_piece_values --;
-	    }
-
-	    if ((pieces[piece].prev_piece_in_encoding_group != -1)
-		&& (pieces[piece].total_legal_positions
-		    != pieces[pieces[piece].prev_piece_in_encoding_group].total_legal_positions)) {
-		fatal("BUG: Identical pieces don't have the same number of total semilegal positions\n");
-	    }
-
-	    if ((pieces[piece].prev_piece_in_encoding_group != -1)
-		&& (pieces[piece].total_legal_piece_values
-		    != pieces[pieces[piece].prev_piece_in_encoding_group].total_legal_piece_values)) {
-		fatal("BUG: Identical pieces don't have the same number of encoding values\n");
-	    }
-
-	    if (pieces[piece].next_piece_in_encoding_group == -1) {
-		max_index *= choose(pieces[piece].total_legal_piece_values, piece_in_set);
-	    }
-
-	}
-
-	max_index --;
-
-	/* Now we pad the tail end of the index arrays with max_index+1.  This allows us to
-	 * search the table using std::lower_bound without having to worry about where its actual
-	 * end is, which will typically be before its physical end.
-	 */
-
-	for (piece = 0; piece < num_pieces; piece ++) {
-	    if ((piece == white_king) || (piece == black_king)) continue;
-	    if ((index_type == PAWNGEN_INDEX) && (pieces[piece].piece_type == PAWN)) continue;
-	    for (int value = pieces[piece].total_legal_piece_values; value < 64; value ++) {
-		pieces[piece].index[value] = max_index + 1;
-	    }
-	}
-
-	if (index_type == PAWNGEN_INDEX) {
-	    max_index ++;
-	    pawngen_multiplier = max_index;
-	    max_index *= pawn_positions_by_index.size();
-	    max_index --;
-	}
-
+	encoding = new pawngen_index(this);
 	break;
 
     case NO_EN_PASSANT_INDEX:
-
-	/* The "2" is because side-to-play is part of the position */
-	max_index = 2;
-
-	for (white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	    if (! (pieces[white_king].legal_squares & BITVECTOR(white_king_square))) continue;
-	    for (black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		if (! (pieces[black_king].legal_squares & BITVECTOR(black_king_square))) continue;
-		if ((symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
-		if ((symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
-		if ((symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
-		if ((symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
-		    && (ROW(black_king_square) > COL(black_king_square))) continue;
-
-		if (positions_with_adjacent_kings_are_illegal
-		    && ! check_king_legality(white_king_square, black_king_square)) continue;
-
-		white_king_position[total_legal_king_positions] = white_king_square;
-		black_king_position[total_legal_king_positions] = black_king_square;
-		king_index[white_king_square][black_king_square] = total_legal_king_positions;
-		total_legal_king_positions ++;
-	    }
-	}
-	max_index *= total_legal_king_positions;
-
-	pieces[white_king].prev_piece_in_encoding_group = -1;
-	pieces[white_king].next_piece_in_encoding_group = -1;
-	pieces[black_king].prev_piece_in_encoding_group = -1;
-	pieces[black_king].next_piece_in_encoding_group = -1;
-
-	for (piece = 0; piece < num_pieces; piece ++) {
-
-	    if ((piece == white_king) || (piece == black_king)) continue;
-
-	    if ((pieces[piece].prev_piece_in_semilegal_group != -1) && (pieces[piece].next_piece_in_semilegal_group != -1)) {
-		throw "Can't have more than two identical pieces with 'no-en-passant' index (yet)";
-	    }
-
-	    pieces[piece].prev_piece_in_encoding_group = pieces[piece].prev_piece_in_semilegal_group;
-	    pieces[piece].next_piece_in_encoding_group = pieces[piece].next_piece_in_semilegal_group;
-
-	    /* Note that we only set blocking_piece for plus-pawns, so if two pieces are mutually
-	     * blocking, they must be opposing plus-pawns.
-	     */
-
-	    if ((pieces[piece].blocking_piece != -1)
-		&& (pieces[pieces[piece].blocking_piece].blocking_piece == piece)) {
-
-		if ((pieces[piece].prev_piece_in_encoding_group != -1) || (pieces[piece].next_piece_in_encoding_group != -1)) {
-		    throw "Can't have a doubled pawn opposed by enemy pawn (yet)";
-		}
-		if ((pieces[piece].blocking_piece > piece) && (pieces[piece].color != WHITE)) {
-		    throw "Mutually blocking pawns must currently be specified white pawn first";
-		}
-		if (pieces[piece].blocking_piece > piece) {
-		    pieces[piece].next_piece_in_encoding_group = pieces[piece].blocking_piece;
-		} else {
-		    pieces[piece].prev_piece_in_encoding_group = pieces[piece].blocking_piece;
-		}
-		/* We have to extend the semilegal squares of both blocking pawns because the
-		 * pairing is based on 2 pieces on n squares using (n)(n-1)/2 numbers.
-		 */
-		pieces[piece].semilegal_squares |= pieces[pieces[piece].blocking_piece].semilegal_squares;
-	    }
-
-	    /* We count semilegal and not legal squares here because the pair encoding used for
-	     * identical pieces assumes that both pieces occupy the same range of squares.
-	     */
-
-	    for (square = 0; square < 64; square ++) {
-
-		if (! (pieces[piece].semilegal_squares & BITVECTOR(square))) continue;
-
-		if ((piece == white_king) && (symmetry >= 2) && (COL(square) >= 4)) continue;
-		if ((piece == white_king) && (symmetry >= 4) && (ROW(square) >= 4)) continue;
-		if ((piece == white_king) && (symmetry == 8) && (ROW(square) > COL(square))) continue;
-		pieces[piece].piece_position[pieces[piece].total_legal_positions] = square;
-		pieces[piece].index[square] = pieces[piece].total_legal_positions;
-		pieces[piece].total_legal_positions ++;
-
-		/* Unlike 'compact', we don't have to consider the en-passant case here because
-		 * we've already eliminated that as a possibility.  Also unlike 'compact', we've
-		 * grouped opposing pawns on the same file.  So if en-passant were allowed, we would
-		 * now have to (like 'compact') add an extra position for it, which could cause the
-		 * total number of semilegal positions to be different for two grouped pieces.
-		 */
-	    }
-	    if (pieces[piece].prev_piece_in_encoding_group == -1) {
-		max_index *= pieces[piece].total_legal_positions;
-	    } else if (pieces[piece].total_legal_positions
-		       != pieces[pieces[piece].prev_piece_in_encoding_group].total_legal_positions) {
-		/* Semilegal positions are the union of legal positions for an entire encoding group */
-		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
-	    } else {
-		max_index *= pieces[piece].total_legal_positions/2;
-	    }
-	}
-
-	max_index --;
+	fatal("no-en-passant index type deprecated\n");
 	break;
 
+    default:
+	fatal("unknown index type\n");
+	break;
     }
 
     /* Fetch any prune enable elements */
@@ -5684,7 +5633,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.930 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.931 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14471,7 +14420,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.930 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.931 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
