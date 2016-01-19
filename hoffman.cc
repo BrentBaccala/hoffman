@@ -724,41 +724,19 @@ struct piece {
      * squares.  For each piece type of each color, semilegal groups partition the board.  If two
      * otherwise identical pieces have move restrictions that don't overlap (so they can't exchange
      * places), then they're in different semilegal groups.
-     *
-     * Encoding groups are encoded together into the index.  Only their positions are encoded, not
-     * their identities.  Thus, encoding groups are usually semilegal pieces, but in the
-     * 'no-en-passant' and 'combinadic3' schemes, pawns restricted to a single file using plus
-     * syntax are grouped, even if they are not the same color.  They can't pass each other because
-     * there are no captures within a tablebase, so the color ordering of the pawns on the file
-     * can't change.
-     *
-     * Some of the combinadic indexing schemes use "overlapping" pieces, which happens when a
-     * piece's semilegal range completely contains the semilegal range of a earlier piece.  We'll be
-     * able to remove some of our positions since they must be occupied by the earlier piece.
      */
 
+    Glib::ustring location;
     uint64_t legal_squares;
     uint64_t semilegal_squares;
     int prev_piece_in_semilegal_group;
     int next_piece_in_semilegal_group;
-    int prev_piece_in_encoding_group;
-    int next_piece_in_encoding_group;
-
-    int last_overlapping_piece;
 
     int blocking_piece;
 
     int color_symmetric_transpose;
 
-    int total_legal_positions;
-    int total_legal_piece_values;
-    int piece_position[64];
-    index_t index[64];
-    int value[64];
-
     int *permutations;
-
-    Glib::ustring location;
 
     /* For each square on the board and piece in the futurebase, record the first piece in the
      * corresponding local semilegal group.  Unlike the previous variables, this one isn't
@@ -821,10 +799,6 @@ typedef struct tablebase {
 
     int white_king;
     int black_king;
-    uint8_t white_king_position[64*64];
-    uint8_t black_king_position[64*64];
-    index_t king_index[64][64];
-    uint total_legal_king_positions;
 
     struct format format;
 
@@ -1974,11 +1948,14 @@ public:
 
 /* "Naive2" index.  Assigns a number from 0 to 63 to each square on the board and multiplies them
  * together for the various pieces.  Differs from "naive" in its handling of multiple identical
- * pieces, which it stores as a base and an offset, thus saving a single bit.  Currently, only
- * pairs of identical pieces are correctly handled.
+ * pieces, which it stores as a base and an offset (an "encoding group"), thus saving a single bit.
+ * Currently, only pairs of identical pieces are correctly handled.
  */
 
-class naive2_index : public index_encoding {
+class naive2_index : public index_encoding
+{
+    int prev_piece_in_encoding_group[MAX_PIECES];
+    int next_piece_in_encoding_group[MAX_PIECES];
 
 public:
 
@@ -2023,17 +2000,17 @@ public:
 	 */
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->pieces[piece].next_piece_in_encoding_group != -1) {
+	    if (next_piece_in_encoding_group[piece] != -1) {
 
-		if (((vals[piece] < vals[tb->pieces[piece].next_piece_in_encoding_group])
-		     && (vals[piece] + 32 < vals[tb->pieces[piece].next_piece_in_encoding_group]))
-		    || ((vals[tb->pieces[piece].next_piece_in_encoding_group] < vals[piece])
-			&& (vals[tb->pieces[piece].next_piece_in_encoding_group] + 32 >= vals[piece]))) {
+		if (((vals[piece] < vals[next_piece_in_encoding_group[piece]])
+		     && (vals[piece] + 32 < vals[next_piece_in_encoding_group[piece]]))
+		    || ((vals[next_piece_in_encoding_group[piece]] < vals[piece])
+			&& (vals[next_piece_in_encoding_group[piece]] + 32 >= vals[piece]))) {
 
 		    unsigned char val;
 		    val = vals[piece];
-		    vals[piece] = vals[tb->pieces[piece].next_piece_in_encoding_group];
-		    vals[tb->pieces[piece].next_piece_in_encoding_group] = val;
+		    vals[piece] = vals[next_piece_in_encoding_group[piece]];
+		    vals[next_piece_in_encoding_group[piece]] = val;
 		}
 	    }
 
@@ -2049,14 +2026,14 @@ public:
 		shift_count += 2;
 		index |= COL(vals[piece]) << shift_count;
 		shift_count += 2;
-	    } else if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+	    } else if (prev_piece_in_encoding_group[piece] == -1) {
 		index |= vals[piece] << shift_count;
 		shift_count += 6;  /* because 2^6=64 */
 	    } else {
-		if (vals[piece] > vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
-		    index |= (vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1) << shift_count;
+		if (vals[piece] > vals[prev_piece_in_encoding_group[piece]]) {
+		    index |= (vals[piece] - vals[prev_piece_in_encoding_group[piece]] - 1) << shift_count;
 		} else {
-		    index |= (64 + vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1) << shift_count;
+		    index |= (64 + vals[piece] - vals[prev_piece_in_encoding_group[piece]] - 1) << shift_count;
 		}
 		shift_count += 5; /* the whole point of "naive2" */
 	    }
@@ -2081,14 +2058,14 @@ public:
 	    } else if ((tb->symmetry == 4) && (piece == tb->white_king)) {
 		vals[piece] = rowcol2square(index & 3, (index >> 2) & 3);
 		index >>= 4;
-	    } else if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+	    } else if (prev_piece_in_encoding_group[piece] == -1) {
 		vals[piece] = index & 63;
 		index >>= 6;
 	    } else {
-		vals[piece] = (vals[tb->pieces[piece].prev_piece_in_encoding_group] + (index & 31) + 1) % 64;
+		vals[piece] = (vals[prev_piece_in_encoding_group[piece]] + (index & 31) + 1) % 64;
 		index >>= 5;
 
-		if (vals[piece] < vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
+		if (vals[piece] < vals[prev_piece_in_encoding_group[piece]]) {
 		    unsigned char val;
 
 		    /* One of the important tasks of any index_to_position() function is to return
@@ -2100,11 +2077,11 @@ public:
 		     * function.
 		     */
 
-		    if (vals[tb->pieces[piece].prev_piece_in_encoding_group] - vals[piece] == 32) return false;
+		    if (vals[prev_piece_in_encoding_group[piece]] - vals[piece] == 32) return false;
 
 		    val = vals[piece];
-		    vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
-		    vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
+		    vals[piece] = vals[prev_piece_in_encoding_group[piece]];
+		    vals[prev_piece_in_encoding_group[piece]] = val;
 		}
 	    }
 
@@ -2189,8 +2166,8 @@ public:
 	    break;
 	}
 
-	tb->pieces[tb->white_king].prev_piece_in_encoding_group = -1;
-	tb->pieces[tb->white_king].next_piece_in_encoding_group = -1;
+	prev_piece_in_encoding_group[tb->white_king] = -1;
+	next_piece_in_encoding_group[tb->white_king] = -1;
 
 	/* now do everything else */
 	for (int piece = 1; piece < tb->num_pieces; piece ++) {
@@ -2200,10 +2177,10 @@ public:
 		throw "Can't have more than two identical pieces with 'naive2' index";
 	    }
 
-	    tb->pieces[piece].prev_piece_in_encoding_group = tb->pieces[piece].prev_piece_in_semilegal_group;
-	    tb->pieces[piece].next_piece_in_encoding_group = tb->pieces[piece].next_piece_in_semilegal_group;
+	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
+	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
-	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) tb->max_index <<= 6;
+	    if (prev_piece_in_encoding_group[piece] == -1) tb->max_index <<= 6;
 	    else tb->max_index <<=5;
 	}
 
@@ -2219,6 +2196,10 @@ public:
 
 class simple_index : public index_encoding
 {
+    int piece_position[MAX_PIECES][64];
+    index_t piece_index[MAX_PIECES][64];
+
+    int total_legal_positions[MAX_PIECES] = {};
 
 public:
 
@@ -2231,7 +2212,7 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    index *= tb->pieces[piece].total_legal_positions;
+	    index *= total_legal_positions[piece];
 
 	    /* The way we encode en passant capturable pawns is use the column number of the pawn.
 	     * Since there can never be a pawn (of either color) on the first rank, this is
@@ -2242,9 +2223,9 @@ public:
 		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		    || ((tb->pieces[piece].color == BLACK)
 			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-		index += tb->pieces[piece].index[COL(pos->en_passant_square)];
+		index += piece_index[piece][COL(pos->en_passant_square)];
 	    } else {
-		index += tb->pieces[piece].index[pos->piece_position[piece]];
+		index += piece_index[piece][pos->piece_position[piece]];
 	    }
 	}
 
@@ -2265,8 +2246,8 @@ public:
 
 	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
-	    int square = tb->pieces[piece].piece_position[index % tb->pieces[piece].total_legal_positions];
-	    index /= tb->pieces[piece].total_legal_positions;
+	    int square = piece_position[piece][index % total_legal_positions[piece]];
+	    index /= total_legal_positions[piece];
 
 	    /* En passant */
 	    if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
@@ -2342,20 +2323,20 @@ public:
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
-		tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = square;
-		tb->pieces[piece].index[square] = tb->pieces[piece].total_legal_positions;
-		tb->pieces[piece].total_legal_positions ++;
+		piece_position[piece][total_legal_positions[piece]] = square;
+		piece_index[piece][square] = total_legal_positions[piece];
+		total_legal_positions[piece] ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
 		if ((tb->pieces[piece].piece_type == PAWN)
 		    && (((tb->pieces[piece].color == WHITE) && (ROW(square) == 3))
 			|| ((tb->pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
-		    tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = COL(square);
-		    tb->pieces[piece].index[COL(square)] = tb->pieces[piece].total_legal_positions;
-		    tb->pieces[piece].total_legal_positions ++;
+		    piece_position[piece][total_legal_positions[piece]] = COL(square);
+		    piece_index[piece][COL(square)] = total_legal_positions[piece];
+		    total_legal_positions[piece] ++;
 		}
 	    }
-	    tb->max_index *= tb->pieces[piece].total_legal_positions;
+	    tb->max_index *= total_legal_positions[piece];
 	}
 
 	tb->max_index --;
@@ -2410,6 +2391,18 @@ public:
 
 class compact_index : public index_encoding
 {
+    int prev_piece_in_encoding_group[MAX_PIECES];
+    int next_piece_in_encoding_group[MAX_PIECES];
+
+    int piece_position[MAX_PIECES][64];
+    index_t piece_index[MAX_PIECES][64];
+
+    uint8_t white_king_position[64*64];
+    uint8_t black_king_position[64*64];
+    index_t king_index[64][64];
+    uint total_legal_king_positions;
+
+    int total_legal_positions[MAX_PIECES] = {};
 
 public:
 
@@ -2434,9 +2427,9 @@ public:
 		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		    || ((tb->pieces[piece].color == BLACK)
 			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-		vals[piece] = tb->pieces[piece].index[COL(pos->en_passant_square)];
+		vals[piece] = piece_index[piece][COL(pos->en_passant_square)];
 	    } else {
-		vals[piece] = tb->pieces[piece].index[pos->piece_position[piece]];
+		vals[piece] = piece_index[piece][pos->piece_position[piece]];
 	    }
 	}
 
@@ -2458,39 +2451,39 @@ public:
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    if (piece == tb->white_king) {
-		index *= tb->total_legal_king_positions;
-		index += tb->king_index[pos->piece_position[tb->white_king]]
+		index *= total_legal_king_positions;
+		index += king_index[pos->piece_position[tb->white_king]]
 		    [pos->piece_position[tb->black_king]];
 	    }
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->pieces[piece].next_piece_in_encoding_group != -1) {
+	    if (next_piece_in_encoding_group[piece] != -1) {
 
-		if (((vals[piece] < vals[tb->pieces[piece].next_piece_in_encoding_group])
-		     && (vals[piece] + tb->pieces[piece].total_legal_positions/2
-			 < vals[tb->pieces[piece].next_piece_in_encoding_group]))
-		    || ((vals[tb->pieces[piece].next_piece_in_encoding_group] < vals[piece])
-			&& (vals[tb->pieces[piece].next_piece_in_encoding_group] + tb->pieces[piece].total_legal_positions/2
+		if (((vals[piece] < vals[next_piece_in_encoding_group[piece]])
+		     && (vals[piece] + total_legal_positions[piece]/2
+			 < vals[next_piece_in_encoding_group[piece]]))
+		    || ((vals[next_piece_in_encoding_group[piece]] < vals[piece])
+			&& (vals[next_piece_in_encoding_group[piece]] + total_legal_positions[piece]/2
 			    >= vals[piece]))) {
 
 		    unsigned char val;
 		    val = vals[piece];
-		    vals[piece] = vals[tb->pieces[piece].next_piece_in_encoding_group];
-		    vals[tb->pieces[piece].next_piece_in_encoding_group] = val;
+		    vals[piece] = vals[next_piece_in_encoding_group[piece]];
+		    vals[next_piece_in_encoding_group[piece]] = val;
 		}
 	    }
 
-	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
-		index *= tb->pieces[piece].total_legal_positions;
+	    if (prev_piece_in_encoding_group[piece] == -1) {
+		index *= total_legal_positions[piece];
 		index += vals[piece];
 	    } else {
-		index *= tb->pieces[piece].total_legal_positions / 2;
+		index *= total_legal_positions[piece] / 2;
 
-		if (vals[piece] > vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
-		    index += (vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1);
+		if (vals[piece] > vals[prev_piece_in_encoding_group[piece]]) {
+		    index += (vals[piece] - vals[prev_piece_in_encoding_group[piece]] - 1);
 		} else {
-		    index += (tb->pieces[piece].total_legal_positions + vals[piece] - vals[tb->pieces[piece].prev_piece_in_encoding_group] - 1);
+		    index += (total_legal_positions[piece] + vals[piece] - vals[prev_piece_in_encoding_group[piece]] - 1);
 		}
 	    }
 	}
@@ -2517,18 +2510,18 @@ public:
 	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
 	    if (piece == tb->white_king) {
-		king_index = index % tb->total_legal_king_positions;
-		index /= tb->total_legal_king_positions;
+		king_index = index % total_legal_king_positions;
+		index /= total_legal_king_positions;
 	    }
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
-		vals[piece] = index % tb->pieces[piece].total_legal_positions;
-		index /= tb->pieces[piece].total_legal_positions;
+	    if (prev_piece_in_encoding_group[piece] == -1) {
+		vals[piece] = index % total_legal_positions[piece];
+		index /= total_legal_positions[piece];
 	    } else {
-		vals[piece] = index % (tb->pieces[piece].total_legal_positions/2);
-		index /= tb->pieces[piece].total_legal_positions/2;
+		vals[piece] = index % (total_legal_positions[piece]/2);
+		index /= total_legal_positions[piece]/2;
 	    }
 	}
 
@@ -2543,10 +2536,10 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
+	    if (prev_piece_in_encoding_group[piece] != -1) {
 
-		vals[piece] += vals[tb->pieces[piece].prev_piece_in_encoding_group] + 1;
-		vals[piece] %= tb->pieces[piece].total_legal_positions;
+		vals[piece] += vals[prev_piece_in_encoding_group[piece]] + 1;
+		vals[piece] %= total_legal_positions[piece];
 
 		/* One of the important tasks of any index_to_local_position() function is to return
 		 * false on all but one of the indices that correspond to identical positions.
@@ -2557,11 +2550,11 @@ public:
 		 * right in the previous function.
 		 */
 
-		if (vals[tb->pieces[piece].prev_piece_in_encoding_group] - vals[piece]
-		    == tb->pieces[piece].total_legal_positions/2) return false;
+		if (vals[prev_piece_in_encoding_group[piece]] - vals[piece]
+		    == total_legal_positions[piece]/2) return false;
 	    }
 
-	    vals[piece] = tb->pieces[piece].piece_position[vals[piece]];
+	    vals[piece] = piece_position[piece][vals[piece]];
 
 	    /* En passant */
 	    if ((tb->pieces[piece].piece_type == PAWN) && (vals[piece] < 8)) {
@@ -2595,21 +2588,21 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
+	    if (prev_piece_in_encoding_group[piece] != -1) {
 
-		if (vals[piece] < vals[tb->pieces[piece].prev_piece_in_encoding_group]) {
+		if (vals[piece] < vals[prev_piece_in_encoding_group[piece]]) {
 		    uint8_t val = vals[piece];
-		    vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
-		    vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
+		    vals[piece] = vals[prev_piece_in_encoding_group[piece]];
+		    vals[prev_piece_in_encoding_group[piece]] = val;
 		}
 
 		if (! (tb->pieces[piece].legal_squares & BITVECTOR(vals[piece]))
-		    || ! (tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].legal_squares
-			  & BITVECTOR(vals[tb->pieces[piece].prev_piece_in_encoding_group]))) {
+		    || ! (tb->pieces[prev_piece_in_encoding_group[piece]].legal_squares
+			  & BITVECTOR(vals[prev_piece_in_encoding_group[piece]]))) {
 
 		    uint8_t val = vals[piece];
-		    vals[piece] = vals[tb->pieces[piece].prev_piece_in_encoding_group];
-		    vals[tb->pieces[piece].prev_piece_in_encoding_group] = val;
+		    vals[piece] = vals[prev_piece_in_encoding_group[piece]];
+		    vals[prev_piece_in_encoding_group[piece]] = val;
 		}
 	    }
 	}
@@ -2640,8 +2633,8 @@ public:
 	    }
 	}
 
-	p->piece_position[tb->white_king] = tb->white_king_position[king_index];
-	p->piece_position[tb->black_king] = tb->black_king_position[king_index];
+	p->piece_position[tb->white_king] = white_king_position[king_index];
+	p->piece_position[tb->black_king] = black_king_position[king_index];
 	if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return false;
 	if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return false;
 	p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
@@ -2689,6 +2682,8 @@ public:
 	/* The "2" is because side-to-play is part of the position */
 	tb->max_index = 2;
 
+	total_legal_king_positions = 0;
+
 	for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
 	    if (! (tb->pieces[tb->white_king].legal_squares & BITVECTOR(white_king_square))) continue;
 	    for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
@@ -2702,18 +2697,18 @@ public:
 		if (tb->positions_with_adjacent_kings_are_illegal
 		    && ! check_king_legality(white_king_square, black_king_square)) continue;
 
-		tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
-		tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
-		tb->king_index[white_king_square][black_king_square] = tb->total_legal_king_positions;
-		tb->total_legal_king_positions ++;
+		white_king_position[total_legal_king_positions] = white_king_square;
+		black_king_position[total_legal_king_positions] = black_king_square;
+		king_index[white_king_square][black_king_square] = total_legal_king_positions;
+		total_legal_king_positions ++;
 	    }
 	}
-	tb->max_index *= tb->total_legal_king_positions;
+	tb->max_index *= total_legal_king_positions;
 
-	tb->pieces[tb->white_king].prev_piece_in_encoding_group = -1;
-	tb->pieces[tb->white_king].next_piece_in_encoding_group = -1;
-	tb->pieces[tb->black_king].prev_piece_in_encoding_group = -1;
-	tb->pieces[tb->black_king].next_piece_in_encoding_group = -1;
+	prev_piece_in_encoding_group[tb->white_king] = -1;
+	next_piece_in_encoding_group[tb->white_king] = -1;
+	prev_piece_in_encoding_group[tb->black_king] = -1;
+	next_piece_in_encoding_group[tb->black_king] = -1;
 
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -2724,8 +2719,8 @@ public:
 		throw "Can't have more than two identical pieces with 'compact' index";
 	    }
 
-	    tb->pieces[piece].prev_piece_in_encoding_group = tb->pieces[piece].prev_piece_in_semilegal_group;
-	    tb->pieces[piece].next_piece_in_encoding_group = tb->pieces[piece].next_piece_in_semilegal_group;
+	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
+	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
 	    /* We count semilegal and not legal squares here because the pair encoding used for
 	     * identical pieces assumes that both pieces occupy the same range of squares.
@@ -2738,27 +2733,27 @@ public:
 		if ((piece == tb->white_king) && (tb->symmetry >= 2) && (COL(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry >= 4) && (ROW(square) >= 4)) continue;
 		if ((piece == tb->white_king) && (tb->symmetry == 8) && (ROW(square) > COL(square))) continue;
-		tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = square;
-		tb->pieces[piece].index[square] = tb->pieces[piece].total_legal_positions;
-		tb->pieces[piece].total_legal_positions ++;
+		piece_position[piece][total_legal_positions[piece]] = square;
+		piece_index[piece][square] = total_legal_positions[piece];
+		total_legal_positions[piece] ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
 		if ((tb->pieces[piece].piece_type == PAWN)
 		    && (((tb->pieces[piece].color == WHITE) && (ROW(square) == 3))
 			|| ((tb->pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
-		    tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = COL(square);
-		    tb->pieces[piece].index[COL(square)] = tb->pieces[piece].total_legal_positions;
-		    tb->pieces[piece].total_legal_positions ++;
+		    piece_position[piece][total_legal_positions[piece]] = COL(square);
+		    piece_index[piece][COL(square)] = total_legal_positions[piece];
+		    total_legal_positions[piece] ++;
 		}
 	    }
-	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
-		tb->max_index *= tb->pieces[piece].total_legal_positions;
-	    } else if (tb->pieces[piece].total_legal_positions
-		       != tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].total_legal_positions) {
+	    if (prev_piece_in_encoding_group[piece] == -1) {
+		tb->max_index *= total_legal_positions[piece];
+	    } else if (total_legal_positions[piece]
+		       != total_legal_positions[prev_piece_in_encoding_group[piece]]) {
 		/* Semilegal positions are the union of legal positions for an entire encoding group */
 		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
 	    } else {
-		tb->max_index *= tb->pieces[piece].total_legal_positions/2;
+		tb->max_index *= total_legal_positions[piece]/2;
 	    }
 	}
 
@@ -2775,6 +2770,11 @@ public:
  * on the first rank.  When using a pawn to reduce the encoding value of a later piece, we ignore
  * the en-passant status of the pawn and use its board position.  When reducing the encoding value
  * of a pawn, we use the encoding value, with en-passant factored in.
+ *
+ * Encoding groups are usually identical pieces, but pawns restricted to a single file using plus
+ * syntax are grouped, even if they are not the same color.  They can't pass each other because
+ * there are no captures within a tablebase, so the color ordering of the pawns on the file can't
+ * change.
  *
  * 'combinadic4' differs from 'combinadic3' in that it omits side-to-move if the position
  * can be inverted.
@@ -2799,6 +2799,28 @@ int choose(int n, int k) {
 
 class combinadic_index : public index_encoding
 {
+protected:   // XXX temporarily protected so that pawngen_index can inherit
+    int prev_piece_in_encoding_group[MAX_PIECES];
+    int next_piece_in_encoding_group[MAX_PIECES];
+
+    int piece_position[MAX_PIECES][64];
+    index_t piece_index[MAX_PIECES][64];
+    int value[MAX_PIECES][64];
+
+    uint8_t white_king_position[64*64];
+    uint8_t black_king_position[64*64];
+    index_t king_index[64][64];
+    uint total_legal_king_positions;
+
+    int total_legal_positions[MAX_PIECES] = {};
+    int total_legal_piece_values[MAX_PIECES];
+
+    /* "Overlapping" pieces happen when a piece's semilegal range completely contains the semilegal
+     * range of a earlier piece.  We'll be able to remove some of our positions since they must be
+     * occupied by the earlier piece.
+     */
+
+    int last_overlapping_piece[MAX_PIECES];
 
 public:
 
@@ -2821,10 +2843,10 @@ public:
 		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
 		    || ((tb->pieces[piece].color == BLACK)
 			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
-		vals[piece] = tb->pieces[piece].value[COL(pos->en_passant_square)];
+		vals[piece] = value[piece][COL(pos->en_passant_square)];
 		continue;  /* Have to do this, as we never change en-passant values */
 	    } else {
-		vals[piece] = tb->pieces[piece].value[pos->piece_position[piece]];
+		vals[piece] = value[piece][pos->piece_position[piece]];
 	    }
 
 	    /* Remove positions for overlapping pieces, but we don't touch the kings, and we don't
@@ -2842,9 +2864,9 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    for (piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
+	    for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
 
-	    for (piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
+	    for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
 		if (pos->piece_position[piece] > pos->piece_position[piece2]) decrement ++;
 	    }
 
@@ -2855,10 +2877,10 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    piece2 = piece;
-	    while ((tb->pieces[piece2].prev_piece_in_encoding_group != -1)
-		   && (vals[piece2] < vals[tb->pieces[piece2].prev_piece_in_encoding_group])) {
-		transpose_array(vals, piece2, tb->pieces[piece2].prev_piece_in_encoding_group);
-		piece2 = tb->pieces[piece2].prev_piece_in_encoding_group;
+	    while ((prev_piece_in_encoding_group[piece2] != -1)
+		   && (vals[piece2] < vals[prev_piece_in_encoding_group[piece2]])) {
+		transpose_array(vals, piece2, prev_piece_in_encoding_group[piece2]);
+		piece2 = prev_piece_in_encoding_group[piece2];
 	    }
 	}
 
@@ -2870,13 +2892,13 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    index += tb->pieces[piece].index[vals[piece]];
+	    index += piece_index[piece][vals[piece]];
 	}
 
 	/* Kings have their own encoding table */
 
 	if (tb->white_king != -1) {
-	    index += tb->king_index[pos->piece_position[tb->white_king]]
+	    index += king_index[pos->piece_position[tb->white_king]]
 		[pos->piece_position[tb->black_king]];
 	}
 
@@ -2922,12 +2944,12 @@ public:
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	    vals[piece]
-		= std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + 64, index+1)
-		- tb->pieces[piece].index - 1;
+		= std::lower_bound(piece_index[piece], piece_index[piece] + 64, index+1)
+		- piece_index[piece] - 1;
 
-	    index -= tb->pieces[piece].index[vals[piece]];
+	    index -= piece_index[piece][vals[piece]];
 
-	    if ((tb->pieces[piece].piece_type == PAWN) && (tb->pieces[piece].piece_position[vals[piece]] < 8)) {
+	    if ((tb->pieces[piece].piece_type == PAWN) && (piece_position[piece][vals[piece]] < 8)) {
 
 		if (en_passant_pawn != -1) return false; /* can't have two en passant pawns */
 
@@ -2937,7 +2959,7 @@ public:
 		en_passant_color = 1 - p->side_to_move;
 
 		/* En passant pawns are encoded on the first row and never have their values reduced */
-		p->piece_position[en_passant_pawn] = tb->pieces[en_passant_pawn].piece_position[vals[en_passant_pawn]];
+		p->piece_position[en_passant_pawn] = piece_position[en_passant_pawn][vals[en_passant_pawn]];
 
 		if (en_passant_color == WHITE) {
 		    p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
@@ -2955,13 +2977,13 @@ public:
 
 	if (tb->variant != VARIANT_SUICIDE) {
 
-	    if (index >= tb->total_legal_king_positions) {
-		fatal("index >= total legal king positions in combinadic3_index_to_local_position!\n");
+	    if (index >= total_legal_king_positions) {
+		fatal("index >= total legal king positions in combinadic_index::index_to_position!\n");
 		return false;
 	    }
 
-	    p->piece_position[tb->white_king] = tb->white_king_position[index];
-	    p->piece_position[tb->black_king] = tb->black_king_position[index];
+	    p->piece_position[tb->white_king] = white_king_position[index];
+	    p->piece_position[tb->black_king] = black_king_position[index];
 
 	} else {
 
@@ -2996,8 +3018,8 @@ public:
 	    /* Back out to the first piece of this encoding group. */
 
 	    int piece2;
-	    for (piece2=piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1;
-		 piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
+	    for (piece2=piece; prev_piece_in_encoding_group[piece2] != -1;
+		 piece2 = prev_piece_in_encoding_group[piece2]);
 
 	    /* Find the last overlapping piece for this encoding group and retrieve its cumulative
 	     * overlapping piece vector.  Not doing this was the bug in 1.759 exposed by attempting
@@ -3005,21 +3027,21 @@ public:
 	     */
 
 	    uint64_t overlapping_this_group = 0;
-	    if (tb->pieces[piece2].last_overlapping_piece != -1) {
-		overlapping_this_group = overlapping_pieces[tb->pieces[piece2].last_overlapping_piece];
+	    if (last_overlapping_piece[piece2] != -1) {
+		overlapping_this_group = overlapping_pieces[last_overlapping_piece[piece2]];
 	    }
 
-	    if (tb->pieces[piece].prev_piece_in_encoding_group != -1) {
-		overlapping_pieces[piece] = overlapping_pieces[tb->pieces[piece].prev_piece_in_encoding_group];
-	    } else if (tb->pieces[piece].last_overlapping_piece != -1) {
-		overlapping_pieces[piece] = overlapping_pieces[tb->pieces[piece].last_overlapping_piece];
+	    if (prev_piece_in_encoding_group[piece] != -1) {
+		overlapping_pieces[piece] = overlapping_pieces[prev_piece_in_encoding_group[piece]];
+	    } else if (last_overlapping_piece[piece] != -1) {
+		overlapping_pieces[piece] = overlapping_pieces[last_overlapping_piece[piece]];
 	    }
  
 	    /* Kings and en passant pawns have their own encoding schemes and have already been decoded */
  
 	    if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)) {
  
-		p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
+		p->piece_position[piece] = piece_position[piece][vals[piece]];
 
 		/* Form a bitvector of the piece on smaller squares than this one, that were earlier and
 		 * are overlapped by this group.
@@ -3038,7 +3060,7 @@ public:
 		    increments &= increments - 1;
 		    do {
 			vals[piece] ++;
-			p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
+			p->piece_position[piece] = piece_position[piece][vals[piece]];
 		    } while (overlapping_this_group & (1ULL << (p->piece_position[piece])));
 		}
 	    }
@@ -3053,12 +3075,12 @@ public:
 
 	if (en_passant_pawn != -1) {
 
-	    for (piece = tb->pieces[en_passant_pawn].next_piece_in_encoding_group;
+	    for (piece = next_piece_in_encoding_group[en_passant_pawn];
 		 (piece != -1)
-		     && (p->piece_position[tb->pieces[piece].prev_piece_in_encoding_group]
+		     && (p->piece_position[prev_piece_in_encoding_group[piece]]
 			 > p->piece_position[piece]);
-		 piece = tb->pieces[piece].next_piece_in_encoding_group) {
-		transpose_array(p->piece_position, piece, tb->pieces[piece].prev_piece_in_encoding_group);
+		 piece = next_piece_in_encoding_group[piece]) {
+		transpose_array(p->piece_position, piece, prev_piece_in_encoding_group[piece]);
 		en_passant_pawn = piece;
 	    }
 
@@ -3094,7 +3116,7 @@ public:
 		    int piece2;
 
 		    /* check for legality of all pieces in this set */
-		    for (piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].next_piece_in_encoding_group) {
+		    for (piece2 = piece; piece2 != -1; piece2 = next_piece_in_encoding_group[piece2]) {
 			if (! (tb->pieces[piece2].legal_squares & BITVECTOR(p->piece_position[piece2]))) {
 			    break;
 			}
@@ -3169,6 +3191,7 @@ public:
 	}
 
 	if (tb->variant != VARIANT_SUICIDE) {
+	    total_legal_king_positions = 0;
 	    for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
 		if (! (tb->pieces[tb->white_king].legal_squares & BITVECTOR(white_king_square))) continue;
 		for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
@@ -3182,18 +3205,18 @@ public:
 		    if (tb->positions_with_adjacent_kings_are_illegal
 			&& ! check_king_legality(white_king_square, black_king_square)) continue;
 
-		    tb->white_king_position[tb->total_legal_king_positions] = white_king_square;
-		    tb->black_king_position[tb->total_legal_king_positions] = black_king_square;
-		    tb->king_index[white_king_square][black_king_square] = tb->max_index * tb->total_legal_king_positions;
-		    tb->total_legal_king_positions ++;
+		    white_king_position[total_legal_king_positions] = white_king_square;
+		    black_king_position[total_legal_king_positions] = black_king_square;
+		    king_index[white_king_square][black_king_square] = tb->max_index * total_legal_king_positions;
+		    total_legal_king_positions ++;
 		}
 	    }
-	    tb->max_index *= tb->total_legal_king_positions;
+	    tb->max_index *= total_legal_king_positions;
 
-	    tb->pieces[tb->white_king].prev_piece_in_encoding_group = -1;
-	    tb->pieces[tb->white_king].next_piece_in_encoding_group = -1;
-	    tb->pieces[tb->black_king].prev_piece_in_encoding_group = -1;
-	    tb->pieces[tb->black_king].next_piece_in_encoding_group = -1;
+	    prev_piece_in_encoding_group[tb->white_king] = -1;
+	    next_piece_in_encoding_group[tb->white_king] = -1;
+	    prev_piece_in_encoding_group[tb->black_king] = -1;
+	    next_piece_in_encoding_group[tb->black_king] = -1;
 	}
 
 	/* Assign encoding groups, usually groups of identical pieces. */
@@ -3204,8 +3227,8 @@ public:
 
 	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
 
-	    tb->pieces[piece].prev_piece_in_encoding_group = tb->pieces[piece].prev_piece_in_semilegal_group;
-	    tb->pieces[piece].next_piece_in_encoding_group = tb->pieces[piece].next_piece_in_semilegal_group;
+	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
+	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
 	    /* An important special case - handle two opposing plus-pawns by combining their
 	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
@@ -3227,8 +3250,8 @@ public:
 			/* should never happen, we should be blocked by a pawn of opposite color */
 			throw "BUG: not blocked right";
 		    } else {
-			tb->pieces[piece].next_piece_in_encoding_group = tb->pieces[piece].blocking_piece;
-			for (piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group) {
+			next_piece_in_encoding_group[piece] = tb->pieces[piece].blocking_piece;
+			for (piece2 = piece; piece2 != -1; piece2 = prev_piece_in_encoding_group[piece2]) {
 			    tb->pieces[piece2].semilegal_squares
 				|= tb->pieces[tb->pieces[piece].blocking_piece].semilegal_squares;
 			}
@@ -3238,8 +3261,8 @@ public:
 			/* should never happen, we should be blocked by a pawn of opposite color */
 			throw "BUG: not blocked right";
 		    } else {
-			tb->pieces[piece].prev_piece_in_encoding_group = tb->pieces[piece].blocking_piece;
-			for (piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].next_piece_in_encoding_group) {
+			prev_piece_in_encoding_group[piece] = tb->pieces[piece].blocking_piece;
+			for (piece2 = piece; piece2 != -1; piece2 = next_piece_in_encoding_group[piece2]) {
 			    tb->pieces[piece2].semilegal_squares
 				|= tb->pieces[tb->pieces[piece].blocking_piece].semilegal_squares;
 			}
@@ -3262,11 +3285,11 @@ public:
 	     * d5, e5, a later piece restricted to de, and another later piece restricted to 45.
 	     */
 
-	    tb->pieces[piece].last_overlapping_piece = -1;
+	    last_overlapping_piece[piece] = -1;
 
 	    for (int piece2 = piece-1; piece2 >= 0; piece2 --) {
 		if ((tb->pieces[piece].semilegal_squares & tb->pieces[piece2].semilegal_squares) == tb->pieces[piece2].semilegal_squares) {
-		    tb->pieces[piece].last_overlapping_piece = piece2;
+		    last_overlapping_piece[piece] = piece2;
 		    break;
 		}
 	    }
@@ -3277,9 +3300,9 @@ public:
 
 	    int piece_in_set;
 
-	    if (tb->pieces[piece].prev_piece_in_encoding_group == -1) {
+	    if (prev_piece_in_encoding_group[piece] == -1) {
 		piece_in_set = 1;
-	    } else if (tb->pieces[piece].prev_piece_in_encoding_group == piece-1) {
+	    } else if (prev_piece_in_encoding_group[piece] == piece-1) {
 		piece_in_set ++;
 	    } else {
 		fatal("Combinadic3/4 index requires encoding groups to be adjacent in index\n");
@@ -3301,16 +3324,16 @@ public:
 			&& (tb->pieces[piece].semilegal_squares
 			    & BITVECTOR(rowcol2square(tb->pieces[piece].color == WHITE ? 3 : 4, square))))) {
 
-		    tb->pieces[piece].value[square] = tb->pieces[piece].total_legal_positions;
-		    tb->pieces[piece].piece_position[tb->pieces[piece].total_legal_positions] = square;
+		    value[piece][square] = total_legal_positions[piece];
+		    piece_position[piece][total_legal_positions[piece]] = square;
 
-		    tb->pieces[piece].index[tb->pieces[piece].total_legal_positions]
-			= choose(tb->pieces[piece].total_legal_positions, piece_in_set) * tb->max_index;
+		    piece_index[piece][total_legal_positions[piece]]
+			= choose(total_legal_positions[piece], piece_in_set) * tb->max_index;
 
-		    tb->pieces[piece].total_legal_positions ++;
+		    total_legal_positions[piece] ++;
 		} else {
 		    /* This value should never get used. */
-		    tb->pieces[piece].value[square] = ILLEGAL_POSITION;
+		    value[piece][square] = ILLEGAL_POSITION;
 		}
 
 	    }
@@ -3321,27 +3344,27 @@ public:
 	     * decremented.
 	     */
 
-	    tb->pieces[piece].total_legal_piece_values = tb->pieces[piece].total_legal_positions;
+	    total_legal_piece_values[piece] = total_legal_positions[piece];
 
-	    for (int piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
-	    for (int piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
-		tb->pieces[piece].total_legal_piece_values --;
+	    for (int piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
+	    for (int piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
+		total_legal_piece_values[piece] --;
 	    }
 
-	    if ((tb->pieces[piece].prev_piece_in_encoding_group != -1)
-		&& (tb->pieces[piece].total_legal_positions
-		    != tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].total_legal_positions)) {
+	    if ((prev_piece_in_encoding_group[piece] != -1)
+		&& (total_legal_positions[piece]
+		    != total_legal_positions[prev_piece_in_encoding_group[piece]])) {
 		fatal("BUG: Identical pieces don't have the same number of total semilegal positions\n");
 	    }
 
-	    if ((tb->pieces[piece].prev_piece_in_encoding_group != -1)
-		&& (tb->pieces[piece].total_legal_piece_values
-		    != tb->pieces[tb->pieces[piece].prev_piece_in_encoding_group].total_legal_piece_values)) {
+	    if ((prev_piece_in_encoding_group[piece] != -1)
+		&& (total_legal_piece_values[piece]
+		    != total_legal_piece_values[prev_piece_in_encoding_group[piece]])) {
 		fatal("BUG: Identical pieces don't have the same number of encoding values\n");
 	    }
 
-	    if (tb->pieces[piece].next_piece_in_encoding_group == -1) {
-		tb->max_index *= choose(tb->pieces[piece].total_legal_piece_values, piece_in_set);
+	    if (next_piece_in_encoding_group[piece] == -1) {
+		tb->max_index *= choose(total_legal_piece_values[piece], piece_in_set);
 	    }
 
 	}
@@ -3356,8 +3379,8 @@ public:
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
-	    for (int value = tb->pieces[piece].total_legal_piece_values; value < 64; value ++) {
-		tb->pieces[piece].index[value] = tb->max_index + 1;
+	    for (int value = total_legal_piece_values[piece]; value < 64; value ++) {
+		piece_index[piece][value] = tb->max_index + 1;
 	    }
 	}
 
@@ -3824,7 +3847,7 @@ public:
 
 	    int decrement = 0;
 
-	    vals[piece] = tb->pieces[piece].value[pos->piece_position[piece]];
+	    vals[piece] = value[piece][pos->piece_position[piece]];
 
 	    /* Remove positions for overlapping pieces, but we don't touch the kings or pawns, and
 	     * we don't consider anything in the current encoding group, because the combinadic
@@ -3835,9 +3858,9 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
 
-	    for (piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
+	    for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
 
-	    for (piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
+	    for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
 		if (pos->piece_position[piece] > pos->piece_position[piece2]) decrement ++;
 	    }
 
@@ -3849,10 +3872,10 @@ public:
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->pieces[piece].piece_type == PAWN) continue;
 	    piece2 = piece;
-	    while ((tb->pieces[piece2].prev_piece_in_encoding_group != -1)
-		   && (vals[piece2] < vals[tb->pieces[piece2].prev_piece_in_encoding_group])) {
-		transpose_array(vals, piece2, tb->pieces[piece2].prev_piece_in_encoding_group);
-		piece2 = tb->pieces[piece2].prev_piece_in_encoding_group;
+	    while ((prev_piece_in_encoding_group[piece2] != -1)
+		   && (vals[piece2] < vals[prev_piece_in_encoding_group[piece2]])) {
+		transpose_array(vals, piece2, prev_piece_in_encoding_group[piece2]);
+		piece2 = prev_piece_in_encoding_group[piece2];
 	    }
 	}
 
@@ -3864,13 +3887,13 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
 
-	    index += tb->pieces[piece].index[vals[piece]];
+	    index += piece_index[piece][vals[piece]];
 	}
 
 	/* Kings have their own encoding table */
 
 	if (tb->white_king != -1) {
-	    index += tb->king_index[pos->piece_position[tb->white_king]]
+	    index += king_index[pos->piece_position[tb->white_king]]
 		[pos->piece_position[tb->black_king]];
 	}
 
@@ -3971,23 +3994,23 @@ public:
 	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    vals[piece]
-		= std::lower_bound(tb->pieces[piece].index, tb->pieces[piece].index + 64, index+1)
-		- tb->pieces[piece].index - 1;
+		= std::lower_bound(piece_index[piece], piece_index[piece] + 64, index+1)
+		- piece_index[piece] - 1;
 
-	    index -= tb->pieces[piece].index[vals[piece]];
+	    index -= piece_index[piece][vals[piece]];
 	}
 
 	if (tb->encode_stm) index /= 2;
 
 	if (tb->variant != VARIANT_SUICIDE) {
 
-	    if (index >= tb->total_legal_king_positions) {
+	    if (index >= total_legal_king_positions) {
 		fatal("index >= total legal king positions in pawngen_index_to_local_position!\n");
 		return false;
 	    }
 
-	    p->piece_position[tb->white_king] = tb->white_king_position[index];
-	    p->piece_position[tb->black_king] = tb->black_king_position[index];
+	    p->piece_position[tb->white_king] = white_king_position[index];
+	    p->piece_position[tb->black_king] = black_king_position[index];
 
 	} else {
 
@@ -4024,15 +4047,15 @@ public:
   
 	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
 
-	    p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
+	    p->piece_position[piece] = piece_position[piece][vals[piece]];
 	    smallest_position = ILLEGAL_POSITION;
 
 	    do {
 		next_smallest_position = ILLEGAL_POSITION;
 
-		for (int piece2 = piece; tb->pieces[piece2].prev_piece_in_encoding_group != -1; piece2 = tb->pieces[piece2].prev_piece_in_encoding_group);
+		for (int piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
 
-		for (int piece2 = tb->pieces[piece2].last_overlapping_piece; piece2 != -1; piece2 = tb->pieces[piece2].last_overlapping_piece) {
+		for (int piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
 		    if (p->piece_position[piece2] <= p->piece_position[piece]) {
 			if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
 			    if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
@@ -4046,9 +4069,9 @@ public:
 		    vals[piece] ++;
 
 		    /* I suspect that this test never triggers */
-		    if (vals[piece] >= tb->pieces[piece].total_legal_positions) return false;
+		    if (vals[piece] >= total_legal_positions[piece]) return false;
 
-		    p->piece_position[piece] = tb->pieces[piece].piece_position[vals[piece]];
+		    p->piece_position[piece] = piece_position[piece][vals[piece]];
 		    smallest_position = next_smallest_position;
 		}
 
@@ -4076,7 +4099,7 @@ public:
 		    int piece2;
 
 		    /* check for legality of all pieces in this set */
-		    for (int piece2 = piece; piece2 != -1; piece2 = tb->pieces[piece2].next_piece_in_encoding_group) {
+		    for (int piece2 = piece; piece2 != -1; piece2 = next_piece_in_encoding_group[piece2]) {
 			if (! (tb->pieces[piece2].legal_squares & BITVECTOR(p->piece_position[piece2]))) {
 			    break;
 			}
@@ -5517,11 +5540,6 @@ void tablebase::parse_XML(std::istream *instream)
 
     encode_stm = true;
 
-    total_legal_king_positions = 0;
-    for (piece = 0; piece < num_pieces; piece ++) {
-	pieces[piece].total_legal_positions = 0;
-    }
-
     switch (index_type) {
     case NAIVE_INDEX:
 	encoding = new naive_index(this);
@@ -5633,7 +5651,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.931 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.932 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14420,7 +14438,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.931 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.932 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
