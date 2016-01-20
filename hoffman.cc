@@ -795,7 +795,7 @@ typedef struct tablebase {
      * that function.  white_king and black_king are the piece numbers of the two kings.
      */
 
-    index_encoding * encoding;
+    std::unique_ptr<index_encoding> encoding;
 
     int white_king;
     int black_king;
@@ -845,6 +845,8 @@ typedef struct tablebase {
     tablebase(void) : offset(0), invert_colors(false), num_pieces(0) { }
     tablebase(std::istream *);
     tablebase(Glib::ustring);
+
+    //tablebase(const tablebase &) = delete;
 
 private:
     void parse_pawngen_element(xmlpp::Node *);
@@ -1786,17 +1788,25 @@ bool check_king_legality(int kingA, int kingB) {
 
 class index_encoding {
 public:
-    virtual index_t position_to_index(local_position_t *pos) = 0;
-    virtual bool index_to_position(index_t index, local_position_t *pos) = 0;
+    virtual index_t position_to_index(tablebase_t *tb, local_position_t *pos) = 0;
+    virtual bool index_to_position(tablebase_t * tb, index_t index, local_position_t *pos) = 0;
 #if 0
-    virtual bool move_piece(local_position_t *pos, int piece, int destination_square) {
+    virtual bool move_piece(tablebase_t * tb, local_position_t *pos, int piece, int destination_square) {
 	// move piece and recompute index
     }
 #endif
-    index_encoding(tablebase_t *tb) : tb(tb) { }
-    // XXX virtual destructor; copy assignment?
-protected:
-    tablebase_t *tb;
+
+    /* index_encoding is a polymorphic base type
+     *
+     * It has a trivial constructor, a virtual destructor (so its derived classes can destroy their
+     * own data), and no copy or copy assignment operators, since it will only exist within a
+     * std::unique_ptr in a tablebase_t.
+     */
+
+    index_encoding() { }
+    virtual ~index_encoding() { }
+    index_encoding(const index_encoding &) = delete;
+    index_encoding & operator=(const index_encoding &) = delete;
 };
 
 /* "Naive" index.  Just assigns a number from 0 to 63 to each square on the board and multiplies
@@ -1808,7 +1818,7 @@ class naive_index : public index_encoding {
 
 public:
 
-    index_t position_to_index(local_position_t *pos)
+    index_t position_to_index(tablebase_t *tb, local_position_t *pos)
     {
 	int shift_count = 1;
 	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
@@ -1849,7 +1859,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(index_t index, local_position_t *p)
+    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 
@@ -1929,7 +1939,7 @@ public:
 	return true;
     }
 
-    naive_index(tablebase_t *tb) : index_encoding(tb)
+    naive_index(tablebase_t *tb)
     {
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
 	switch (tb->symmetry) {
@@ -1959,7 +1969,7 @@ class naive2_index : public index_encoding
 
 public:
 
-    index_t position_to_index(local_position_t *pos)
+    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
     {
 	int shift_count = 1;
 	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
@@ -2042,7 +2052,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(index_t index, local_position_t *p)
+    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 	uint8_t vals[MAX_PIECES];
@@ -2149,7 +2159,7 @@ public:
 	return true;
     }
 
-    naive2_index(tablebase_t *tb) : index_encoding(tb)
+    naive2_index(tablebase_t *tb)
     {
 	tb->max_index = 2;
 
@@ -2203,7 +2213,7 @@ class simple_index : public index_encoding
 
 public:
 
-    index_t position_to_index(local_position_t *pos)
+    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
     {
 	index_t index;
 	int piece;
@@ -2237,7 +2247,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(index_t index, local_position_t *p)
+    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 
@@ -2312,7 +2322,7 @@ public:
 	return true;
     }
 
-    simple_index(tablebase_t *tb) : index_encoding(tb)
+    simple_index(tablebase_t *tb)
     {
 	/* The "2" is because side-to-play is part of the position */
 	tb->max_index = 2;
@@ -2406,7 +2416,7 @@ class compact_index : public index_encoding
 
 public:
 
-    index_t position_to_index(local_position_t *pos)
+    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
     {
 	index_t index;
 	int piece;
@@ -2496,7 +2506,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(index_t index, local_position_t *p)
+    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 	uint8_t vals[MAX_PIECES];
@@ -2677,7 +2687,7 @@ public:
 	return true;
     }
 
-    compact_index(tablebase_t *tb) : index_encoding(tb)
+    compact_index(tablebase_t *tb)
     {
 	/* The "2" is because side-to-play is part of the position */
 	tb->max_index = 2;
@@ -2824,7 +2834,7 @@ protected:   // XXX temporarily protected so that pawngen_index can inherit
 
 public:
 
-    index_t position_to_index(local_position_t *pos)
+    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
     {
 	index_t index;
 	int piece, piece2;
@@ -2909,7 +2919,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(index_t index, local_position_t *p)
+    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 	int en_passant_pawn = -1;
@@ -3178,7 +3188,7 @@ public:
 	return true;
     }
 
-    combinadic_index(tablebase_t *tb) : index_encoding(tb)
+    combinadic_index(tablebase_t *tb)
     {
 	if ((tb->index_type == COMBINADIC4_INDEX) && tb->is_color_symmetric()) {
 	    /* Don't need side-to-play for a color symetric tablebase */
@@ -3346,8 +3356,9 @@ public:
 
 	    total_legal_piece_values[piece] = total_legal_positions[piece];
 
-	    for (int piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
-	    for (int piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
+	    int piece2;
+	    for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
+	    for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
 		total_legal_piece_values[piece] --;
 	    }
 
@@ -3837,7 +3848,7 @@ class pawngen_index : public combinadic_index
 
 public:
 
-    index_t position_to_index(local_position_t *pos)
+    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
     {
 	index_t index;
 	int piece, piece2;
@@ -3937,7 +3948,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(index_t index, local_position_t *p)
+    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 	uint8_t vals[MAX_PIECES];
@@ -4053,9 +4064,10 @@ public:
 	    do {
 		next_smallest_position = ILLEGAL_POSITION;
 
-		for (int piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
+		int piece2;
+		for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
 
-		for (int piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
+		for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
 		    if (p->piece_position[piece2] <= p->piece_position[piece]) {
 			if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
 			    if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
@@ -4317,19 +4329,23 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
      * diagonal, then black king is on or below a1-h8 diagonal
      */
 
-    reflection = tb->reflections
-	[position->piece_position[tb->white_king]]
-	[position->piece_position[tb->black_king]];
+    if (tb->symmetry > 1) {
 
-    if (reflection != 0) {
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    position->piece_position[piece]
-		= forward_reflection[reflection][position->piece_position[piece]];
+	reflection = tb->reflections
+	    [position->piece_position[tb->white_king]]
+	    [position->piece_position[tb->black_king]];
+
+	if (reflection != 0) {
+	    for (piece = 0; piece < tb->num_pieces; piece ++) {
+		position->piece_position[piece]
+		    = forward_reflection[reflection][position->piece_position[piece]];
+	    }
+	    if (position->en_passant_square != ILLEGAL_POSITION) {
+		position->en_passant_square
+		    = forward_reflection[reflection][position->en_passant_square];
+	    }
 	}
-	if (position->en_passant_square != ILLEGAL_POSITION) {
-	    position->en_passant_square
-		= forward_reflection[reflection][position->en_passant_square];
-	}
+
     }
 
     /* Sort any identical pieces so that the lowest square number always comes first. */
@@ -4442,7 +4458,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	}
     }
 
-    index = tb->encoding->position_to_index(position);
+    index = tb->encoding->position_to_index(tb, position);
 
     /* Multiplicity - number of non-identical positions that this index corresponds to.  We want to
      * update the original position structure that got passed in.
@@ -4488,7 +4504,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     bzero(position, sizeof(local_position_t));
     position->en_passant_square = ILLEGAL_POSITION;
 
-    ret = tb->encoding->index_to_position(index, position);
+    ret = tb->encoding->index_to_position(tb, index, position);
 
     if (!ret) return false;
 
@@ -5542,28 +5558,28 @@ void tablebase::parse_XML(std::istream *instream)
 
     switch (index_type) {
     case NAIVE_INDEX:
-	encoding = new naive_index(this);
+	encoding.reset(new naive_index(this));
 	break;
 
     case NAIVE2_INDEX:
-	encoding = new naive2_index(this);
+	encoding.reset(new naive2_index(this));
 	break;
 
     case SIMPLE_INDEX:
-	encoding = new simple_index(this);
+	encoding.reset(new simple_index(this));
 	break;
 
     case COMPACT_INDEX:
-	encoding = new compact_index(this);
+	encoding.reset(new compact_index(this));
 	break;
 
     case COMBINADIC3_INDEX:
     case COMBINADIC4_INDEX:
-	encoding = new combinadic_index(this);
+	encoding.reset(new combinadic_index(this));
 	break;
 
     case PAWNGEN_INDEX:
-	encoding = new pawngen_index(this);
+	encoding.reset(new pawngen_index(this));
 	break;
 
     case NO_EN_PASSANT_INDEX:
@@ -5651,7 +5667,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.932 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.933 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14438,7 +14454,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.932 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.933 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
