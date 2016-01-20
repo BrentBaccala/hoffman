@@ -149,6 +149,13 @@ endef
 # This target builds all the futurebases that a given xml file depends
 # on.  For example, assuming the standard kqqkq.xml exists, calling
 # 'make kqqkq.xml.futurebases' will build kqkq.htb and kqqk.htb.
+#
+# An earlier version of this makefile called the futurebases macro
+# directly from the %.htb and %.xml targets, but because macros are
+# expanded before commands run, no futurebases were made if the xml
+# file didn't exist yet!  So now we have a 'fake' target for
+# futurebases that calls the macro at the right point in the command,
+# at the cost of an additional recursive make.
 
 %.futurebases:
 	$(if $(strip $(call futurebases, $*)), $(MAKE) $(call futurebases, $*))
