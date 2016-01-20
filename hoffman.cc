@@ -2827,10 +2827,14 @@ protected:   // XXX temporarily protected so that pawngen_index can inherit
 
     /* "Overlapping" pieces happen when a piece's semilegal range completely contains the semilegal
      * range of a earlier piece.  We'll be able to remove some of our positions since they must be
-     * occupied by the earlier piece.
+     * occupied by the earlier piece.  When decoding, we construct, for each piece, a board vector
+     * of all positions occupied by it and all the pieces its range overlaps.  When we have multiple
+     * pieces in a semilegal group, we need to both build this vector, and reference the last
+     * overlapping piece not in the current semilegal group.
      */
 
     int last_overlapping_piece[MAX_PIECES];
+    int last_overlapping_group[MAX_PIECES];
 
 public:
 
@@ -3025,28 +3029,16 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
  
-	    /* Back out to the first piece of this encoding group. */
-
-	    int piece2;
-	    for (piece2=piece; prev_piece_in_encoding_group[piece2] != -1;
-		 piece2 = prev_piece_in_encoding_group[piece2]);
-
 	    /* Find the last overlapping piece for this encoding group and retrieve its cumulative
 	     * overlapping piece vector.  Not doing this was the bug in 1.759 exposed by attempting
 	     * to build kqqk.
 	     */
 
 	    uint64_t overlapping_this_group = 0;
-	    if (last_overlapping_piece[piece2] != -1) {
-		overlapping_this_group = overlapping_pieces[last_overlapping_piece[piece2]];
+	    if (last_overlapping_group[piece] != -1) {
+		overlapping_this_group = overlapping_pieces[last_overlapping_group[piece]];
 	    }
 
-	    if (prev_piece_in_encoding_group[piece] != -1) {
-		overlapping_pieces[piece] = overlapping_pieces[prev_piece_in_encoding_group[piece]];
-	    } else if (last_overlapping_piece[piece] != -1) {
-		overlapping_pieces[piece] = overlapping_pieces[last_overlapping_piece[piece]];
-	    }
- 
 	    /* Kings and en passant pawns have their own encoding schemes and have already been decoded */
  
 	    if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)) {
@@ -3073,6 +3065,14 @@ public:
 			p->piece_position[piece] = piece_position[piece][vals[piece]];
 		    } while (overlapping_this_group & (1ULL << (p->piece_position[piece])));
 		}
+	    }
+ 
+	    /* Build a board vector of this piece and all its overlapping pieces. */
+
+	    /* XXX Isn't the previous piece in the encoding group always the last overlapping piece? */
+
+	    if (last_overlapping_piece[piece] != -1) {
+		overlapping_pieces[piece] = overlapping_pieces[last_overlapping_piece[piece]];
 	    }
  
 	    overlapping_pieces[piece] |= (1ULL << (p->piece_position[piece]));
@@ -3235,10 +3235,16 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    /* We don't really need to assign this for pawns in a PAWNGEN_INDEX, but we do it
+	     * anyway to avoid bogus values in these arrays when we compute last_overlapping_group.
+	     */
+
+	    /* XXX revisit this when pawngen is refactored */
 
 	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
 	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
+
+	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    /* An important special case - handle two opposing plus-pawns by combining their
 	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
@@ -3304,6 +3310,17 @@ public:
 		}
 	    }
 
+	    /* Back out to the first piece of this encoding group and record the last overlapping
+	     * piece for this encoding group.  Not doing this was the bug in 1.759 exposed by
+	     * attempting to build kqqk.
+	     */
+
+	    int piece2;
+	    for (piece2=piece; prev_piece_in_encoding_group[piece2] != -1;
+		 piece2 = prev_piece_in_encoding_group[piece2]);
+
+	    last_overlapping_group[piece] = last_overlapping_piece[piece2];
+
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
@@ -3356,7 +3373,6 @@ public:
 
 	    total_legal_piece_values[piece] = total_legal_positions[piece];
 
-	    int piece2;
 	    for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
 	    for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
 		total_legal_piece_values[piece] --;
@@ -5667,7 +5683,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.933 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.934 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14454,7 +14470,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.933 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.934 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
