@@ -1735,6 +1735,470 @@ void verify_movements()
 }
 
 
+/***** PAWNGEN *****/
+
+/* Although early versions of hoffman included a Perl script to generate a complex set of
+ * interrelated tablebases resulting from a starting pawn position, it was Pedro Pérez Moreno's
+ * program "finalgen" that really pioneered the analysis of endgames in this manner.
+ *
+ * The <pawngen/> element takes a starting pawn position and generates a table of all possible pawn
+ * positions that can result from it.  For typical endgame scenarios with half a dozen pawns
+ * or so, this results in a manageable table with a few thousand entries.  Pawn positions
+ * are encoded using this table, and the other pieces are encoded separately.
+ *
+ * Because hoffman requires the number, type, and color of pieces to be fixed for each tablebase,
+ * the <pawngen/> element specifies the number of pawns of each color allowed.  Multiple tablebases
+ * must be chained together using <futurebase/> elements to completely analyze a pawngen position.
+ * For example, given a position with 3 pawns on each side, and both kppkp and kpppk available as
+ * futurebases, we'd first compute three tablebases for the four pawn configurations (3 vs 1, 2 vs
+ * 2, 1 vs 3), then back propagate into two tablebases for the five pawn configurations (3 vs 2 and
+ * 2 vs 3), then finally back propagate into a single tablebase for the six pawn configurations,
+ * that would include the original position.
+ *
+ * Pawn captures simply lead to another pawngen futurebase (i.e, 3 vs 2 leads into 3 vs 1 and 2 vs
+ * 2), but what about piece captures?  Attributes on the <pawngen/> element specify how many pieces
+ * of each color are allowed to be captured, and additional pawn positions are generated to account
+ * for those capture moves.  For example, a 3 vs 2 position that includes a rook would require
+ * futurebases for 3 vs 1 and 2 vs 2 (each with the rook present), as well as a 3 vs 2 futurebase
+ * without the rook, but with a "captures-allowed" attribute on the pawngen element.
+ *
+ * Likewise, we wish to consider queening combinations.  In this case, queens are not "allowed", but
+ * actually "required", since we need not consider positions where a pawn has not yet advanced to
+ * the back rank.  So, continuing the example above, we'd also want a 3 vs 1 futurebase with a queen
+ * required, as well as a 2 vs 2 futurebase with a queen of the opposite color required.
+ *
+ * If the resulting positions are too complicated to analyze, prune elements can be used to handle
+ * the queens and/or captures.
+ *
+ * Currently, there are some restrictions.  No non-pawngen pawns are allowed, and encoding groups
+ * are computed according to where the pawngen element appears in the piece list, but the index is
+ * always encoded with the pawn index in the most significant bits.
+ */
+
+int white_pawns_required = 0;
+int black_pawns_required = 0;
+
+class pawn_position {
+
+    friend bool operator< (const pawn_position & LHS, const pawn_position & RHS);
+    friend bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position & RHS);
+
+    uint64_t white_pawns = 0;
+    uint64_t black_pawns = 0;
+
+    int total_white_pawns = 0;
+    int total_black_pawns = 0;
+
+public:
+
+    int white_pawn_captures_black_piece_allowed = 0;
+    int black_pawn_captures_white_piece_allowed = 0;
+
+    int white_queens_required = 0;
+    int black_queens_required = 0;
+
+    int en_passant_square = ILLEGAL_POSITION;
+
+    /* These next variables are computed from prior information to speed access. */
+
+    int index;
+    uint8_t position[MAX_PIECES];
+    int en_passant_pawn;
+
+    bool valid(void) const
+    {
+	return ((white_queens_required == 0) && (black_queens_required == 0) &&
+		(total_white_pawns == white_pawns_required) && (total_black_pawns == black_pawns_required));
+    }
+
+    bool white_pawn_at (int square) const
+    {
+	return (white_pawns & (1ULL << square));
+    }
+
+    void remove_white_pawn(int square)
+    {
+	white_pawns &= ~(1ULL << square);
+	total_white_pawns --;
+    }
+
+    void add_white_pawn(int square)
+    {
+	white_pawns |= (1ULL << square);
+	total_white_pawns ++;
+    }
+
+    bool black_pawn_at(int square) const
+    {
+	return (black_pawns & (1ULL << square));
+    }
+
+    void remove_black_pawn(int square)
+    {
+	black_pawns &= ~(1ULL << square);
+	total_black_pawns --;
+    }
+
+    void add_black_pawn(int square)
+    {
+	black_pawns |= (1ULL << square);
+	total_black_pawns ++;
+    }
+
+    bool pawn_at(int square) const
+    {
+	return white_pawn_at(square) || black_pawn_at(square);
+    }
+
+};
+
+/* Comparison operator for pawn position.
+ *
+ * We want to order pawn positions so that later pawn positions depend only on early ones, and also
+ * so that we can easily tell how many board squares are occupied by pawns.
+ *
+ * We order first by total number of pawns, then by number of white pawns on the 2nd rank, then 3rd,
+ * up to 7th, then by number of black pawns on the 7th rank, then 6th, down to 2nd, then by any
+ * remaining differences.
+ *
+ * Any capture will reduce the total number of pawns and thus lead to a smaller index.
+ *
+ * Any pawn move will reduce the number of pawns on a rank earlier in the sort order, and thus lead
+ * to a smaller index.
+ *
+ * XXX We might want to group en passant positions together, because they don't need the
+ * side-to-move flag encoded, as the side-to-move is always the opposite color of the en passant
+ * pawn.
+ *
+ * XXX We might want a second, faster comparison operator to use when searching for a particular
+ * position after the index numbers have been assigned.
+ */
+
+short pawns_on_rank[256];
+
+bool operator< (const pawn_position & LHS, const pawn_position & RHS)
+{
+    if ((LHS.total_white_pawns + LHS.total_black_pawns) != (RHS.total_white_pawns + RHS.total_black_pawns)) {
+	return ((LHS.total_white_pawns + LHS.total_black_pawns) < (RHS.total_white_pawns + RHS.total_black_pawns));
+    } else {
+	for (int rank = 2; rank <= 7; rank ++) {
+	    auto LHS_white_rank_pawns = pawns_on_rank[(LHS.white_pawns >> 8*(rank-1)) & 0xff];
+	    auto RHS_white_rank_pawns = pawns_on_rank[(RHS.white_pawns >> 8*(rank-1)) & 0xff];
+	    if (LHS_white_rank_pawns != RHS_white_rank_pawns) {
+		return (LHS_white_rank_pawns < RHS_white_rank_pawns);
+	    }
+	}
+	for (int rank = 7; rank >= 2; rank --) {
+	    auto LHS_black_rank_pawns = pawns_on_rank[(LHS.black_pawns >> 8*(rank-1)) & 0xff];
+	    auto RHS_black_rank_pawns = pawns_on_rank[(RHS.black_pawns >> 8*(rank-1)) & 0xff];
+	    if (LHS_black_rank_pawns != RHS_black_rank_pawns) {
+		return (LHS_black_rank_pawns < RHS_black_rank_pawns);
+	    }
+	}
+    }
+
+    if (LHS.white_pawns != RHS.white_pawns) {
+	return (LHS.white_pawns < RHS.white_pawns);
+    }
+
+    if (LHS.black_pawns != RHS.black_pawns) {
+	return (LHS.black_pawns < RHS.black_pawns);
+    }
+
+    return LHS.en_passant_square < RHS.en_passant_square;
+}
+
+bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position & RHS)
+{
+    if (LHS.white_pawns != RHS.white_pawns) {
+	return LHS.white_pawns < RHS.white_pawns;
+    } else if (LHS.black_pawns != RHS.black_pawns) {
+	return LHS.black_pawns < RHS.black_pawns;
+    } else {
+	return LHS.en_passant_square < RHS.en_passant_square;
+    }
+}
+
+/* Recursively compute all possible pawn positions that can arise from a starting position.
+ *
+ * Pawns can always be captured by a piece.  They can always move forward and can always capture
+ * each other.  They can only queen if required to, and can only capture a piece if allowed to.
+ *
+ * The two std::sets here are global variables, but are only used when a tablebase's indexing
+ * function is being computed.  The resulting information is stored in tablebase_t's std::vector
+ * pawn_positions.  These std::sets are then clear()ed, so they can be used again to compute another
+ * tablebase's indexing function.
+ */
+
+std::set<pawn_position> valid_pawn_positions;
+std::set<pawn_position> invalid_pawn_positions;
+
+void process_pawn_position(class pawn_position position)
+{
+    std::pair<std::set<pawn_position>::iterator,bool> ret;
+
+    if (position.valid()) {
+	ret = valid_pawn_positions.insert(position);
+    } else {
+	ret = invalid_pawn_positions.insert(position);
+    }
+
+    if (! ret.second) return;
+
+    for (int square=0; square < 64; square ++) {
+
+	/* White pawns */
+
+	if (position.white_pawn_at(square)) {
+	    pawn_position position2 = position;
+
+	    /* Remove pawn (captured by piece), and reuse position2 with pawn removed */
+	    position2.remove_white_pawn(square);
+	    position2.en_passant_square = ILLEGAL_POSITION;
+	    process_pawn_position(position2);
+
+	    /* Queen it if queens are required */
+	    if (square >= 48 && position2.white_queens_required) {
+		pawn_position position3 = position2;
+		position3.white_queens_required --;
+		process_pawn_position(position3);
+	    }
+
+	    if (square < 48) {
+		/* Move forward if unblocked */
+		if (! position2.pawn_at(square + 8)) {
+		    pawn_position position3 = position2;
+
+		    position3.add_white_pawn(square + 8);
+		    process_pawn_position(position3);
+		}
+
+		/* Left pawn capture */
+		if ((square % 8) != 0) {
+		    if (position2.black_pawn_at(square + 8 - 1)) {
+			pawn_position position3 = position2;
+			position3.remove_black_pawn(square + 8 - 1);
+			position3.add_white_pawn(square + 8 - 1);
+			process_pawn_position(position3);
+		    } else if (position2.white_pawn_captures_black_piece_allowed
+			       && !position2.white_pawn_at(square + 8 - 1)) {
+			pawn_position position3 = position2;
+			position3.add_white_pawn(square + 8 - 1);
+			position3.white_pawn_captures_black_piece_allowed --;
+			process_pawn_position(position3);
+		    }
+		}
+
+		/* Right pawn capture */
+		if ((square % 8) != 7) {
+		    if (position2.black_pawn_at(square + 8 + 1)) {
+			pawn_position position3 = position2;
+			position3.remove_black_pawn(square + 8 + 1);
+			position3.add_white_pawn(square + 8 + 1);
+			process_pawn_position(position3);
+		    } else if (position2.white_pawn_captures_black_piece_allowed
+			       && !position2.white_pawn_at(square + 8 + 1)) {
+			pawn_position position3 = position2;
+			position3.add_white_pawn(square + 8 + 1);
+			position3.white_pawn_captures_black_piece_allowed --;
+			process_pawn_position(position3);
+		    }
+		}
+	    }
+
+	    /* En passant movement */
+	    if (square < 16) {
+		if (! position2.pawn_at(square + 8) && ! position2.pawn_at(square + 16)) {
+		    if ((square != 8) && (position2.black_pawn_at(square + 16 - 1))
+			|| (square != 15) && (position2.black_pawn_at(square + 16 + 1))) {
+			position2.add_white_pawn(square + 16);
+			position2.en_passant_square = square + 8;
+			process_pawn_position(position2);
+		    }
+		}
+	    }
+	}
+
+	/* Ditto for black pawns */
+
+	if (position.black_pawn_at(square)) {
+	    pawn_position position2 = position;
+	    position2.remove_black_pawn(square);
+	    position2.en_passant_square = ILLEGAL_POSITION;
+	    process_pawn_position(position2);
+
+	    if (square < 16 && position2.black_queens_required) {
+		pawn_position position3 = position2;
+		position3.black_queens_required --;
+		process_pawn_position(position3);
+	    }
+	    if (square >= 16) {
+		if (! position2.pawn_at(square - 8)) {
+		    pawn_position position3 = position2;
+		    position3.add_black_pawn(square - 8);
+		    process_pawn_position(position3);
+		}
+		if ((square % 8) != 0) {
+		    if (position2.white_pawn_at(square - 8 - 1)) {
+			pawn_position position3 = position2;
+			position3.remove_white_pawn(square - 8 - 1);
+			position3.add_black_pawn(square - 8 - 1);
+			process_pawn_position(position3);
+		    } else if (position2.black_pawn_captures_white_piece_allowed
+			       && !position2.black_pawn_at(square - 8 - 1)) {
+			pawn_position position3 = position2;
+			position3.add_black_pawn(square - 8 - 1);
+			position3.black_pawn_captures_white_piece_allowed --;
+			process_pawn_position(position3);
+		    }
+		}
+		if ((square % 8) != 7) {
+		    if (position.white_pawn_at(square - 8 + 1)) {
+			pawn_position position3 = position2;
+			position3.remove_white_pawn(square - 8 + 1);
+			position3.add_black_pawn(square - 8 + 1);
+			process_pawn_position(position3);
+		    } else if (position2.black_pawn_captures_white_piece_allowed
+			       && !position2.black_pawn_at(square - 8 + 1)) {
+			pawn_position position3 = position2;
+			position3.add_black_pawn(square - 8 + 1);
+			position3.black_pawn_captures_white_piece_allowed --;
+			process_pawn_position(position3);
+		    }
+		}
+	    }
+	    if (square >= 48) {
+		if (! position2.pawn_at(square - 8) && ! position2.pawn_at(square - 16)) {
+		    if ((square != 48) && (position2.white_pawn_at(square - 16 - 1))
+			|| (square != 55) && (position2.white_pawn_at(square - 16 + 1))) {
+			position2.add_black_pawn(square - 16);
+			position2.en_passant_square = square - 8;
+			process_pawn_position(position2);
+		    }
+		}
+	    }
+	}
+    }
+}
+
+void tablebase::parse_pawngen_element(xmlpp::Node * xml)
+{
+    pawn_position initial_position;
+
+    for (int i=0; i < 256; i++) {
+	int bits = 0;
+	for (int bit=0; bit < 7; bit ++) {
+	    if (i & (1 << bit)) bits++;
+	}
+	pawns_on_rank[i] = bits;
+    }
+
+    for (short color = WHITE; color <= BLACK; color ++) {
+
+	Glib::ustring location;
+	int j = 0;
+
+	if (color == WHITE) {
+	    location = xml->eval_to_string("@white-pawn-locations");
+	} else {
+	    location = xml->eval_to_string("@black-pawn-locations");
+	}
+
+	while ((location[j] >= 'a') && (location[j] <= 'h')
+	       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
+	    int square = rowcol2square(location[j+1] - '1', location[j] - 'a');
+
+	    if (color == WHITE) {
+		initial_position.add_white_pawn(square);
+	    } else {
+		initial_position.add_black_pawn(square);
+	    }
+
+	    j += 2;
+	    while (location[j] == ' ') j ++;
+	}
+
+	if (location[j] != '\0') {
+	    fatal("Illegal pawn location (%s)\n", location.c_str());
+	}
+    }
+
+    white_pawns_required = eval_to_number_or_zero(xml, "@white-pawns-required");
+    black_pawns_required = eval_to_number_or_zero(xml, "@black-pawns-required");
+
+    initial_position.white_queens_required = eval_to_number_or_zero(xml, "@white-queens-required");
+    initial_position.black_queens_required = eval_to_number_or_zero(xml, "@black-queens-required");
+
+    initial_position.white_pawn_captures_black_piece_allowed = eval_to_number_or_zero(xml, "@white-captures-allowed");
+    initial_position.black_pawn_captures_white_piece_allowed = eval_to_number_or_zero(xml, "@black-captures-allowed");
+
+    process_pawn_position(initial_position);
+
+    pawn_positions_by_position.resize(valid_pawn_positions.size());
+    pawn_positions_by_index.resize(valid_pawn_positions.size());
+
+    int first_white_pawn = num_pieces;
+    int first_black_pawn = num_pieces + white_pawns_required;
+
+    uint64_t legal_white_squares = 0ULL;
+    uint64_t legal_black_squares = 0ULL;
+
+    int index=0;
+    for (auto it = valid_pawn_positions.begin(); it != valid_pawn_positions.end(); it ++) {
+
+	int white_pawn = first_white_pawn;
+	int black_pawn = first_black_pawn;
+
+	/* std::set doesn't allow its objects to be modified once inserted */
+
+	pawn_position pp = *it;
+
+	for (int square = 0; square < 64; square ++) {
+	    if (pp.white_pawn_at(square)) {
+		pp.position[white_pawn] = square;
+		if (pp.en_passant_square == square - 8) {
+		    pp.en_passant_pawn = white_pawn;
+		}
+		legal_white_squares |= BITVECTOR(square);
+		white_pawn ++;
+	    }
+	    if (pp.black_pawn_at(square)) {
+		pp.position[black_pawn] = square;
+		if (pp.en_passant_square == square + 8) {
+		    pp.en_passant_pawn = black_pawn;
+		}
+		legal_black_squares |= BITVECTOR(square);
+		black_pawn ++;
+	    }
+	}
+
+	pp.index = index;
+	pawn_positions_by_index[index] = pp;
+	pawn_positions_by_position[index] = pp;
+
+	index ++;
+    }
+
+    std::sort(pawn_positions_by_position.begin(), pawn_positions_by_position.end(), pawn_position_fast_compare);
+
+#if DEBUG
+    fprintf(stderr, "%" PRIx64 " %" PRIx64 "\n", legal_white_squares, legal_black_squares);
+#endif
+
+    for (int i=0; i < white_pawns_required; i++) {
+	pieces.push_back(piece(WHITE, PAWN, legal_white_squares));
+	num_pieces ++;
+    }
+
+    for (int i=0; i < black_pawns_required; i++) {
+	pieces.push_back(piece(BLACK, PAWN, legal_black_squares));
+	num_pieces ++;
+    }
+
+    valid_pawn_positions.clear();
+    invalid_pawn_positions.clear();
+}
+
 /***** INDICES *****/
 
 /* Basically there are two functions here - one converts an index to a local position, the other
@@ -3420,444 +3884,6 @@ public:
 
     }
 };
-
-/* "pawngen" index
- *
- * The encoding of restricted pieces used in "simple", paired encoding of the kings so they can
- * never be adjacent, a special table of pawn positions, a combinatorial-based encoding of identical
- * pieces, and later pieces wholly contained within the semilegal positions of earlier pieces are
- * encoded using fewer positions.
- *
- * Current restrictions: no non-pawngen pawns allowed, encoding groups are computed according to
- * where the pawngen element appears in the piece list, but the index is encoded as if it appears
- * last
- */
-
-int white_pawns_required = 0;
-int black_pawns_required = 0;
-
-class pawn_position {
-
-    friend bool operator< (const pawn_position & LHS, const pawn_position & RHS);
-    friend bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position & RHS);
-
-    uint64_t white_pawns = 0;
-    uint64_t black_pawns = 0;
-
-    int total_white_pawns = 0;
-    int total_black_pawns = 0;
-
-public:
-
-    int white_pawn_captures_black_piece_allowed = 0;
-    int black_pawn_captures_white_piece_allowed = 0;
-
-    int white_queens_required = 0;
-    int black_queens_required = 0;
-
-    int en_passant_square = ILLEGAL_POSITION;
-
-    /* These next variables are computed from prior information to speed access. */
-
-    int index;
-    uint8_t position[MAX_PIECES];
-    int en_passant_pawn;
-
-    bool valid(void) const
-    {
-	return ((white_queens_required == 0) && (black_queens_required == 0) &&
-		(total_white_pawns == white_pawns_required) && (total_black_pawns == black_pawns_required));
-	// return (! white_queens_required && ! black_queens_required && (total_white_pawns + total_black_pawns == pawns_required));
-	// return (! white_queens_required && ! black_queens_required);
-    }
-
-    bool white_pawn_at (int square) const
-    {
-	return (white_pawns & (1ULL << square));
-    }
-
-    void remove_white_pawn(int square)
-    {
-	white_pawns &= ~(1ULL << square);
-	total_white_pawns --;
-    }
-
-    void add_white_pawn(int square)
-    {
-	white_pawns |= (1ULL << square);
-	total_white_pawns ++;
-    }
-
-    bool black_pawn_at(int square) const
-    {
-	return (black_pawns & (1ULL << square));
-    }
-
-    void remove_black_pawn(int square)
-    {
-	black_pawns &= ~(1ULL << square);
-	total_black_pawns --;
-    }
-
-    void add_black_pawn(int square)
-    {
-	black_pawns |= (1ULL << square);
-	total_black_pawns ++;
-    }
-
-    bool pawn_at(int square) const
-    {
-	return white_pawn_at(square) || black_pawn_at(square);
-    }
-
-};
-
-/* Comparison operator for pawn position.
- *
- * We want to order pawn positions so that later pawn positions depend only on early ones, and also
- * so that we can easily tell how many board squares are occupied by pawns.
- *
- * We order first by total number of pawns, then by number of white pawns on the 2nd rank, then 3rd,
- * up to 7th, then by number of black pawns on the 7th rank, then 6th, down to 2nd, then by any
- * remaining differences.
- *
- * Any capture will reduce the total number of pawns and thus lead to a smaller index.
- *
- * Any pawn move will reduce the number of pawns on a rank earlier in the sort order, and thus lead
- * to a smaller index.
- *
- * XXX We might want to group en passant positions together, because they don't need the
- * side-to-move flag encoded, as the side-to-move is always the opposite color of the en passant
- * pawn.
- *
- * XXX We might want a second, faster comparison operator to use when searching for a particular
- * position after the index numbers have been assigned.
- */
-
-short pawns_on_rank[256];
-
-bool operator< (const pawn_position & LHS, const pawn_position & RHS)
-{
-    if ((LHS.total_white_pawns + LHS.total_black_pawns) != (RHS.total_white_pawns + RHS.total_black_pawns)) {
-	return ((LHS.total_white_pawns + LHS.total_black_pawns) < (RHS.total_white_pawns + RHS.total_black_pawns));
-    } else {
-	for (int rank = 2; rank <= 7; rank ++) {
-	    auto LHS_white_rank_pawns = pawns_on_rank[(LHS.white_pawns >> 8*(rank-1)) & 0xff];
-	    auto RHS_white_rank_pawns = pawns_on_rank[(RHS.white_pawns >> 8*(rank-1)) & 0xff];
-	    if (LHS_white_rank_pawns != RHS_white_rank_pawns) {
-		return (LHS_white_rank_pawns < RHS_white_rank_pawns);
-	    }
-	}
-	for (int rank = 7; rank >= 2; rank --) {
-	    auto LHS_black_rank_pawns = pawns_on_rank[(LHS.black_pawns >> 8*(rank-1)) & 0xff];
-	    auto RHS_black_rank_pawns = pawns_on_rank[(RHS.black_pawns >> 8*(rank-1)) & 0xff];
-	    if (LHS_black_rank_pawns != RHS_black_rank_pawns) {
-		return (LHS_black_rank_pawns < RHS_black_rank_pawns);
-	    }
-	}
-    }
-
-    if (LHS.white_pawns != RHS.white_pawns) {
-	return (LHS.white_pawns < RHS.white_pawns);
-    }
-
-    if (LHS.black_pawns != RHS.black_pawns) {
-	return (LHS.black_pawns < RHS.black_pawns);
-    }
-
-    return LHS.en_passant_square < RHS.en_passant_square;
-}
-
-bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position & RHS)
-{
-    if (LHS.white_pawns != RHS.white_pawns) {
-	return LHS.white_pawns < RHS.white_pawns;
-    } else if (LHS.black_pawns != RHS.black_pawns) {
-	return LHS.black_pawns < RHS.black_pawns;
-    } else {
-	return LHS.en_passant_square < RHS.en_passant_square;
-    }
-}
-
-/* Recursively compute all possible pawn positions that can arise from a starting position.
- *
- * Pawns can always be captured by a piece.  They can always move forward and can always capture
- * each other.  They can only queen if required to, and can only capture a piece if allowed to.
- *
- * The two std::sets here are global variables, but are only used when a tablebase's indexing
- * function is being computed.  The resulting information is stored in tablebase_t's std::vector
- * pawn_positions.  These std::sets are then clear()ed, so they can be used again to compute another
- * tablebase's indexing function.
- */
-
-std::set<pawn_position> valid_pawn_positions;
-std::set<pawn_position> invalid_pawn_positions;
-
-void process_pawn_position(class pawn_position position)
-{
-    std::pair<std::set<pawn_position>::iterator,bool> ret;
-
-    if (position.valid()) {
-	ret = valid_pawn_positions.insert(position);
-    } else {
-	ret = invalid_pawn_positions.insert(position);
-    }
-
-    if (! ret.second) return;
-
-    for (int square=0; square < 64; square ++) {
-
-	/* White pawns */
-
-	if (position.white_pawn_at(square)) {
-	    pawn_position position2 = position;
-
-	    /* Remove pawn (captured by piece), and reuse position2 with pawn removed */
-	    position2.remove_white_pawn(square);
-	    position2.en_passant_square = ILLEGAL_POSITION;
-	    process_pawn_position(position2);
-
-	    /* Queen it if queens are required */
-	    if (square >= 48 && position2.white_queens_required) {
-		pawn_position position3 = position2;
-		position3.white_queens_required --;
-		process_pawn_position(position3);
-	    }
-
-	    if (square < 48) {
-		/* Move forward if unblocked */
-		if (! position2.pawn_at(square + 8)) {
-		    pawn_position position3 = position2;
-
-		    position3.add_white_pawn(square + 8);
-		    process_pawn_position(position3);
-		}
-
-		/* Left pawn capture */
-		if ((square % 8) != 0) {
-		    if (position2.black_pawn_at(square + 8 - 1)) {
-			pawn_position position3 = position2;
-			position3.remove_black_pawn(square + 8 - 1);
-			position3.add_white_pawn(square + 8 - 1);
-			process_pawn_position(position3);
-		    } else if (position2.white_pawn_captures_black_piece_allowed
-			       && !position2.white_pawn_at(square + 8 - 1)) {
-			pawn_position position3 = position2;
-			position3.add_white_pawn(square + 8 - 1);
-			position3.white_pawn_captures_black_piece_allowed --;
-			process_pawn_position(position3);
-		    }
-		}
-
-		/* Right pawn capture */
-		if ((square % 8) != 7) {
-		    if (position2.black_pawn_at(square + 8 + 1)) {
-			pawn_position position3 = position2;
-			position3.remove_black_pawn(square + 8 + 1);
-			position3.add_white_pawn(square + 8 + 1);
-			process_pawn_position(position3);
-		    } else if (position2.white_pawn_captures_black_piece_allowed
-			       && !position2.white_pawn_at(square + 8 + 1)) {
-			pawn_position position3 = position2;
-			position3.add_white_pawn(square + 8 + 1);
-			position3.white_pawn_captures_black_piece_allowed --;
-			process_pawn_position(position3);
-		    }
-		}
-	    }
-
-	    /* En passant movement */
-	    if (square < 16) {
-		if (! position2.pawn_at(square + 8) && ! position2.pawn_at(square + 16)) {
-		    if ((square != 8) && (position2.black_pawn_at(square + 16 - 1))
-			|| (square != 15) && (position2.black_pawn_at(square + 16 + 1))) {
-			position2.add_white_pawn(square + 16);
-			position2.en_passant_square = square + 8;
-			process_pawn_position(position2);
-		    }
-		}
-	    }
-	}
-
-	/* Ditto for black pawns */
-
-	if (position.black_pawn_at(square)) {
-	    pawn_position position2 = position;
-	    position2.remove_black_pawn(square);
-	    position2.en_passant_square = ILLEGAL_POSITION;
-	    process_pawn_position(position2);
-
-	    if (square < 16 && position2.black_queens_required) {
-		pawn_position position3 = position2;
-		position3.black_queens_required --;
-		process_pawn_position(position3);
-	    }
-	    if (square >= 16) {
-		if (! position2.pawn_at(square - 8)) {
-		    pawn_position position3 = position2;
-		    position3.add_black_pawn(square - 8);
-		    process_pawn_position(position3);
-		}
-		if ((square % 8) != 0) {
-		    if (position2.white_pawn_at(square - 8 - 1)) {
-			pawn_position position3 = position2;
-			position3.remove_white_pawn(square - 8 - 1);
-			position3.add_black_pawn(square - 8 - 1);
-			process_pawn_position(position3);
-		    } else if (position2.black_pawn_captures_white_piece_allowed
-			       && !position2.black_pawn_at(square - 8 - 1)) {
-			pawn_position position3 = position2;
-			position3.add_black_pawn(square - 8 - 1);
-			position3.black_pawn_captures_white_piece_allowed --;
-			process_pawn_position(position3);
-		    }
-		}
-		if ((square % 8) != 7) {
-		    if (position.white_pawn_at(square - 8 + 1)) {
-			pawn_position position3 = position2;
-			position3.remove_white_pawn(square - 8 + 1);
-			position3.add_black_pawn(square - 8 + 1);
-			process_pawn_position(position3);
-		    } else if (position2.black_pawn_captures_white_piece_allowed
-			       && !position2.black_pawn_at(square - 8 + 1)) {
-			pawn_position position3 = position2;
-			position3.add_black_pawn(square - 8 + 1);
-			position3.black_pawn_captures_white_piece_allowed --;
-			process_pawn_position(position3);
-		    }
-		}
-	    }
-	    if (square >= 48) {
-		if (! position2.pawn_at(square - 8) && ! position2.pawn_at(square - 16)) {
-		    if ((square != 48) && (position2.white_pawn_at(square - 16 - 1))
-			|| (square != 55) && (position2.white_pawn_at(square - 16 + 1))) {
-			position2.add_black_pawn(square - 16);
-			position2.en_passant_square = square - 8;
-			process_pawn_position(position2);
-		    }
-		}
-	    }
-	}
-    }
-}
-
-void tablebase::parse_pawngen_element(xmlpp::Node * xml)
-{
-    pawn_position initial_position;
-
-    for (int i=0; i < 256; i++) {
-	int bits = 0;
-	for (int bit=0; bit < 7; bit ++) {
-	    if (i & (1 << bit)) bits++;
-	}
-	pawns_on_rank[i] = bits;
-    }
-
-    for (short color = WHITE; color <= BLACK; color ++) {
-
-	Glib::ustring location;
-	int j = 0;
-
-	if (color == WHITE) {
-	    location = xml->eval_to_string("@white-pawn-locations");
-	} else {
-	    location = xml->eval_to_string("@black-pawn-locations");
-	}
-
-	while ((location[j] >= 'a') && (location[j] <= 'h')
-	       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
-	    int square = rowcol2square(location[j+1] - '1', location[j] - 'a');
-
-	    if (color == WHITE) {
-		initial_position.add_white_pawn(square);
-	    } else {
-		initial_position.add_black_pawn(square);
-	    }
-
-	    j += 2;
-	    while (location[j] == ' ') j ++;
-	}
-
-	if (location[j] != '\0') {
-	    fatal("Illegal pawn location (%s)\n", location.c_str());
-	}
-    }
-
-    white_pawns_required = eval_to_number_or_zero(xml, "@white-pawns-required");
-    black_pawns_required = eval_to_number_or_zero(xml, "@black-pawns-required");
-
-    initial_position.white_queens_required = eval_to_number_or_zero(xml, "@white-queens-required");
-    initial_position.black_queens_required = eval_to_number_or_zero(xml, "@black-queens-required");
-
-    initial_position.white_pawn_captures_black_piece_allowed = eval_to_number_or_zero(xml, "@white-captures-allowed");
-    initial_position.black_pawn_captures_white_piece_allowed = eval_to_number_or_zero(xml, "@black-captures-allowed");
-
-    process_pawn_position(initial_position);
-
-    pawn_positions_by_position.resize(valid_pawn_positions.size());
-    pawn_positions_by_index.resize(valid_pawn_positions.size());
-
-    int first_white_pawn = num_pieces;
-    int first_black_pawn = num_pieces + white_pawns_required;
-
-    uint64_t legal_white_squares = 0ULL;
-    uint64_t legal_black_squares = 0ULL;
-
-    int index=0;
-    for (auto it = valid_pawn_positions.begin(); it != valid_pawn_positions.end(); it ++) {
-
-	int white_pawn = first_white_pawn;
-	int black_pawn = first_black_pawn;
-
-	/* std::set doesn't allow its objects to be modified once inserted */
-
-	pawn_position pp = *it;
-
-	for (int square = 0; square < 64; square ++) {
-	    if (pp.white_pawn_at(square)) {
-		pp.position[white_pawn] = square;
-		if (pp.en_passant_square == square - 8) {
-		    pp.en_passant_pawn = white_pawn;
-		}
-		legal_white_squares |= BITVECTOR(square);
-		white_pawn ++;
-	    }
-	    if (pp.black_pawn_at(square)) {
-		pp.position[black_pawn] = square;
-		if (pp.en_passant_square == square + 8) {
-		    pp.en_passant_pawn = black_pawn;
-		}
-		legal_black_squares |= BITVECTOR(square);
-		black_pawn ++;
-	    }
-	}
-
-	pp.index = index;
-	pawn_positions_by_index[index] = pp;
-	pawn_positions_by_position[index] = pp;
-
-	index ++;
-    }
-
-    std::sort(pawn_positions_by_position.begin(), pawn_positions_by_position.end(), pawn_position_fast_compare);
-
-#if DEBUG
-    fprintf(stderr, "%" PRIx64 " %" PRIx64 "\n", legal_white_squares, legal_black_squares);
-#endif
-
-    for (int i=0; i < white_pawns_required; i++) {
-	pieces.push_back(piece(WHITE, PAWN, legal_white_squares));
-	num_pieces ++;
-    }
-
-    for (int i=0; i < black_pawns_required; i++) {
-	pieces.push_back(piece(BLACK, PAWN, legal_black_squares));
-	num_pieces ++;
-    }
-
-    valid_pawn_positions.clear();
-    invalid_pawn_positions.clear();
-}
 
 class pawngen_index : public combinadic_index
 {
@@ -5683,7 +5709,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.934 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.935 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14470,7 +14496,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.934 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.935 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
