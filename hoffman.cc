@@ -2206,8 +2206,8 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
  * on the type of index we're using for a particular tablebase.  These functions are used
  * extensively during all types of back propagation.
  *
- * local_position_to_index() returns either an index into the table, or -1 if the position is
- * illegal.  The only change it makes to the position is to set the multiplicity.
+ * local_position_to_index() returns either an index into the table, or INVALID_INDEX if the
+ * position is illegal.  The only change it makes to the position is to set the multiplicity.
  *
  * index_to_local_position(), given an index, fills in a board position.  Obviously has to correspond
  * to local_position_to_index() and it's a big bug if it doesn't.  The bool that gets returned is
@@ -2644,7 +2644,9 @@ public:
 	next_piece_in_encoding_group[tb->white_king] = -1;
 
 	/* now do everything else */
-	for (int piece = 1; piece < tb->num_pieces; piece ++) {
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if (piece == tb->white_king) continue;
 
 	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
 		&& (tb->pieces[piece].next_piece_in_semilegal_group != -1)) {
@@ -5453,7 +5455,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.936 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.937 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14240,7 +14242,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.936 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.937 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
