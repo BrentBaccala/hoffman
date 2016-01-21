@@ -3273,7 +3273,6 @@ int choose(int n, int k) {
 
 class combinadic_index : public index_encoding
 {
-protected:   // XXX temporarily protected so that pawngen_index can inherit
     int prev_piece_in_encoding_group[MAX_PIECES];
     int next_piece_in_encoding_group[MAX_PIECES];
 
@@ -3310,6 +3309,10 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
+	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+
 	    int decrement = 0;
 
 	    /* The way we encode en passant capturable pawns is use the column number of the pawn.
@@ -3340,8 +3343,6 @@ public:
 	     * an en-passant encoded pawn.
 	     */
 
-	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-
 	    for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
 
 	    for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
@@ -3354,6 +3355,7 @@ public:
 	/* Sort encoding groups so that the lowest values always come first. */
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
 	    piece2 = piece;
 	    while ((prev_piece_in_encoding_group[piece2] != -1)
 		   && (vals[piece2] < vals[prev_piece_in_encoding_group[piece2]])) {
@@ -3369,6 +3371,8 @@ public:
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    index += piece_index[piece][vals[piece]];
 	}
@@ -3409,8 +3413,6 @@ public:
 	}
 	bzero(overlapping_pieces, sizeof(overlapping_pieces));
 
-	if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
-
 	/* Binary search for the largest value in index[] that is less than or equal to the
 	 * (running) index, subtract it out of the index, and store the encoding values.  This loop
 	 * has to run in reverse order over the pieces, since a combinadic encoding must be backed
@@ -3420,6 +3422,8 @@ public:
 	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+
+	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    vals[piece]
 		= std::lower_bound(piece_index[piece], piece_index[piece] + 64, index+1)
@@ -3466,7 +3470,7 @@ public:
 	} else {
 
 	    if (index != 0) {
-		fatal("index > 0 in combinadic3_index_to_local_position!\n");
+		fatal("index > 0 in combinadic_index::index_to_position!\n");
 		return false;
 	    }
 
@@ -3503,9 +3507,12 @@ public:
 		overlapping_this_group = overlapping_pieces[last_overlapping_group[piece]];
 	    }
 
-	    /* Kings and en passant pawns have their own encoding schemes and have already been decoded */
+	    /* Kings, en passant pawns, and pawngen pawns have their own encoding schemes and have
+	     * already been decoded.
+	     */
  
-	    if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)) {
+	    if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)
+		&& ((tb->index_type != PAWNGEN_INDEX) || (tb->pieces[piece].piece_type != PAWN))) {
  
 		p->piece_position[piece] = piece_position[piece][vals[piece]];
 
@@ -3533,8 +3540,6 @@ public:
  
 	    /* Build a board vector of this piece and all its overlapping pieces. */
 
-	    /* XXX Isn't the previous piece in the encoding group always the last overlapping piece? */
-
 	    if (last_overlapping_piece[piece] != -1) {
 		overlapping_pieces[piece] = overlapping_pieces[last_overlapping_piece[piece]];
 	    }
@@ -3545,6 +3550,8 @@ public:
 	/* En passant pawns always trail on a file, since they just moved from their starting
 	 * positions.  So, white en passant pawns are still sorted, but black ones have to be moved
 	 * to the end of their group.
+	 *
+	 * PAWNGEN_INDEX will never decode an en_passant_pawn here, so this code gets skipped.
 	 */
 
 	if (en_passant_pawn != -1) {
@@ -3581,6 +3588,8 @@ public:
 	 */
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    if (tb->pieces[piece].permutations) {
 		int perm = 0;
@@ -3885,339 +3894,6 @@ public:
     }
 };
 
-class pawngen_index : public combinadic_index
-{
-
-public:
-
-    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
-    {
-	index_t index;
-	int piece, piece2;
-	uint8_t vals[MAX_PIECES];
-
-	for (int piece = 0; piece < tb->num_pieces; piece ++) {
-
-	    int decrement = 0;
-
-	    vals[piece] = value[piece][pos->piece_position[piece]];
-
-	    /* Remove positions for overlapping pieces, but we don't touch the kings or pawns, and
-	     * we don't consider anything in the current encoding group, because the combinadic
-	     * encoding already takes care of them.  For all other overlapping pieces before us in
-	     * the piece list, if that piece is earlier than us in board order, decrement our
-	     * position by one.
-	     */
-
-	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
-
-	    for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
-
-	    for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
-		if (pos->piece_position[piece] > pos->piece_position[piece2]) decrement ++;
-	    }
-
-	    vals[piece] -= decrement;
-	}
-
-	/* Sort encoding groups so that the lowest values always come first. */
-
-	for (int piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->pieces[piece].piece_type == PAWN) continue;
-	    piece2 = piece;
-	    while ((prev_piece_in_encoding_group[piece2] != -1)
-		   && (vals[piece2] < vals[prev_piece_in_encoding_group[piece2]])) {
-		transpose_array(vals, piece2, prev_piece_in_encoding_group[piece2]);
-		piece2 = prev_piece_in_encoding_group[piece2];
-	    }
-	}
-
-	/* Encode the pieces */
-
-	index = 0;
-
-	for (int piece = 0; piece < tb->num_pieces; piece ++) {
-
-	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
-
-	    index += piece_index[piece][vals[piece]];
-	}
-
-	/* Kings have their own encoding table */
-
-	if (tb->white_king != -1) {
-	    index += king_index[pos->piece_position[tb->white_king]]
-		[pos->piece_position[tb->black_king]];
-	}
-
-	/* Pawns have their own encoding table */
-
-	pawn_position pawns;
-
-	for (int piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->pieces[piece].piece_type == PAWN) {
-		if (tb->pieces[piece].color == WHITE) {
-		    pawns.add_white_pawn(pos->piece_position[piece]);
-		} else {
-		    pawns.add_black_pawn(pos->piece_position[piece]);
-		}
-	    }
-	}
-	pawns.en_passant_square = pos->en_passant_square;
-
-	auto it = std::lower_bound(tb->pawn_positions_by_position.begin(), tb->pawn_positions_by_position.end(),
-				   pawns, pawn_position_fast_compare);
-
-	/* In the course of normal program operation, we should never generate invalid pawn
-	 * positions, but it can happen during testing with check_1000_positions().  So invalid pawn
-	 * positions just return INVALID_INDEX.
-	 *
-	 * XXX throw errors more aggressively here during actual program operation
-	 */
-
-	if (it == tb->pawn_positions_by_position.end()) {
-	    return INVALID_INDEX;
-	} else if ((*it < pawns) || (pawns < *it)) {
-	    return INVALID_INDEX;
-	} else {
-	    index += tb->pawngen_multiplier * it->index;
-	}
-
-	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
-
-	if (tb->encode_stm) index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-
-	return index;
-    }
-
-    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
-    {
-	int piece;
-	uint8_t vals[MAX_PIECES];
-	uint64_t overlapping_pieces[MAX_PIECES];
-
-	static uint64_t smaller_pieces[64];
-	static bool do_once = false;
-
-	if (!do_once) {
-	    bzero(smaller_pieces, sizeof(smaller_pieces));
-	    for (int i=0; i<64; i++) {
-		for (int j=0; j<=i; j++) {
-		    smaller_pieces[i] |= (1ULL << j);
-		}
-	    }
-	    do_once = true;
-	}
-	bzero(overlapping_pieces, sizeof(overlapping_pieces));
-
-	if (tb->encode_stm) p->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
-
-	/* Extract the pawn encoding from the most significant bits */
-
-	int pawn_index = index / tb->pawngen_multiplier;
-	index -= pawn_index * tb->pawngen_multiplier;
-
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->pieces[piece].piece_type == PAWN) {
-		p->piece_position[piece] = tb->pawn_positions_by_index[pawn_index].position[piece];
-	    }
-	}
-
-	p->en_passant_square = tb->pawn_positions_by_index[pawn_index].en_passant_square;
-
-	/* If we've got an en passant pawn, make sure that it is the right color, i.e, the opposite
-	 * color of the side to move.  This check will reject half of our en passant positions, which
-	 * might be a place for improvement.
-	 */
-
-	if (p->en_passant_square != ILLEGAL_POSITION) {
-	    if (tb->pieces[tb->pawn_positions_by_index[pawn_index].en_passant_pawn].color == p->side_to_move) {
-		return false;
-	    }
-	}
-
-	/* Binary search for the largest value in index[] that is less than or equal to the
-	 * (running) index, subtract it out of the index, and store the encoding values.  This loop has
-	 * to run in reverse order over the pieces, since a combinadic encoding must be backed out from
-	 * the largest piece first.
-	 */
-
-	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
-
-	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
-
-	    vals[piece]
-		= std::lower_bound(piece_index[piece], piece_index[piece] + 64, index+1)
-		- piece_index[piece] - 1;
-
-	    index -= piece_index[piece][vals[piece]];
-	}
-
-	if (tb->encode_stm) index /= 2;
-
-	if (tb->variant != VARIANT_SUICIDE) {
-
-	    if (index >= total_legal_king_positions) {
-		fatal("index >= total legal king positions in pawngen_index_to_local_position!\n");
-		return false;
-	    }
-
-	    p->piece_position[tb->white_king] = white_king_position[index];
-	    p->piece_position[tb->black_king] = black_king_position[index];
-
-	} else {
-
-	    if (index != 0) {
-		fatal("index > 0 in pawngen_index_to_local_position!\n");
-		return false;
-	    }
-
-	}
-
-	/* "You've got to be kidding me"
-	 *
-	 * If we have overlapping pieces, some of the position numbers of the later pieces might
-	 * have been reduced.  We fix up the positions by going back through the earlier overlapping
-	 * pieces and incrementing our position if we're past them.  This has to be done in order
-	 * from the smallest position to the largest.  Consider unrestricted pieces; kings on
-	 * squares 12 and 33, and a queen on square 34 that got encoded as 32.  We need to increment
-	 * 32 to 33 for 12, then increment 33 to 34 for 33, and if we try to handle the king on 33
-	 * first, we won't increment because 32 is less than 33.
-	 *
-	 * I've tried to minimize the number of loops by maintaining a bit vector
-	 * (overlapping_pieces) for each piece that has a bit set both for that piece's position and
-	 * for the positions of any earlier overlapping pieces.  For each piece, we count the bits
-	 * set at earlier positions in the bit vector, but we have to be careful to check additional
-	 * bits as we increment.  In the example above, we can count all the bits from 0 to 32, find
-	 * that 12 is set, but then we have to check 33 as we increment to know that we need to
-	 * increment again to 34.
-	 */
-
-	for (int piece = 0; piece < tb->num_pieces; piece ++) {
-
-	    int piece2;
-	    uint8_t smallest_position, next_smallest_position;
-  
-	    if ((piece == tb->white_king) || (piece == tb->black_king) || (tb->pieces[piece].piece_type == PAWN)) continue;
-
-	    p->piece_position[piece] = piece_position[piece][vals[piece]];
-	    smallest_position = ILLEGAL_POSITION;
-
-	    do {
-		next_smallest_position = ILLEGAL_POSITION;
-
-		int piece2;
-		for (piece2 = piece; prev_piece_in_encoding_group[piece2] != -1; piece2 = prev_piece_in_encoding_group[piece2]);
-
-		for (piece2 = last_overlapping_piece[piece2]; piece2 != -1; piece2 = last_overlapping_piece[piece2]) {
-		    if (p->piece_position[piece2] <= p->piece_position[piece]) {
-			if ((smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] > smallest_position)) {
-			    if ((next_smallest_position == ILLEGAL_POSITION) || (p->piece_position[piece2] < next_smallest_position)) {
-				next_smallest_position = p->piece_position[piece2];
-			    }
-			}
-		    }
-		}
-
-		if (next_smallest_position != ILLEGAL_POSITION) {
-		    vals[piece] ++;
-
-		    /* I suspect that this test never triggers */
-		    if (vals[piece] >= total_legal_positions[piece]) return false;
-
-		    p->piece_position[piece] = piece_position[piece][vals[piece]];
-		    smallest_position = next_smallest_position;
-		}
-
-	    } while (next_smallest_position != ILLEGAL_POSITION);
-
-	}
-
-	/* We've got all the numbers right, but maybe not in the right order, since each encoding
-	 * group is sorted in ascending order.
-	 *
-	 * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
-	 * encoding groups of identical pieces into ascending order, then permutes until all the
-	 * pieces are on legal squares.  Mimic this action here.
-	 *
-	 * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
-	 */
-
-	for (int piece = 0; piece < tb->num_pieces; piece ++) {
-
-	    if ((tb->pieces[piece].piece_type != PAWN) && tb->pieces[piece].permutations) {
-		int perm = 0;
-
-		while (tb->pieces[piece].permutations[perm] != 0) {
-
-		    int piece2;
-
-		    /* check for legality of all pieces in this set */
-		    for (int piece2 = piece; piece2 != -1; piece2 = next_piece_in_encoding_group[piece2]) {
-			if (! (tb->pieces[piece2].legal_squares & BITVECTOR(p->piece_position[piece2]))) {
-			    break;
-			}
-		    }
-
-		    if (piece2 == -1) {
-			/* we're legal */
-			break;
-		    }
-
-		    /* permute */
-		    transpose_array(p->piece_position,
-				    tb->pieces[piece].permutations[perm] & 0xff, tb->pieces[piece].permutations[perm] >> 8);
-		    perm ++;
-		}
-	    }
-	}
-
-	/* Final checks for an illegally positioned piece, two pieces on the same square,
-	 * setting bits in the board vectors
-	 */
-
-	for (int piece = 0; piece < tb->num_pieces; piece ++) {
-
-	    int square = p->piece_position[piece];
-
-	    /* This can happen because we counted semilegal positions to encode with, not legal
-	     * positions.
-	     */
-
-	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-		return false;
-	    }
-
-	    if (p->board_vector & BITVECTOR(square)) {
-		return false;
-	    }
-
-	    p->board_vector |= BITVECTOR(square);
-	    if (tb->pieces[piece].color == p->side_to_move) {
-		p->PTM_vector |= BITVECTOR(square);
-	    }
-	}
-
-	/* If there is an en passant capturable pawn in this position, then there can't be anything
-	 * on the capture square or on the square right behind it (where the pawn just came from),
-	 * or its an illegal position.
-	 */
-
-	if (p->en_passant_square != ILLEGAL_POSITION) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	    if (p->side_to_move == WHITE) {
-		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	    } else {
-		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
-	    }
-	}
-
-	return true;
-    }
-
-    pawngen_index(tablebase_t *tb) : combinadic_index(tb) { }
-};
-
 /* Normalization
  *
  * Not all positions are created equal, but some are.  For example, interchanging two identical
@@ -4500,7 +4176,46 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	}
     }
 
+    /* Encode pieces and non-pawngen pawns using whatever index function was selected */
+
     index = tb->encoding->position_to_index(tb, position);
+
+    /* Pawngen - the index encoding function skipped any pawngen pawns */
+
+    if (tb->index_type == PAWNGEN_INDEX) {
+
+	pawn_position pawns;
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->pieces[piece].piece_type == PAWN) {
+		if (tb->pieces[piece].color == WHITE) {
+		    pawns.add_white_pawn(position->piece_position[piece]);
+		} else {
+		    pawns.add_black_pawn(position->piece_position[piece]);
+		}
+	    }
+	}
+	pawns.en_passant_square = position->en_passant_square;
+
+	auto it = std::lower_bound(tb->pawn_positions_by_position.begin(), tb->pawn_positions_by_position.end(),
+				   pawns, pawn_position_fast_compare);
+
+	/* In the course of normal program operation, we should never generate invalid pawn
+	 * positions, but it can happen during testing with check_1000_positions().  So invalid pawn
+	 * positions just return INVALID_INDEX.
+	 *
+	 * XXX throw errors more aggressively here during actual program operation
+	 */
+
+	if (it == tb->pawn_positions_by_position.end()) {
+	    return INVALID_INDEX;
+	} else if ((*it < pawns) || (pawns < *it)) {
+	    return INVALID_INDEX;
+	} else {
+	    index += tb->pawngen_multiplier * it->index;
+	}
+
+    }
 
     /* Multiplicity - number of non-identical positions that this index corresponds to.  We want to
      * update the original position structure that got passed in.
@@ -4545,6 +4260,38 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 
     bzero(position, sizeof(local_position_t));
     position->en_passant_square = ILLEGAL_POSITION;
+
+    /* Side-to-move, if present, is always LSB */
+
+    if (tb->encode_stm) position->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
+
+    /* Extract pawngen pawn encoding from the most significant bits. */
+
+    if (tb->index_type == PAWNGEN_INDEX) {
+	int pawn_index = index / tb->pawngen_multiplier;
+	index -= pawn_index * tb->pawngen_multiplier;
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->pieces[piece].piece_type == PAWN) {
+		position->piece_position[piece] = tb->pawn_positions_by_index[pawn_index].position[piece];
+	    }
+	}
+
+	position->en_passant_square = tb->pawn_positions_by_index[pawn_index].en_passant_square;
+
+	/* If we've got an en passant pawn, make sure that it is the right color, i.e, the opposite
+	 * color of the side to move.  This check will reject half of our en passant positions, which
+	 * might be a place for improvement.
+	 */
+
+	if (position->en_passant_square != ILLEGAL_POSITION) {
+	    if (tb->pieces[tb->pawn_positions_by_index[pawn_index].en_passant_pawn].color == position->side_to_move) {
+		return false;
+	    }
+	}
+    }
+
+    /* Encode pieces and non-pawngen pawns using selected function */
 
     ret = tb->encoding->index_to_position(tb, index, position);
 
@@ -5617,11 +5364,8 @@ void tablebase::parse_XML(std::istream *instream)
 
     case COMBINADIC3_INDEX:
     case COMBINADIC4_INDEX:
-	encoding.reset(new combinadic_index(this));
-	break;
-
     case PAWNGEN_INDEX:
-	encoding.reset(new pawngen_index(this));
+	encoding.reset(new combinadic_index(this));
 	break;
 
     case NO_EN_PASSANT_INDEX:
@@ -5709,7 +5453,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.935 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.936 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14496,7 +14240,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.935 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.936 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
