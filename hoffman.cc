@@ -751,10 +751,10 @@ struct piece {
     piece(xmlpp::Node *);
 };
 
-class pawn_position;
 int eval_to_number_or_zero(xmlpp::Node *node, std::string xpath);
 
 class index_encoding;
+struct pawngen;
 
 typedef struct tablebase {
 
@@ -785,16 +785,13 @@ typedef struct tablebase {
      * array times pawngen_multiplier.
      */
 
-    index_t pawngen_multiplier;
-    std::vector<pawn_position> pawn_positions_by_position;
-    std::vector<pawn_position> pawn_positions_by_index;
-
     /* Kings are usually encoded together to take advantage of them never being adjacent.  Given a
      * pair of king positions, king_index[WHITE_KING_POSITION][BLACK_KING_POSITION] returns the
      * associated index, while white_king_position[INDEX] and black_king_position[INDEX] reverse
      * that function.  white_king and black_king are the piece numbers of the two kings.
      */
 
+    std::unique_ptr<struct pawngen> pawngen;
     std::unique_ptr<index_encoding> encoding;
 
     int white_king;
@@ -1874,7 +1871,22 @@ public:
  * position after the index numbers have been assigned.
  */
 
-short pawns_on_rank[256];
+/* bit count of the number of bits in a 8-bit number */
+
+class pawns_on_rank_class : public std::array<short, 256>
+{
+public:
+    pawns_on_rank_class()
+    {
+	for (int i=0; i < 256; i++) {
+	    int bits = 0;
+	    for (int bit=0; bit < 7; bit ++) {
+		if (i & (1 << bit)) bits++;
+	    }
+	    at(i) = bits;
+	}
+    }
+} pawns_on_rank;
 
 bool operator< (const pawn_position & LHS, const pawn_position & RHS)
 {
@@ -1932,6 +1944,12 @@ bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position 
 
 std::set<pawn_position> valid_pawn_positions;
 std::set<pawn_position> invalid_pawn_positions;
+
+struct pawngen {
+    index_t pawngen_multiplier;
+    std::vector<pawn_position> pawn_positions_by_position;
+    std::vector<pawn_position> pawn_positions_by_index;
+};
 
 void process_pawn_position(class pawn_position position)
 {
@@ -2085,14 +2103,6 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
 {
     pawn_position initial_position;
 
-    for (int i=0; i < 256; i++) {
-	int bits = 0;
-	for (int bit=0; bit < 7; bit ++) {
-	    if (i & (1 << bit)) bits++;
-	}
-	pawns_on_rank[i] = bits;
-    }
-
     for (short color = WHITE; color <= BLACK; color ++) {
 
 	Glib::ustring location;
@@ -2134,8 +2144,10 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
 
     process_pawn_position(initial_position);
 
-    pawn_positions_by_position.resize(valid_pawn_positions.size());
-    pawn_positions_by_index.resize(valid_pawn_positions.size());
+    pawngen.reset(new struct pawngen);
+
+    pawngen->pawn_positions_by_position.resize(valid_pawn_positions.size());
+    pawngen->pawn_positions_by_index.resize(valid_pawn_positions.size());
 
     int first_white_pawn = num_pieces;
     int first_black_pawn = num_pieces + white_pawns_required;
@@ -2173,13 +2185,13 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
 	}
 
 	pp.index = index;
-	pawn_positions_by_index[index] = pp;
-	pawn_positions_by_position[index] = pp;
+	pawngen->pawn_positions_by_index[index] = pp;
+	pawngen->pawn_positions_by_position[index] = pp;
 
 	index ++;
     }
 
-    std::sort(pawn_positions_by_position.begin(), pawn_positions_by_position.end(), pawn_position_fast_compare);
+    std::sort(pawngen->pawn_positions_by_position.begin(), pawngen->pawn_positions_by_position.end(), pawn_position_fast_compare);
 
 #if DEBUG
     fprintf(stderr, "%" PRIx64 " %" PRIx64 "\n", legal_white_squares, legal_black_squares);
@@ -3313,7 +3325,7 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    int decrement = 0;
 
@@ -3357,7 +3369,7 @@ public:
 	/* Sort encoding groups so that the lowest values always come first. */
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 	    piece2 = piece;
 	    while ((prev_piece_in_encoding_group[piece2] != -1)
 		   && (vals[piece2] < vals[prev_piece_in_encoding_group[piece2]])) {
@@ -3374,7 +3386,7 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    index += piece_index[piece][vals[piece]];
 	}
@@ -3425,7 +3437,7 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    vals[piece]
 		= std::lower_bound(piece_index[piece], piece_index[piece] + 64, index+1)
@@ -3514,7 +3526,7 @@ public:
 	     */
  
 	    if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)
-		&& ((tb->index_type != PAWNGEN_INDEX) || (tb->pieces[piece].piece_type != PAWN))) {
+		&& (! tb->pawngen || (tb->pieces[piece].piece_type != PAWN))) {
  
 		p->piece_position[piece] = piece_position[piece][vals[piece]];
 
@@ -3553,7 +3565,7 @@ public:
 	 * positions.  So, white en passant pawns are still sorted, but black ones have to be moved
 	 * to the end of their group.
 	 *
-	 * PAWNGEN_INDEX will never decode an en_passant_pawn here, so this code gets skipped.
+	 * pawngen will never decode an en_passant_pawn here, so this code gets skipped.
 	 */
 
 	if (en_passant_pawn != -1) {
@@ -3591,7 +3603,7 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    if (tb->pieces[piece].permutations) {
 		int perm = 0;
@@ -3719,7 +3731,7 @@ public:
 	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
 	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
-	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    /* An important special case - handle two opposing plus-pawns by combining their
 	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
@@ -3798,7 +3810,7 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    int piece_in_set;
 
@@ -3880,16 +3892,16 @@ public:
 
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-	    if ((tb->index_type == PAWNGEN_INDEX) && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 	    for (int value = total_legal_piece_values[piece]; value < 64; value ++) {
 		piece_index[piece][value] = tb->max_index + 1;
 	    }
 	}
 
-	if (tb->index_type == PAWNGEN_INDEX) {
+	if (tb->pawngen) {
 	    tb->max_index ++;
-	    tb->pawngen_multiplier = tb->max_index;
-	    tb->max_index *= tb->pawn_positions_by_index.size();
+	    tb->pawngen->pawngen_multiplier = tb->max_index;
+	    tb->max_index *= tb->pawngen->pawn_positions_by_index.size();
 	    tb->max_index --;
 	}
 
@@ -4184,7 +4196,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 
     /* Pawngen - the index encoding function skipped any pawngen pawns */
 
-    if (tb->index_type == PAWNGEN_INDEX) {
+    if (tb->pawngen) {
 
 	pawn_position pawns;
 
@@ -4199,7 +4211,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	}
 	pawns.en_passant_square = position->en_passant_square;
 
-	auto it = std::lower_bound(tb->pawn_positions_by_position.begin(), tb->pawn_positions_by_position.end(),
+	auto it = std::lower_bound(tb->pawngen->pawn_positions_by_position.begin(), tb->pawngen->pawn_positions_by_position.end(),
 				   pawns, pawn_position_fast_compare);
 
 	/* In the course of normal program operation, we should never generate invalid pawn
@@ -4209,12 +4221,12 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	 * XXX throw errors more aggressively here during actual program operation
 	 */
 
-	if (it == tb->pawn_positions_by_position.end()) {
+	if (it == tb->pawngen->pawn_positions_by_position.end()) {
 	    return INVALID_INDEX;
 	} else if ((*it < pawns) || (pawns < *it)) {
 	    return INVALID_INDEX;
 	} else {
-	    index += tb->pawngen_multiplier * it->index;
+	    index += tb->pawngen->pawngen_multiplier * it->index;
 	}
 
     }
@@ -4269,17 +4281,17 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 
     /* Extract pawngen pawn encoding from the most significant bits. */
 
-    if (tb->index_type == PAWNGEN_INDEX) {
-	int pawn_index = index / tb->pawngen_multiplier;
-	index -= pawn_index * tb->pawngen_multiplier;
+    if (tb->pawngen) {
+	int pawn_index = index / tb->pawngen->pawngen_multiplier;
+	index -= pawn_index * tb->pawngen->pawngen_multiplier;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->pieces[piece].piece_type == PAWN) {
-		position->piece_position[piece] = tb->pawn_positions_by_index[pawn_index].position[piece];
+		position->piece_position[piece] = tb->pawngen->pawn_positions_by_index[pawn_index].position[piece];
 	    }
 	}
 
-	position->en_passant_square = tb->pawn_positions_by_index[pawn_index].en_passant_square;
+	position->en_passant_square = tb->pawngen->pawn_positions_by_index[pawn_index].en_passant_square;
 
 	/* If we've got an en passant pawn, make sure that it is the right color, i.e, the opposite
 	 * color of the side to move.  This check will reject half of our en passant positions, which
@@ -4287,7 +4299,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	 */
 
 	if (position->en_passant_square != ILLEGAL_POSITION) {
-	    if (tb->pieces[tb->pawn_positions_by_index[pawn_index].en_passant_pawn].color == position->side_to_move) {
+	    if (tb->pieces[tb->pawngen->pawn_positions_by_index[pawn_index].en_passant_pawn].color == position->side_to_move) {
 		return false;
 	    }
 	}
@@ -5455,7 +5467,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.937 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.938 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -11097,7 +11109,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			/* might want to put the promotion code here */
 
-		    } else if (tb->index_type != PAWNGEN_INDEX) {
+		    } else if (! tb->pawngen) {
 
 			/* If the pawn is moving outside its restricted squares, it's a futuremove,
 			 * unless the pawn is blocked, in which case the pawn will never be able to
@@ -14242,7 +14254,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.937 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.938 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
