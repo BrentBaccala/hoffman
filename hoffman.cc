@@ -2371,30 +2371,13 @@ public:
 		}
 	    }
 
-	    /* The first place we handle restricted pieces, and one of most important, too, because
-	     * this function is used during initialization to decide which indices are legal and
-	     * which are not.
-	     */
-
-	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-		return false;
-	    }
-
 	    p->piece_position[piece] = square;
-	    if (p->board_vector & BITVECTOR(square)) {
-		return false;
-	    }
 
 	    /* Identical pieces have to appear in sorted order. */
 
 	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
 		&& (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
 		return false;
-	    }
-
-	    p->board_vector |= BITVECTOR(square);
-	    if (tb->pieces[piece].color == p->side_to_move) {
-		p->PTM_vector |= BITVECTOR(square);
 	    }
 	}
 
@@ -2577,30 +2560,13 @@ public:
 		}
 	    }
 
-	    /* The first place we handle restricted pieces, and one of most important, too, because
-	     * this function is used during initialization to decide which indices are legal and
-	     * which are not.
-	     */
-
-	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-		return false;
-	    }
-
 	    p->piece_position[piece] = square;
-	    if (p->board_vector & BITVECTOR(square)) {
-		return false;
-	    }
 
 	    /* Identical pieces have to appear in sorted order. */
 
 	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
 		&& (p->piece_position[piece] < p->piece_position[tb->pieces[piece].prev_piece_in_semilegal_group])) {
 		return false;
-	    }
-
-	    p->board_vector |= BITVECTOR(square);
-	    if (tb->pieces[piece].color == p->side_to_move) {
-		p->PTM_vector |= BITVECTOR(square);
 	    }
 	}
 
@@ -2723,22 +2689,7 @@ public:
 		}
 	    }
 
-	    /* This should never happen. */
-
-	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-		fatal("Illegal piece position in simple_index_to_local_position!\n");
-		return false;
-	    }
-
 	    p->piece_position[piece] = square;
-	    if (p->board_vector & BITVECTOR(square)) {
-		return false;
-	    }
-
-	    p->board_vector |= BITVECTOR(square);
-	    if (tb->pieces[piece].color == p->side_to_move) {
-		p->PTM_vector |= BITVECTOR(square);
-	    }
 	}
 
 	/* Identical pieces have to appear in sorted order. */
@@ -3059,36 +3010,9 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    /* This can happen if we have multiple identical pieces because we counted semilegal
-	     * positions to encode them with.
-	     */
-
-	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-		/* fprintf(stderr, "Illegal piece position in compact_index_to_local_position!\n"); */
-		return false;
-	    }
-
 	    p->piece_position[piece] = square;
-	    if (p->board_vector & BITVECTOR(square)) {
-		return false;
-	    }
 
-	    p->board_vector |= BITVECTOR(square);
-	    if (tb->pieces[piece].color == p->side_to_move) {
-		p->PTM_vector |= BITVECTOR(square);
-	    }
 	}
-
-	p->piece_position[tb->white_king] = white_king_position[king_index];
-	p->piece_position[tb->black_king] = black_king_position[king_index];
-	if (p->board_vector & BITVECTOR(p->piece_position[tb->white_king])) return false;
-	if (p->board_vector & BITVECTOR(p->piece_position[tb->black_king])) return false;
-	p->board_vector |= BITVECTOR(p->piece_position[tb->white_king]);
-	p->board_vector |= BITVECTOR(p->piece_position[tb->black_king]);
-	if (p->side_to_move == WHITE)
-	    p->PTM_vector |= BITVECTOR(p->piece_position[tb->white_king]);
-	else
-	    p->PTM_vector |= BITVECTOR(p->piece_position[tb->black_king]);
 
 #if 0
 	/* Identical pieces have to appear in sorted order. */
@@ -3573,32 +3497,6 @@ public:
 				    tb->pieces[piece].permutations[perm] & 0xff, tb->pieces[piece].permutations[perm] >> 8);
 		    perm ++;
 		}
-	    }
-	}
-
-	/* Final checks for an illegally positioned piece, two pieces on the same square, setting
-	 * bits in the board vectors
-	 */
-
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	    int square = p->piece_position[piece];
-
-	    /* This can happen because we counted semilegal positions to encode with, not legal
-	     * positions.
-	     */
-
-	    if (!(tb->pieces[piece].legal_squares & BITVECTOR(square))) {
-		return false;
-	    }
-
-	    if (p->board_vector & BITVECTOR(square)) {
-		return false;
-	    }
-
-	    p->board_vector |= BITVECTOR(square);
-	    if (tb->pieces[piece].color == p->side_to_move) {
-		p->PTM_vector |= BITVECTOR(square);
 	    }
 	}
 
@@ -4237,26 +4135,13 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 
     /* Encode pieces and non-pawngen pawns using selected function.
      *
-     * This function is expect to set board_vector and PTM_vector in position.
+     * This function is expected to set side_to_move, piece_position[], en_passant_square,
+     * board_vector and PTM_vector in 'position'.
      */
 
     ret = tb->encoding->index_to_position(tb, index, position);
 
     if (!ret) return false;
-
-    /* If there is an en passant capturable pawn in this position, then there can't be anything on
-     * the capture square or on the square right behind it (where the pawn just came from), or its
-     * an illegal position.
-     */
-
-    if (position->en_passant_square != ILLEGAL_POSITION) {
-	if (position->board_vector & BITVECTOR(position->en_passant_square)) return false;
-	if (position->side_to_move == WHITE) {
-	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return false;
-	} else {
-	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return false;
-	}
-    }
 
     /* Blocking pawns.  Reject any position where a pawn has "hopped" over the enemy piece blocking
      * it.
@@ -4306,14 +4191,36 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 
     if ((reflection & REFLECTION_DIAGONAL) && (position->multiplicity == 1)) return false;
 
-    /* Apply reflections and compute bit vectors */
+    /* Apply reflection, check for an illegally positioned piece or two pieces on the same square,
+     * set bits in the board vectors.
+     */
 
-    /* XXX shouldn't need this, but these were already set in the various index-specific routines */
-    position->board_vector = 0;
-    position->PTM_vector = 0;
+    // Put these back in when we don't use bzero anymore.
+    //position->board_vector = 0;
+    //position->PTM_vector = 0;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	position->piece_position[piece] = reverse_reflection[reflection & 7][position->piece_position[piece]];
+
+	/* An important check for restricted pieces, and one of most important, too, because
+	 * this function is used during initialization to decide which indices are legal and
+	 * which are not.
+	 *
+	 * For 'combinadic' and 'compact' index types, this test can fire because we counted
+	 * semilegal positions to encode with, not legal positions.  It should never fire for the
+	 * 'simple' index type, which only encodes legal positions.  'naive' and 'naive2'
+	 * make no attempt to reject illegal positions, so of course it fires for them.
+	 */
+
+	if (!(tb->pieces[piece].legal_squares & BITVECTOR(position->piece_position[piece]))) {
+	    return false;
+	}
+
+	/* Is there another piece already on this square? */
+	if (position->board_vector & BITVECTOR(position->piece_position[piece])) {
+	    return false;
+	}
+
 	position->board_vector |= BITVECTOR(position->piece_position[piece]);
 	if (tb->pieces[piece].color == position->side_to_move) {
 	    position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
@@ -4335,6 +4242,20 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	    position->en_passant_square = 63 - position->en_passant_square;
 	}
 	position->side_to_move = BLACK;
+    }
+
+    /* If there is an en passant capturable pawn in this position, then there can't be anything on
+     * the capture square or on the square right behind it (where the pawn just came from), or its
+     * an illegal position.
+     */
+
+    if (position->en_passant_square != ILLEGAL_POSITION) {
+	if (position->board_vector & BITVECTOR(position->en_passant_square)) return false;
+	if (position->side_to_move == WHITE) {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return false;
+	} else {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return false;
+	}
     }
 
     /* permuted_piece is used to track the changes that happen after index-to-position and before
@@ -5414,7 +5335,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.939 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.940 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14201,7 +14122,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.939 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.940 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
