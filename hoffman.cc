@@ -2398,20 +2398,6 @@ public:
 	    }
 	}
 
-	/* If there is an en passant capturable pawn in this position, then there can't be anything
-	 * on the capture square or on the square right behind it (where the pawn just came from),
-	 * or its an illegal position.
-	 */
-
-	if (p->en_passant_square != ILLEGAL_POSITION) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	    if (p->side_to_move == WHITE) {
-		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	    } else {
-		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
-	    }
-	}
-
 	return true;
     }
 
@@ -2618,20 +2604,6 @@ public:
 	    }
 	}
 
-	/* If there is an en passant capturable pawn in this position, then there can't be anything
-	 * on the capture square or on the square right behind it (where the pawn just came from),
-	 * or its an illegal position.
-	 */
-
-	if (p->en_passant_square != ILLEGAL_POSITION) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return 0;
-	    if (p->side_to_move == WHITE) {
-		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return 0;
-	    } else {
-		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return 0;
-	    }
-	}
-
 	return true;
     }
 
@@ -2781,20 +2753,6 @@ public:
 	if (index != 0) {
 	    fatal("index != 0 at end of simple_index::index_to_position!\n");
 	    return false;
-	}
-
-	/* If there is an en passant capturable pawn in this position, then there can't be anything
-	 * on the capture square or on the square right behind it (where the pawn just came from),
-	 * or its an illegal position.
-	 */
-
-	if (p->en_passant_square != ILLEGAL_POSITION) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	    if (p->side_to_move == WHITE) {
-		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	    } else {
-		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
-	    }
 	}
 
 	return true;
@@ -3146,20 +3104,6 @@ public:
 	if (index != 0) {
 	    fatal("index != 0 at end of compact_index::index_to_position!\n");
 	    return false;
-	}
-
-	/* If there is an en passant capturable pawn in this position, then there can't be anything
-	 * on the capture square or on the square right behind it (where the pawn just came from),
-	 * or its an illegal position.
-	 */
-
-	if (p->en_passant_square != ILLEGAL_POSITION) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	    if (p->side_to_move == WHITE) {
-		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	    } else {
-		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
-	    }
 	}
 
 	return true;
@@ -3655,20 +3599,6 @@ public:
 	    p->board_vector |= BITVECTOR(square);
 	    if (tb->pieces[piece].color == p->side_to_move) {
 		p->PTM_vector |= BITVECTOR(square);
-	    }
-	}
-
-	/* If there is an en passant capturable pawn in this position, then there can't be anything
-	 * on the capture square or on the square right behind it (where the pawn just came from),
-	 * or its an illegal position.
-	 */
-
-	if (p->en_passant_square != ILLEGAL_POSITION) {
-	    if (p->board_vector & BITVECTOR(p->en_passant_square)) return false;
-	    if (p->side_to_move == WHITE) {
-		if (p->board_vector & BITVECTOR(p->en_passant_square + 8)) return false;
-	    } else {
-		if (p->board_vector & BITVECTOR(p->en_passant_square - 8)) return false;
 	    }
 	}
 
@@ -4305,11 +4235,28 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	}
     }
 
-    /* Encode pieces and non-pawngen pawns using selected function */
+    /* Encode pieces and non-pawngen pawns using selected function.
+     *
+     * This function is expect to set board_vector and PTM_vector in position.
+     */
 
     ret = tb->encoding->index_to_position(tb, index, position);
 
     if (!ret) return false;
+
+    /* If there is an en passant capturable pawn in this position, then there can't be anything on
+     * the capture square or on the square right behind it (where the pawn just came from), or its
+     * an illegal position.
+     */
+
+    if (position->en_passant_square != ILLEGAL_POSITION) {
+	if (position->board_vector & BITVECTOR(position->en_passant_square)) return false;
+	if (position->side_to_move == WHITE) {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return false;
+	} else {
+	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return false;
+	}
+    }
 
     /* Blocking pawns.  Reject any position where a pawn has "hopped" over the enemy piece blocking
      * it.
@@ -5467,7 +5414,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.938 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.939 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14254,7 +14201,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.938 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.939 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
