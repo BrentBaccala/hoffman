@@ -2303,6 +2303,8 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+
 	    /* The way we encode en passant capturable pawns is use the column number of the
 	     * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	     * this is completely legit.
@@ -2337,12 +2339,12 @@ public:
 
     bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
     {
-	int piece;
-
-	p->side_to_move = index & 1;
+	/* Eliminate side-to-move (already decoded) */
 	index >>= 1;
 
-	for (piece = 0; piece < tb->num_pieces; piece++) {
+	for (int piece = 0; piece < tb->num_pieces; piece++) {
+
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    int square;
 
@@ -2386,16 +2388,27 @@ public:
 
     naive_index(tablebase_t *tb)
     {
+	int encoded_pieces = 0;
+
+	for (int piece = 0; piece < tb->num_pieces; piece++) {
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    encoded_pieces ++;
+	}
+
+	if (encoded_pieces == 0) {
+	    fatal("naive_index: At least one piece must be encoded\n");
+	}
+
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
 	switch (tb->symmetry) {
 	case 1:
-	    tb->max_index = (2<<(6*tb->num_pieces)) - 1;
+	    tb->max_index = (2<<(6*encoded_pieces)) - 1;
 	    break;
 	case 2:
-	    tb->max_index = (2<<(6*tb->num_pieces - 1)) - 1;
+	    tb->max_index = (2<<(6*encoded_pieces - 1)) - 1;
 	    break;
 	case 4:
-	    tb->max_index = (2<<(6*tb->num_pieces - 2)) - 1;
+	    tb->max_index = (2<<(6*encoded_pieces - 2)) - 1;
 	    break;
 	}
     }
@@ -2423,6 +2436,8 @@ public:
 	uint8_t vals[MAX_PIECES];
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    /* The way we encode en passant capturable pawns is use the column number of the
 	     * pawn.  Since there can never be a pawn (of either color) on the first rank,
@@ -2455,6 +2470,7 @@ public:
 	 */
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 	    if (next_piece_in_encoding_group[piece] != -1) {
 
 		if (((vals[piece] < vals[next_piece_in_encoding_group[piece]])
@@ -2507,6 +2523,8 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece++) {
 
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+
 	    if ((tb->symmetry == 2) && (piece == tb->white_king)) {
 		vals[piece] = rowcol2square(index & 7, (index >> 3) & 3);
 		index >>= 5;
@@ -2543,6 +2561,8 @@ public:
 	}
 
 	for (piece = 0; piece < tb->num_pieces; piece++) {
+
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    int square = vals[piece];
 
@@ -2597,6 +2617,8 @@ public:
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    if (piece == tb->white_king) continue;
+
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
 		&& (tb->pieces[piece].next_piece_in_semilegal_group != -1)) {
@@ -3013,6 +3035,9 @@ public:
 	    p->piece_position[piece] = square;
 
 	}
+
+	p->piece_position[tb->white_king] = white_king_position[king_index];
+	p->piece_position[tb->black_king] = black_king_position[king_index];
 
 #if 0
 	/* Identical pieces have to appear in sorted order. */
@@ -3725,14 +3750,6 @@ public:
 		piece_index[piece][value] = tb->max_index + 1;
 	    }
 	}
-
-	if (tb->pawngen) {
-	    tb->max_index ++;
-	    tb->pawngen->pawngen_multiplier = tb->max_index;
-	    tb->max_index *= tb->pawngen->pawn_positions_by_index.size();
-	    tb->max_index --;
-	}
-
     }
 };
 
@@ -4133,10 +4150,13 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	}
     }
 
-    /* Encode pieces and non-pawngen pawns using selected function.
+    /* Encode pieces and non-pawngen pawns using selected index function.
      *
-     * This function is expected to set side_to_move, piece_position[], en_passant_square,
-     * board_vector and PTM_vector in 'position'.
+     * This function is expected to set the piece_position[] array and en_passant_square in
+     * 'position'.  side_to_move is already set.  If pawngen is in use, piece_position[] has been
+     * partially filled in (with pawns) and en_passant_square is already set.
+     *
+     * XXX stm is still encoded in LSB, but the pawngen index has been subtracted out of the MSBs.
      */
 
     ret = tb->encoding->index_to_position(tb, index, position);
@@ -4956,8 +4976,10 @@ void tablebase::parse_XML(std::istream *instream)
 	}
     }
 
+    // XXX DEFAULT_INDEX should be able to handle pawngen
+
     if (index == "") {
-	if (! tablebase->find("//pawngen").empty()) {
+	if (pawngen) {
 	    index_type = PAWNGEN_INDEX;
 	} else {
 	    index_type = DEFAULT_INDEX;
@@ -4972,9 +4994,15 @@ void tablebase::parse_XML(std::istream *instream)
 	index_type = index_types.at(index);
     }
 
-    if (index_type == PAWNGEN_INDEX) {
+    if (pawngen) {
 	if (! tablebase->find("//piece[@type='pawn']").empty()) {
-	    throw nested_exception("Can't have normal pawn pieces with pawngen index type");
+	    throw nested_exception("Can't have normal pawn pieces with pawngen");
+	}
+
+	if ((index_type != PAWNGEN_INDEX)
+	    && (index_type != COMBINADIC3_INDEX) && (index_type != COMBINADIC4_INDEX)
+	    && (index_type != NAIVE_INDEX) && (index_type != NAIVE2_INDEX)) {
+	    throw nested_exception("Illegal index type with pawngen");
 	}
     }
 
@@ -5259,6 +5287,13 @@ void tablebase::parse_XML(std::istream *instream)
 	break;
     }
 
+    if (pawngen) {
+	max_index ++;
+	pawngen->pawngen_multiplier = max_index;
+	max_index *= pawngen->pawn_positions_by_index.size();
+	max_index --;
+    }
+
     /* Fetch any prune enable elements */
 
     prune_enable[BLACK] = 0;
@@ -5335,7 +5370,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.940 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.941 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14122,7 +14157,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.940 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.941 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
