@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+
+<tablebase>
+   <prune-enable color="white" type="concede"/>
+   <dtm/>
+   <piece color="white" type="king" location="a1"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="queen"/>
+   <piece color="white" type="queen"/>
+
+   <futurebase filename="kqk.htb"/>
+
+   <prune color="white" type="concede" move="K*"/>
+   <prune color="white" type="concede" move="Q*"/>
+
+   <output filename="kqqk_.htb"/>
+</tablebase>
