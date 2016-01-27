@@ -79,8 +79,8 @@ sub mkfilename {
 	$black_value += $values{$black_piece};
     }
 
-    if (($option !~ /^-[24]x[48]/) && ((length($black_pieces) > length($white_pieces)) or
-				       ((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value)))) {
+    if (($option !~ /-[24]x[48]/) && ((length($black_pieces) > length($white_pieces)) or
+				      ((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value)))) {
 	$invert = 1;
 	if ($suicide) {
 	    $filename = $black_pieces . "v" . $white_pieces . $option;
@@ -122,9 +122,10 @@ sub mkfuturebase {
 sub write_cntl_file {
     my ($cntl_filename) = @_;
 
+    my $opts = "-basic|-whitewins|-prop(\\d+)|-4x4|-2x8";
     die "Invalid control filename $cntl_filename\n"
-	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)(-basic|-whitewins|-prop(\d+)|-4x4|-2x8|).xml$/
-		or $cntl_filename =~ m/^([kqrbnp]*)(v)([kqrbnp.]*).xml$/);
+	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)($opts)*.xml$/
+		or $cntl_filename =~ m/^([kqrbnp]*)(v)([kqrbnp.]*)($opts)*.xml$/);
 
     my ($white_pieces, $black_pieces) = ($1, $3);
     $suicide = ($2 eq 'v');
@@ -145,24 +146,24 @@ sub write_cntl_file {
 
     printnl '   <variant name="suicide"/>' if $suicide;
 
-    if ($option =~ /^-[24]x[48]/) {
+    if ($option =~ /-[24]x[48]/) {
 	printnl '    <prune-enable color="white" type="discard"/>';
 	printnl '    <prune-enable color="black" type="discard"/>';
     }
 
-    printnl '   <dtm/>' if ($option ne "-basic" and $option ne '-whitewins');
-    printnl '   <basic/>' if ($option eq "-basic");
-    printnl '   <flag type="white-wins"/>' if ($option eq "-whitewins");
+    printnl '   <dtm/>' if ($option !~ /-basic/ and $option !~ /-whitewins/);
+    printnl '   <basic/>' if ($option =~ /-basic/);
+    printnl '   <flag type="white-wins"/>' if ($option =~ /-whitewins/);
 
     my $location = "";
     my $pawn_location = "";
 
-    if ($option =~ /^-4x4/) {
+    if ($option =~ /-4x4/) {
 	$location = " location='a1 a2 a3 a4 b1 b2 b3 b4 c1 c2 c3 c4 d1 d2 d3 d4'";
 	$pawn_location = " location='a2 a3 a4 b2 b3 b4 c2 c3 c4 d2 d3 d4'";
     }
 
-    if ($option =~ /^-2x8/) {
+    if ($option =~ /-2x8/) {
 	$location = " location='a1 a2 a3 a4 a5 a6 a7 a8 b1 b2 b3 b4 b5 b6 b7 b8'";
 	$pawn_location = " location='a2 a3 a4 a5 a6 a7 b2 b3 b4 b5 b6 b7'";
     }
@@ -236,17 +237,19 @@ sub write_cntl_file {
 	}
     }
 
-    printnl '   <enable-proptables MB="' . substr($option, 5) . '"/>' if ($option =~ /^-prop/);
+    if ($option =~ /-prop(\d+)/) {
+	printnl "   <enable-proptables MB=\"$1\"/>" ;
+    }
     printnl '   <output filename="' . $filename . '.htb"/>';
 
-    if ($option =~ /^-4x4/) {
+    if ($option =~ /-4x4/) {
 	printnl '    <prune color="white" type="discard" move="*[e-h]*"/>';
 	printnl '    <prune color="white" type="discard" move="*[a-d][5-8]*"/>';
 	printnl '    <prune color="black" type="discard" move="*[e-h]*"/>';
 	printnl '    <prune color="black" type="discard" move="*[a-d][5-8]*"/>';
     }
 
-    if ($option =~ /^-2x8/) {
+    if ($option =~ /-2x8/) {
 	printnl '    <prune color="white" type="discard" move="*[c-h]*"/>';
 	printnl '    <prune color="black" type="discard" move="*[c-h]*"/>';
     }
