@@ -518,7 +518,6 @@ futurevector_t optimized_futuremoves[2] = {0, 0};
  */
 
 typedef struct {
-    struct tablebase *tb;
     uint64_t board_vector;
     uint64_t PTM_vector;
     uint8_t piece_position[MAX_PIECES];
@@ -776,7 +775,7 @@ typedef struct tablebase {
 
     int variant;
     int index_type;
-    index_t max_index;
+    index_t num_indices;
     bool positions_with_adjacent_kings_are_illegal;
     int symmetry;
     uint8_t reflections[64][64];
@@ -965,7 +964,7 @@ void info (const char * format, ...)
 }
 
 /* We aim to print progress_dots progress dots as we move through a tablebase.  That means one
- * progress dot every tb->max_index/progress_dots indices.  We keep an internal count of how many
+ * progress dot every tb->num_indices/progress_dots indices.  We keep an internal count of how many
  * times this routine gets called, expecting it to be called once for each index in the tablebase.
  * I also take care to precompute next_target_index to avoid division every time this routine gets
  * called.
@@ -982,7 +981,7 @@ void print_progress_dot(tablebase_t *tb, bool reset)
 	if (reset) {
 	    progress_dots_printed = 0;
 	    indices_processed = 0;
-	    next_target_index = tb->max_index / progress_dots;
+	    next_target_index = tb->num_indices / progress_dots;
 	    return;
 	}
 
@@ -997,7 +996,7 @@ void print_progress_dot(tablebase_t *tb, bool reset)
 	    printing_progress_dots = true;
 	    progress_dots_printed ++;
 
-	    next_target_index = tb->max_index * (progress_dots_printed + 1) / progress_dots;
+	    next_target_index = tb->num_indices * (progress_dots_printed + 1) / progress_dots;
 	}
     }
 
@@ -2402,13 +2401,13 @@ public:
 	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
 	switch (tb->symmetry) {
 	case 1:
-	    tb->max_index = (2<<(6*encoded_pieces)) - 1;
+	    tb->num_indices = 2<<(6*encoded_pieces);
 	    break;
 	case 2:
-	    tb->max_index = (2<<(6*encoded_pieces - 1)) - 1;
+	    tb->num_indices = 2<<(6*encoded_pieces - 1);
 	    break;
 	case 4:
-	    tb->max_index = (2<<(6*encoded_pieces - 2)) - 1;
+	    tb->num_indices = 2<<(6*encoded_pieces - 2);
 	    break;
 	}
     }
@@ -2595,18 +2594,18 @@ public:
 
     naive2_index(tablebase_t *tb)
     {
-	tb->max_index = 2;
+	tb->num_indices = 2;
 
 	/* do the white king "by hand" */
 	switch (tb->symmetry) {
 	case 1:
-	    tb->max_index <<= 6;
+	    tb->num_indices <<= 6;
 	    break;
 	case 2:
-	    tb->max_index <<= 5;
+	    tb->num_indices <<= 5;
 	    break;
 	case 4:
-	    tb->max_index <<= 4;
+	    tb->num_indices <<= 4;
 	    break;
 	}
 
@@ -2628,11 +2627,9 @@ public:
 	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
 	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
-	    if (prev_piece_in_encoding_group[piece] == -1) tb->max_index <<= 6;
-	    else tb->max_index <<=5;
+	    if (prev_piece_in_encoding_group[piece] == -1) tb->num_indices <<= 6;
+	    else tb->num_indices <<=5;
 	}
-
-	tb->max_index --;
     }
 
 };
@@ -2734,7 +2731,7 @@ public:
     simple_index(tablebase_t *tb)
     {
 	/* The "2" is because side-to-play is part of the position */
-	tb->max_index = 2;
+	tb->num_indices = 2;
 
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 	    for (int square = 0; square < 64; square ++) {
@@ -2755,10 +2752,8 @@ public:
 		    total_legal_positions[piece] ++;
 		}
 	    }
-	    tb->max_index *= total_legal_positions[piece];
+	    tb->num_indices *= total_legal_positions[piece];
 	}
-
-	tb->max_index --;
     }
 
 };
@@ -3061,7 +3056,7 @@ public:
     compact_index(tablebase_t *tb)
     {
 	/* The "2" is because side-to-play is part of the position */
-	tb->max_index = 2;
+	tb->num_indices = 2;
 
 	total_legal_king_positions = 0;
 
@@ -3084,7 +3079,7 @@ public:
 		total_legal_king_positions ++;
 	    }
 	}
-	tb->max_index *= total_legal_king_positions;
+	tb->num_indices *= total_legal_king_positions;
 
 	prev_piece_in_encoding_group[tb->white_king] = -1;
 	next_piece_in_encoding_group[tb->white_king] = -1;
@@ -3128,17 +3123,15 @@ public:
 		}
 	    }
 	    if (prev_piece_in_encoding_group[piece] == -1) {
-		tb->max_index *= total_legal_positions[piece];
+		tb->num_indices *= total_legal_positions[piece];
 	    } else if (total_legal_positions[piece]
 		       != total_legal_positions[prev_piece_in_encoding_group[piece]]) {
 		/* Semilegal positions are the union of legal positions for an entire encoding group */
 		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
 	    } else {
-		tb->max_index *= total_legal_positions[piece]/2;
+		tb->num_indices *= total_legal_positions[piece]/2;
 	    }
 	}
-
-	tb->max_index --;
     }
 };
 
@@ -3533,11 +3526,11 @@ public:
 	if ((tb->index_type == COMBINADIC4_INDEX) && tb->is_color_symmetric()) {
 	    /* Don't need side-to-play for a color symetric tablebase */
 	    tb->encode_stm = false;
-	    tb->max_index = 1;
+	    tb->num_indices = 1;
 	} else {
 	    /* The "2" is because side-to-play is part of the position */
 	    tb->encode_stm = true;
-	    tb->max_index = 2;
+	    tb->num_indices = 2;
 	}
 
 	if (tb->variant != VARIANT_SUICIDE) {
@@ -3557,11 +3550,11 @@ public:
 
 		    white_king_position[total_legal_king_positions] = white_king_square;
 		    black_king_position[total_legal_king_positions] = black_king_square;
-		    king_index[white_king_square][black_king_square] = tb->max_index * total_legal_king_positions;
+		    king_index[white_king_square][black_king_square] = tb->num_indices * total_legal_king_positions;
 		    total_legal_king_positions ++;
 		}
 	    }
-	    tb->max_index *= total_legal_king_positions;
+	    tb->num_indices *= total_legal_king_positions;
 
 	    prev_piece_in_encoding_group[tb->white_king] = -1;
 	    next_piece_in_encoding_group[tb->white_king] = -1;
@@ -3695,7 +3688,7 @@ public:
 		    piece_position[piece][total_legal_positions[piece]] = square;
 
 		    piece_index[piece][total_legal_positions[piece]]
-			= choose(total_legal_positions[piece], piece_in_set) * tb->max_index;
+			= choose(total_legal_positions[piece], piece_in_set) * tb->num_indices;
 
 		    total_legal_positions[piece] ++;
 		} else {
@@ -3731,14 +3724,12 @@ public:
 	    }
 
 	    if (next_piece_in_encoding_group[piece] == -1) {
-		tb->max_index *= choose(total_legal_piece_values[piece], piece_in_set);
+		tb->num_indices *= choose(total_legal_piece_values[piece], piece_in_set);
 	    }
 
 	}
 
-	tb->max_index --;
-
-	/* Now we pad the tail end of the index arrays with max_index+1.  This allows us to
+	/* Now we pad the tail end of the index arrays with num_indices.  This allows us to
 	 * search the table using std::lower_bound without having to worry about where its actual
 	 * end is, which will typically be before its physical end.
 	 */
@@ -3747,7 +3738,7 @@ public:
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 	    for (int value = total_legal_piece_values[piece]; value < 64; value ++) {
-		piece_index[piece][value] = tb->max_index + 1;
+		piece_index[piece][value] = tb->num_indices;
 	    }
 	}
     }
@@ -4115,7 +4106,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     int ret;
     int piece, piece2;
 
-    if (index > tb->max_index) return false;
+    if (index >= tb->num_indices) return false;
 
     bzero(position, sizeof(local_position_t));
     position->en_passant_square = ILLEGAL_POSITION;
@@ -4289,9 +4280,9 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     return true;
 }
 
-index_t max_index(tablebase_t * tb)
+index_t num_indices(tablebase_t * tb)
 {
-    return tb->max_index;
+    return tb->num_indices;
 }
 
 int index_to_side_to_move(tablebase_t *tb, index_t index)
@@ -4377,7 +4368,7 @@ int check_1000_indices(tablebase_t *tb)
 
     for (positions=0; positions < 1000; positions ++) {
 
-	index = rand() % (tb->max_index + 1);
+	index = rand() % (tb->num_indices);
 
 	if (index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 	    index2 = local_position_to_index(tb, &position);
@@ -5251,7 +5242,7 @@ void tablebase::parse_XML(std::istream *instream)
 	}
     }
 
-    /* Compute max_index (but see next section of code where it might be modified) */
+    /* Compute num_indices (but see next section of code where it might be modified) */
 
     encode_stm = true;
 
@@ -5288,10 +5279,8 @@ void tablebase::parse_XML(std::istream *instream)
     }
 
     if (pawngen) {
-	max_index ++;
-	pawngen->pawngen_multiplier = max_index;
-	max_index *= pawngen->pawn_positions_by_index.size();
-	max_index --;
+	pawngen->pawngen_multiplier = num_indices;
+	num_indices *= pawngen->pawn_positions_by_index.size();
     }
 
     /* Fetch any prune enable elements */
@@ -5370,7 +5359,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.941 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.942 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -5965,7 +5954,7 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
     }
 
     node->add_child_text("\n      ");
-    node->add_child("indices")->set_child_text(boost::lexical_cast<std::string>(tb->max_index + 1));
+    node->add_child("indices")->set_child_text(boost::lexical_cast<std::string>(tb->num_indices));
     node->add_child_text("\n      ");
     node->add_child("PNTM-mated-positions")->set_child_text(boost::lexical_cast<std::string>(total_PNTM_mated_positions));
     node->add_child_text("\n      ");
@@ -6841,15 +6830,15 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
 	next_read_index = index;
     }
 
-    if (next_read_index + futurebase_stride < max_index) {
+    if (next_read_index + futurebase_stride <= num_indices) {
 	instream->read(cached_entries, format.bits * futurebase_stride / 8);
 	next_read_index += futurebase_stride;
     } else {
 	/* short read at end of file */
-	int bytes_to_read = format.bits * (max_index - next_read_index + 1) / 8;
-	if ((format.bits * (max_index - next_read_index + 1)) % 8 != 0) bytes_to_read ++;
+	int bytes_to_read = format.bits * (num_indices - next_read_index) / 8;
+	if ((format.bits * (num_indices - next_read_index)) % 8 != 0) bytes_to_read ++;
 	instream->read(cached_entries, bytes_to_read);
-	next_read_index = max_index + 1;
+	next_read_index = num_indices;
     }
 
     // XXX put this error handling back in
@@ -6857,7 +6846,7 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
     if (zlib_read(file, cached_entries, format.bits * futurebase_stride / 8) != format.bits * futurebase_stride / 8) {
 	/* Might get a short read at the end of a tablebase, otherwise complain */
 
-	if (next_read_index + futurebase_stride < max_index) {
+	if (next_read_index + futurebase_stride <= num_indices) {
 	    fatal("fetch_entry() hit EOF reading from disk\n");
 	}
     }
@@ -7400,9 +7389,9 @@ class MemoryEntriesTable: public EntriesTable {
 
  public:
     MemoryEntriesTable(void) {
-	size_t bytes = (current_tb->max_index + 1) * sizeof(atomic_entry);
+	size_t bytes = current_tb->num_indices * sizeof(atomic_entry);
 	try {
-	    entries = new atomic_entry [current_tb->max_index + 1];
+	    entries = new atomic_entry [current_tb->num_indices];
 	    if (bytes < 1024*1024) {
 		info("Malloced %zdKB for tablebase entries\n", bytes/1024);
 	    } else {
@@ -7912,7 +7901,7 @@ void non_proptable_pass(int target_dtm)
 {
     std::thread t[num_threads];
     unsigned int thread;
-    index_t block_size = (current_tb->max_index+1)/num_threads;
+    index_t block_size = current_tb->num_indices / num_threads;
 
     entriesTable->set_threads(num_threads);
 
@@ -7925,7 +7914,7 @@ void non_proptable_pass(int target_dtm)
         if (thread != num_threads-1) {
             end_index = (thread+1)*block_size - 1;
         } else {
-            end_index = current_tb->max_index;
+            end_index = current_tb->num_indices - 1;
         }
 
 	t[thread] = std::thread(back_propagate_section, start_index, end_index, target_dtm);
@@ -7991,19 +7980,18 @@ struct proptable_format {
     uint64_t futuremove_mask;
     int bits;
 
-    proptable_format(index_t max_index, int min_dtm, int max_dtm, int movecnt_bits, int max_futuremoves)
+    proptable_format(index_t num_indices, int min_dtm, int max_dtm, int movecnt_bits, int max_futuremoves)
 	: movecnt_bits(movecnt_bits) {
 
-	/* Tricky, tricky, tricky... max_index can actually occur in the index field, so
-	 * 2^index_bits must be strictly greater than max_index.  dtm ranges in [min_dtm, max_dtm]
-	 * inclusive, so 2^(dtm_bits-1) must be strictly greater than max_dtm and 2^(dtm_bits-1)
-	 * must be greater than or equal to -min_dtm.  futuremove numbers range from 0 to
-	 * max_futuremoves-1, so 2^futuremove_bits must be greater than or equal to
+	/* Tricky, tricky, tricky... 2^index_bits must be greater than or equal to num_indices.  dtm
+	 * ranges in [min_dtm, max_dtm] inclusive, so 2^(dtm_bits-1) must be strictly greater than
+	 * max_dtm and 2^(dtm_bits-1) must be greater than or equal to -min_dtm.  futuremove numbers
+	 * range from 0 to max_futuremoves-1, so 2^futuremove_bits must be greater than or equal to
 	 * max_futuremoves... and the senses of the comparisons are reversed for the loop!  Hope I
 	 * got it all right!
 	 */
 
-	for (index_bits = 1; (1ULL << index_bits) <= max_index; index_bits ++);
+	for (index_bits = 1; (1ULL << index_bits) < num_indices; index_bits ++);
 
 	if ((max_dtm != 0) || (min_dtm != 0)) {
 	    for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) || (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
@@ -8450,14 +8438,14 @@ public:
  *
  * Required field sizes for futurebase back-propagation:
  *
- *   index - figure out from max_index
+ *   index - figure out from num_indices
  *   dtm - figure out from futurebase preload, unless it isn't being tracked
  *   movecnt - 0 (XXX - discarded futuremove only), 1, or 2 for 8-way symmetry conversion
  *   futuremove - figure out from total_futuremoves
  *
  * Required field sizes for intra-tablebase propagation:
  *
- *   index - figure out from max_index
+ *   index - figure out from num_indices
  *   dtm - known from pass number, unless it isn't being tracked
  *   movecnt - always 1
  *   futuremove - unneeded
@@ -8867,7 +8855,7 @@ void proptable_pass_thread(int target_dtm)
 
 	    index = (proptable_shared_index ++);
 
-	    if (index > current_tb->max_index) break;
+	    if (index >= current_tb->num_indices) break;
 
 	    if (! input_proptable->empty()) {
 
@@ -8965,7 +8953,7 @@ void proptable_pass(int target_dtm)
      * known from the pass number, the movecnt is always one, and we're done tracking futuremoves.
      */
 
-    proptable_format format(current_tb->max_index, 0, 0, 0, 0);
+    proptable_format format(current_tb->num_indices, 0, 0, 0, 0);
 
     /* Swap proptables.  Our priority queue implementation is designed to do all the insertions
      * first, then all the retrievals, and prepare_to_retrieve() can free a lot of memory.
@@ -9010,7 +8998,7 @@ void reconstruct_proptable_thread(int target_dtm)
 
 	index_t index = (proptable_shared_index ++);
 
-	if (index > current_tb->max_index) break;
+	if (index >= current_tb->num_indices) break;
 
 	back_propagate_index(index, target_dtm);
     }
@@ -9021,7 +9009,7 @@ void reconstruct_proptable(int target_dtm)
     std::thread t[num_threads];
     unsigned int thread;
 
-    proptable_format format(current_tb->max_index, 0, 0, 0, 0);
+    proptable_format format(current_tb->num_indices, 0, 0, 0, 0);
 
     output_proptable = new proptable(format, proptable_MBs << 20);
 
@@ -10336,11 +10324,11 @@ void back_propagate_futurebase_thread(void (* backprop_function)(index_t, int))
      * piece appears on the back rank, but watch out for reflection.
      */
 
-    while ((future_index = futurebase->fetch_entry()) <= futurebase->max_index) {
+    while ((future_index = futurebase->fetch_entry()) < futurebase->num_indices) {
 
 	for (i=0; i<futurebase_stride; i++) {
 
-	    if (future_index + i <= futurebase->max_index) {
+	    if (future_index + i < futurebase->num_indices) {
 
 		/* It's tempting to break out the loop here if the position isn't a win, but we want
 		 * to track futuremoves in order to make sure we don't miss one, so the simplest way
@@ -10551,7 +10539,7 @@ bool have_all_futuremoves_been_handled(tablebase_t *tb) {
      * matter the endianness.  Might have alignment problems, though.
      */
 
-    for (index = 0; index <= tb->max_index; index ++) {
+    for (index = 0; index < tb->num_indices; index ++) {
 	if (entriesTable[index].get_DTM() != 1) {
 	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 	    futurevector_t futurevector = *((futurevector_t *)(current_tb->futurevectors + (bit_offset >> 3)));
@@ -12615,7 +12603,7 @@ void initialize_tablebase(void)
 {
     std::thread t[num_threads];
     unsigned int thread;
-    index_t block_size = (current_tb->max_index+1)/num_threads;
+    index_t block_size = current_tb->num_indices /num_threads;
 
     reset_progress_dots(current_tb);
 
@@ -12626,7 +12614,7 @@ void initialize_tablebase(void)
 	if (thread != num_threads-1) {
 	    end_index = (thread+1)*block_size - 1;
 	} else {
-	    end_index = current_tb->max_index;
+	    end_index = current_tb->num_indices - 1;
 	}
 
 	t[thread] = std::thread(initialize_tablebase_section, start_index, end_index);
@@ -12795,7 +12783,7 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 
     /* Then we write the tablebase data */
 
-    for (index_t index = 0; index <= tb->max_index; index ++) {
+    for (index_t index = 0; index < tb->num_indices; index ++) {
 
 #ifdef DEBUG_MOVE
 	if (index == DEBUG_MOVE) {
@@ -12854,7 +12842,7 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 	 * and that requires exactly 'bits' bytes.
 	 */
 
-	if ((index % 8 == 7) || (index == tb->max_index)) {
+	if ((index % 8 == 7) || (index == tb->num_indices - 1)) {
 	    outstream.write(entrybuf, tb->format.bits);
 	}
     }
@@ -12883,7 +12871,7 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 
     /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
     current_tb = tb;
-    info("Total indices: %" PRIindex "\n", tb->max_index + 1);
+    info("Total indices: %" PRIindex "\n", tb->num_indices);
 
     /* Figure out where we want to write the finished product. */
 
@@ -12962,13 +12950,13 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 
 	entriesTable = new MemoryEntriesTable;
 
-	/* tb->futurevectors = (futurevector_t *) calloc(tb->max_index + 1, sizeof(futurevector_t)); */
+	/* tb->futurevectors = (futurevector_t *) calloc(tb->num_indices + 1, sizeof(futurevector_t)); */
         if (num_futuremoves[WHITE] > num_futuremoves[BLACK])
 	    tb->futurevector_bits = num_futuremoves[WHITE];
 	else
 	    tb->futurevector_bits = num_futuremoves[BLACK];
 
-	futurevector_bytes = ((((tb->max_index + 1) * tb->futurevector_bits) + 7) >> 3) + 2*sizeof(int);
+	futurevector_bytes = (((tb->num_indices * tb->futurevector_bits) + 7) >> 3) + 2*sizeof(int);
 	tb->futurevectors = (char *) malloc(futurevector_bytes);
 	if (tb->futurevectors == nullptr) {
 	    fatal("Can't malloc %zdMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
@@ -13050,7 +13038,7 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	 *
 	 * Required field sizes for futurebase back-propagation:
 	 *
-	 *   index - figure out from max_index
+	 *   index - figure out from num_indices
 	 *   dtm - figure out from futurebase preload, unless it isn't being tracked
 	 *   movecnt - 0 (DTM 0 only), 1, or 2 for 8-way symmetry conversion
 	 *   futuremove - figure out from total_futuremoves
@@ -13060,7 +13048,7 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	 * XXX turn off movecnt if we don't have 8-way symmetry
 	 */
 
-	proptable_format format(tb->max_index, min_tracked_dtm, max_tracked_dtm,
+	proptable_format format(tb->num_indices, min_tracked_dtm, max_tracked_dtm,
 				1, std::max(num_futuremoves[WHITE], num_futuremoves[BLACK]));
 
 	info("Initial proptable format: %d bits index; %d bits dtm; %d bit movecnt; %d bits futuremove\n",
@@ -13141,7 +13129,7 @@ void verify_tablebase_internally_thread(void)
 	int origin_square;
 	struct movement *movementptr;
 
-	if (index > current_tb->max_index) break;
+	if (index >= current_tb->num_indices) break;
 
 	print_progress_dot(current_tb);
 
@@ -13353,7 +13341,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
     info("Verifying tablebase against Nalimov\n");
 
-    for (index = 0; index <= tb->max_index; index++) {
+    for (index = 0; index < tb->num_indices; index++) {
 	if (index_to_global_position(tb, index, &global)) {
 
 	    index_to_local_position(tb, index, REFLECTION_NONE, &local);
@@ -14018,8 +14006,8 @@ void probe_tablebases(tablebase_t **tbs) {
 
 	    index = strtol(buffer, &endptr, 10);
 	    if (*endptr == '\0') {
-		if (index > tbs[0]->max_index) {
-		    printf("Index out of range (%" PRIindex " max)\n", tbs[0]->max_index);
+		if (index >= tbs[0]->num_indices) {
+		    printf("Index out of range (%" PRIindex " max)\n", tbs[0]->num_indices - 1);
 		} else {
 		    index_valid = true;
 		    break;
@@ -14157,7 +14145,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.941 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.942 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
@@ -14286,7 +14274,7 @@ int main(int argc, char *argv[])
     if (summarize) {
 	tablebase_t * tb = parse_XML_control_file(argv[optind]);
 	if (tb != nullptr) {
-	    std::cout << "Total indices: " << tb->max_index + 1 << std::endl;
+	    std::cout << "Total indices: " << tb->num_indices << std::endl;
 	}
 	terminate();
     }
