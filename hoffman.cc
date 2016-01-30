@@ -780,10 +780,6 @@ typedef struct tablebase {
     int symmetry;
     uint8_t reflections[64][64];
 
-    /* Pawn are encoded together for the 'pawngen' index type, using the index in the pawn_positions
-     * array times pawngen_multiplier.
-     */
-
     /* Kings are usually encoded together to take advantage of them never being adjacent.  Given a
      * pair of king positions, king_index[WHITE_KING_POSITION][BLACK_KING_POSITION] returns the
      * associated index, while white_king_position[INDEX] and black_king_position[INDEX] reverse
@@ -1945,7 +1941,6 @@ std::set<pawn_position> valid_pawn_positions;
 std::set<pawn_position> invalid_pawn_positions;
 
 struct pawngen {
-    index_t pawngen_multiplier;
     std::vector<pawn_position> pawn_positions_by_position;
     std::vector<pawn_position> pawn_positions_by_index;
 };
@@ -2271,6 +2266,12 @@ public:
     }
 #endif
 
+    /* 'size' is the number of indices generated the index encoding, which is different from the
+     * number of indices in the tablebase, because 'size' excludes side-to-move and pawngen.
+     */
+
+    index_t size;
+
     /* index_encoding is a polymorphic base type
      *
      * It has a trivial constructor, a virtual destructor (so its derived classes can destroy their
@@ -2295,9 +2296,8 @@ public:
 
     index_t position_to_index(tablebase_t *tb, local_position_t *pos)
     {
-	int shift_count = 1;
-	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
-	index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+	int shift_count = 0;
+	index_t index = 0;
 	int piece;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -2338,9 +2338,6 @@ public:
 
     bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
     {
-	/* Eliminate side-to-move (already decoded) */
-	index >>= 1;
-
 	for (int piece = 0; piece < tb->num_pieces; piece++) {
 
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
@@ -2385,7 +2382,7 @@ public:
 	return true;
     }
 
-    naive_index(tablebase_t *tb)
+    naive_index(const tablebase_t *tb)
     {
 	int encoded_pieces = 0;
 
@@ -2398,16 +2395,16 @@ public:
 	    fatal("naive_index: At least one piece must be encoded\n");
 	}
 
-	/* The "2" is because side-to-play is part of the position; "6" for the 2^6 squares on the board */
+	/* The "6" is for the 2^6 squares on the board */
 	switch (tb->symmetry) {
 	case 1:
-	    tb->num_indices = 2<<(6*encoded_pieces);
+	    size = 1<<(6*encoded_pieces);
 	    break;
 	case 2:
-	    tb->num_indices = 2<<(6*encoded_pieces - 1);
+	    size = 1<<(6*encoded_pieces - 1);
 	    break;
 	case 4:
-	    tb->num_indices = 2<<(6*encoded_pieces - 2);
+	    size = 1<<(6*encoded_pieces - 2);
 	    break;
 	}
     }
@@ -2428,9 +2425,8 @@ public:
 
     index_t position_to_index(tablebase_t * tb, local_position_t *pos)
     {
-	int shift_count = 1;
-	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
-	index_t index = pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
+	int shift_count = 0;
+	index_t index = 0;
 	int piece;
 	uint8_t vals[MAX_PIECES];
 
@@ -2517,9 +2513,6 @@ public:
 	int piece;
 	uint8_t vals[MAX_PIECES];
 
-	p->side_to_move = index & 1;
-	index >>= 1;
-
 	for (piece = 0; piece < tb->num_pieces; piece++) {
 
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
@@ -2592,20 +2585,20 @@ public:
 	return true;
     }
 
-    naive2_index(tablebase_t *tb)
+    naive2_index(const tablebase_t *tb)
     {
-	tb->num_indices = 2;
+	size = 1;
 
 	/* do the white king "by hand" */
 	switch (tb->symmetry) {
 	case 1:
-	    tb->num_indices <<= 6;
+	    size <<= 6;
 	    break;
 	case 2:
-	    tb->num_indices <<= 5;
+	    size <<= 5;
 	    break;
 	case 4:
-	    tb->num_indices <<= 4;
+	    size <<= 4;
 	    break;
 	}
 
@@ -2627,8 +2620,8 @@ public:
 	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
 	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
-	    if (prev_piece_in_encoding_group[piece] == -1) tb->num_indices <<= 6;
-	    else tb->num_indices <<=5;
+	    if (prev_piece_in_encoding_group[piece] == -1) size <<= 6;
+	    else size <<=5;
 	}
     }
 
@@ -2650,12 +2643,9 @@ public:
 
     index_t position_to_index(tablebase_t * tb, local_position_t *pos)
     {
-	index_t index;
-	int piece;
+	index_t index = 0;
 
-	index = 0;
-
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    index *= total_legal_positions[piece];
 
@@ -2674,20 +2664,12 @@ public:
 	    }
 	}
 
-	/* We've still got code that assumes flipping the index's LSB flip side-to-move */
-
-	index *= 2;
-	index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-
 	return index;
     }
 
     bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
-
-	p->side_to_move = index % 2;
-	index /= 2;
 
 	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
@@ -2728,10 +2710,9 @@ public:
 	return true;
     }
 
-    simple_index(tablebase_t *tb)
+    simple_index(const tablebase_t *tb)
     {
-	/* The "2" is because side-to-play is part of the position */
-	tb->num_indices = 2;
+	size = 1;
 
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 	    for (int square = 0; square < 64; square ++) {
@@ -2752,7 +2733,7 @@ public:
 		    total_legal_positions[piece] ++;
 		}
 	    }
-	    tb->num_indices *= total_legal_positions[piece];
+	    size *= total_legal_positions[piece];
 	}
     }
 
@@ -2822,13 +2803,10 @@ public:
 
     index_t position_to_index(tablebase_t * tb, local_position_t *pos)
     {
-	index_t index;
-	int piece;
+	index_t index = 0;
 	uint8_t vals[MAX_PIECES];
 
-	index = 0;
-
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
@@ -2862,7 +2840,7 @@ public:
 	 * each other before doing anything else...
 	 */
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    if (piece == tb->white_king) {
 		index *= total_legal_king_positions;
@@ -2902,11 +2880,6 @@ public:
 	    }
 	}
 
-	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
-
-	index *= 2;
-	index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-
 	return index;
     }
 
@@ -2915,9 +2888,6 @@ public:
 	int piece;
 	uint8_t vals[MAX_PIECES];
 	int king_index = 0;
-
-	p->side_to_move = index % 2;
-	index /= 2;
 
 	/* First, split index into an array of encoding values. */
 
@@ -3053,10 +3023,11 @@ public:
 	return true;
     }
 
-    compact_index(tablebase_t *tb)
+    compact_index(const tablebase_t *tb)
     {
-	/* The "2" is because side-to-play is part of the position */
-	tb->num_indices = 2;
+	if (tb->variant == VARIANT_SUICIDE) {
+	    throw nested_exception("'compact' index type not allowed with 'suicide' variable");
+	}
 
 	total_legal_king_positions = 0;
 
@@ -3079,7 +3050,8 @@ public:
 		total_legal_king_positions ++;
 	    }
 	}
-	tb->num_indices *= total_legal_king_positions;
+
+	size = total_legal_king_positions;
 
 	prev_piece_in_encoding_group[tb->white_king] = -1;
 	next_piece_in_encoding_group[tb->white_king] = -1;
@@ -3123,13 +3095,13 @@ public:
 		}
 	    }
 	    if (prev_piece_in_encoding_group[piece] == -1) {
-		tb->num_indices *= total_legal_positions[piece];
+		size *= total_legal_positions[piece];
 	    } else if (total_legal_positions[piece]
 		       != total_legal_positions[prev_piece_in_encoding_group[piece]]) {
 		/* Semilegal positions are the union of legal positions for an entire encoding group */
 		fatal("BUG: Encoding group don't have the same number of total semilegal positions\n");
 	    } else {
-		tb->num_indices *= total_legal_positions[piece]/2;
+		size *= total_legal_positions[piece]/2;
 	    }
 	}
     }
@@ -3284,10 +3256,6 @@ public:
 		[pos->piece_position[tb->black_king]];
 	}
 
-	/* index_to_side_to_move() assumes that side-to-move is the index's LSB */
-
-	if (tb->encode_stm) index += pos->side_to_move;  /* WHITE is 0; BLACK is 1 */
-
 	return index;
     }
 
@@ -3354,8 +3322,6 @@ public:
 	    }
 
 	}
-
-	if (tb->encode_stm) index /= 2;
 
 	if (tb->variant != VARIANT_SUICIDE) {
 
@@ -3521,18 +3487,10 @@ public:
 	return true;
     }
 
+    /* XXX This argument isn't 'const' because it might modify semilegal ranges. */
+
     combinadic_index(tablebase_t *tb)
     {
-	if ((tb->index_type == COMBINADIC4_INDEX) && tb->is_color_symmetric()) {
-	    /* Don't need side-to-play for a color symetric tablebase */
-	    tb->encode_stm = false;
-	    tb->num_indices = 1;
-	} else {
-	    /* The "2" is because side-to-play is part of the position */
-	    tb->encode_stm = true;
-	    tb->num_indices = 2;
-	}
-
 	if (tb->variant != VARIANT_SUICIDE) {
 	    total_legal_king_positions = 0;
 	    for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
@@ -3550,16 +3508,18 @@ public:
 
 		    white_king_position[total_legal_king_positions] = white_king_square;
 		    black_king_position[total_legal_king_positions] = black_king_square;
-		    king_index[white_king_square][black_king_square] = tb->num_indices * total_legal_king_positions;
+		    king_index[white_king_square][black_king_square] = total_legal_king_positions;
 		    total_legal_king_positions ++;
 		}
 	    }
-	    tb->num_indices *= total_legal_king_positions;
+	    size = total_legal_king_positions;
 
 	    prev_piece_in_encoding_group[tb->white_king] = -1;
 	    next_piece_in_encoding_group[tb->white_king] = -1;
 	    prev_piece_in_encoding_group[tb->black_king] = -1;
 	    next_piece_in_encoding_group[tb->black_king] = -1;
+	} else {
+	    size = 1;
 	}
 
 	/* Assign encoding groups, usually groups of identical pieces. */
@@ -3688,7 +3648,7 @@ public:
 		    piece_position[piece][total_legal_positions[piece]] = square;
 
 		    piece_index[piece][total_legal_positions[piece]]
-			= choose(total_legal_positions[piece], piece_in_set) * tb->num_indices;
+			= choose(total_legal_positions[piece], piece_in_set) * size;
 
 		    total_legal_positions[piece] ++;
 		} else {
@@ -3724,21 +3684,21 @@ public:
 	    }
 
 	    if (next_piece_in_encoding_group[piece] == -1) {
-		tb->num_indices *= choose(total_legal_piece_values[piece], piece_in_set);
+		size *= choose(total_legal_piece_values[piece], piece_in_set);
 	    }
 
 	}
 
-	/* Now we pad the tail end of the index arrays with num_indices.  This allows us to
-	 * search the table using std::lower_bound without having to worry about where its actual
-	 * end is, which will typically be before its physical end.
+	/* Now we pad the tail end of the index arrays with 'size'.  This allows us to search the
+	 * table using std::lower_bound without having to worry about where its actual end is, which
+	 * will typically be before its physical end.
 	 */
 
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 	    for (int value = total_legal_piece_values[piece]; value < 64; value ++) {
-		piece_index[piece][value] = tb->num_indices;
+		piece_index[piece][value] = size;
 	    }
 	}
     }
@@ -4062,9 +4022,18 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
 	} else if ((*it < pawns) || (pawns < *it)) {
 	    return INVALID_INDEX;
 	} else {
-	    index += tb->pawngen->pawngen_multiplier * it->index;
+	    index += tb->encoding->size * it->index;
 	}
 
+    }
+
+    /* Now encode side-to-move (if needed).  Other code, like index_to_side_to_move(), assumes that
+     * side-to-move is the index's LSB.
+     */
+
+    if (tb->encode_stm) {
+	index <<= 1;
+	index += position->side_to_move;  /* WHITE is 0; BLACK is 1 */
     }
 
     /* Multiplicity - number of non-identical positions that this index corresponds to.  We want to
@@ -4113,13 +4082,17 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 
     /* Side-to-move, if present, is always LSB */
 
-    if (tb->encode_stm) position->side_to_move = index % 2;  /* else p->side_to_move = WHITE */
+    if (tb->encode_stm) {
+	position->side_to_move = index % 2;
+	index >>= 1;
+    }
+    /* else p->side_to_move = WHITE, but position has already be bzeroed, and WHITE = 0 */
 
     /* Extract pawngen pawn encoding from the most significant bits. */
 
     if (tb->pawngen) {
-	int pawn_index = index / tb->pawngen->pawngen_multiplier;
-	index -= pawn_index * tb->pawngen->pawngen_multiplier;
+	int pawn_index = index / tb->encoding->size;
+	index -= pawn_index * tb->encoding->size;
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->pieces[piece].piece_type == PAWN) {
@@ -4144,10 +4117,9 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     /* Encode pieces and non-pawngen pawns using selected index function.
      *
      * This function is expected to set the piece_position[] array and en_passant_square in
-     * 'position'.  side_to_move is already set.  If pawngen is in use, piece_position[] has been
-     * partially filled in (with pawns) and en_passant_square is already set.
-     *
-     * XXX stm is still encoded in LSB, but the pawngen index has been subtracted out of the MSBs.
+     * 'position'.  side_to_move is already set, and has been divided out of 'index', if it was
+     * encoded at all.  If pawngen is in use, piece_position[] has been partially filled in (with
+     * pawns) and en_passant_square is already set.
      */
 
     ret = tb->encoding->index_to_position(tb, index, position);
@@ -5242,9 +5214,17 @@ void tablebase::parse_XML(std::istream *instream)
 	}
     }
 
-    /* Compute num_indices (but see next section of code where it might be modified) */
+    /* Do we encode side-to-move? */
 
-    encode_stm = true;
+    if ((index_type == COMBINADIC4_INDEX) && is_color_symmetric()) {
+	encode_stm = false;
+    } else {
+	encode_stm = true;
+    }
+
+    /* The constructor for the index encoding is expected to compute and assign num_indices in the
+     * tablebase structure (but see next section of code where it might be modified).
+     */
 
     switch (index_type) {
     case NAIVE_INDEX:
@@ -5278,8 +5258,19 @@ void tablebase::parse_XML(std::istream *instream)
 	break;
     }
 
+    /* Compute the actual size of the tablebase.  If we're encoding side-to-move, the tablebase is
+     * bigger by a factor of two from what the index encoding calculated.  If we're using pawngen,
+     * then the index constructor didn't take that into account, either.  The tablebase is actually
+     * bigger by a factor of however many pawngen positions we've got.
+     */
+
+    num_indices = encoding->size;
+
+    if (encode_stm) {
+	num_indices *= 2;
+    }
+
     if (pawngen) {
-	pawngen->pawngen_multiplier = num_indices;
 	num_indices *= pawngen->pawn_positions_by_index.size();
     }
 
@@ -5359,7 +5350,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.942 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.943 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14145,7 +14136,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.942 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.943 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
