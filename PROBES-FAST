@@ -87,6 +87,12 @@ c21a2a5a49963fdf0d274300762c4c20 8/6k1/6p1/8/q7/4R3/5PK1/8\ w fortress.htb
 6e2ca854365273cee470fdfa507687a5 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8\ w fine67-3-3.htb
 50ddd1dea9f27f941daad985c9b4b263 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8\ w fine67n-3-3.htb
 
+# check alternate index types
+3e3f8dffb6c277d04ae6209bfd4da52a 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-naive.htb
+ba8c06b99e8865c14f160477f06f230a 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-simple.htb
+254b28060524ea0caf42ee3f2c90cdfa 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-compact.htb
+515098ff1682b68b5116eaa6805ac6c4 8/3k4/8/8/8/4Q3/8/1K1Q4\ b kqqk-naive2.htb
+
 # test various bugs
 6ff1d8e170f972b66ac3f25ec63d4736 234 r779a.htb kqpk.htb
 8601d924b2624a814cd6fac46bed83d2 21499040 r779e.htb r779c.htb
