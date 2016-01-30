@@ -11,6 +11,7 @@
 # list of white pieces and B is a list of black pieces, both from the
 # set qrnbp, and the optional option are:
 #     'basic' or 'whitewins' to obtain bitbases instead of DTM
+#     'naive', 'naive2', 'simple', or 'compact' to obtain alternate indices
 #     'propNUM' to generate using proptables with the specified size in MB
 #     '4x4' to restrict to a 4x4 board
 #     '2x8' to restrict to a 2x8 board
@@ -122,7 +123,9 @@ sub mkfuturebase {
 sub write_cntl_file {
     my ($cntl_filename) = @_;
 
-    my $opts = "-basic|-whitewins|-prop(\\d+)|-4x4|-2x8";
+    my $indices = "-naive|-naive2|-simple|-compact";
+    my $opts = "-basic|-whitewins|-prop(\\d+)|-4x4|-2x8|$indices";
+
     die "Invalid control filename $cntl_filename\n"
 	unless ($cntl_filename =~ m/^k([qrbnp]*)(k)([qrbnp.]*)($opts)*.xml$/
 		or $cntl_filename =~ m/^([kqrbnp]*)(v)([kqrbnp.]*)($opts)*.xml$/);
@@ -154,6 +157,11 @@ sub write_cntl_file {
     printnl '   <dtm/>' if ($option !~ /-basic/ and $option !~ /-whitewins/);
     printnl '   <basic/>' if ($option =~ /-basic/);
     printnl '   <flag type="white-wins"/>' if ($option =~ /-whitewins/);
+
+    if ($option =~ /($indices)/) {
+	my $index = substr($1, 1);
+	printnl "   <index type=\"$index\"/>";
+    }
 
     my $location = "";
     my $pawn_location = "";
