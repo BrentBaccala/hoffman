@@ -5350,7 +5350,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.943 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.944 $ $Locker: baccala $");
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -5737,7 +5737,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	    futurebases.push_back(tablebase(filename));
 	} catch (const char * msg) {
 	    fatal("%s: futurebase preload failed: %s\n", filename.c_str(), msg);
-	    return nullptr;
+	    return false;
 	}
 
 	if (futurebases[fbnum].variant != tb->variant) {
@@ -14136,7 +14136,7 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.943 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman $Revision: 1.944 $ $Locker: baccala $\n");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
