@@ -30,5 +30,6 @@
    <prune color="white" move="RxR" type="discard"/>
    <futurebase filename="r879a.htb"/>
    <futurebase filename="krk.htb" colors="invert"/>
-   <output filename="r879b.htb"/>
+   <enable-proptables MB="100"/>
+   <output filename="r895.htb"/>
 </tablebase>
