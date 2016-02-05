@@ -3176,6 +3176,13 @@ class combinadic_index : public index_encoding
     int last_overlapping_piece[MAX_PIECES];
     int last_overlapping_group[MAX_PIECES];
 
+    /* A bitvector of the smaller squares than this one.  Initialized in constructor.
+     *
+     * XXX smaller_pieces needs to take restricted locations into account
+     */
+
+    uint64_t smaller_pieces[64] = {0};
+
 public:
 
     index_t position_to_index(tablebase_t * tb, local_position_t *pos)
@@ -3270,21 +3277,7 @@ public:
 	int en_passant_pawn = -1;
 	int en_passant_color = 0;
 	uint8_t vals[MAX_PIECES];
-	uint64_t overlapping_pieces[MAX_PIECES];
-
-	static uint64_t smaller_pieces[64];
-	static bool do_once = false;
-
-	if (!do_once) {
-	    bzero(smaller_pieces, sizeof(smaller_pieces));
-	    for (int i=0; i<64; i++) {
-		for (int j=0; j<=i; j++) {
-		    smaller_pieces[i] |= (1ULL << j);
-		}
-	    }
-	    do_once = true;
-	}
-	bzero(overlapping_pieces, sizeof(overlapping_pieces));
+	uint64_t overlapping_pieces[MAX_PIECES] = {0};
 
 	/* Binary search for the largest value in index[] that is less than or equal to the
 	 * (running) index, subtract it out of the index, and store the encoding values.  This loop
@@ -3496,6 +3489,13 @@ public:
 
     combinadic_index(tablebase_t *tb)
     {
+	/* Construct smaller_pieces */
+	for (int i=0; i<64; i++) {
+	    for (int j=0; j<=i; j++) {
+		smaller_pieces[i] |= (1ULL << j);
+	    }
+	}
+
 	if (tb->variant != VARIANT_SUICIDE) {
 	    total_legal_king_positions = 0;
 	    for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
