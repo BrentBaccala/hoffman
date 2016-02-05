@@ -133,7 +133,10 @@
 
 namespace io = boost::iostreams;
 
+#pragma GCC diagnostic push	/* because libxml++ still uses auto_ptr */
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #include <libxml++/libxml++.h>
+#pragma GCC diagnostic pop
 
 #ifndef _LARGEFILE64_SOURCE
 #define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
