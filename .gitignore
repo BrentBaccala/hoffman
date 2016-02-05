@@ -1,0 +1,54 @@
+
+# Autoconf stuff
+
+aclocal.m4
+autom4te.cache
+config.guess
+config.h
+config.h.in
+config.log
+config.status
+config.sub
+configure
+install-sh
+Makefile
+
+# auto-generated source, objects, and executable
+
+version.h
+tablebase_dtd.h
+*.o
+hoffman
+
+# Hoffman's saved readline history
+
+.hoffman_history
+
+# auto-generated history
+
+ChangeLog
+
+# auto-generated gdb init script
+
+.gdbinit
+
+# auto-generated stuff in the test directory
+
+test/*.xml
+test/*.htb
+
+# Older distributions and executables
+
+hoffman-*.tgz
+hoffman.[0-9]*
+
+# LaTeX cruft
+
+reference.aux
+reference.dvi
+reference.log
+reference.pdf
+tutorial.aux
+tutorial.dvi
+tutorial.log
+tutorial.pdf
