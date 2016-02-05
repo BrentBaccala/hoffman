@@ -785,14 +785,10 @@ typedef struct tablebase {
     int symmetry;
     uint8_t reflections[64][64];
 
-    /* Kings are usually encoded together to take advantage of them never being adjacent.  Given a
-     * pair of king positions, king_index[WHITE_KING_POSITION][BLACK_KING_POSITION] returns the
-     * associated index, while white_king_position[INDEX] and black_king_position[INDEX] reverse
-     * that function.  white_king and black_king are the piece numbers of the two kings.
-     */
-
     std::unique_ptr<struct pawngen> pawngen;
     std::unique_ptr<index_encoding> encoding;
+
+    /* white_king and black_king are the piece numbers of the two kings */
 
     int white_king;
     int black_king;
@@ -807,7 +803,6 @@ typedef struct tablebase {
     /* for futurebases only */
     Glib::ustring filename;
     std::unique_ptr<io::filtering_istream> instream;
-    //const char * filename;
 
     int futurebase_type;
     index_t next_read_index;
@@ -2796,6 +2791,12 @@ class compact_index : public index_encoding
 
     int piece_position[MAX_PIECES][64];
     index_t piece_index[MAX_PIECES][64];
+
+    /* Kings are usually encoded together to take advantage of them never being adjacent.  Given a
+     * pair of king positions, king_index[WHITE_KING_POSITION][BLACK_KING_POSITION] returns the
+     * associated index, while white_king_position[INDEX] and black_king_position[INDEX] reverse
+     * that function.
+     */
 
     uint8_t white_king_position[64*64];
     uint8_t black_king_position[64*64];
