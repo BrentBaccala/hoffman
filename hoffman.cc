@@ -89,6 +89,8 @@
 
 #include "config.h"	/* GNU configure script figures out our build options and writes them here */
 
+#include "version.h"	/* Automatically generated Hoffman_program_version and Hoffman_program_modified */
+
 /* C99 requires a macro to be defined prior to including <inttypes.h> to obtain printf formatting
  * macros PRIu32 and PRIu64.  Under cygwin, however, one of the other include files seems to include
  * <inttypes.h> without this macro set, and the file's protection against multiple inclusion then
@@ -5350,7 +5352,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     he = gethostbyname(hostname);
 
     create_GenStats_node("host")->add_child_text(he->h_name);
-    create_GenStats_node("program")->add_child_text("Hoffman $Revision: 1.944 $ $Locker: baccala $");
+    create_GenStats_node("program")->add_child_text("Hoffman Version " + boost::lexical_cast<std::string>(Hoffman_program_version) + (Hoffman_program_modified ? " (modified)" : ""));
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
     create_GenStats_node("start-time")->add_child_text(strbuf);
@@ -14136,7 +14138,8 @@ int main(int argc, char *argv[])
 
     /* Print a greating banner with program version number. */
 
-    fprintf(stderr, "Hoffman $Revision: 1.944 $ $Locker: baccala $\n");
+    fprintf(stderr, "Hoffman Version %d%s\n", Hoffman_program_version,
+	    Hoffman_program_modified ? " (modified)" : "");
 
     /* Figure how we were called.  This is just to record in the XML output for reference purposes. */
 
