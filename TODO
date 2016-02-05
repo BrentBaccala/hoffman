@@ -11,6 +11,93 @@ next.
 Allow an 'offset' field to adjust the range of the fields, i.e, allow
 DTM field to range from -10 to 5 and still fit into 4 bits.
 
+- fast increment of positions by 1
+
+During initialization, we run through the indices in order
+
+- fast increment of positions by small numbers
+
+During propagation passes, we move sequentially through the table
+
+- fast update of positions by moving a single piece
+
+This is the only way we change them.
+
+
+
+  ;
+
+class index_encoding {
+  virtual index_to_position(index_t index, local_position_t &pos);
+  virtual move_piece(local_position_t, piece, destination_square) {
+    // move piece and recompute index
+  }
+};
+
+class combinadic3 : public index_encoding {
+  index_to_position(index_t index, local_position_t &pos) final {
+    if (position_valid) {
+      if (index - pos.index < small_number) {
+	be smart;
+      }
+    }
+  }
+  move_piece(local_position_t, piece, destination_square) final {
+  }
+  combinadic3(tablebase_t *);
+ private:
+  int last_overlapping_piece[NUM_PIECES];
+};
+
+class tablebase_t {
+  index_encoding encoding;
+
+  encoding = new combinadic3(this);
+
+  index_to_local_position(index_t index, local_position_t &pos) {
+    if (position_valid) {
+      if (index - pos.index == 1) {
+	maybe flip stm;  // stm is LSB
+      }
+      if (index - pos.index > small_number) {
+	process kings;  // kings are next LSB
+	// moving kings affects overlapping pieces
+      }
+      if (index - pos.index > pawngen_limit) {
+	process pawngen;
+      }
+    } else {
+      process stm;
+      process kings;
+      process pawngen;
+    }
+    encoding->index_to_position(index, pos);
+    compute multiplicity;
+    compute board vectors;
+  }
+
+}
+
+class local_position_t {
+  bool position_valid = false;
+  void move_piece(int piece, int destination_square) {
+    tablebase->encoding->move_piece(this, piece, destination_square);
+  }
+  operator++();  // maybe use this
+
+  local_position_t(tablebase) tablebase(tablebase), position_valid(false) { }  
+ private:
+  const tablebase_t &tablebase;
+};
+
+class combinadic3_position : public local_position_t {
+  void move_piece(int piece, int destination_square) {
+    ...;
+  }
+ private:
+  encoding_information;
+};
+
 
 - fast movecnt generation with perfect hashing
 
