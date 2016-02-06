@@ -4083,7 +4083,6 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 
     if (index >= tb->num_indices) return false;
 
-    bzero(position, sizeof(local_position_t));
     position->en_passant_square = ILLEGAL_POSITION;
 
     /* Side-to-move, if present, is always LSB */
@@ -4091,8 +4090,9 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
     if (tb->encode_stm) {
 	position->side_to_move = index % 2;
 	index >>= 1;
+    } else {
+	position->side_to_move = WHITE;
     }
-    /* else p->side_to_move = WHITE, but position has already be bzeroed, and WHITE = 0 */
 
     /* Extract pawngen pawn encoding from the most significant bits. */
 
@@ -4184,9 +4184,8 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
      * set bits in the board vectors.
      */
 
-    // Put these back in when we don't use bzero anymore.
-    //position->board_vector = 0;
-    //position->PTM_vector = 0;
+    position->board_vector = 0;
+    position->PTM_vector = 0;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	position->piece_position[piece] = reverse_reflection[reflection & 7][position->piece_position[piece]];
@@ -4215,6 +4214,7 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	    position->PTM_vector |= BITVECTOR(position->piece_position[piece]);
 	}
     }
+
     if (position->en_passant_square != ILLEGAL_POSITION) {
 	position->en_passant_square = reverse_reflection[reflection & 7][position->en_passant_square];
     }
@@ -4322,12 +4322,20 @@ int check_1000_positions(tablebase_t *tb)
 
 		/* PTM_vector wasn't set in position1, so don't check it now */
 
-		position2.PTM_vector = 0;
-		position2.board_vector = position1.board_vector;
-
-		if (memcmp(&position1, &position2, sizeof(position1))) {
+		if ((position1.board_vector != position2.board_vector)
+		    || (position1.side_to_move != position2.side_to_move)
+		    || (position1.en_passant_square != position2.en_passant_square)
+		    || (position1.multiplicity != position2.multiplicity)) {
 		    fatal("Mismatch in check_1000_positions()\n");
 		    ret = 0;
+		}
+
+		for (piece = 0; piece < tb->num_pieces; piece ++) {
+		    if ((position1.piece_position[piece] != position2.piece_position[piece])
+			|| (position1.permuted_piece[piece] != position2.permuted_piece[piece])) {
+			fatal("Mismatch in check_1000_positions()\n");
+			ret = 0;
+		    }
 		}
 	    }
 	}
