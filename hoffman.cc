@@ -417,6 +417,13 @@ public:
     const char * what() const throw() { return msg.c_str(); }
 };
 
+/* Colors */
+
+#define WHITE 0
+#define BLACK 1
+
+bimap colors = {{"WHITE", WHITE}, {"BLACK", BLACK}};
+
 /* Futuremoves are moves like captures and promotions that lead to a different tablebase.
  * 'futurevectors' are bit vectors used to track which futuremoves have been handled in a particular
  * position.  They are of type futurevector_t, and the primary operations used to construct them are
@@ -543,15 +550,22 @@ struct translation_result;
 template<typename MemberOfWhichClass, typename primative>
 class ReadOnly {
     friend MemberOfWhichClass;
+    friend class naive_index;
+    friend class naive2_index;
+    friend class simple_index;
+    friend class compact_index;
+    friend class combinadic_index;
+
     friend void normalize_position(const struct tablebase *, struct local_position *);
     friend index_t normalized_position_to_index(const struct tablebase *, struct local_position *);
     friend bool index_to_local_position(const struct tablebase *tb, index_t index, int reflection, struct local_position *position);
+    friend int check_1000_positions(struct tablebase *);
+    friend bool parse_FEN_to_local_position(char *, struct tablebase *, struct local_position *);
     friend translation_result translate_foreign_position_to_local_position(struct tablebase *foreign_tb, struct local_position *foreign_position,
 									   struct tablebase *local_tb, struct local_position *local_position,
 									   bool invert_colors);
+    friend translation_result global_position_to_local_position(struct tablebase *tb, struct global_position *global, struct local_position *local);
     friend bool place_piece_in_local_position(struct tablebase *tb, struct local_position *pos, int square, int color, int type);
-    //friend bool move_piece(const struct tablebase * tb, struct local_position *pos, int piece, int destination_square);
-    //friend bool capture_piece(const struct tablebase * tb, struct local_position *pos, int capturing_piece, int captured_piece);
 
 public:
     inline operator primative() const                 { return x; }
@@ -595,12 +609,12 @@ typedef struct local_position {
     int reflection;
 
     ReadOnly<struct local_position, uint64_t> board_vector;
-    uint64_t PTM_vector;
+    ReadOnly<struct local_position, uint64_t> PTM_vector;
     uint8_t piece_position[MAX_PIECES];
     uint8_t permuted_piece[MAX_PIECES];
-    uint8_t side_to_move;
-    uint8_t en_passant_square;
-    uint8_t multiplicity;
+    ReadOnly<struct local_position, uint8_t> side_to_move;
+    ReadOnly<struct local_position, uint8_t> en_passant_square;
+    ReadOnly<struct local_position, uint8_t> multiplicity;
 
     /* I go to the trouble to update board_vector here so we can check en passant legality in
      * propagate_one_move_within_table().
@@ -620,6 +634,24 @@ typedef struct local_position {
 	piece_position[captured_piece] = ILLEGAL_POSITION;
     };
 
+    void flip_side_to_move(void)
+    {
+	if (side_to_move == WHITE) side_to_move = BLACK;
+	else side_to_move = WHITE;
+
+	valid = false;
+    };
+
+    void clear_en_passant_square(void)
+    {
+	en_passant_square = ILLEGAL_POSITION;
+    }
+
+    void set_en_passant_square(int square)
+    {
+	en_passant_square = square;
+    }
+
 } local_position_t;
 
 /* This is a global position, that doesn't depend on a particular tablebase.  It's slower to
@@ -627,7 +659,7 @@ typedef struct local_position {
  * empty square, and one of the FEN characters for a chess piece.
  */
 
-typedef struct {
+typedef struct global_position {
     unsigned char board[64];
     short side_to_move;
     short en_passant_square;
@@ -662,11 +694,6 @@ const char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
 
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
-
-#define WHITE 0
-#define BLACK 1
-
-bimap colors = {{"WHITE", WHITE}, {"BLACK", BLACK}};
 
 /* Possibilities for pawn promotions.  "2" means queen and knight, but that can cause some problems,
  * as I've learned the hard (and embarrassing) way.  "4" is typical, but "5" is used for suicide
@@ -6105,16 +6132,6 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
 
 /***** INDICES AND POSITIONS *****/
 
-inline void flip_side_to_move_local(local_position_t *position)
-{
-    if (position->side_to_move == WHITE)
-	position->side_to_move = BLACK;
-    else
-	position->side_to_move = WHITE;
-
-    position->valid = false;
-}
-
 inline void flip_side_to_move_global(global_position_t *position)
 {
     if (position->side_to_move == WHITE)
@@ -6269,7 +6286,7 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 	local_position->en_passant_square = vertical_reflection(local_position->en_passant_square);
 
     local_position->side_to_move = foreign_position->side_to_move;
-    if (invert_colors) flip_side_to_move_local(local_position);
+    if (invert_colors) local_position->flip_side_to_move();
 
     /* First, see if we can slot foreign pieces into the local tablebase on semilegal squares. */
 
@@ -9408,7 +9425,7 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 		&& (ROW(position->piece_position[piece]) == 3)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
-		position->en_passant_square = position->piece_position[piece] - 8;
+		position->set_en_passant_square(position->piece_position[piece] - 8);
 		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
@@ -9416,11 +9433,11 @@ void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futu
 		&& (ROW(position->piece_position[piece]) == 4)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
-		position->en_passant_square = position->piece_position[piece] + 8;
+		position->set_en_passant_square(position->piece_position[piece] + 8);
 		propagate_minilocal_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
-	    position->en_passant_square = ILLEGAL_POSITION;
+	    position->clear_en_passant_square();
 	}
     }
 }
@@ -9484,7 +9501,7 @@ void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t 
 		&& (ROW(position->piece_position[piece]) == 3)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
-		position->en_passant_square = position->piece_position[piece] - 8;
+		position->set_en_passant_square(position->piece_position[piece] - 8);
 		propagate_mini_normalized_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
@@ -9492,11 +9509,11 @@ void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t 
 		&& (ROW(position->piece_position[piece]) == 4)
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 		&& !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
-		position->en_passant_square = position->piece_position[piece] + 8;
+		position->set_en_passant_square(position->piece_position[piece] + 8);
 		propagate_mini_normalized_position_from_futurebase(tb, futurebase, future_index, futuremove, position);
 	    }
 
-	    position->en_passant_square = ILLEGAL_POSITION;
+	    position->clear_en_passant_square();
 	}
     }
 }
@@ -9655,7 +9672,7 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 
 	/* We're going to back step a half move now */
 
-	flip_side_to_move_local(&position);
+	position.flip_side_to_move();
 
 	/* We need an extra loop in here to handle futurebases with multiple identical pieces.
 	 * Let's say we're back propagating from a Q+Q endgame into a Q+P endgame.  If we've got a
@@ -9778,7 +9795,7 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 	/* We're going to back step a half move now */
 
-	flip_side_to_move_local(&position);
+	position.flip_side_to_move();
 
 	/* We need an extra loop in here to handle futurebases with multiple identical pieces.
 	 * Let's say we're back propagating from a Q+Q endgame into a Q+P endgame.  If we've got a
@@ -10037,7 +10054,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 		    normalized_position = *position;
 
-		    normalized_position.en_passant_square = position->piece_position[captured_piece];
+		    normalized_position.set_en_passant_square(position->piece_position[captured_piece]);
 		    normalized_position.piece_position[captured_piece] += 8;
 
 		    if ((current_tb->pieces[captured_piece].semilegal_squares
@@ -10065,7 +10082,7 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 		    normalized_position = *position;
 
-		    normalized_position.en_passant_square = position->piece_position[captured_piece];
+		    normalized_position.set_en_passant_square(position->piece_position[captured_piece]);
 		    normalized_position.piece_position[captured_piece] -= 8;
 
 		    if ((current_tb->pieces[captured_piece].semilegal_squares
@@ -10152,7 +10169,7 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 
 	/* We're going to back step a half move now */
 
-	flip_side_to_move_local(&position);
+	position.flip_side_to_move();
 
 	if (translation.restricted_piece == NONE) {
 
@@ -10265,8 +10282,8 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 		return;
 	    }
 
-	    flip_side_to_move_local(&current_position);
-	    current_position.en_passant_square = ILLEGAL_POSITION;
+	    current_position.flip_side_to_move();
+	    current_position.clear_en_passant_square();
 
 	    int square;
 	    if (current_tb->pieces[piece].color == WHITE)
@@ -10331,7 +10348,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 		     * propagate_one_move_within_table()
 		     */
 
-		    flip_side_to_move_local(&current_position);
+		    current_position.flip_side_to_move();
 
 		    current_position.move_piece(piece, movementptr->square);
 
@@ -10379,7 +10396,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 		current_position = parent_position;
 
-		flip_side_to_move_local(&current_position);
+		current_position.flip_side_to_move();
 
 		current_position.move_piece(piece, movementptr->square);
 
@@ -11632,7 +11649,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 	    && (ROW(position->piece_position[piece]) == 3)
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
-	    position->en_passant_square = position->piece_position[piece] - 8;
+	    position->set_en_passant_square(position->piece_position[piece] - 8);
 	    propagate_one_minimove_within_table(tb, future_index, position);
 	}
 
@@ -11640,11 +11657,11 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 	    && (ROW(position->piece_position[piece]) == 4)
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
-	    position->en_passant_square = position->piece_position[piece] + 8;
+	    position->set_en_passant_square(position->piece_position[piece] + 8);
 	    propagate_one_minimove_within_table(tb, future_index, position);
 	}
 
-	position->en_passant_square = ILLEGAL_POSITION;
+	position->clear_en_passant_square();
     }
 }
 
@@ -11678,7 +11695,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 	info("back_propagate_index_within_table; index=%" PRIindex "; reflection %d\n", index, reflection);
 #endif
 
-    flip_side_to_move_local(&position);
+    position.flip_side_to_move();
 
     /* If there are any en passant capturable pawns in the position, then the last move had to
      * have been a pawn move.  In fact, in this case, we already know exactly what the last move
@@ -11725,7 +11742,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	    local_position_t new_position = position;
 
-	    new_position.en_passant_square = ILLEGAL_POSITION;
+	    new_position.clear_en_passant_square();
 
 	    new_position.move_piece(en_passant_pawn, square);
 
@@ -11841,11 +11858,11 @@ void back_propagate_index_within_table(index_t index, int reflection)
 		    local_position_t new_position = position;
 
 		    if (new_position.side_to_move == WHITE) {
-			new_position.en_passant_square = origin_square - 8;
+			new_position.set_en_passant_square(origin_square - 8);
 		    } else {
-			new_position.en_passant_square = origin_square + 8;
+			new_position.set_en_passant_square(origin_square + 8);
 		    }
-		    flip_side_to_move_local(&new_position);
+		    new_position.flip_side_to_move();
 
 		    bool en_passant_position_exists = (local_position_to_index(current_tb, &new_position) != INVALID_INDEX);
 
@@ -13187,8 +13204,8 @@ void verify_tablebase_internally_thread(void)
 
 	if (!index_to_local_position(current_tb, index, REFLECTION_NONE, &position)) continue;
 
-	flip_side_to_move_local(&position);
-	position.en_passant_square = ILLEGAL_POSITION;
+	position.flip_side_to_move();
+	position.clear_en_passant_square();
 
 	for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
@@ -13259,7 +13276,7 @@ void verify_tablebase_internally_thread(void)
 		    new_position.move_piece(piece, movementptr->square);
 
 		    if (abs(movementptr->square - origin_square) == 16) {
-			new_position.en_passant_square = (movementptr->square + origin_square) / 2;
+			new_position.set_en_passant_square((movementptr->square + origin_square) / 2);
 		    }
 
 		    if (! PNTM_in_check(current_tb, &new_position)
