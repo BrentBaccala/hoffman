@@ -569,37 +569,12 @@ class ReadOnly {
 
 public:
     inline operator primative() const                 { return x; }
-    //inline operator primative()                 { return x; }
-    //inline operator primative&()                 { return x; }
-
-#if 0
-    template<typename number> inline bool   operator==(const number& y) const { return x == y; }
-    template<typename number> inline number operator+ (const number& y) const { return x + y; }
-    template<typename number> inline number operator- (const number& y) const { return x - y; }
-    template<typename number> inline number operator* (const number& y) const { return x * y; }
-    template<typename number> inline number operator/ (const number& y) const { return x / y; }
-    template<typename number> inline number operator<<(const number& y) const { return x <<y; }
-    template<typename number> inline number operator>>(const number& y) const { return x >> y; }
-    template<typename number> inline number operator^ (const number& y) const { return x ^ y; }
-    template<typename number> inline number operator| (const number& y) const { return x | y; }
-    template<typename number> inline number operator& (const number& y) const { return x & y; }
-    template<typename number> inline number operator&&(const number& y) const { return x &&y; }
-    template<typename number> inline number operator||(const number& y) const { return x ||y; }
-    template<typename number> inline number operator~() const                 { return ~x; }
-#endif
 
 protected:
-    //inline operator primative&()                 { return x; }
     template<typename number> inline number operator= (const number& y) { return x = y; }
-    //template<typename number> inline number operator= (const number& y) = delete;
-#if 1
     template<typename number> inline number operator+=(const number& y) { return x += y; }
-    template<typename number> inline number operator-=(const number& y) { return x -= y; }
-    template<typename number> inline number operator*=(const number& y) { return x *= y; }
-    template<typename number> inline number operator/=(const number& y) { return x /= y; }
     template<typename number> inline number operator&=(const number& y) { return x &= y; }
     template<typename number> inline number operator|=(const number& y) { return x |= y; }
-#endif
     primative x;
 };
 
@@ -610,9 +585,8 @@ typedef struct local_position {
 
     ReadOnly<struct local_position, uint64_t> board_vector;
     ReadOnly<struct local_position, uint64_t> PTM_vector;
-    //uint8_t piece_position[MAX_PIECES];
     std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> piece_position;
-    uint8_t permuted_piece[MAX_PIECES];
+    std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> permuted_piece;
     ReadOnly<struct local_position, uint8_t> side_to_move;
     ReadOnly<struct local_position, uint8_t> en_passant_square;
     ReadOnly<struct local_position, uint8_t> multiplicity;
