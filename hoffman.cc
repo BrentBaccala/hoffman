@@ -3246,13 +3246,6 @@ public:
  * can be inverted.
  */
 
-void transpose_array(uint8_t *array, int index1, int index2)
-{
-    uint8_t tmp = array[index2];
-    array[index2] = array[index1];
-    array[index1] = tmp;
-}
-
 int choose(int n, int k) {
     long retval = 1;
     int i;
@@ -3358,7 +3351,7 @@ public:
 	    piece2 = piece;
 	    while ((prev_piece_in_encoding_group[piece2] != -1)
 		   && (vals[piece2] < vals[prev_piece_in_encoding_group[piece2]])) {
-		transpose_array(vals, piece2, prev_piece_in_encoding_group[piece2]);
+		std::swap(vals[piece2], vals[prev_piece_in_encoding_group[piece2]]);
 		piece2 = prev_piece_in_encoding_group[piece2];
 	    }
 	}
@@ -3540,7 +3533,7 @@ public:
 		     && (p->piece_position[prev_piece_in_encoding_group[piece]]
 			 > p->piece_position[piece]);
 		 piece = next_piece_in_encoding_group[piece]) {
-		transpose_array(p->piece_position, piece, prev_piece_in_encoding_group[piece]);
+		std::swap(p->piece_position[piece], p->piece_position[prev_piece_in_encoding_group[piece]]);
 		en_passant_pawn = piece;
 	    }
 
@@ -3590,8 +3583,8 @@ public:
 		    }
 
 		    /* permute */
-		    transpose_array(p->piece_position,
-				    tb->pieces[piece].permutations[perm] & 0xff, tb->pieces[piece].permutations[perm] >> 8);
+		    std::swap(p->piece_position[tb->pieces[piece].permutations[perm] & 0xff],
+			      p->piece_position[tb->pieces[piece].permutations[perm] >> 8]);
 		    perm ++;
 		}
 	    }
@@ -3897,7 +3890,7 @@ void init_reflections(void)
     }
 }
 
-bool semilegal_group_is_legal(const tablebase_t *tb, local_position_t *position, int first_piece_in_group)
+bool semilegal_group_is_legal(const tablebase_t *tb, const local_position_t *position, int first_piece_in_group)
 {
     for (int piece = first_piece_in_group; piece != -1; piece = tb->pieces[piece].next_piece_in_semilegal_group) {
 	if (! (tb->pieces[piece].legal_squares & BITVECTOR(position->piece_position[piece]))) {
@@ -3914,12 +3907,10 @@ bool permute_semilegal_group_until_legal(const tablebase_t *tb, local_position_t
 
 	if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
 
-	transpose_array(position->piece_position,
-			tb->pieces[first_piece_in_group].permutations[perm] & 0xff,
-			tb->pieces[first_piece_in_group].permutations[perm] >> 8);
-	transpose_array(permutation,
-			tb->pieces[first_piece_in_group].permutations[perm] & 0xff,
-			tb->pieces[first_piece_in_group].permutations[perm] >> 8);
+	std::swap(position->piece_position[tb->pieces[first_piece_in_group].permutations[perm] & 0xff],
+		  position->piece_position[tb->pieces[first_piece_in_group].permutations[perm] >> 8]);
+	std::swap(permutation[tb->pieces[first_piece_in_group].permutations[perm] & 0xff],
+		  permutation[tb->pieces[first_piece_in_group].permutations[perm] >> 8]);
     }
 
     if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
@@ -3929,8 +3920,8 @@ bool permute_semilegal_group_until_legal(const tablebase_t *tb, local_position_t
      * return false.
      */
 
-    transpose_array(position->piece_position,
-		    first_piece_in_group, tb->pieces[first_piece_in_group].next_piece_in_semilegal_group);
+    std::swap(position->piece_position[first_piece_in_group],
+	      position->piece_position[tb->pieces[first_piece_in_group].next_piece_in_semilegal_group]);
     return false;
 }
 
@@ -3951,7 +3942,8 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
 	    permutation[piece] = tb->pieces[piece].color_symmetric_transpose;
 	    if (tb->pieces[piece].color_symmetric_transpose > piece) {
 		position->piece_position[piece] = 63 - position->piece_position[piece];
-		transpose_array(position->piece_position, piece, tb->pieces[piece].color_symmetric_transpose);
+		std::swap(position->piece_position[piece],
+			  position->piece_position[tb->pieces[piece].color_symmetric_transpose]);
 		position->piece_position[piece] = 63 - position->piece_position[piece];
 	    }
 	}
@@ -4008,8 +4000,10 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
 	while ((tb->pieces[piece2].prev_piece_in_semilegal_group != -1)
 	       && (position->piece_position[piece2]
 		   < position->piece_position[tb->pieces[piece2].prev_piece_in_semilegal_group])) {
-	    transpose_array(position->piece_position, piece2, tb->pieces[piece2].prev_piece_in_semilegal_group);
-	    transpose_array(permutation, piece2, tb->pieces[piece2].prev_piece_in_semilegal_group);
+	    std::swap(position->piece_position[piece2],
+		      position->piece_position[tb->pieces[piece2].prev_piece_in_semilegal_group]);
+	    std::swap(permutation[piece2],
+		      permutation[tb->pieces[piece2].prev_piece_in_semilegal_group]);
 	    piece2 = tb->pieces[piece2].prev_piece_in_semilegal_group;
 	}
     }
@@ -4346,7 +4340,8 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    if (tb->pieces[piece].color_symmetric_transpose > piece) {
 		position->piece_position[piece] = 63 - position->piece_position[piece];
-		transpose_array(position->piece_position, piece, tb->pieces[piece].color_symmetric_transpose);
+		std::swap(position->piece_position[piece],
+			  position->piece_position[tb->pieces[piece].color_symmetric_transpose]);
 		position->piece_position[piece] = 63 - position->piece_position[piece];
 	    }
 	}
@@ -6442,23 +6437,28 @@ index_t global_position_to_index(tablebase_t *tb, global_position_t *global)
  * Seems never to be used on a tablebase under construction; only on a finished one.
  */
 
-bool index_to_global_position(const tablebase_t *tb, index_t index, global_position_t *global)
+void local_position_to_global_position(const tablebase_t *tb, const local_position_t& local, global_position_t *global)
 {
-    local_position_t local;
-    int piece;
-
     memset(global, 0, sizeof(global_position_t));
-
-    if (! index_to_local_position(tb, index, REFLECTION_NONE, &local)) return false;
 
     global->side_to_move = local.side_to_move;
     global->en_passant_square = local.en_passant_square;
     global->variant = tb->variant;
 
-    for (piece = 0; piece < tb->num_pieces; piece++) {
+    for (int piece = 0; piece < tb->num_pieces; piece++) {
 	global->board[local.piece_position[piece]]
 	    = global_pieces[tb->pieces[piece].color][tb->pieces[piece].piece_type];
     }
+}
+
+
+bool index_to_global_position(const tablebase_t *tb, index_t index, global_position_t *global)
+{
+    local_position_t local;
+
+    if (! index_to_local_position(tb, index, REFLECTION_NONE, &local)) return false;
+
+    local_position_to_global_position(tb, local, global);
 
     return true;
 }
