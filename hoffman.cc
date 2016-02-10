@@ -610,7 +610,8 @@ typedef struct local_position {
 
     ReadOnly<struct local_position, uint64_t> board_vector;
     ReadOnly<struct local_position, uint64_t> PTM_vector;
-    uint8_t piece_position[MAX_PIECES];
+    //uint8_t piece_position[MAX_PIECES];
+    std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> piece_position;
     uint8_t permuted_piece[MAX_PIECES];
     ReadOnly<struct local_position, uint8_t> side_to_move;
     ReadOnly<struct local_position, uint8_t> en_passant_square;
@@ -628,11 +629,29 @@ typedef struct local_position {
 	board_vector |= BITVECTOR(piece_position[piece]);
     };
 
+    void place_piece(int piece, int destination_square) {
+	if (piece_position[piece] != ILLEGAL_POSITION) {
+	    throw nested_exception("Attempted to place_piece that was already placed");
+	}
+	piece_position[piece] = destination_square;
+	board_vector |= BITVECTOR(piece_position[piece]);
+    };
+
     void capture_piece(int capturing_piece, int captured_piece) {
 	board_vector &= ~BITVECTOR(piece_position[capturing_piece]);
 	piece_position[capturing_piece] = piece_position[captured_piece];
 	piece_position[captured_piece] = ILLEGAL_POSITION;
     };
+
+    void uncapture_piece(int capturing_piece, int captured_piece, int square) {
+	piece_position[captured_piece] = piece_position[capturing_piece];
+	piece_position[capturing_piece] = square;
+	board_vector |= BITVECTOR(square);
+    }
+
+    void swap_pieces(int piece1, int piece2) {
+	std::swap(piece_position[piece1], piece_position[piece2]);
+    }
 
     void flip_side_to_move(void)
     {
@@ -9634,7 +9653,6 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 {
     local_position_t foreign_position;
     local_position_t position;
-    local_position_t normalized_position;
     translation_result translation;
     int true_pawn;
 
@@ -9715,24 +9733,21 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 		if (!(position.board_vector & BITVECTOR(promotion_sq - promotion_move))
 		    && (current_tb->pieces[pawn].semilegal_squares & BITVECTOR(promotion_sq - promotion_move))) {
 
-		    /* Because the promoted piece was 'extra' it doesn't appear in the local
-		     * position, so we don't have to worry about taking it off the board.  Put the
-		     * missing pawn on the seventh (or second).
-		     */
+		    local_position_t new_position = position;
 
-		    position.piece_position[pawn] = promotion_sq - promotion_move;
+		    /* Put the missing pawn on the seventh (or second). */
+
+		    new_position.place_piece(pawn, promotion_sq - promotion_move);
 
 		    /* Normalize the position, and back prop it. */
 
-		    normalized_position = position;
+		    normalize_position(current_tb, &new_position);
 
-		    normalize_position(current_tb, &normalized_position);
-
-		    true_pawn = normalized_position.permuted_piece[pawn];
+		    true_pawn = new_position.permuted_piece[pawn];
 
 		    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 								  promotions[true_pawn][futurebase->promotion],
-								  &normalized_position);
+								  &new_position);
 		}
 
 	    }
@@ -9745,7 +9760,7 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 
 	    int new_promotion_sq = position.piece_position[local_piece];
 
-	    position.piece_position[local_piece] = promotion_sq;
+	    position.move_piece(local_piece, promotion_sq);
 	    promotion_sq = new_promotion_sq;
 
 	    local_piece = current_tb->pieces[local_piece].next_piece_in_semilegal_group;
@@ -9757,7 +9772,6 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 {
     local_position_t foreign_position;
     local_position_t position;
-    local_position_t normalized_position;
     translation_result translation;
     int true_captured_piece;
     int true_pawn;
@@ -9831,10 +9845,6 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 	    if ((promotion_sq >= first_back_rank_square) && (promotion_sq <= last_back_rank_square)) {
 
-		/* Put the piece that was captured onto the board on the promotion square. */
-
-		position.piece_position[translation.missing_piece2] = promotion_sq;
-
 		/* Consider first a capture to the left (white's left).  There has to be an empty
 		 * square where the pawn came from, and it has to be at least semilegal.
 		 */
@@ -9843,21 +9853,22 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move - 1))
 		    && (current_tb->pieces[translation.missing_piece1].semilegal_squares & BITVECTOR(promotion_sq - promotion_move - 1))) {
 
-		    /* Because the promoted piece was 'extra' it doesn't appear in the local
-		     * position, so we don't have to worry about taking it off the board.  Put the
-		     * missing pawn on the seventh (or second).
-		     */
+		    local_position_t new_position = position;
 
-		    position.piece_position[translation.missing_piece1] = promotion_sq - promotion_move - 1;
+		    /* Put the piece that was captured onto the board on the promotion square. */
+
+		    new_position.place_piece(translation.missing_piece2, promotion_sq);
+
+		    /* Put the missing pawn on the seventh (or second). */
+
+		    new_position.place_piece(translation.missing_piece1, promotion_sq - promotion_move - 1);
 
 		    /* Back propagate the resulting position */
 
-		    normalized_position = position;
+		    normalize_position(current_tb, &new_position);
 
-		    normalize_position(current_tb, &normalized_position);
-
-		    true_captured_piece = normalized_position.permuted_piece[translation.missing_piece2];
-		    true_pawn = normalized_position.permuted_piece[translation.missing_piece1];
+		    true_captured_piece = new_position.permuted_piece[translation.missing_piece2];
+		    true_pawn = new_position.permuted_piece[translation.missing_piece1];
 
 		    /* This function also back props any similar positions with one of the pawns
 		     * from the side that didn't promote in an en passant state.
@@ -9865,7 +9876,7 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 		    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 								  promotion_captures[true_pawn][true_captured_piece][futurebase->promotion],
-								  &normalized_position);
+								  &new_position);
 
 		}
 
@@ -9877,23 +9888,24 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 		    && !(position.board_vector & BITVECTOR(promotion_sq - promotion_move + 1))
 		    && (current_tb->pieces[translation.missing_piece1].semilegal_squares & BITVECTOR(promotion_sq - promotion_move + 1))) {
 
-		    /* Because the promoted piece was 'extra' it doesn't appear in the local
-		     * position, so we don't have to worry about taking it off the board.  Put
-		     * the missing pawn on the seventh (or second).
-		     */
+		    local_position_t new_position = position;
 
-		    position.piece_position[translation.missing_piece1] = promotion_sq - promotion_move + 1;
+		    /* Put the piece that was captured onto the board on the promotion square. */
 
-		    normalized_position = position;
+		    new_position.place_piece(translation.missing_piece2, promotion_sq);
 
-		    normalize_position(current_tb, &normalized_position);
+		    /* Put the missing pawn on the seventh (or second). */
 
-		    true_captured_piece = normalized_position.permuted_piece[translation.missing_piece2];
-		    true_pawn = normalized_position.permuted_piece[translation.missing_piece1];
+		    new_position.place_piece(translation.missing_piece1, promotion_sq - promotion_move + 1);
+
+		    normalize_position(current_tb, &new_position);
+
+		    true_captured_piece = new_position.permuted_piece[translation.missing_piece2];
+		    true_pawn = new_position.permuted_piece[translation.missing_piece1];
 
 		    propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 								  promotion_captures[true_pawn][true_captured_piece][futurebase->promotion],
-								  &normalized_position);
+								  &new_position);
 
 		}
 
@@ -9907,7 +9919,7 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 
 	    int new_promotion_sq = position.piece_position[local_piece];
 
-	    position.piece_position[local_piece] = promotion_sq;
+	    position.move_piece(local_piece, promotion_sq);
 	    promotion_sq = new_promotion_sq;
 
 	    local_piece = current_tb->pieces[local_piece].next_piece_in_semilegal_group;
@@ -9925,22 +9937,17 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
  * on invert_colors_of_global position.
  */
 
-void consider_possible_captures(index_t future_index, local_position_t *position,
-				int capturing_piece, int captured_piece)
+void consider_possible_captures(const index_t future_index, const local_position_t *position,
+				const int capturing_piece, const int captured_piece)
 {
     int dir;
     struct movement *movementptr;
-    local_position_t normalized_position;
     int true_captured_piece;
     int true_capturing_piece;
 
     /* We only want to consider pieces of the side which captured... */
 
     if (current_tb->pieces[capturing_piece].color == current_tb->pieces[captured_piece].color) return;
-
-    /* Put the captured piece on the capturing piece's square (from the future position).  */
-
-    position->piece_position[captured_piece] = position->piece_position[capturing_piece];
 
     /* When we finally convert the position to an index (in local_position_to_index()), we'll make a
      * copy of the position and normalize it by sorting the identical pieces so that they are in
@@ -9953,14 +9960,14 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
     if (current_tb->pieces[capturing_piece].piece_type != PAWN) {
 
-	/* If the square we put the captured piece on isn't semilegal for it, then don't consider
-	 * this capturing piece in this future position any more.  This is after the "if" instead of
-	 * before it because an en passant pawn capture is special, since then the capturing piece
-	 * ends up on a different square from the captured piece.
+	/* If the square we're about to put the captured piece on isn't semilegal for it, then don't
+	 * consider this capturing piece in this future position any more.  This is after the "if"
+	 * instead of before it because an en passant pawn capture is special, since then the
+	 * capturing piece ends up on a different square from the captured piece.
 	 */
 
 	if (!(current_tb->pieces[captured_piece].semilegal_squares
-	      & BITVECTOR(position->piece_position[captured_piece]))) {
+	      & BITVECTOR(position->piece_position[capturing_piece]))) {
 	    return;
 	}
 
@@ -9982,18 +9989,18 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		 * be the pieces we started with (see comments on normalization).
 		 */
 
-		normalized_position = *position;
+		local_position_t new_position = *position;
 
-		normalized_position.piece_position[capturing_piece] = movementptr->square;
+		new_position.uncapture_piece(capturing_piece, captured_piece, movementptr->square);
 
-		normalize_position(current_tb, &normalized_position);
+		normalize_position(current_tb, &new_position);
 
-		true_capturing_piece = normalized_position.permuted_piece[capturing_piece];
-		true_captured_piece = normalized_position.permuted_piece[captured_piece];
+		true_capturing_piece = new_position.permuted_piece[capturing_piece];
+		true_captured_piece = new_position.permuted_piece[captured_piece];
 
 		propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 							      futurecaptures[true_capturing_piece][true_captured_piece],
-							      &normalized_position);
+							      &new_position);
 	    }
 	}
 
@@ -10009,26 +10016,27 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 
 	    if ((movementptr->vector & position->board_vector) != 0) continue;
 
-	    /* Move back the capturing pawn and see if it came from a semilegal square for it. */
+	    /* See if it came from a semilegal square for it. */
 
-	    position->piece_position[capturing_piece] = movementptr->square;
 	    if (! (current_tb->pieces[capturing_piece].semilegal_squares & movementptr->vector)) continue;
 
-	    /* And if the captured piece is also on a semilegal square for it... */
+	    /* And if the captured piece will end up on a semilegal square for it... */
 
 	    if ((current_tb->pieces[captured_piece].semilegal_squares
-		 & BITVECTOR(position->piece_position[captured_piece]))) {
+		 & BITVECTOR(position->piece_position[capturing_piece]))) {
 
-		normalized_position = *position;
+		local_position_t new_position = *position;
 
-		normalize_position(current_tb, &normalized_position);
+		new_position.uncapture_piece(capturing_piece, captured_piece, movementptr->square);
 
-		true_capturing_piece = normalized_position.permuted_piece[capturing_piece];
-		true_captured_piece = normalized_position.permuted_piece[captured_piece];
+		normalize_position(current_tb, &new_position);
+
+		true_capturing_piece = new_position.permuted_piece[capturing_piece];
+		true_captured_piece = new_position.permuted_piece[captured_piece];
 
 		propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 							      futurecaptures[true_capturing_piece][true_captured_piece],
-							      &normalized_position);
+							      &new_position);
 
 	    }
 
@@ -10042,8 +10050,8 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 	     */
 
 	    if ((current_tb->pieces[captured_piece].piece_type == PAWN)
-		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]-8))
-		&& !(position->board_vector & BITVECTOR(position->piece_position[captured_piece]+8))) {
+		&& !(position->board_vector & BITVECTOR(position->piece_position[capturing_piece]-8))
+		&& !(position->board_vector & BITVECTOR(position->piece_position[capturing_piece]+8))) {
 
 		if ((current_tb->pieces[capturing_piece].color == BLACK) && (ROW(movementptr->square) == 3)) {
 
@@ -10052,22 +10060,25 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		     * The white pawn is actually a rank higher than usual.
 		     */
 
-		    normalized_position = *position;
-
-		    normalized_position.set_en_passant_square(position->piece_position[captured_piece]);
-		    normalized_position.piece_position[captured_piece] += 8;
-
 		    if ((current_tb->pieces[captured_piece].semilegal_squares
-			 & BITVECTOR(normalized_position.piece_position[captured_piece]))) {
+			 & BITVECTOR(position->piece_position[capturing_piece] + 8))) {
 
-			normalize_position(current_tb, &normalized_position);
+			local_position_t new_position = *position;
 
-			true_capturing_piece = normalized_position.permuted_piece[capturing_piece];
-			true_captured_piece = normalized_position.permuted_piece[captured_piece];
+			new_position.uncapture_piece(capturing_piece, captured_piece, movementptr->square);
+
+			new_position.set_en_passant_square(new_position.piece_position[captured_piece]);
+
+			new_position.move_piece(captured_piece, new_position.piece_position[captured_piece] + 8);
+
+			normalize_position(current_tb, &new_position);
+
+			true_capturing_piece = new_position.permuted_piece[capturing_piece];
+			true_captured_piece = new_position.permuted_piece[captured_piece];
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 								      futurecaptures[true_capturing_piece][true_captured_piece],
-								      &normalized_position);
+								      &new_position);
 
 		    }
 
@@ -10080,39 +10091,31 @@ void consider_possible_captures(index_t future_index, local_position_t *position
 		     * The black pawn is actually a rank lower than usual.
 		     */
 
-		    normalized_position = *position;
-
-		    normalized_position.set_en_passant_square(position->piece_position[captured_piece]);
-		    normalized_position.piece_position[captured_piece] -= 8;
-
 		    if ((current_tb->pieces[captured_piece].semilegal_squares
-			 & BITVECTOR(normalized_position.piece_position[captured_piece]))) {
+			 & BITVECTOR(position->piece_position[capturing_piece] - 8))) {
 
-			normalize_position(current_tb, &normalized_position);
+			local_position_t new_position = *position;
 
-			true_capturing_piece = normalized_position.permuted_piece[capturing_piece];
-			true_captured_piece = normalized_position.permuted_piece[captured_piece];
+			new_position.uncapture_piece(capturing_piece, captured_piece, movementptr->square);
+
+			new_position.set_en_passant_square(new_position.piece_position[captured_piece]);
+
+			new_position.move_piece(captured_piece, new_position.piece_position[captured_piece] - 8);
+
+			normalize_position(current_tb, &new_position);
+
+			true_capturing_piece = new_position.permuted_piece[capturing_piece];
+			true_captured_piece = new_position.permuted_piece[captured_piece];
 
 			propagate_normalized_position_from_futurebase(current_tb, futurebase, future_index,
 								      futurecaptures[true_capturing_piece][true_captured_piece],
-								      &normalized_position);
+								      &new_position);
 
 		    }
 		}
 	    }
-
 	}
-
     }
-
-    /* Put the capturing piece back where it came from (on the capture square) so that we can use
-     * this local position again (on another call to this function) to consider other potential
-     * capturing pieces without having to copy or recreate the entire local position structure.
-     */
-
-
-    position->piece_position[capturing_piece] = position->piece_position[captured_piece];
-
 }
 
 void propagate_moves_from_capture_futurebase(index_t future_index, int reflection)
@@ -10201,12 +10204,11 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 		    && (current_tb->pieces[piece].piece_type == current_tb->pieces[translation.restricted_piece].piece_type)
 		    && (current_tb->pieces[piece].semilegal_squares & BITVECTOR(restricted_square))) {
 
-		    position.piece_position[translation.restricted_piece] = position.piece_position[piece];
-		    position.piece_position[piece] = restricted_square;
+		    position.swap_pieces(translation.restricted_piece, piece);
 
 		    consider_possible_captures(future_index, &position, translation.restricted_piece, captured_piece);
 
-		    position.piece_position[piece] = position.piece_position[translation.restricted_piece];
+		    position.swap_pieces(translation.restricted_piece, piece);
 		}
 	    }
 	}
@@ -10287,9 +10289,9 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 	    int square;
 	    if (current_tb->pieces[piece].color == WHITE)
-		square = current_position.piece_position[piece] -= 16;
+		square = current_position.piece_position[piece] - 16;
 	    else
-		square = current_position.piece_position[piece] += 16;
+		square = current_position.piece_position[piece] + 16;
 
 	    current_position.move_piece(piece, square);
 
