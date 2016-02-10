@@ -501,7 +501,9 @@ futurevector_t optimized_futuremoves[2] = {0, 0};
  * Local positions use numbers (0-63) indicating the positions of the pieces, and also have a quick
  * way to check captures using a PTM_vector (pieces of the Player to Move).  You have to look into
  * the tablebase structure to figure out what piece corresponds to each number.  PTM_vector is only
- * used during tablebase initialization and in the probe code.
+ * used during tablebase initialization and in the probe code.  During initialization, we consider
+ * captures to determine if they're legal moves, or pruned moves, so we might set one piece position
+ * to ILLEGAL_POSITION.
  *
  * It makes sense to include these vectors in the position structures because it's easiest to
  * compute them in the routines that convert indices to positions, but if you alter the position,
@@ -522,8 +524,63 @@ futurevector_t optimized_futuremoves[2] = {0, 0};
  *
  */
 
-typedef struct {
-    uint64_t board_vector;
+struct translation_result;
+
+template<typename MemberOfWhichClass, typename primative>
+class ReadOnly {
+    friend MemberOfWhichClass;
+    friend void normalize_position(const struct tablebase *, struct local_position *);
+    friend index_t normalized_position_to_index(const struct tablebase *, struct local_position *);
+    friend bool index_to_local_position(const struct tablebase *tb, index_t index, int reflection, struct local_position *position);
+    friend translation_result translate_foreign_position_to_local_position(struct tablebase *foreign_tb, struct local_position *foreign_position,
+									   struct tablebase *local_tb, struct local_position *local_position,
+									   bool invert_colors);
+    friend bool place_piece_in_local_position(struct tablebase *tb, struct local_position *pos, int square, int color, int type);
+    friend bool move_piece(const struct tablebase * tb, struct local_position *pos, int piece, int destination_square);
+    friend bool capture_piece(const struct tablebase * tb, struct local_position *pos, int capturing_piece, int captured_piece);
+
+public:
+    inline operator primative() const                 { return x; }
+    //inline operator primative()                 { return x; }
+    //inline operator primative&()                 { return x; }
+
+#if 0
+    template<typename number> inline bool   operator==(const number& y) const { return x == y; }
+    template<typename number> inline number operator+ (const number& y) const { return x + y; }
+    template<typename number> inline number operator- (const number& y) const { return x - y; }
+    template<typename number> inline number operator* (const number& y) const { return x * y; }
+    template<typename number> inline number operator/ (const number& y) const { return x / y; }
+    template<typename number> inline number operator<<(const number& y) const { return x <<y; }
+    template<typename number> inline number operator>>(const number& y) const { return x >> y; }
+    template<typename number> inline number operator^ (const number& y) const { return x ^ y; }
+    template<typename number> inline number operator| (const number& y) const { return x | y; }
+    template<typename number> inline number operator& (const number& y) const { return x & y; }
+    template<typename number> inline number operator&&(const number& y) const { return x &&y; }
+    template<typename number> inline number operator||(const number& y) const { return x ||y; }
+    template<typename number> inline number operator~() const                 { return ~x; }
+#endif
+
+protected:
+    //inline operator primative&()                 { return x; }
+    template<typename number> inline number operator= (const number& y) { return x = y; }
+    //template<typename number> inline number operator= (const number& y) = delete;
+#if 1
+    template<typename number> inline number operator+=(const number& y) { return x += y; }
+    template<typename number> inline number operator-=(const number& y) { return x -= y; }
+    template<typename number> inline number operator*=(const number& y) { return x *= y; }
+    template<typename number> inline number operator/=(const number& y) { return x /= y; }
+    template<typename number> inline number operator&=(const number& y) { return x &= y; }
+    template<typename number> inline number operator|=(const number& y) { return x |= y; }
+#endif
+    primative x;
+};
+
+typedef struct local_position {
+    bool valid = false;
+    index_t index;
+    int reflection;
+
+    ReadOnly<struct local_position, uint64_t> board_vector;
     uint64_t PTM_vector;
     uint8_t piece_position[MAX_PIECES];
     uint8_t permuted_piece[MAX_PIECES];
@@ -531,6 +588,7 @@ typedef struct {
     uint8_t en_passant_square;
     uint8_t multiplicity;
 } local_position_t;
+
 
 #define ILLEGAL_POSITION 0xff
 
@@ -2258,8 +2316,8 @@ bool check_king_legality(int kingA, int kingB) {
 
 class index_encoding {
 public:
-    virtual index_t position_to_index(tablebase_t *tb, local_position_t *pos) = 0;
-    virtual bool index_to_position(tablebase_t * tb, index_t index, local_position_t *pos) = 0;
+    virtual index_t position_to_index(const tablebase_t *tb, local_position_t *pos) = 0;
+    virtual bool index_to_position(const tablebase_t * tb, index_t index, local_position_t *pos) = 0;
 #if 0
     virtual bool move_piece(tablebase_t * tb, local_position_t *pos, int piece, int destination_square) {
 	// move piece and recompute index
@@ -2294,7 +2352,7 @@ class naive_index : public index_encoding {
 
 public:
 
-    index_t position_to_index(tablebase_t *tb, local_position_t *pos)
+    index_t position_to_index(const tablebase_t *tb, local_position_t *pos)
     {
 	int shift_count = 0;
 	index_t index = 0;
@@ -2336,7 +2394,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
+    bool index_to_position(const tablebase_t * tb, index_t index, local_position_t *p)
     {
 	for (int piece = 0; piece < tb->num_pieces; piece++) {
 
@@ -2423,7 +2481,7 @@ class naive2_index : public index_encoding
 
 public:
 
-    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
+    index_t position_to_index(const tablebase_t * tb, local_position_t *pos)
     {
 	int shift_count = 0;
 	index_t index = 0;
@@ -2508,7 +2566,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
+    bool index_to_position(const tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 	uint8_t vals[MAX_PIECES];
@@ -2641,7 +2699,7 @@ class simple_index : public index_encoding
 
 public:
 
-    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
+    index_t position_to_index(const tablebase_t * tb, local_position_t *pos)
     {
 	index_t index = 0;
 
@@ -2667,7 +2725,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
+    bool index_to_position(const tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 
@@ -2807,7 +2865,7 @@ class compact_index : public index_encoding
 
 public:
 
-    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
+    index_t position_to_index(const tablebase_t * tb, local_position_t *pos)
     {
 	index_t index = 0;
 	uint8_t vals[MAX_PIECES];
@@ -2889,7 +2947,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
+    bool index_to_position(const tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 	uint8_t vals[MAX_PIECES];
@@ -3186,7 +3244,7 @@ class combinadic_index : public index_encoding
 
 public:
 
-    index_t position_to_index(tablebase_t * tb, local_position_t *pos)
+    index_t position_to_index(const tablebase_t * tb, local_position_t *pos)
     {
 	index_t index;
 	int piece, piece2;
@@ -3272,7 +3330,7 @@ public:
 	return index;
     }
 
-    bool index_to_position(tablebase_t * tb, index_t index, local_position_t *p)
+    bool index_to_position(const tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
 	int en_passant_pawn = -1;
@@ -3783,7 +3841,7 @@ void init_reflections(void)
     }
 }
 
-bool semilegal_group_is_legal(tablebase_t *tb, local_position_t *position, int first_piece_in_group)
+bool semilegal_group_is_legal(const tablebase_t *tb, local_position_t *position, int first_piece_in_group)
 {
     for (int piece = first_piece_in_group; piece != -1; piece = tb->pieces[piece].next_piece_in_semilegal_group) {
 	if (! (tb->pieces[piece].legal_squares & BITVECTOR(position->piece_position[piece]))) {
@@ -3793,7 +3851,7 @@ bool semilegal_group_is_legal(tablebase_t *tb, local_position_t *position, int f
     return true;
 }
 
-bool permute_semilegal_group_until_legal(tablebase_t *tb, local_position_t *position,
+bool permute_semilegal_group_until_legal(const tablebase_t *tb, local_position_t *position,
 					 int first_piece_in_group, uint8_t *permutation)
 {
     for (int perm = 0; tb->pieces[first_piece_in_group].permutations[perm] != 0; perm ++) {
@@ -3820,11 +3878,10 @@ bool permute_semilegal_group_until_legal(tablebase_t *tb, local_position_t *posi
     return false;
 }
 
-void normalize_position(tablebase_t *tb, local_position_t *position)
+void normalize_position(const tablebase_t *tb, local_position_t *position)
 {
     int piece, piece2;
     uint8_t permutation[MAX_PIECES];
-    int reflection;
 
     /* The 'combinadic4' index might not encode side-to-move at all.  In this case, if black is to
      * move, then we have to invert the entire board.  We've precomputed how to exchange the pieces;
@@ -3865,7 +3922,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 
     if (tb->symmetry > 1) {
 
-	reflection = tb->reflections
+	int reflection = tb->reflections
 	    [position->piece_position[tb->white_king]]
 	    [position->piece_position[tb->black_king]];
 
@@ -3880,7 +3937,14 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
 	    }
 	}
 
+	position->reflection = reflection;
+
+    } else {
+
+	position->reflection = 0;
+
     }
+    
 
     /* Sort any identical pieces so that the lowest square number always comes first. */
 
@@ -3933,7 +3997,7 @@ void normalize_position(tablebase_t *tb, local_position_t *position)
     }
 }
 
-index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position)
+index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *position)
 {
     index_t index;
     int piece;
@@ -4057,7 +4121,7 @@ index_t normalized_position_to_index(tablebase_t *tb, local_position_t *position
     return index;
 }
 
-index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
+index_t local_position_to_index(const tablebase_t *tb, local_position_t *original)
 {
     index_t index;
 
@@ -4073,10 +4137,14 @@ index_t local_position_to_index(tablebase_t *tb, local_position_t *original)
 
     original->multiplicity = copy.multiplicity;
 
+    original->index = index;
+    original->reflection = copy.reflection;
+    original->valid = true;
+
     return index;
 }
 
-bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, local_position_t *position)
+bool index_to_local_position(const tablebase_t *tb, index_t index, int reflection, local_position_t *position)
 {
     int ret;
     int piece, piece2;
@@ -4255,8 +4323,30 @@ bool index_to_local_position(tablebase_t *tb, index_t index, int reflection, loc
 	position->permuted_piece[piece] = piece;
     }
 
+    position->index = index;
+    position->reflection = reflection;
+    position->valid = true;
+
     return true;
 }
+
+/* I go to the trouble to update board_vector here so we can check en passant legality in
+ * propagate_one_move_within_table().
+ */
+
+bool move_piece(const tablebase_t * tb, local_position_t *pos, int piece, int destination_square) {
+    pos->board_vector &= ~BITVECTOR(pos->piece_position[piece]);
+    pos->piece_position[piece] = destination_square;
+    pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
+    // XXX update other fields, like PTM_vector?
+};
+
+bool capture_piece(const tablebase_t * tb, local_position_t *pos, int capturing_piece, int captured_piece) {
+    pos->board_vector &= ~BITVECTOR(pos->piece_position[capturing_piece]);
+    pos->piece_position[capturing_piece] = pos->piece_position[captured_piece];
+    pos->piece_position[captured_piece] = ILLEGAL_POSITION;
+    // XXX update other fields, like PTM_vector?
+};
 
 index_t num_indices(tablebase_t * tb)
 {
@@ -6011,6 +6101,8 @@ inline void flip_side_to_move_local(local_position_t *position)
 	position->side_to_move = BLACK;
     else
 	position->side_to_move = WHITE;
+
+    position->valid = false;
 }
 
 inline void flip_side_to_move_global(global_position_t *position)
@@ -6323,7 +6415,7 @@ index_t global_position_to_index(tablebase_t *tb, global_position_t *global)
  * Seems never to be used on a tablebase under construction; only on a finished one.
  */
 
-bool index_to_global_position(tablebase_t *tb, index_t index, global_position_t *global)
+bool index_to_global_position(const tablebase_t *tb, index_t index, global_position_t *global)
 {
     local_position_t local;
     int piece;
@@ -10166,17 +10258,13 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 	    flip_side_to_move_local(&current_position);
 	    current_position.en_passant_square = ILLEGAL_POSITION;
 
-	    /* I go to the trouble to update board_vector here so we can check en passant
-	     * legality in propagate_one_move_within_table().
-	     */
-
-	    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
+	    int square;
 	    if (current_tb->pieces[piece].color == WHITE)
-		current_position.piece_position[piece] -= 16;
+		square = current_position.piece_position[piece] -= 16;
 	    else
-		current_position.piece_position[piece] += 16;
+		square = current_position.piece_position[piece] += 16;
 
-	    current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
+	    move_piece(current_tb, &current_position, piece, square);
 
 	    /* We never back out into a restricted position.  Since we've already decided that this
 	     * is the only possible back-move from this point, well...
@@ -10235,15 +10323,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 		    flip_side_to_move_local(&current_position);
 
-		    /* I go to the trouble to update board_vector here so we can check en passant
-		     * legality in propagate_one_move_within_table().
-		     */
-
-		    current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
-
-		    current_position.piece_position[piece] = movementptr->square;
-
-		    current_position.board_vector |= BITVECTOR(movementptr->square);
+		    move_piece(current_tb, &current_position, piece, movementptr->square);
 
 		    propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
 							     futuremoves[piece][origin_square],
@@ -10291,15 +10371,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 		flip_side_to_move_local(&current_position);
 
-		/* I go to the trouble to update board_vector here so we can check en passant
-		 * legality in propagate_one_move_within_table().
-		 */
-
-		current_position.board_vector &= ~BITVECTOR(current_position.piece_position[piece]);
-
-		current_position.piece_position[piece] = movementptr->square;
-
-		current_position.board_vector |= BITVECTOR(current_position.piece_position[piece]);
+		move_piece(current_tb, &current_position, piece, movementptr->square);
 
 		propagate_local_position_from_futurebase(current_tb, futurebase, future_index,
 							 futuremoves[piece][origin_square],
@@ -11607,6 +11679,8 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	int en_passant_pawn = -1;
 
+	/* XXX let's store en_passant_pawn in the local position structure and avoid this loop */
+
 	for (piece = 0; piece < current_tb->num_pieces; piece++) {
 
 	    if (current_tb->pieces[piece].color != position.side_to_move) continue;
@@ -11624,31 +11698,28 @@ void back_propagate_index_within_table(index_t index, int reflection)
 	    fatal("No en passant pawn in back prop!?\n");
 	} else {
 
-	    position.en_passant_square = ILLEGAL_POSITION;
-
-	    /* I go to the trouble to update board_vector here so we can check en passant
-	     * legality in propagate_one_move_within_table().
-	     */
-
-	    position.board_vector &= ~BITVECTOR(position.piece_position[en_passant_pawn]);
+	    int square;
 
 	    if (current_tb->pieces[en_passant_pawn].color == WHITE)
-		position.piece_position[en_passant_pawn] -= 16;
+		square = position.piece_position[en_passant_pawn] - 16;
 	    else
-		position.piece_position[en_passant_pawn] += 16;
-
-	    position.board_vector |= BITVECTOR(position.piece_position[en_passant_pawn]);
+		square = position.piece_position[en_passant_pawn] + 16;
 
 	    /* We never back out into a restricted position.  Since we've already decided that this
 	     * is the only legal back-move from this point, well...
 	     */
 
-	    if (! (current_tb->pieces[en_passant_pawn].semilegal_squares
-		   & BITVECTOR(position.piece_position[en_passant_pawn]))) {
+	    if (! (current_tb->pieces[en_passant_pawn].semilegal_squares & BITVECTOR(square))) {
 		return;
 	    }
 
-	    propagate_one_move_within_table(current_tb, index, &position);
+	    local_position_t new_position = position;
+
+	    new_position.en_passant_square = ILLEGAL_POSITION;
+
+	    move_piece(current_tb, &new_position, en_passant_pawn, square);
+
+	    propagate_one_move_within_table(current_tb, index, &new_position);
 	}
 
 	return;
@@ -11666,8 +11737,6 @@ void back_propagate_index_within_table(index_t index, int reflection)
 	    continue;
 
 	origin_square = position.piece_position[piece];
-
-	position.board_vector &= ~BITVECTOR(origin_square);
 
 	if (current_tb->pieces[piece].piece_type != PAWN) {
 
@@ -11701,17 +11770,11 @@ void back_propagate_index_within_table(index_t index, int reflection)
 		     * propagate_one_move_within_table()
 		     */
 
-		    /* I go to the trouble to update board_vector here so we can check en passant
-		     * legality in propagate_one_move_within_table().
-		     */
+		    local_position_t new_position = position;
 
-		    position.piece_position[piece] = movementptr->square;
+		    move_piece(current_tb, &new_position, piece, movementptr->square);
 
-		    position.board_vector |= BITVECTOR(movementptr->square);
-
-		    propagate_one_move_within_table(current_tb, index, &position);
-
-		    position.board_vector &= ~BITVECTOR(movementptr->square);
+		    propagate_one_move_within_table(current_tb, index, &new_position);
 		}
 	    }
 
@@ -11764,42 +11827,28 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 		if (((movementptr->square - origin_square) == 16)
 		    || ((movementptr->square - origin_square) == -16)) {
-		    // if ((current_tb->index_type != NO_EN_PASSANT_INDEX) && (current_tb->index_type != PAWNGEN_INDEX)) continue;
 
-		    position.piece_position[piece] = origin_square;
-		    position.board_vector |= BITVECTOR(origin_square);
-		    if (position.side_to_move == WHITE) {
-			position.en_passant_square = origin_square - 8;
+		    local_position_t new_position = position;
+
+		    if (new_position.side_to_move == WHITE) {
+			new_position.en_passant_square = origin_square - 8;
 		    } else {
-			position.en_passant_square = origin_square + 8;
+			new_position.en_passant_square = origin_square + 8;
 		    }
-		    flip_side_to_move_local(&position);
+		    flip_side_to_move_local(&new_position);
 
-		    bool en_passant_position_exists = (local_position_to_index(current_tb, &position) != INVALID_INDEX);
-
-		    flip_side_to_move_local(&position);
-		    position.en_passant_square = ILLEGAL_POSITION;
-		    position.board_vector &= ~BITVECTOR(origin_square);
+		    bool en_passant_position_exists = (local_position_to_index(current_tb, &new_position) != INVALID_INDEX);
 
 		    if (en_passant_position_exists) continue;
 		}
 
-		/* I go to the trouble to update board_vector here so we can check en passant
-		 * legality in propagate_one_move_within_table().
-		 */
+		local_position_t new_position = position;
 
-		position.piece_position[piece] = movementptr->square;
+		move_piece(current_tb, &new_position, piece, movementptr->square);
 
-		position.board_vector |= BITVECTOR(movementptr->square);
-
-		propagate_one_move_within_table(current_tb, index, &position);
-
-		position.board_vector &= ~BITVECTOR(movementptr->square);
+		propagate_one_move_within_table(current_tb, index, &new_position);
 	    }
 	}
-
-	position.piece_position[piece] = origin_square;
-	position.board_vector |= BITVECTOR(origin_square);
     }
 }
 
@@ -11860,7 +11909,7 @@ void initialize_board_masks(void)
     }
 }
 
-bool PTM_in_check(tablebase_t *tb, local_position_t *position)
+bool PTM_in_check(const tablebase_t *tb, const local_position_t *position)
 {
     int king_position = position->piece_position[(position->side_to_move == WHITE) ? tb->white_king : tb->black_king];
 
@@ -12095,28 +12144,12 @@ bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
  *
  */
 
-futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
+futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t index, const local_position_t &position)
 {
-    local_position_t position;
     int piece;
     int dir;
-    int origin_square;
     struct movement *movementptr;
     int i;
-
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
-	info("Initializing %" PRIindex "\n", index);
-#endif
-
-    print_progress_dot(current_tb);
-
-    if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
-
-	entriesTable->initialize_entry_as_illegal(index);
-	return 0;
-
-    } else {
 
 	/* Now we need to count moves.  FORWARD moves. */
 	unsigned int movecnt = 0;
@@ -12144,8 +12177,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	    if (tb->pieces[piece].color != position.side_to_move) continue;
 
-	    origin_square = position.piece_position[piece];
-	    position.board_vector &= ~BITVECTOR(origin_square);
+	    int origin_square = position.piece_position[piece];
 
 	    if (tb->pieces[piece].piece_type != PAWN) {
 
@@ -12157,9 +12189,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 			/* Move the piece, so we can test the new position for check */
 
-			position.piece_position[piece] = movementptr->square;
+			local_position_t new_position = position;
 
-			position.board_vector |= BITVECTOR(movementptr->square);
+			move_piece(tb, &new_position, piece, movementptr->square);
 
 			/* If we're NOT moving into check AND the piece is moving outside its legal
 			 * squares AND we can't permute the pieces into a position where everything
@@ -12169,10 +12201,10 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			 * makes this a little faster.
 			 */
 
-			if (! PTM_in_check(tb, &position)) {
+			if (! PTM_in_check(tb, &new_position)) {
 
 			    if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-				&& (local_position_to_index(tb, &position) == INVALID_INDEX)) {
+				&& (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
 
 				if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
 				    /* it's a discard - decrement movecnt so net change is zero */
@@ -12199,8 +12231,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    movecnt ++;
 			}
 
-			position.board_vector &= ~BITVECTOR(movementptr->square);
-
 		    }
 
 		    /* Now check to see if the movement ended because we hit against another piece
@@ -12224,10 +12254,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    return 0;
 				}
 
-				position.piece_position[i] = ILLEGAL_POSITION;
-				position.piece_position[piece] = movementptr->square;
+				local_position_t new_position = position;
 
-				if (! PTM_in_check(tb, &position)) {
+				capture_piece(tb, &new_position, piece, i);
+
+				if (! PTM_in_check(tb, &new_position)) {
 
 				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
 					/* discard prune - do nothing */
@@ -12252,8 +12283,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    }
 				}
 
-				position.piece_position[i] = movementptr->square;
-
 				break;
 			    }
 			}
@@ -12271,10 +12300,9 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
-		    /* Move the piece.  The in-check test below require this. */
+		    local_position_t new_position = position;
 
-		    position.piece_position[piece] = movementptr->square;
-		    position.board_vector |= BITVECTOR(movementptr->square);
+		    move_piece(tb, &new_position, piece, movementptr->square);
 
 		    /* What about pawn promotions here?  Well, we're looking to see if the moving
 		     * side is in check after the pawn move, and the only way the pawn could affect
@@ -12283,7 +12311,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		     * moves here.
 		     */
 
-		    if (! PTM_in_check(tb, &position)) {
+		    if (! PTM_in_check(tb, &new_position)) {
 
 			/* If the piece is a pawn and we're moving to the last rank, then this has
 			 * to be a promotion move, in fact, promotion_possibilities moves.  (queen,
@@ -12329,7 +12357,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			     */
 
 			    if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-				&& (local_position_to_index(tb, &position) == INVALID_INDEX)) {
+				&& (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
 
 				if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
 				    /* discard prune */
@@ -12356,9 +12384,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 			    movecnt ++;
 			}
 		    }
-
-		    position.board_vector &= ~BITVECTOR(movementptr->square);
-
 		}
 
 
@@ -12384,17 +12409,19 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 		    if (movementptr->square == position.en_passant_square) {
 
+			/* XXX record en_passant_pawn in local position to avoid this loop */
+
 			for (i = 0; i < tb->num_pieces; i ++) {
-			    if ((i == tb->white_king) || (i == tb->black_king)) continue;
+			    //if ((i == tb->white_king) || (i == tb->black_king)) continue;
 			    if (movementptr->square + (tb->pieces[piece].color == WHITE ? -8 : 8)
 				== position.piece_position[i]) {
 
-				position.piece_position[piece] = position.en_passant_square;
-				position.board_vector |= BITVECTOR(position.en_passant_square);
-				position.board_vector &= ~BITVECTOR(position.piece_position[i]);
-				position.piece_position[i] = ILLEGAL_POSITION;
+				local_position_t new_position = position;
 
-				if (! PTM_in_check(tb, &position)) {
+				move_piece(tb, &new_position, i, position.en_passant_square);
+				capture_piece(tb, &new_position, piece, i);
+
+				if (! PTM_in_check(tb, &new_position)) {
 				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
 					/* discard prune - do nothing */
 				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
@@ -12418,11 +12445,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				    }
 				}
 
-				position.piece_position[i] = position.en_passant_square
-				    + (tb->pieces[piece].color == WHITE ? -8 : 8);
-				position.board_vector |= BITVECTOR(position.piece_position[i]);
-				position.board_vector &= ~BITVECTOR(position.en_passant_square);
-
 				break;
 			    }
 			}
@@ -12439,10 +12461,11 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				return 0;
 			    }
 
-			    position.piece_position[i] = ILLEGAL_POSITION;
-			    position.piece_position[piece] = movementptr->square;
+			    local_position_t new_position = position;
 
-			    if (! PTM_in_check(tb, &position)) {
+			    capture_piece(tb, &new_position, piece, i);
+
+			    if (! PTM_in_check(tb, &new_position)) {
 				if (! is_promotion_capture) {
 				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
 					/* discard prune - do nothing */
@@ -12496,7 +12519,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 				}
 			    }
 
-			    position.piece_position[i] = movementptr->square;
 			    break;
 			}
 		    }
@@ -12509,9 +12531,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 		}
 
 	    }
-
-	    position.board_vector |= BITVECTOR(origin_square);
-	    position.piece_position[piece] = origin_square;
 
 	}
 
@@ -12582,6 +12601,35 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
 	    return futurevector;
 	}
+}
+
+futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
+{
+    local_position_t position;
+    int piece;
+    int dir;
+    int origin_square;
+    struct movement *movementptr;
+    int i;
+
+#ifdef DEBUG_MOVE
+    if (index == DEBUG_MOVE)
+	info("Initializing %" PRIindex "\n", index);
+#endif
+
+    print_progress_dot(current_tb);
+
+    if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
+
+	/* XXX do we need to initialize these entries at all?  not sure */
+
+	entriesTable->initialize_entry_as_illegal(index);
+	return 0;
+
+    } else {
+
+	return initialize_tablebase_entry(tb, index, position);
+
     }
 }
 
@@ -13150,7 +13198,6 @@ void verify_tablebase_internally_thread(void)
 	    if (current_tb->pieces[piece].color == position.side_to_move) continue;
 
 	    origin_square = position.piece_position[piece];
-	    position.board_vector &= ~BITVECTOR(origin_square);
 
 	    if (current_tb->pieces[piece].piece_type != PAWN) {
 
@@ -13162,8 +13209,9 @@ void verify_tablebase_internally_thread(void)
 
 			/* Move the piece, so we can test the new position for check */
 
-			position.piece_position[piece] = movementptr->square;
-			position.board_vector |= BITVECTOR(movementptr->square);
+			local_position_t new_position = position;
+
+			move_piece(current_tb, &new_position, piece, movementptr->square);
 
 			/* We could just check if local_position_to_index() returns a valid index,
 			 * but checking the legal_squares bitvector first makes this a little
@@ -13172,9 +13220,9 @@ void verify_tablebase_internally_thread(void)
 			 * XXX what really should we use here?
 			 */
 
-			if (! PNTM_in_check(current_tb, &position)
+			if (! PNTM_in_check(current_tb, &new_position)
 			    && (current_tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-			    && ((next_index = local_position_to_index(current_tb, &position)) != INVALID_INDEX)) {
+			    && ((next_index = local_position_to_index(current_tb, &new_position)) != INVALID_INDEX)) {
 
 			    /* check this position */
 			    int n = entriesTable[index].get_DTM();
@@ -13196,9 +13244,6 @@ void verify_tablebase_internally_thread(void)
 				}
 			    }
 			}
-
-			position.board_vector &= ~BITVECTOR(movementptr->square);
-
 		    }
 		}
 
@@ -13210,19 +13255,18 @@ void verify_tablebase_internally_thread(void)
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
 
-		    /* Move the piece.  The in-check test below require this. */
+		    local_position_t new_position = position;
 
-		    position.piece_position[piece] = movementptr->square;
-		    position.board_vector |= BITVECTOR(movementptr->square);
+		    move_piece(current_tb, &new_position, piece, movementptr->square);
 
 		    if (abs(movementptr->square - origin_square) == 16) {
-			position.en_passant_square = (movementptr->square + origin_square) / 2;
+			new_position.en_passant_square = (movementptr->square + origin_square) / 2;
 		    }
 
-		    if (! PNTM_in_check(current_tb, &position)
+		    if (! PNTM_in_check(current_tb, &new_position)
 			&& (ROW(movementptr->square) != 7) && (ROW(movementptr->square) != 0)
 			&& (current_tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-			&& ((next_index = local_position_to_index(current_tb, &position)) != INVALID_INDEX)) {
+			&& ((next_index = local_position_to_index(current_tb, &new_position)) != INVALID_INDEX)) {
 
 			/* check this position */
 			int n = entriesTable[index].get_DTM();
@@ -13244,16 +13288,8 @@ void verify_tablebase_internally_thread(void)
 			    }
 			}
 		    }
-
-		    position.board_vector &= ~BITVECTOR(movementptr->square);
-		    position.en_passant_square = ILLEGAL_POSITION;
-
 		}
 	    }
-
-	    position.piece_position[piece] = origin_square;
-	    position.board_vector |= BITVECTOR(origin_square);
-
 	}
     }
 }
