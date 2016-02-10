@@ -3944,7 +3944,6 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
 	position->reflection = 0;
 
     }
-    
 
     /* Sort any identical pieces so that the lowest square number always comes first. */
 
@@ -12146,471 +12145,462 @@ bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
 
 futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t index, const local_position_t &position)
 {
-    int piece;
-    int dir;
-    struct movement *movementptr;
-    int i;
+    /* Now we need to count moves.  FORWARD moves. */
+    unsigned int movecnt = 0;
+    unsigned int capturecnt = 0;
+    unsigned int futuremovecnt = 0;
+    futurevector_t futurevector = 0;
+    futurevector_t capture_futurevector = 0;
 
-	/* Now we need to count moves.  FORWARD moves. */
-	unsigned int movecnt = 0;
-	unsigned int capturecnt = 0;
-	unsigned int futuremovecnt = 0;
-	futurevector_t futurevector = 0;
-	futurevector_t capture_futurevector = 0;
+    bool concede_prune = false;
+    bool resign_prune = false;
 
-	bool concede_prune = false;
-	bool resign_prune = false;
+    /* En passant:
+     *
+     * We're just counting moves here.  In particular, we don't compute the indices of the resulting
+     * positions.  If we did, we'd have to worry about clearing en passant status from any of fourth
+     * or fifth rank pawns, but we don't have to worry about it.
+     *
+     * We do have to count one or two possible extra en passant pawn captures, though...
+     */
 
-	/* En passant:
-	 *
-	 * We're just counting moves here.  In particular, we don't compute the indices of the
-	 * resulting positions.  If we did, we'd have to worry about clearing en passant status
-	 * from any of fourth or fifth rank pawns, but we don't have to worry about it.
-	 *
-	 * We do have to count one or two possible extra en passant pawn captures, though...
-	 */
+    for (int piece = 0; piece < tb->num_pieces; piece++) {
 
+	/* We only want to consider pieces of the side which is to move... */
 
-	for (piece = 0; piece < tb->num_pieces; piece++) {
+	if (tb->pieces[piece].color != position.side_to_move) continue;
 
-	    /* We only want to consider pieces of the side which is to move... */
+	int origin_square = position.piece_position[piece];
 
-	    if (tb->pieces[piece].color != position.side_to_move) continue;
+	if (tb->pieces[piece].piece_type != PAWN) {
 
-	    int origin_square = position.piece_position[piece];
+	    for (int dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
 
-	    if (tb->pieces[piece].piece_type != PAWN) {
+		struct movement * movementptr;
 
-		for (dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
-
-		    for (movementptr = movements[tb->pieces[piece].piece_type][origin_square][dir];
-			 (movementptr->vector & position.board_vector) == 0;
-			 movementptr++) {
-
-			/* Move the piece, so we can test the new position for check */
-
-			local_position_t new_position = position;
-
-			move_piece(tb, &new_position, piece, movementptr->square);
-
-			/* If we're NOT moving into check AND the piece is moving outside its legal
-			 * squares AND we can't permute the pieces into a position where everything
-			 * is legal, we regard this as a futuremove (since it will require back prop
-			 * from futurebases).  We could just check if local_position_to_index()
-			 * returns a valid index, but checking the legal_squares bitvector first
-			 * makes this a little faster.
-			 */
-
-			if (! PTM_in_check(tb, &new_position)) {
-
-			    if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-				&& (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
-
-				if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
-				    /* it's a discard - decrement movecnt so net change is zero */
-				    movecnt --;
-				} else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
-				    concede_prune = true;
-				} else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
-				    resign_prune = true;
-				} else if (futuremoves[piece][movementptr->square] < 0) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->pieces[piece].piece_type],
-					  'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-				} else if (futurevector
-					   & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				    fatal("Duplicate futuremove!\n");
-				} else {
-				    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-				    futuremovecnt ++;
-				}
-			    }
-
-			    movecnt ++;
-			}
-
-		    }
-
-		    /* Now check to see if the movement ended because we hit against another piece
-		     * of the opposite color.  If so, add another move for the capture.  As before,
-		     * ignore moves into check.
-		     *
-		     * Actually, we check to see that we DIDN'T hit a piece of our OWN color.  The
-		     * difference is that this way we don't register a capture if we hit the end of
-		     * the list of movements in a given direction.
-		     *
-		     * We also check to see if the capture was against the enemy king! in which case
-		     * this position is a PNTM-mated.
-		     */
-
-		    if ((movementptr->vector & position.PTM_vector) == 0) {
-
-			for (i = 0; i < tb->num_pieces; i ++) {
-			    if (movementptr->square == position.piece_position[i]) {
-				if ((i == tb->black_king) || (i == tb->white_king)) {
-				    entriesTable->initialize_entry_with_PNTM_mated(index);
-				    return 0;
-				}
-
-				local_position_t new_position = position;
-
-				capture_piece(tb, &new_position, piece, i);
-
-				if (! PTM_in_check(tb, &new_position)) {
-
-				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
-					/* discard prune - do nothing */
-				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
-					concede_prune = true;
-				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
-					resign_prune = true;
-				    } else if (futurecaptures[piece][i] < 0) {
-					global_position_t global;
-					index_to_global_position(tb, index, &global);
-					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					      piece_char[tb->pieces[piece].piece_type],
-					      piece_char[tb->pieces[i].piece_type]);
-				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-					fatal("Duplicate futuremove!\n");
-				    } else {
-					capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-					futuremovecnt ++;
-					capturecnt ++;
-					movecnt ++;
-				    }
-				}
-
-				break;
-			    }
-			}
-			if (i == tb->num_pieces) {
-			    fatal("Couldn't match capture!\n");
-			}
-		    }
-		}
-
-	    } else {
-
-		/* Pawns, as always, are special */
-
-		for (movementptr = normal_pawn_movements[origin_square][tb->pieces[piece].color];
+		for (movementptr = movements[tb->pieces[piece].piece_type][origin_square][dir];
 		     (movementptr->vector & position.board_vector) == 0;
 		     movementptr++) {
+
+		    /* Move the piece, so we can test the new position for check */
 
 		    local_position_t new_position = position;
 
 		    move_piece(tb, &new_position, piece, movementptr->square);
 
-		    /* What about pawn promotions here?  Well, we're looking to see if the moving
-		     * side is in check after the pawn move, and the only way the pawn could affect
-		     * this is by blocking the check.  It still blocks no matter what it promotes
-		     * into, so we don't have to distinguish between promotion and non-promotion
-		     * moves here.
+		    /* If we're NOT moving into check AND the piece is moving outside its legal
+		     * squares AND we can't permute the pieces into a position where everything is
+		     * legal, we regard this as a futuremove (since it will require back prop from
+		     * futurebases).  We could just check if local_position_to_index() returns a
+		     * valid index, but checking the legal_squares bitvector first makes this a
+		     * little faster.
 		     */
 
 		    if (! PTM_in_check(tb, &new_position)) {
 
-			/* If the piece is a pawn and we're moving to the last rank, then this has
-			 * to be a promotion move, in fact, promotion_possibilities moves.  (queen,
-			 * knight, maybe rook and bishop, king for suicide).  As such, they will
-			 * require back propagation from futurebases and must therefore be flagged
-			 * as futuremoves.
-			 */
+			if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
+			    && (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
 
-			if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
-
-			    int promotion;
-
-			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-
-				if (promotions[piece][promotion] == DISCARD_FUTUREMOVE) {
-				    /* discard prune - do nothing */
-				} else if (promotions[piece][promotion] == CONCEDE_FUTUREMOVE) {
-				    concede_prune = true;
-				} else if (promotions[piece][promotion] == RESIGN_FUTUREMOVE) {
-				    resign_prune = true;
-				} else if (promotions[piece][promotion] < 0) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %c=%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->pieces[piece].piece_type], piece_char[promoted_pieces[promotion]]);
-				} else if (futurevector & FUTUREVECTOR(promotions[piece][promotion])) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("Duplicate futuremove: %s %s\n", global_position_to_FEN(&global),
-					  movestr[tb->pieces[piece].color][promotions[piece][promotion]]);
-				} else {
-				    futurevector |= FUTUREVECTOR(promotions[piece][promotion]);
-				    futuremovecnt ++;
-				    movecnt ++;
-				}
+			    if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
+				/* it's a discard - decrement movecnt so net change is zero */
+				movecnt --;
+			    } else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
+				concede_prune = true;
+			    } else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
+				resign_prune = true;
+			    } else if (futuremoves[piece][movementptr->square] < 0) {
+				global_position_t global;
+				index_to_global_position(tb, index, &global);
+				fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
+				      piece_char[tb->pieces[piece].piece_type],
+				      'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
+			    } else if (futurevector
+				       & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
+				fatal("Duplicate futuremove!\n");
+			    } else {
+				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
+				futuremovecnt ++;
 			    }
-
-			} else {
-
-			    /* If a piece is moving outside its legal squares AND we can't permute
-			     * the pieces into a position where everything is legal, we regard this
-			     * as a futuremove (since it will require back prop from futurebases).
-			     */
-
-			    if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-				&& (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
-
-				if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
-				    /* discard prune */
-				    movecnt --;
-				} else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
-				    concede_prune = true;
-				} else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
-				    resign_prune = true;
-				} else if (futuremoves[piece][movementptr->square] < 0) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->pieces[piece].piece_type],
-					  'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-				} else if (futurevector
-					   & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				    fatal("Duplicate futuremove!\n");
-				} else {
-				    futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-				    futuremovecnt ++;
-				}
-			    }
-
-			    movecnt ++;
 			}
+
+			movecnt ++;
 		    }
+
 		}
 
-
-		/* Pawn captures.
+		/* Now check to see if the movement ended because we hit against another piece of
+		 * the opposite color.  If so, add another move for the capture.  As before, ignore
+		 * moves into check.
 		 *
-		 * In this part of the code, we're just counting forward moves, and all captures
-		 * are futurebase moves, so the only difference to us whether this is a
-		 * promotion move or not is how many futuremoves get recorded.
+		 * Actually, we check to see that we DIDN'T hit a piece of our OWN color.  The
+		 * difference is that this way we don't register a capture if we hit the end of the
+		 * list of movements in a given direction.
+		 *
+		 * We also check to see if the capture was against the enemy king! in which case
+		 * this position is a PNTM-mated.
 		 */
 
-		for (movementptr = capture_pawn_movements[origin_square][tb->pieces[piece].color];
-		     movementptr->square != -1;
-		     movementptr++) {
+		if ((movementptr->vector & position.PTM_vector) == 0) {
 
-		    /* If we're capturing to the last rank, then this has to be a promotion move, in
-		     * fact, promotion_possibilities moves.
-		     */
+		    int captured_piece;
 
-		    int is_promotion_capture =
-			((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0));
-
-		    /* A special check for en passant captures.  */
-
-		    if (movementptr->square == position.en_passant_square) {
-
-			/* XXX record en_passant_pawn in local position to avoid this loop */
-
-			for (i = 0; i < tb->num_pieces; i ++) {
-			    //if ((i == tb->white_king) || (i == tb->black_king)) continue;
-			    if (movementptr->square + (tb->pieces[piece].color == WHITE ? -8 : 8)
-				== position.piece_position[i]) {
-
-				local_position_t new_position = position;
-
-				move_piece(tb, &new_position, i, position.en_passant_square);
-				capture_piece(tb, &new_position, piece, i);
-
-				if (! PTM_in_check(tb, &new_position)) {
-				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
-					/* discard prune - do nothing */
-				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
-					concede_prune = true;
-				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
-					resign_prune = true;
-				    } else if (futurecaptures[piece][i] < 0) {
-					global_position_t global;
-					index_to_global_position(tb, index, &global);
-					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					      piece_char[tb->pieces[piece].piece_type],
-					      piece_char[tb->pieces[i].piece_type]);
-				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-					fatal("Duplicate futuremove!\n");
-				    } else {
-					capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-					futuremovecnt ++;
-					capturecnt ++;
-					movecnt ++;
-				    }
-				}
-
-				break;
-			    }
-			}
-			continue;
-		    }
-
-		    if (((movementptr->vector & position.board_vector) == 0)
-			|| ((movementptr->vector & position.PTM_vector) != 0)) continue;
-
-		    for (i = 0; i < tb->num_pieces; i ++) {
-			if (movementptr->square == position.piece_position[i]) {
-			    if ((i == tb->black_king) || (i == tb->white_king)) {
+		    for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+			if (movementptr->square == position.piece_position[captured_piece]) {
+			    if ((captured_piece == tb->black_king) || (captured_piece == tb->white_king)) {
 				entriesTable->initialize_entry_with_PNTM_mated(index);
 				return 0;
 			    }
 
 			    local_position_t new_position = position;
 
-			    capture_piece(tb, &new_position, piece, i);
+			    capture_piece(tb, &new_position, piece, captured_piece);
 
 			    if (! PTM_in_check(tb, &new_position)) {
-				if (! is_promotion_capture) {
-				    if (futurecaptures[piece][i] == DISCARD_FUTUREMOVE) {
-					/* discard prune - do nothing */
-				    } else if (futurecaptures[piece][i] == CONCEDE_FUTUREMOVE) {
-					concede_prune = true;
-				    } else if (futurecaptures[piece][i] == RESIGN_FUTUREMOVE) {
-					resign_prune = true;
-				    } else if (futurecaptures[piece][i] < 0) {
-					global_position_t global;
-					index_to_global_position(tb, index, &global);
-					fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					      piece_char[tb->pieces[piece].piece_type],
-					      piece_char[tb->pieces[i].piece_type]);
-				    } else if (futurevector & FUTUREVECTOR(futurecaptures[piece][i])) {
-					fatal("Duplicate futuremove!\n");
-				    } else {
-					capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-					futurevector |= FUTUREVECTOR(futurecaptures[piece][i]);
-					futuremovecnt ++;
-					capturecnt ++;
-					movecnt ++;
-				    }
+
+				if (futurecaptures[piece][captured_piece] == DISCARD_FUTUREMOVE) {
+				    /* discard prune - do nothing */
+				} else if (futurecaptures[piece][captured_piece] == CONCEDE_FUTUREMOVE) {
+				    concede_prune = true;
+				} else if (futurecaptures[piece][captured_piece] == RESIGN_FUTUREMOVE) {
+				    resign_prune = true;
+				} else if (futurecaptures[piece][captured_piece] < 0) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->pieces[piece].piece_type],
+					  piece_char[tb->pieces[captured_piece].piece_type]);
+				} else if (futurevector & FUTUREVECTOR(futurecaptures[piece][captured_piece])) {
+				    fatal("Duplicate futuremove!\n");
 				} else {
-				    int promotion;
-
-				    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-
-					if (promotion_captures[piece][i][promotion] == DISCARD_FUTUREMOVE) {
-					    /* discard prune - do nothing */
-					} else if (promotion_captures[piece][i][promotion] == CONCEDE_FUTUREMOVE) {
-					    concede_prune = true;
-					} else if (promotion_captures[piece][i][promotion] == RESIGN_FUTUREMOVE) {
-					    resign_prune = true;
-					} else if (promotion_captures[piece][i][promotion] < 0) {
-					    global_position_t global;
-					    index_to_global_position(tb, index, &global);
-					    fatal("No futuremove: %s %cx%c=%c\n", global_position_to_FEN(&global),
-						  piece_char[tb->pieces[piece].piece_type],
-						  piece_char[tb->pieces[i].piece_type],
-						  piece_char[promoted_pieces[promotion]]);
-					} else if (futurevector & FUTUREVECTOR(promotion_captures[piece][i][promotion])) {
-					    fatal("Duplicate futuremove!\n");
-					} else {
-					    capture_futurevector |= FUTUREVECTOR(promotion_captures[piece][i][promotion]);
-					    futurevector |= FUTUREVECTOR(promotion_captures[piece][i][promotion]);
-					    futuremovecnt ++;
-					    capturecnt ++;
-					    movecnt ++;
-					}
-				    }
+				    capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
+				    futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
+				    futuremovecnt ++;
+				    capturecnt ++;
+				    movecnt ++;
 				}
 			    }
 
 			    break;
 			}
 		    }
-
-		    if (i == tb->num_pieces) {
-			fatal("Couldn't match pawn capture!\n");
+		    if (captured_piece == tb->num_pieces) {
+			fatal("Couldn't match capture!\n");
 		    }
+		}
+	    }
+
+	} else {
+
+	    /* Pawns, as always, are special */
+
+	    for (auto movementptr = normal_pawn_movements[origin_square][tb->pieces[piece].color];
+		 (movementptr->vector & position.board_vector) == 0;
+		 movementptr++) {
+
+		local_position_t new_position = position;
+
+		move_piece(tb, &new_position, piece, movementptr->square);
+
+		/* What about pawn promotions here?  Well, we're looking to see if the moving side
+		 * is in check after the pawn move, and the only way the pawn could affect this is
+		 * by blocking the check.  It still blocks no matter what it promotes into, so we
+		 * don't have to distinguish between promotion and non-promotion moves here.
+		 */
+
+		if (! PTM_in_check(tb, &new_position)) {
+
+		    /* If the piece is a pawn and we're moving to the last rank, then this has to be
+		     * a promotion move, in fact, promotion_possibilities moves.  (queen, knight,
+		     * maybe rook and bishop, king for suicide).  As such, they will require back
+		     * propagation from futurebases and must therefore be flagged as futuremoves.
+		     */
+
+		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+
+			for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
+
+			    if (promotions[piece][promotion] == DISCARD_FUTUREMOVE) {
+				/* discard prune - do nothing */
+			    } else if (promotions[piece][promotion] == CONCEDE_FUTUREMOVE) {
+				concede_prune = true;
+			    } else if (promotions[piece][promotion] == RESIGN_FUTUREMOVE) {
+				resign_prune = true;
+			    } else if (promotions[piece][promotion] < 0) {
+				global_position_t global;
+				index_to_global_position(tb, index, &global);
+				fatal("No futuremove: %s %c=%c\n", global_position_to_FEN(&global),
+				      piece_char[tb->pieces[piece].piece_type], piece_char[promoted_pieces[promotion]]);
+			    } else if (futurevector & FUTUREVECTOR(promotions[piece][promotion])) {
+				global_position_t global;
+				index_to_global_position(tb, index, &global);
+				fatal("Duplicate futuremove: %s %s\n", global_position_to_FEN(&global),
+				      movestr[tb->pieces[piece].color][promotions[piece][promotion]]);
+			    } else {
+				futurevector |= FUTUREVECTOR(promotions[piece][promotion]);
+				futuremovecnt ++;
+				movecnt ++;
+			    }
+			}
+
+		    } else {
+
+			/* If a piece is moving outside its legal squares AND we can't permute the
+			 * pieces into a position where everything is legal, we regard this as a
+			 * futuremove (since it will require back prop from futurebases).
+			 */
+
+			if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
+			    && (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
+
+			    if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
+				/* discard prune */
+				movecnt --;
+			    } else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
+				concede_prune = true;
+			    } else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
+				resign_prune = true;
+			    } else if (futuremoves[piece][movementptr->square] < 0) {
+				global_position_t global;
+				index_to_global_position(tb, index, &global);
+				fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
+				      piece_char[tb->pieces[piece].piece_type],
+				      'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
+			    } else if (futurevector
+				       & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
+				fatal("Duplicate futuremove!\n");
+			    } else {
+				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
+				futuremovecnt ++;
+			    }
+			}
+
+			movecnt ++;
+		    }
+		}
+	    }
 
 
+	    /* Pawn captures.
+	     *
+	     * In this part of the code, we're just counting forward moves, and all captures are
+	     * futurebase moves, so the only difference to us whether this is a promotion move or
+	     * not is how many futuremoves get recorded.
+	     */
+
+	    struct movement * movementptr;
+
+	    for (movementptr = capture_pawn_movements[origin_square][tb->pieces[piece].color];
+		 movementptr->square != -1;
+		 movementptr++) {
+
+		/* If we're capturing to the last rank, then this has to be a promotion move, in
+		 * fact, promotion_possibilities moves.
+		 */
+
+		bool is_promotion_capture =
+		    ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0));
+
+		/* A special check for en passant captures.  */
+
+		if (movementptr->square == position.en_passant_square) {
+
+		    /* XXX record en_passant_pawn in local position to avoid this loop */
+
+		    for (int captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+			//if ((i == tb->white_king) || (i == tb->black_king)) continue;
+			if (movementptr->square + (tb->pieces[piece].color == WHITE ? -8 : 8)
+			    == position.piece_position[captured_piece]) {
+
+			    local_position_t new_position = position;
+
+			    move_piece(tb, &new_position, captured_piece, position.en_passant_square);
+			    capture_piece(tb, &new_position, piece, captured_piece);
+
+			    if (! PTM_in_check(tb, &new_position)) {
+				if (futurecaptures[piece][captured_piece] == DISCARD_FUTUREMOVE) {
+				    /* discard prune - do nothing */
+				} else if (futurecaptures[piece][captured_piece] == CONCEDE_FUTUREMOVE) {
+				    concede_prune = true;
+				} else if (futurecaptures[piece][captured_piece] == RESIGN_FUTUREMOVE) {
+				    resign_prune = true;
+				} else if (futurecaptures[piece][captured_piece] < 0) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->pieces[piece].piece_type],
+					  piece_char[tb->pieces[captured_piece].piece_type]);
+				} else if (futurevector & FUTUREVECTOR(futurecaptures[piece][captured_piece])) {
+				    fatal("Duplicate futuremove!\n");
+				} else {
+				    capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
+				    futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
+				    futuremovecnt ++;
+				    capturecnt ++;
+				    movecnt ++;
+				}
+			    }
+
+			    break;
+			}
+		    }
+		    continue;
+		}
+
+		if (((movementptr->vector & position.board_vector) == 0)
+		    || ((movementptr->vector & position.PTM_vector) != 0)) continue;
+
+		int captured_piece;
+
+		for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+		    if (movementptr->square == position.piece_position[captured_piece]) {
+			if ((captured_piece == tb->black_king) || (captured_piece == tb->white_king)) {
+			    entriesTable->initialize_entry_with_PNTM_mated(index);
+			    return 0;
+			}
+
+			local_position_t new_position = position;
+
+			capture_piece(tb, &new_position, piece, captured_piece);
+
+			if (! PTM_in_check(tb, &new_position)) {
+			    if (! is_promotion_capture) {
+				if (futurecaptures[piece][captured_piece] == DISCARD_FUTUREMOVE) {
+				    /* discard prune - do nothing */
+				} else if (futurecaptures[piece][captured_piece] == CONCEDE_FUTUREMOVE) {
+				    concede_prune = true;
+				} else if (futurecaptures[piece][captured_piece] == RESIGN_FUTUREMOVE) {
+				    resign_prune = true;
+				} else if (futurecaptures[piece][captured_piece] < 0) {
+				    global_position_t global;
+				    index_to_global_position(tb, index, &global);
+				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
+					  piece_char[tb->pieces[piece].piece_type],
+					  piece_char[tb->pieces[captured_piece].piece_type]);
+				} else if (futurevector & FUTUREVECTOR(futurecaptures[piece][captured_piece])) {
+				    fatal("Duplicate futuremove!\n");
+				} else {
+				    capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
+				    futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
+				    futuremovecnt ++;
+				    capturecnt ++;
+				    movecnt ++;
+				}
+			    } else {
+
+				for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
+
+				    if (promotion_captures[piece][captured_piece][promotion] == DISCARD_FUTUREMOVE) {
+					/* discard prune - do nothing */
+				    } else if (promotion_captures[piece][captured_piece][promotion] == CONCEDE_FUTUREMOVE) {
+					concede_prune = true;
+				    } else if (promotion_captures[piece][captured_piece][promotion] == RESIGN_FUTUREMOVE) {
+					resign_prune = true;
+				    } else if (promotion_captures[piece][captured_piece][promotion] < 0) {
+					global_position_t global;
+					index_to_global_position(tb, index, &global);
+					fatal("No futuremove: %s %cx%c=%c\n", global_position_to_FEN(&global),
+					      piece_char[tb->pieces[piece].piece_type],
+					      piece_char[tb->pieces[captured_piece].piece_type],
+					      piece_char[promoted_pieces[promotion]]);
+				    } else if (futurevector & FUTUREVECTOR(promotion_captures[piece][captured_piece][promotion])) {
+					fatal("Duplicate futuremove!\n");
+				    } else {
+					capture_futurevector |= FUTUREVECTOR(promotion_captures[piece][captured_piece][promotion]);
+					futurevector |= FUTUREVECTOR(promotion_captures[piece][captured_piece][promotion]);
+					futuremovecnt ++;
+					capturecnt ++;
+					movecnt ++;
+				    }
+				}
+			    }
+			}
+
+			break;
+		    }
+		}
+
+		if (captured_piece == tb->num_pieces) {
+		    fatal("Couldn't match pawn capture!\n");
 		}
 
 	    }
 
 	}
 
-	if (concede_prune) {
-	    entriesTable->initialize_entry_with_concede(index);
-	    return 0;
-	}
+    }
 
-	if (resign_prune) {
-	    entriesTable->initialize_entry_with_resign(index);
-	    return 0;
-	}
+    if (concede_prune) {
+	entriesTable->initialize_entry_with_concede(index);
+	return 0;
+    }
 
-	/* Finally, if every possible moves leads us into check, we determine if we're in check,
-	 * being the difference between this being checkmate or stalemate.  In suicide analysis, a
-	 * stalemate is a win for the stalemated player (international rules).
+    if (resign_prune) {
+	entriesTable->initialize_entry_with_resign(index);
+	return 0;
+    }
+
+    /* Finally, if every possible moves leads us into check, we determine if we're in check, being
+     * the difference between this being checkmate or stalemate.  In suicide analysis, a stalemate
+     * is a win for the stalemated player (international rules).
+     */
+
+    if (movecnt == 0) {
+
+	if (tb->variant == VARIANT_SUICIDE) {
+	    entriesTable->initialize_entry_with_PNTM_mated(index);
+	} else if (PTM_in_check(tb, &position)) {
+	    entriesTable->initialize_entry_with_PTM_mated(index);
+	} else {
+	    entriesTable->initialize_entry_with_stalemate(index);
+	}
+	return 0;
+
+    } else {
+
+	total_moves += movecnt;
+	total_futuremoves += futuremovecnt;
+
+	/* In suicide, captures are forced, so if any captures are possible they are our only moves.
+	 * Of course, if we can capture the opponent's last piece, then we win!
 	 */
 
-	if (movecnt == 0) {
+	if ((tb->variant == VARIANT_SUICIDE) && (capturecnt != 0)) {
+	    movecnt = capturecnt;
+	    futurevector = capture_futurevector;
+	}
 
-	    if (tb->variant == VARIANT_SUICIDE) {
-		entriesTable->initialize_entry_with_PNTM_mated(index);
-	    } else if (PTM_in_check(tb, &position)) {
-		entriesTable->initialize_entry_with_PTM_mated(index);
-	    } else {
-		entriesTable->initialize_entry_with_stalemate(index);
-	    }
-	    return 0;
+	/* Symmetry and multiplicity.  If we're using a symmetric index, then there might be more
+	 * than one actual board position that corresponds to a given index value.  The number of
+	 * non-identical board positions for a given index is called its multiplicity.  So here we
+	 * multiply the movecnt by the multiplicity of the position to get the total number of moves
+	 * out of all possible positions that correspond to this index.
+	 *
+	 * Actually, when computing position.multiplicity, we ignore horizontal and vertical
+	 * symmetry because they always result in doubled (or quadrupled) board positions.  Diagonal
+	 * symmetry is more difficult to handle because the pieces along the diagonal don't move
+	 * when you reflect the board.  So we need to use position.multiplicity to distinguish
+	 * between the two kings being on the a1/h8 diagonal (multiplicity 1), and one of them being
+	 * off the diagonal (multiplicity 2).
+	 */
 
-	} else {
+	entriesTable->initialize_entry_with_movecnt(index, movecnt * position.multiplicity);
 
-	    total_moves += movecnt;
-	    total_futuremoves += futuremovecnt;
-
-	    /* In suicide, captures are forced, so if any captures are possible they are our only
-	     * moves.  Of course, if we can capture the opponent's last piece, then we win!
-	     */
-
-	    if ((tb->variant == VARIANT_SUICIDE) && (capturecnt != 0)) {
-		movecnt = capturecnt;
-		futurevector = capture_futurevector;
-	    }
-
-	    /* Symmetry and multiplicity.  If we're using a symmetric index, then there might be more
-	     * than one actual board position that corresponds to a given index value.  The number
-	     * of non-identical board positions for a given index is called its multiplicity.  So
-	     * here we multiply the movecnt by the multiplicity of the position to get the total
-	     * number of moves out of all possible positions that correspond to this index.
-	     *
-	     * Actually, when computing position.multiplicity, we ignore horizontal and vertical
-	     * symmetry because they always result in doubled (or quadrupled) board positions.
-	     * Diagonal symmetry is more difficult to handle because the pieces along the diagonal
-	     * don't move when you reflect the board.  So we need to use position.multiplicity to
-	     * distinguish between the two kings being on the a1/h8 diagonal (multiplicity 1), and
-	     * one of them being off the diagonal (multiplicity 2).
-	     */
-
-	    entriesTable->initialize_entry_with_movecnt(index, movecnt * position.multiplicity);
-
-	    entriesTable[index].set_capture_possible_flag((capturecnt != 0));
+	entriesTable[index].set_capture_possible_flag((capturecnt != 0));
 
 #ifdef DEBUG_MOVE
-	    if (index == DEBUG_MOVE) {
-		/* other fields were printed by DEBUG_MOVE statement in initialize_entry() */
-		info("   futurevector " FUTUREVECTOR_HEX_FORMAT "\n", futurevector);
-	    }
+	if (index == DEBUG_MOVE) {
+	    /* other fields were printed by DEBUG_MOVE statement in initialize_entry() */
+	    info("   futurevector " FUTUREVECTOR_HEX_FORMAT "\n", futurevector);
+	}
 #endif
 
-	    return futurevector;
-	}
+	return futurevector;
+    }
 }
 
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 {
     local_position_t position;
-    int piece;
-    int dir;
-    int origin_square;
-    struct movement *movementptr;
-    int i;
 
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
@@ -12620,8 +12610,6 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
     print_progress_dot(current_tb);
 
     if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
-
-	/* XXX do we need to initialize these entries at all?  not sure */
 
 	entriesTable->initialize_entry_as_illegal(index);
 	return 0;
