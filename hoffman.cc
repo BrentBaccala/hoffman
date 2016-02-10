@@ -547,6 +547,8 @@ struct translation_result;
  * defined yet.
  */
 
+/* XXX initialize local_position meaningfully so we can drop a lot of these friends */
+
 template<typename MemberOfWhichClass, typename primative>
 class ReadOnly {
     friend MemberOfWhichClass;
@@ -560,15 +562,17 @@ class ReadOnly {
     friend index_t normalized_position_to_index(const struct tablebase *, struct local_position *);
     friend bool index_to_local_position(const struct tablebase *tb, index_t index, int reflection, struct local_position *position);
     friend int check_1000_positions(struct tablebase *);
+    friend bool place_piece_in_local_position(struct tablebase *tb, struct local_position *pos, int square, int color, int type);
     friend bool parse_FEN_to_local_position(char *, struct tablebase *, struct local_position *);
     friend translation_result translate_foreign_position_to_local_position(struct tablebase *foreign_tb, struct local_position *foreign_position,
 									   struct tablebase *local_tb, struct local_position *local_position,
 									   bool invert_colors);
     friend translation_result global_position_to_local_position(struct tablebase *tb, struct global_position *global, struct local_position *local);
-    friend bool place_piece_in_local_position(struct tablebase *tb, struct local_position *pos, int square, int color, int type);
 
 public:
     inline operator primative() const                 { return x; }
+    //ReadOnly() { }
+    //ReadOnly(const primative x) : x(x) { }
 
 protected:
     template<typename number> inline number operator= (const number& y) { return x = y; }
@@ -585,6 +589,7 @@ typedef struct local_position {
 
     ReadOnly<struct local_position, uint64_t> board_vector;
     ReadOnly<struct local_position, uint64_t> PTM_vector;
+    //std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> piece_position = {{ILLEGAL_POSITION}};
     std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> piece_position;
     std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> permuted_piece;
     ReadOnly<struct local_position, uint8_t> side_to_move;
@@ -12147,6 +12152,15 @@ bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
  *
  */
 
+/* There are three different variants of initialize_tablebase_entry(), that differ in their third
+ * argument.  The first one, that does all the work, takes a const local_position_t to protect
+ * against bugs in that code, the second takes a non-const local_position_t and performs an extra
+ * index_to_local_position conversion on it, and the third takes nothing and creates a
+ * local_position_t on the stack.  The third is deprecated since we now like to call
+ * index_to_local_position on an existing position, if possible, because it's often faster
+ * than creating a new position from scratch.
+ */
+
 futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t index, const local_position_t &position)
 {
     /* Now we need to count moves.  FORWARD moves. */
@@ -12602,10 +12616,8 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
     }
 }
 
-futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
+futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t index, local_position_t &position)
 {
-    local_position_t position;
-
 #ifdef DEBUG_MOVE
     if (index == DEBUG_MOVE)
 	info("Initializing %" PRIindex "\n", index);
@@ -12620,9 +12632,16 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 
     } else {
 
-	return initialize_tablebase_entry(tb, index, position);
+	return initialize_tablebase_entry(tb, index, (const local_position_t) position);
 
     }
+}
+
+futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
+{
+    local_position_t position;
+
+    return initialize_tablebase_entry(tb, index, position);
 }
 
 /* Tablebase initialization is the first important place where we can use threads to speed things up
@@ -12635,12 +12654,13 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 void initialize_tablebase_section(index_t start_index, index_t end_index)
 {
     index_t index;
+    local_position_t position;
 
     for (index=start_index; index <= end_index; index++) {
 	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 
 	set_unsigned_int_field(current_tb->futurevectors, bit_offset, current_tb->futurevector_bits,
-			       initialize_tablebase_entry(current_tb, index));
+			       initialize_tablebase_entry(current_tb, index, position));
     }
 }
 
