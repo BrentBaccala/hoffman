@@ -562,12 +562,12 @@ class ReadOnly {
     friend index_t normalized_position_to_index(const struct tablebase *, struct local_position *);
     friend bool index_to_local_position(const struct tablebase *tb, index_t index, int reflection, struct local_position *position);
     friend int check_1000_positions(struct tablebase *);
-    friend bool place_piece_in_local_position(struct tablebase *tb, struct local_position *pos, int square, int color, int type);
-    friend bool parse_FEN_to_local_position(char *, struct tablebase *, struct local_position *);
     friend translation_result translate_foreign_position_to_local_position(struct tablebase *foreign_tb, struct local_position *foreign_position,
 									   struct tablebase *local_tb, struct local_position *local_position,
 									   bool invert_colors);
     friend translation_result global_position_to_local_position(struct tablebase *tb, struct global_position *global, struct local_position *local);
+    friend bool place_piece_in_local_position(struct tablebase *tb, struct local_position *pos, int square, int color, int type);
+    friend bool parse_FEN_to_local_position(char *, struct tablebase *, struct local_position *);
 
 public:
     inline operator primative() const                 { return x; }
@@ -583,7 +583,7 @@ protected:
 };
 
 typedef struct local_position {
-    bool valid = false;
+    bool valid = false;		/* Does the structure accurately decode the index/reflection? */
     index_t index;
     int reflection;
 
@@ -606,6 +606,7 @@ typedef struct local_position {
 	board_vector &= ~BITVECTOR(piece_position[piece]);
 	piece_position[piece] = destination_square;
 	board_vector |= BITVECTOR(piece_position[piece]);
+	valid = false;
     };
 
     void place_piece(int piece, int destination_square) {
@@ -614,18 +615,21 @@ typedef struct local_position {
 	}
 	piece_position[piece] = destination_square;
 	board_vector |= BITVECTOR(piece_position[piece]);
+	valid = false;
     };
 
     void capture_piece(int capturing_piece, int captured_piece) {
 	board_vector &= ~BITVECTOR(piece_position[capturing_piece]);
 	piece_position[capturing_piece] = piece_position[captured_piece];
 	piece_position[captured_piece] = ILLEGAL_POSITION;
+	valid = false;
     };
 
     void uncapture_piece(int capturing_piece, int captured_piece, int square) {
 	piece_position[captured_piece] = piece_position[capturing_piece];
 	piece_position[capturing_piece] = square;
 	board_vector |= BITVECTOR(square);
+	valid = false;
     }
 
     void swap_pieces(int piece1, int piece2) {
@@ -643,11 +647,13 @@ typedef struct local_position {
     void clear_en_passant_square(void)
     {
 	en_passant_square = ILLEGAL_POSITION;
+	valid = false;
     }
 
     void set_en_passant_square(int square)
     {
 	en_passant_square = square;
+	valid = false;
     }
 
 } local_position_t;
@@ -4042,6 +4048,8 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
 	position->board_vector |= BITVECTOR(position->piece_position[piece]);
 	position->permuted_piece[permutation[piece]] = piece;
     }
+
+    /* If the position was 'valid', it's still valid. */
 }
 
 index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *position)
@@ -4164,6 +4172,13 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
     } else {
 	position->multiplicity = 1;
     }
+
+    /* position->reflection was set in normalize_position.  Maybe we should have a flag to specify
+     * if position has been normalized?
+     */
+
+    position->index = index;
+    position->valid = true;
 
     return index;
 }
@@ -4409,6 +4424,7 @@ int check_1000_positions(tablebase_t *tb)
 
 	position1.side_to_move = rand() % 2;
 	position1.en_passant_square = ILLEGAL_POSITION;
+	position1.valid = false;
 
     retry:
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -6269,6 +6285,8 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 
     memset(local_position, 0, sizeof(local_position_t));
 
+    local_position->valid = false;
+
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
 	local_position->piece_position[local_piece] = ILLEGAL_POSITION;
 	local_position->permuted_piece[local_piece] = local_piece;
@@ -6386,6 +6404,7 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
 
     fake_position.side_to_move = global->side_to_move;
     fake_position.en_passant_square = global->en_passant_square;
+    fake_position.valid = false;
 
     for (square = 0; square < NUM_SQUARES; square ++) {
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
@@ -6479,6 +6498,8 @@ bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int s
 	}
     }
 
+    pos->valid = false;
+
     return false;
 }
 
@@ -6495,6 +6516,7 @@ bool parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_positi
 
     memset(pos, 0, sizeof(local_position_t));
     pos->en_passant_square = ILLEGAL_POSITION;
+    pos->valid = false;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	pos->piece_position[piece] = ILLEGAL_POSITION;
