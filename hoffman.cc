@@ -592,10 +592,15 @@ typedef struct local_position {
      * an invalid position will return false and produce a local_position with 'decoded' true,
      * 'valid' false, and 'index'/'reflection' set to the requested values.
      *
-     * How do we handle reflections?  Permutations to normalize semilegal groups?
+     * How do we handle reflections?  Store a copy of the unreflected positions along with a flag
+     * (unreflected_valid) that indicates if the position calculation was valid up to the point
+     * where we apply reflections.  Reflections are always requested serially on a single position.
+     *
+     * Permutations to normalize semilegal groups?
      */
 
     bool decoded = false;
+    bool unreflected_valid;
     bool valid;
     index_t index;
     int reflection;
@@ -603,9 +608,11 @@ typedef struct local_position {
     ReadOnly<struct local_position, uint64_t> board_vector;
     ReadOnly<struct local_position, uint64_t> PTM_vector;
     //std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> piece_position = {{ILLEGAL_POSITION}};
+    std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> unreflected_piece_position;
     std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> piece_position;
     std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> permuted_piece;
     ReadOnly<struct local_position, uint8_t> side_to_move;
+    ReadOnly<struct local_position, uint8_t> unreflected_en_passant_square;
     ReadOnly<struct local_position, uint8_t> en_passant_square;
     ReadOnly<struct local_position, uint8_t> multiplicity;
 
@@ -4212,14 +4219,16 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 
     if (position->decoded && (index == position->index)) {
 	if (reflection == position->reflection) return position->valid;
-	/* XXX handle case where index hasn't changed but reflection has */
+	if (! position->unreflected_valid) return false;
+	goto do_reflection;
     }
 
     /* These are the values we want stored if this routine returns false. */
     position->index = index;
     position->reflection = reflection;
-    position->decoded = true;
     position->valid = false;
+    position->unreflected_valid = false;
+    position->decoded = true;
 
     /* Side-to-move, if present, is always LSB */
 
@@ -4313,6 +4322,16 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	position->multiplicity = 1;
     }
 
+    /* Store a copy of the unreflected positions to speed up later calls to this function that only
+     * change reflection.
+     */
+
+    position->unreflected_valid = true;
+    position->unreflected_piece_position = position->piece_position;
+    position->unreflected_en_passant_square = position->en_passant_square;
+
+ do_reflection:
+
     /* If a position in an 8-way symmetric tablebase has multiplicity 1, then we don't want to
      * diagonally reflect it, because there's another index that corresponds to the reflected
      * position.  Only 8-way tablebases would request diagonal reflection anyway.
@@ -4328,7 +4347,7 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
     position->PTM_vector = 0;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
-	position->piece_position[piece] = reverse_reflection[reflection & 7][position->piece_position[piece]];
+	position->piece_position[piece] = reverse_reflection[reflection & 7][position->unreflected_piece_position[piece]];
 
 	/* An important check for restricted pieces, and one of most important, too, because
 	 * this function is used during initialization to decide which indices are legal and
@@ -4346,6 +4365,7 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 
 	/* Is there another piece already on this square? */
 	if (position->board_vector & BITVECTOR(position->piece_position[piece])) {
+	    position->unreflected_valid = false;
 	    return false;
 	}
 
@@ -4355,8 +4375,8 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	}
     }
 
-    if (position->en_passant_square != ILLEGAL_POSITION) {
-	position->en_passant_square = reverse_reflection[reflection & 7][position->en_passant_square];
+    if (position->unreflected_en_passant_square != ILLEGAL_POSITION) {
+	position->en_passant_square = reverse_reflection[reflection & 7][position->unreflected_en_passant_square];
     }
 
     if (reflection & REFLECTION_COLOR) {
