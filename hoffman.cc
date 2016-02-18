@@ -583,7 +583,20 @@ protected:
 };
 
 typedef struct local_position {
-    bool valid = false;		/* Does the structure accurately decode the index/reflection? */
+
+    /* decoded - Does the structure accurately decode the index/reflection?
+     *
+     * 'decoded' can be set even for indices that decode to invalid positions.  The 'valid' flag
+     * indicates if the position decodes to a valid position, i.e, if index_to_local_position()
+     * returns true for this index.  Calling index_to_local_position() on an index that decodes to
+     * an invalid position will return false and produce a local_position with 'decoded' true,
+     * 'valid' false, and 'index'/'reflection' set to the requested values.
+     *
+     * How do we handle reflections?  Permutations to normalize semilegal groups?
+     */
+
+    bool decoded = false;
+    bool valid;
     index_t index;
     int reflection;
 
@@ -606,7 +619,7 @@ typedef struct local_position {
 	board_vector &= ~BITVECTOR(piece_position[piece]);
 	piece_position[piece] = destination_square;
 	board_vector |= BITVECTOR(piece_position[piece]);
-	valid = false;
+	decoded = false;
     };
 
     void place_piece(int piece, int destination_square) {
@@ -615,21 +628,21 @@ typedef struct local_position {
 	}
 	piece_position[piece] = destination_square;
 	board_vector |= BITVECTOR(piece_position[piece]);
-	valid = false;
+	decoded = false;
     };
 
     void capture_piece(int capturing_piece, int captured_piece) {
 	board_vector &= ~BITVECTOR(piece_position[capturing_piece]);
 	piece_position[capturing_piece] = piece_position[captured_piece];
 	piece_position[captured_piece] = ILLEGAL_POSITION;
-	valid = false;
+	decoded = false;
     };
 
     void uncapture_piece(int capturing_piece, int captured_piece, int square) {
 	piece_position[captured_piece] = piece_position[capturing_piece];
 	piece_position[capturing_piece] = square;
 	board_vector |= BITVECTOR(square);
-	valid = false;
+	decoded = false;
     }
 
     void swap_pieces(int piece1, int piece2) {
@@ -641,19 +654,19 @@ typedef struct local_position {
 	if (side_to_move == WHITE) side_to_move = BLACK;
 	else side_to_move = WHITE;
 
-	valid = false;
+	decoded = false;
     };
 
     void clear_en_passant_square(void)
     {
 	en_passant_square = ILLEGAL_POSITION;
-	valid = false;
+	decoded = false;
     }
 
     void set_en_passant_square(int square)
     {
 	en_passant_square = square;
-	valid = false;
+	decoded = false;
     }
 
 } local_position_t;
@@ -4026,7 +4039,7 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
      * Only improves speed if we have a lot of pieces in the group, though, so the current
      * code is definitely better for two pieces in the group.
      *
-     * We don't check the return value from permut_semilegal_group_until_legal().  Why?  Well, this
+     * We don't check the return value from permute_semilegal_group_until_legal().  Why?  Well, this
      * function returns void, so what should it do if the position isn't legal?  On the other hand,
      * normalized_position_to_index (the next step after this one in local_position_to_index) will
      * check the position for legality and return INVALID_INDEX if it isn't.
@@ -4049,7 +4062,7 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
 	position->permuted_piece[permutation[piece]] = piece;
     }
 
-    /* If the position was 'valid', it's still valid. */
+    /* If the position was 'decoded', it's still decoded. */
 }
 
 index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *position)
@@ -4179,6 +4192,7 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 
     position->index = index;
     position->valid = true;
+    position->decoded = true;
 
     return index;
 }
@@ -4199,9 +4213,10 @@ index_t local_position_to_index(const tablebase_t *tb, local_position_t *origina
 
     original->multiplicity = copy.multiplicity;
 
-    original->index = index;
+    original->valid = copy.valid;
+    original->index = copy.index;
     original->reflection = copy.reflection;
-    original->valid = true;
+    original->decoded = copy.decoded;
 
     return index;
 }
@@ -4213,7 +4228,16 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 
     if (index >= tb->num_indices) return false;
 
-    position->en_passant_square = ILLEGAL_POSITION;
+    if (position->decoded && (index == position->index)) {
+	if (reflection == position->reflection) return position->valid;
+	/* XXX handle case where index hasn't changed but reflection has */
+    }
+
+    /* These are the values we want stored if this routine returns false. */
+    position->index = index;
+    position->reflection = reflection;
+    position->decoded = true;
+    position->valid = false;
 
     /* Side-to-move, if present, is always LSB */
 
@@ -4225,6 +4249,8 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
     }
 
     /* Extract pawngen pawn encoding from the most significant bits. */
+
+    /* XXX divisions are slow */
 
     if (tb->pawngen) {
 	int pawn_index = index / tb->encoding->size;
@@ -4238,9 +4264,9 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 
 	position->en_passant_square = tb->pawngen->pawn_positions_by_index[pawn_index].en_passant_square;
 
-	/* If we've got an en passant pawn, make sure that it is the right color, i.e, the opposite
-	 * color of the side to move.  This check will reject half of our en passant positions, which
-	 * might be a place for improvement.
+	/* If we've got an en passant pawn, make sure that it is the right color, i.e, the
+	 * opposite color of the side to move.  This check will reject half of our en passant
+	 * positions, which might be a place for improvement.
 	 */
 
 	if (position->en_passant_square != ILLEGAL_POSITION) {
@@ -4248,6 +4274,8 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 		return false;
 	    }
 	}
+    } else {
+	position->en_passant_square = ILLEGAL_POSITION;
     }
 
     /* Encode pieces and non-pawngen pawns using selected index function.
@@ -4386,10 +4414,7 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	position->permuted_piece[piece] = piece;
     }
 
-    position->index = index;
-    position->reflection = reflection;
     position->valid = true;
-
     return true;
 }
 
@@ -4424,7 +4449,7 @@ int check_1000_positions(tablebase_t *tb)
 
 	position1.side_to_move = rand() % 2;
 	position1.en_passant_square = ILLEGAL_POSITION;
-	position1.valid = false;
+	position1.decoded = false;
 
     retry:
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -6285,7 +6310,7 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 
     memset(local_position, 0, sizeof(local_position_t));
 
-    local_position->valid = false;
+    local_position->decoded = false;
 
     for (local_piece = 0; local_piece < local_tb->num_pieces; local_piece ++) {
 	local_position->piece_position[local_piece] = ILLEGAL_POSITION;
@@ -6404,7 +6429,7 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
 
     fake_position.side_to_move = global->side_to_move;
     fake_position.en_passant_square = global->en_passant_square;
-    fake_position.valid = false;
+    fake_position.decoded = false;
 
     for (square = 0; square < NUM_SQUARES; square ++) {
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
@@ -6498,7 +6523,7 @@ bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int s
 	}
     }
 
-    pos->valid = false;
+    pos->decoded = false;
 
     return false;
 }
@@ -6516,7 +6541,7 @@ bool parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_positi
 
     memset(pos, 0, sizeof(local_position_t));
     pos->en_passant_square = ILLEGAL_POSITION;
-    pos->valid = false;
+    pos->decoded = false;
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	pos->piece_position[piece] = ILLEGAL_POSITION;
