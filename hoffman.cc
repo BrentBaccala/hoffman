@@ -2336,6 +2336,239 @@ void tablebase::parse_pawngen_element(xmlpp::Node * xml)
     invalid_pawn_positions.clear();
 }
 
+/***** NORMALIZATION *****/
+
+/* Not all positions are created equal, but some are.  For example, interchanging two identical
+ * pieces doesn't change the position at all, so a position with rook #1 on e4 and rook #2 on g6 is
+ * the same as one with rook #1 on g6 and rook #2 on e4.  When converting to an index, we deal with
+ * this by sorting identical pieces so the piece on the lowest numbered square always appears first
+ * in the position.
+ *
+ * But this creates problems when trying to move a piece.  Consider for example, the two rooks.  If
+ * we are moving rook #1 along the e file, it moves to e5, then e6, then e7.  Now, at e7, it has
+ * become the rook on the higher numbered square, so the pieces have just "flipped" in the position
+ * structure!  Additionally, if we have symmetry involved, then which piece is on the higher
+ * numbered square can depend on the reflections required to get the kings to their restricted
+ * areas.
+ *
+ * And we can't simply hide all of this in the guts of the position-to-index functions, because we
+ * track futuremoves.  Figuring out "which one" of an identical pair of pieces got captured is
+ * critical to figuring out which bit in the futuremoves vector corresponds to this move.
+ *
+ * So, we deal with this using "normalization".  We call normalize_position() to apply all the
+ * reflection and sorting needed to get the position to a point where it can be directly converted
+ * to an index.  We record these transformations using the 'reflection' variable and a permutation
+ * array in the position structure.
+ *
+ * We can look into the permutation array to figure out which piece has been swapped where, so we
+ * can figure out futuremove bit vectors accordingly.  So the way we move a rook, like in the
+ * example above, is to move it e5, normalize, back prop, move it to e6, normalize, back prop, move
+ * it to e7, etc.
+ *
+ * We also recompute the board vector, because the reflections can change it around.
+ */
+
+/* Forward reflections are used when converting a position to an index, are the ones returned by a
+ * lookup in the tablebase's reflections array, and are applied in the order horizontal, vertical,
+ * diagonal.
+ *
+ * Reverse reflections are used when converted an index to a position, and are applied in the order
+ * diagonal, vertical, horizontal.  We need to reverse the ordering in order to ensure that the
+ * positions generated from the index are the same ones that convert back to the index.
+ */
+
+uint8_t forward_reflection[8][64];
+uint8_t reverse_reflection[8][64];
+
+void init_reflections(void)
+{
+    for (int reflect = 0; reflect < 8; reflect ++) {
+	for (int square = 0; square < 64; square ++) {
+	    forward_reflection[reflect][square] = square;
+	    if (reflect & REFLECTION_HORIZONTAL)
+		forward_reflection[reflect][square]
+		    = horizontal_reflection(forward_reflection[reflect][square]);
+	    if (reflect & REFLECTION_VERTICAL)
+		forward_reflection[reflect][square]
+		    = vertical_reflection(forward_reflection[reflect][square]);
+	    if (reflect & REFLECTION_DIAGONAL)
+		forward_reflection[reflect][square]
+		    = diagonal_reflection(forward_reflection[reflect][square]);
+
+	    reverse_reflection[reflect][square] = square;
+	    if (reflect & REFLECTION_DIAGONAL)
+		reverse_reflection[reflect][square]
+		    = diagonal_reflection(reverse_reflection[reflect][square]);
+	    if (reflect & REFLECTION_VERTICAL)
+		reverse_reflection[reflect][square]
+		    = vertical_reflection(reverse_reflection[reflect][square]);
+	    if (reflect & REFLECTION_HORIZONTAL)
+		reverse_reflection[reflect][square]
+		    = horizontal_reflection(reverse_reflection[reflect][square]);
+	}
+    }
+}
+
+bool semilegal_group_is_legal(const tablebase_t *tb, const local_position_t *position, int first_piece_in_group)
+{
+    for (int piece = first_piece_in_group; piece != -1; piece = tb->pieces[piece].next_piece_in_semilegal_group) {
+	if (! (tb->pieces[piece].legal_squares & BITVECTOR(position->piece_position[piece]))) {
+	    return false;
+	}
+    }
+    return true;
+}
+
+bool permute_semilegal_group_until_legal(const tablebase_t *tb, local_position_t *position,
+					 int first_piece_in_group, uint8_t *permutation = NULL)
+{
+    for (int perm = 0; tb->pieces[first_piece_in_group].permutations[perm] != 0; perm ++) {
+
+	if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
+
+	std::swap(position->piece_position[tb->pieces[first_piece_in_group].permutations[perm] & 0xff],
+		  position->piece_position[tb->pieces[first_piece_in_group].permutations[perm] >> 8]);
+	if (permutation) {
+	    std::swap(permutation[tb->pieces[first_piece_in_group].permutations[perm] & 0xff],
+		      permutation[tb->pieces[first_piece_in_group].permutations[perm] >> 8]);
+	}
+    }
+
+    if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
+
+    /* If none of the permutations result in a legal position, then the permutation list is
+     * structured so that this final transposition takes us back to the original position and we
+     * return false.
+     */
+
+    std::swap(position->piece_position[first_piece_in_group],
+	      position->piece_position[tb->pieces[first_piece_in_group].next_piece_in_semilegal_group]);
+    return false;
+}
+
+void normalize_position(const tablebase_t *tb, local_position_t *position)
+{
+    int piece, piece2;
+    uint8_t permutation[MAX_PIECES];
+
+    /* The 'combinadic4' index might not encode side-to-move at all.  In this case, if black is to
+     * move, then we have to invert the entire board.  We've precomputed how to exchange the pieces;
+     * that information is in the color_symmetric_transpose array.  We do this transformation first
+     * because it will change the king positions that are used next to compute reflections.
+     */
+
+    if ((! tb->encode_stm) && (position->side_to_move == BLACK)) {
+
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    permutation[piece] = tb->pieces[piece].color_symmetric_transpose;
+	    if (tb->pieces[piece].color_symmetric_transpose > piece) {
+		position->piece_position[piece] = 63 - position->piece_position[piece];
+		std::swap(position->piece_position[piece],
+			  position->piece_position[tb->pieces[piece].color_symmetric_transpose]);
+		position->piece_position[piece] = 63 - position->piece_position[piece];
+	    }
+	}
+	if (position->en_passant_square != ILLEGAL_POSITION) {
+	    position->en_passant_square = 63 - position->en_passant_square;
+	}
+	position->side_to_move = WHITE;
+
+    } else {
+	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	    permutation[piece] = piece;
+	}
+    }
+
+    /* Reflect the pieces around to get the white king where we want him for symmetry.
+     *
+     * 2-way symmetry: white king always on left side of board
+     *
+     * 4-way symmetry: white king always in lower left quarter of board
+     *
+     * 8-way symmetry: white king always in a1-a4-d4 triangle, and if white king is on a1-d4
+     * diagonal, then black king is on or below a1-h8 diagonal
+     */
+
+    if (tb->symmetry > 1) {
+
+	int reflection = tb->reflections
+	    [position->piece_position[tb->white_king]]
+	    [position->piece_position[tb->black_king]];
+
+	if (reflection != 0) {
+	    for (piece = 0; piece < tb->num_pieces; piece ++) {
+		position->piece_position[piece]
+		    = forward_reflection[reflection][position->piece_position[piece]];
+	    }
+	    if (position->en_passant_square != ILLEGAL_POSITION) {
+		position->en_passant_square
+		    = forward_reflection[reflection][position->en_passant_square];
+	    }
+	}
+
+	position->reflection = reflection;
+
+    } else {
+
+	position->reflection = 0;
+
+    }
+
+    /* Sort any identical pieces so that the lowest square number always comes first. */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	piece2 = piece;
+	while ((tb->pieces[piece2].prev_piece_in_semilegal_group != -1)
+	       && (position->piece_position[piece2]
+		   < position->piece_position[tb->pieces[piece2].prev_piece_in_semilegal_group])) {
+	    std::swap(position->piece_position[piece2],
+		      position->piece_position[tb->pieces[piece2].prev_piece_in_semilegal_group]);
+	    std::swap(permutation[piece2],
+		      permutation[tb->pieces[piece2].prev_piece_in_semilegal_group]);
+	    piece2 = tb->pieces[piece2].prev_piece_in_semilegal_group;
+	}
+    }
+
+    /* Now permute identical pieces to try and get them onto legal squares (if needed).
+     *
+     * The order of the permutations is significant only in that identical board positions must
+     * always generate identical indices.  So we first sort the pieces into a standard order (the
+     * previous step), and then systematically apply permutations until we find the first one that
+     * places all the pieces onto legal squares.  If none of the permutations work, we don't care.
+     * This position is then illegal and will get rejected when we try to convert it to an index.
+     *
+     * Here's an obvious improvement if we have a lot of pieces in a semilegal group.  Count the
+     * number of illegally positioned pieces, then only check legality of the pieces we're swapping
+     * in each transposition to update the count.  Keep going until the count reaches zero.
+     * Only improves speed if we have a lot of pieces in the group, though, so the current
+     * code is definitely better for two pieces in the group.
+     *
+     * We don't check the return value from permute_semilegal_group_until_legal().  Why?  Well, this
+     * function returns void, so what should it do if the position isn't legal?  On the other hand,
+     * normalized_position_to_index (the next step after this one in local_position_to_index) will
+     * check the position for legality and return INVALID_INDEX if it isn't.
+     */
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	if (tb->pieces[piece].permutations) {
+	    permute_semilegal_group_until_legal(tb, position, piece, permutation);
+	}
+    }
+
+    /* Finally, reconstruct the board vector and invert the permutation, so that the permuted_piece
+     * array in the position gives the new pieces as a function of the old ones.
+     */
+
+    position->board_vector = 0;
+
+    for (piece = 0; piece < tb->num_pieces; piece ++) {
+	position->board_vector |= BITVECTOR(position->piece_position[piece]);
+	position->permuted_piece[permutation[piece]] = piece;
+    }
+
+    /* If the position was 'decoded', it's still decoded. */
+}
+
 /***** INDICES *****/
 
 /* Basically there are two functions here - one converts an index to a local position, the other
@@ -3570,7 +3803,7 @@ public:
 	 * group is sorted in ascending order.
 	 *
 	 * Now we have to decide the actual ordering in the piece array.  Normalize_position() sorts
-	 * encoding groups of identical pieces into ascending order, then permutes until all the
+	 * semilegal groups of identical pieces into ascending order, then permutes until all the
 	 * pieces are on legal squares.  Mimic this action here.
 	 *
 	 * XXX don't need to use permutations (at all?) for an encoding group of plus-pawns
@@ -3581,29 +3814,9 @@ public:
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
 
 	    if (tb->pieces[piece].permutations) {
-		int perm = 0;
 
-		while (tb->pieces[piece].permutations[perm] != 0) {
+		permute_semilegal_group_until_legal(tb, p, piece);
 
-		    int piece2;
-
-		    /* check for legality of all pieces in this set */
-		    for (piece2 = piece; piece2 != -1; piece2 = next_piece_in_encoding_group[piece2]) {
-			if (! (tb->pieces[piece2].legal_squares & BITVECTOR(p->piece_position[piece2]))) {
-			    break;
-			}
-		    }
-
-		    if (piece2 == -1) {
-			/* we're legal */
-			break;
-		    }
-
-		    /* permute */
-		    std::swap(p->piece_position[tb->pieces[piece].permutations[perm] & 0xff],
-			      p->piece_position[tb->pieces[piece].permutations[perm] >> 8]);
-		    perm ++;
-		}
 	    }
 	}
 
@@ -3833,237 +4046,6 @@ public:
 	}
     }
 };
-
-/* Normalization
- *
- * Not all positions are created equal, but some are.  For example, interchanging two identical
- * pieces doesn't change the position at all, so a position with rook #1 on e4 and rook #2 on g6 is
- * the same as one with rook #1 on g6 and rook #2 on e4.  When converting to an index, we deal with
- * this by sorting identical pieces so the piece on the lowest numbered square always appears first
- * in the position.
- *
- * But this creates problems when trying to move a piece.  Consider for example, the two rooks.  If
- * we are moving rook #1 along the e file, it moves to e5, then e6, then e7.  Now, at e7, it has
- * become the rook on the higher numbered square, so the pieces have just "flipped" in the position
- * structure!  Additionally, if we have symmetry involved, then which piece is on the higher
- * numbered square can depend on the reflections required to get the kings to their restricted
- * areas.
- *
- * And we can't simply hide all of this in the guts of the position-to-index functions, because we
- * track futuremoves.  Figuring out "which one" of an identical pair of pieces got captured is
- * critical to figuring out which bit in the futuremoves vector corresponds to this move.
- *
- * So, we deal with this using "normalization".  We call normalize_position() to apply all the
- * reflection and sorting needed to get the position to a point where it can be directly converted
- * to an index.  We record these transformations using the 'reflection' variable and a permutation
- * array in the position structure.
- *
- * We can look into the permutation array to figure out which piece has been swapped where, so we
- * can figure out futuremove bit vectors accordingly.  So the way we move a rook, like in the
- * example above, is to move it e5, normalize, back prop, move it to e6, normalize, back prop, move
- * it to e7, etc.
- *
- * We also recompute the board vector, because the reflections can change it around.
- */
-
-/* Forward reflections are used when converting a position to an index, are the ones returned by a
- * lookup in the tablebase's reflections array, and are applied in the order horizontal, vertical,
- * diagonal.
- *
- * Reverse reflections are used when converted an index to a position, and are applied in the order
- * diagonal, vertical, horizontal.  We need to reverse the ordering in order to ensure that the
- * positions generated from the index are the same ones that convert back to the index.
- */
-
-uint8_t forward_reflection[8][64];
-uint8_t reverse_reflection[8][64];
-
-void init_reflections(void)
-{
-    for (int reflect = 0; reflect < 8; reflect ++) {
-	for (int square = 0; square < 64; square ++) {
-	    forward_reflection[reflect][square] = square;
-	    if (reflect & REFLECTION_HORIZONTAL)
-		forward_reflection[reflect][square]
-		    = horizontal_reflection(forward_reflection[reflect][square]);
-	    if (reflect & REFLECTION_VERTICAL)
-		forward_reflection[reflect][square]
-		    = vertical_reflection(forward_reflection[reflect][square]);
-	    if (reflect & REFLECTION_DIAGONAL)
-		forward_reflection[reflect][square]
-		    = diagonal_reflection(forward_reflection[reflect][square]);
-
-	    reverse_reflection[reflect][square] = square;
-	    if (reflect & REFLECTION_DIAGONAL)
-		reverse_reflection[reflect][square]
-		    = diagonal_reflection(reverse_reflection[reflect][square]);
-	    if (reflect & REFLECTION_VERTICAL)
-		reverse_reflection[reflect][square]
-		    = vertical_reflection(reverse_reflection[reflect][square]);
-	    if (reflect & REFLECTION_HORIZONTAL)
-		reverse_reflection[reflect][square]
-		    = horizontal_reflection(reverse_reflection[reflect][square]);
-	}
-    }
-}
-
-bool semilegal_group_is_legal(const tablebase_t *tb, const local_position_t *position, int first_piece_in_group)
-{
-    for (int piece = first_piece_in_group; piece != -1; piece = tb->pieces[piece].next_piece_in_semilegal_group) {
-	if (! (tb->pieces[piece].legal_squares & BITVECTOR(position->piece_position[piece]))) {
-	    return false;
-	}
-    }
-    return true;
-}
-
-bool permute_semilegal_group_until_legal(const tablebase_t *tb, local_position_t *position,
-					 int first_piece_in_group, uint8_t *permutation)
-{
-    for (int perm = 0; tb->pieces[first_piece_in_group].permutations[perm] != 0; perm ++) {
-
-	if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
-
-	std::swap(position->piece_position[tb->pieces[first_piece_in_group].permutations[perm] & 0xff],
-		  position->piece_position[tb->pieces[first_piece_in_group].permutations[perm] >> 8]);
-	std::swap(permutation[tb->pieces[first_piece_in_group].permutations[perm] & 0xff],
-		  permutation[tb->pieces[first_piece_in_group].permutations[perm] >> 8]);
-    }
-
-    if (semilegal_group_is_legal(tb, position, first_piece_in_group)) return true;
-
-    /* If none of the permutations result in a legal position, then the permutation list is
-     * structured so that this final transposition takes us back to the original position and we
-     * return false.
-     */
-
-    std::swap(position->piece_position[first_piece_in_group],
-	      position->piece_position[tb->pieces[first_piece_in_group].next_piece_in_semilegal_group]);
-    return false;
-}
-
-void normalize_position(const tablebase_t *tb, local_position_t *position)
-{
-    int piece, piece2;
-    uint8_t permutation[MAX_PIECES];
-
-    /* The 'combinadic4' index might not encode side-to-move at all.  In this case, if black is to
-     * move, then we have to invert the entire board.  We've precomputed how to exchange the pieces;
-     * that information is in the color_symmetric_transpose array.  We do this transformation first
-     * because it will change the king positions that are used next to compute reflections.
-     */
-
-    if ((! tb->encode_stm) && (position->side_to_move == BLACK)) {
-
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    permutation[piece] = tb->pieces[piece].color_symmetric_transpose;
-	    if (tb->pieces[piece].color_symmetric_transpose > piece) {
-		position->piece_position[piece] = 63 - position->piece_position[piece];
-		std::swap(position->piece_position[piece],
-			  position->piece_position[tb->pieces[piece].color_symmetric_transpose]);
-		position->piece_position[piece] = 63 - position->piece_position[piece];
-	    }
-	}
-	if (position->en_passant_square != ILLEGAL_POSITION) {
-	    position->en_passant_square = 63 - position->en_passant_square;
-	}
-	position->side_to_move = WHITE;
-
-    } else {
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    permutation[piece] = piece;
-	}
-    }
-
-    /* Reflect the pieces around to get the white king where we want him for symmetry.
-     *
-     * 2-way symmetry: white king always on left side of board
-     *
-     * 4-way symmetry: white king always in lower left quarter of board
-     *
-     * 8-way symmetry: white king always in a1-a4-d4 triangle, and if white king is on a1-d4
-     * diagonal, then black king is on or below a1-h8 diagonal
-     */
-
-    if (tb->symmetry > 1) {
-
-	int reflection = tb->reflections
-	    [position->piece_position[tb->white_king]]
-	    [position->piece_position[tb->black_king]];
-
-	if (reflection != 0) {
-	    for (piece = 0; piece < tb->num_pieces; piece ++) {
-		position->piece_position[piece]
-		    = forward_reflection[reflection][position->piece_position[piece]];
-	    }
-	    if (position->en_passant_square != ILLEGAL_POSITION) {
-		position->en_passant_square
-		    = forward_reflection[reflection][position->en_passant_square];
-	    }
-	}
-
-	position->reflection = reflection;
-
-    } else {
-
-	position->reflection = 0;
-
-    }
-
-    /* Sort any identical pieces so that the lowest square number always comes first. */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	piece2 = piece;
-	while ((tb->pieces[piece2].prev_piece_in_semilegal_group != -1)
-	       && (position->piece_position[piece2]
-		   < position->piece_position[tb->pieces[piece2].prev_piece_in_semilegal_group])) {
-	    std::swap(position->piece_position[piece2],
-		      position->piece_position[tb->pieces[piece2].prev_piece_in_semilegal_group]);
-	    std::swap(permutation[piece2],
-		      permutation[tb->pieces[piece2].prev_piece_in_semilegal_group]);
-	    piece2 = tb->pieces[piece2].prev_piece_in_semilegal_group;
-	}
-    }
-
-    /* Now permute identical pieces to try and get them onto legal squares (if needed).
-     *
-     * The order of the permutations is significant only in that identical board positions must
-     * always generate identical indices.  So we first sort the pieces into a standard order (the
-     * previous step), and then systematically apply permutations until we find the first one that
-     * places all the pieces onto legal squares.  If none of the permutations work, we don't care.
-     * This position is then illegal and will get rejected when we try to convert it to an index.
-     *
-     * Here's an obvious improvement if we have a lot of pieces in a semilegal group.  Count the
-     * number of illegally positioned pieces, then only check legality of the pieces we're swapping
-     * in each transposition to update the count.  Keep going until the count reaches zero.
-     * Only improves speed if we have a lot of pieces in the group, though, so the current
-     * code is definitely better for two pieces in the group.
-     *
-     * We don't check the return value from permute_semilegal_group_until_legal().  Why?  Well, this
-     * function returns void, so what should it do if the position isn't legal?  On the other hand,
-     * normalized_position_to_index (the next step after this one in local_position_to_index) will
-     * check the position for legality and return INVALID_INDEX if it isn't.
-     */
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	if (tb->pieces[piece].permutations) {
-	    permute_semilegal_group_until_legal(tb, position, piece, permutation);
-	}
-    }
-
-    /* Finally, reconstruct the board vector and invert the permutation, so that the permuted_piece
-     * array in the position gives the new pieces as a function of the old ones.
-     */
-
-    position->board_vector = 0;
-
-    for (piece = 0; piece < tb->num_pieces; piece ++) {
-	position->board_vector |= BITVECTOR(position->piece_position[piece]);
-	position->permuted_piece[permutation[piece]] = piece;
-    }
-
-    /* If the position was 'decoded', it's still decoded. */
-}
 
 index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *position)
 {
