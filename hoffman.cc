@@ -603,6 +603,8 @@ typedef struct local_position {
     bool unreflected_valid;
     bool valid;
     index_t index;
+    int pawngen_index;
+    index_t pawngen_base_index;
     int reflection;
 
     ReadOnly<struct local_position, uint64_t> board_vector;
@@ -4215,7 +4217,16 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
     int ret;
     int piece, piece2;
 
+    bool decoded = position->decoded;
+
     if (index >= tb->num_indices) return false;
+
+    /* The 'reflection' argument is either always REFLECTION_NONE, or changes faster than the index,
+     * since we compute multiple reflections for every index.  Since 'reflection's behavior is
+     * fairly predictable, I expect branch prediction to blow through this loop correctly every
+     * time, though the appearance of an invalid index that is not 'unreflected_valid' might
+     * upset that.
+     */
 
     if (position->decoded && (index == position->index)) {
 	if (reflection == position->reflection) return position->valid;
@@ -4223,14 +4234,22 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	goto do_reflection;
     }
 
-    /* These are the values we want stored if this routine returns false. */
+    /* There are a bunch of 'return false' statements later in this routine.  We now set the values
+     * we want if the routine returns false, and save the value of the 'decoded' flag.
+     */
+
     position->index = index;
     position->reflection = reflection;
     position->valid = false;
     position->unreflected_valid = false;
     position->decoded = true;
 
-    /* Side-to-move, if present, is always LSB */
+    /* Side-to-move, if present, is always LSB.  Branch prediction can probably get this right
+     * during initialization and futurebase back-prop, but this code is likely to trigger a pipeline
+     * stall during intratable passes, when the LSB changes seemingly at random, unless the position
+     * favors one player over another, in which case one value of side-to-move will dominate each
+     * pass.
+     */
 
     if (tb->encode_stm) {
 	position->side_to_move = index % 2;
@@ -4239,21 +4258,74 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	position->side_to_move = WHITE;
     }
 
-    /* Extract pawngen pawn encoding from the most significant bits. */
-
-    /* XXX divisions are slow */
+    /* Extract pawngen pawn encoding from the most significant bits */
 
     if (tb->pawngen) {
-	int pawn_index = index / tb->encoding->size;
-	index -= pawn_index * tb->encoding->size;
 
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->pieces[piece].piece_type == PAWN) {
-		position->piece_position[piece] = tb->pawngen->pawn_positions_by_index[pawn_index].position[piece];
+	/* Divisions are slow, plus we expect the pawngen field to vary slowly, because it's encoded
+	 * in the MSBs.  Therefore, optimize this code to store the results of the division in the
+	 * position structure, and move forward (but not backward) in the index by adding and
+	 * incrementing.  We optimizing for the case where we've got lot of indices being processed,
+	 * so the index changes slowly as we move through the tablebase, as opposed to only a few
+	 * indices being processed (like at the end of a calculation), when we've moving quickly
+	 * through the tablebase.  I expect branch prediction to turn this block of code into a nop
+	 * when we're moving slowly through a tablebase.
+	 */
+
+	bool pawngen_update_needed = false;
+
+	if ((! decoded) || (index < position->pawngen_base_index)) {
+	    position->pawngen_index = index / tb->encoding->size;
+	    position->pawngen_base_index = position->pawngen_index * tb->encoding->size;
+	    pawngen_update_needed = true;
+	} else {
+	    while (index >= position->pawngen_base_index + tb->encoding->size) {
+		    position->pawngen_base_index += tb->encoding->size;
+		    position->pawngen_index ++;
+		    pawngen_update_needed = true;
 	    }
 	}
 
-	position->en_passant_square = tb->pawngen->pawn_positions_by_index[pawn_index].en_passant_square;
+	/* Do we actually need to copy the pawn positions into the piece_position array?
+	 *
+	 * Not if pawngen_index hasn't changed.
+	 *
+	 * SYMMETRY AND PAWNGEN
+	 *
+	 * We'd really like to copy into the unreflected_piece_position array, but then we'd like
+	 * the method call to index_to_position to copy into that array as well.  Then we could be
+	 * sure that the reflection code hasn't mucked around with the contents of piece_position[].
+	 * So long as symmetry is not allowed with pawngen, we'll never use reflection and pawngen
+	 * together, so it's not an issue.
+	 *
+	 */
+
+	if (pawngen_update_needed) {
+
+	    /* Conceptually, this code only runs for pawns, but we're going to fill in the rest of
+	     * the piece_position array in the index_to_position() method call below, so maybe our
+	     * compiler can optimize this a bit without the if condition on piece_type.
+	     */
+
+	    if ( false ) {
+		for (piece = 0; piece < tb->num_pieces; piece ++) {
+		    if (tb->pieces[piece].piece_type == PAWN) {
+			position->piece_position[piece]
+			    = tb->pawngen->pawn_positions_by_index[position->pawngen_index].position[piece];
+		    }
+		}
+	    } else {
+		for (piece = 0; piece < tb->num_pieces; piece ++) {
+		    position->piece_position[piece]
+			= tb->pawngen->pawn_positions_by_index[position->pawngen_index].position[piece];
+		}
+	    }
+
+	    position->en_passant_square = tb->pawngen->pawn_positions_by_index[position->pawngen_index].en_passant_square;
+
+	}
+
+	index -= position->pawngen_base_index;
 
 	/* If we've got an en passant pawn, make sure that it is the right color, i.e, the
 	 * opposite color of the side to move.  This check will reject half of our en passant
@@ -4261,7 +4333,7 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	 */
 
 	if (position->en_passant_square != ILLEGAL_POSITION) {
-	    if (tb->pieces[tb->pawngen->pawn_positions_by_index[pawn_index].en_passant_pawn].color == position->side_to_move) {
+	    if (tb->pieces[tb->pawngen->pawn_positions_by_index[position->pawngen_index].en_passant_pawn].color == position->side_to_move) {
 		return false;
 	    }
 	}
@@ -4322,8 +4394,11 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	position->multiplicity = 1;
     }
 
-    /* Store a copy of the unreflected positions to speed up later calls to this function that only
-     * change reflection.
+    /* We've made it up to reflection.  Store a copy of the unreflected positions to speed up later
+     * calls to this function that only change reflection, and set 'unreflected_valid' true.
+     *
+     * XXX if the tablebase has no reflection, we should be able to avoid this copy, but then have
+     * to use piece_position[] below, instead of unreflected_piece_position[].
      */
 
     position->unreflected_valid = true;
@@ -5296,6 +5371,9 @@ void tablebase::parse_XML(std::istream *instream)
     }
 
     if (symmetry > 1) {
+	if (pawngen) {
+	    throw "Pawngen not allowed with symmetric indices (yet)";
+	}
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    if (((pieces[piece].piece_type != PAWN) && (pieces[piece].legal_squares != ALL_ONES_BITVECTOR))
 		|| ((pieces[piece].piece_type == PAWN) && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))) {
