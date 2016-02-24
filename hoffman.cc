@@ -1910,9 +1910,19 @@ void verify_movements()
 int white_pawns_required = 0;
 int black_pawns_required = 0;
 
+/* pawn_position - tracks a single placement of pawns on the board, without other pieces
+ *
+ * Will be used to form into two std::sets that track valid_pawn_positions and
+ * invalid_pawn_positions, ordered by the default operators.  operator<, in particular, is somewhat
+ * slow.  The valid_pawn_positions will be sorted into two std::vectors, pawn_positions_by_position
+ * (ordered by pawn_position_fast_compare) and pawn_positions_by_index (ordered by the standard
+ * operators).
+ */
+
 class pawn_position {
 
     friend bool operator< (const pawn_position & LHS, const pawn_position & RHS);
+    friend bool operator== (const pawn_position & LHS, const pawn_position & RHS);
     friend bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position & RHS);
 
     uint64_t white_pawns = 0;
@@ -2053,6 +2063,18 @@ bool operator< (const pawn_position & LHS, const pawn_position & RHS)
     }
 
     return LHS.en_passant_square < RHS.en_passant_square;
+}
+
+bool operator== (const pawn_position & LHS, const pawn_position & RHS)
+{
+    return ((LHS.white_pawns == RHS.white_pawns) &&
+	    (LHS.black_pawns == RHS.black_pawns) &&
+	    (LHS.en_passant_square == RHS.en_passant_square));
+}
+
+bool operator!= (const pawn_position & LHS, const pawn_position & RHS)
+{
+    return !(LHS == RHS);
 }
 
 bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position & RHS)
@@ -4136,7 +4158,8 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 	}
 	pawns.en_passant_square = position->en_passant_square;
 
-	auto it = std::lower_bound(tb->pawngen->pawn_positions_by_position.begin(), tb->pawngen->pawn_positions_by_position.end(),
+	auto it = std::lower_bound(tb->pawngen->pawn_positions_by_position.begin(),
+				   tb->pawngen->pawn_positions_by_position.end(),
 				   pawns, pawn_position_fast_compare);
 
 	/* In the course of normal program operation, we should never generate invalid pawn
@@ -4148,7 +4171,7 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 
 	if (it == tb->pawngen->pawn_positions_by_position.end()) {
 	    return INVALID_INDEX;
-	} else if ((*it < pawns) || (pawns < *it)) {
+	} else if (*it != pawns) {
 	    return INVALID_INDEX;
 	} else {
 	    index += tb->encoding->size * it->index;
@@ -5372,6 +5395,7 @@ void tablebase::parse_XML(std::istream *instream)
 
     if (symmetry > 1) {
 	if (pawngen) {
+	    /* See SYMMETRY AND PAWNGEN above. */
 	    throw "Pawngen not allowed with symmetric indices (yet)";
 	}
 	for (piece = 0; piece < num_pieces; piece ++) {
