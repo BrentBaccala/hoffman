@@ -547,6 +547,8 @@ struct translation_result;
  * defined yet.
  */
 
+class tablebase_t;
+
 /* XXX initialize local_position meaningfully so we can drop a lot of these friends */
 
 template<typename MemberOfWhichClass, typename primative>
@@ -558,16 +560,16 @@ class ReadOnly {
     friend class compact_index;
     friend class combinadic_index;
 
-    friend void normalize_position(const struct tablebase *, struct local_position *);
-    friend index_t normalized_position_to_index(const struct tablebase *, struct local_position *);
-    friend bool index_to_local_position(const struct tablebase *tb, index_t index, int reflection, struct local_position *position);
-    friend int check_1000_positions(struct tablebase *);
-    friend translation_result translate_foreign_position_to_local_position(struct tablebase *foreign_tb, struct local_position *foreign_position,
-									   struct tablebase *local_tb, struct local_position *local_position,
+    friend void normalize_position(const tablebase_t *, struct local_position *);
+    friend index_t normalized_position_to_index(const tablebase_t *, struct local_position *);
+    friend bool index_to_local_position(const tablebase_t *tb, index_t index, int reflection, struct local_position *position);
+    friend int check_1000_positions(tablebase_t *);
+    friend translation_result translate_foreign_position_to_local_position(tablebase_t *foreign_tb, struct local_position *foreign_position,
+									   tablebase_t *local_tb, struct local_position *local_position,
 									   bool invert_colors);
-    friend translation_result global_position_to_local_position(struct tablebase *tb, struct global_position *global, struct local_position *local);
-    friend bool place_piece_in_local_position(struct tablebase *tb, struct local_position *pos, int square, int color, int type);
-    friend bool parse_FEN_to_local_position(char *, struct tablebase *, struct local_position *);
+    friend translation_result global_position_to_local_position(tablebase_t *tb, struct global_position *global, struct local_position *local);
+    friend bool place_piece_in_local_position(tablebase_t *tb, struct local_position *pos, int square, int color, int type);
+    friend bool parse_FEN_to_local_position(char *, tablebase_t *, struct local_position *);
 
 public:
     inline operator primative() const                 { return x; }
@@ -896,8 +898,8 @@ int eval_to_number_or_zero(xmlpp::Node *node, std::string xpath);
 class index_encoding;
 struct pawngen;
 
-typedef struct tablebase {
-
+class tablebase_t {
+public:
     /* I want an xmlpp::DomParser instance variable, to hold the tablebase's associated XML
      * structures, like this:
      *
@@ -970,9 +972,9 @@ typedef struct tablebase {
 
     bool is_color_symmetric(void);
 
-    tablebase(void) : offset(0), invert_colors(false), num_pieces(0) { }
-    tablebase(std::istream *);
-    tablebase(Glib::ustring);
+    tablebase_t(void) : offset(0), invert_colors(false), num_pieces(0) { }
+    tablebase_t(std::istream *);
+    tablebase_t(Glib::ustring);
 
     //tablebase(const tablebase &) = delete;
 
@@ -980,7 +982,7 @@ private:
     void parse_pawngen_element(xmlpp::Node *);
     void parse_XML(std::istream *);
 
-} tablebase_t;
+};
 
 tablebase_t *current_tb = nullptr;
 
@@ -2255,7 +2257,7 @@ void process_pawn_position(class pawn_position position)
     }
 }
 
-void tablebase::parse_pawngen_element(xmlpp::Node * xml)
+void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 {
     pawn_position initial_position;
 
@@ -4803,7 +4805,7 @@ piece::piece(xmlpp::Node * xml)
     }
 }
 
-void tablebase::parse_XML(std::istream *instream)
+void tablebase_t::parse_XML(std::istream *instream)
 {
     xmlpp::DtdValidator dtd;
 
@@ -5576,7 +5578,7 @@ void tablebase::parse_XML(std::istream *instream)
     //return (fatal_errors == starting_fatal_errors) ? tb : nullptr;
 }
 
-tablebase::tablebase(std::istream *instream)
+tablebase_t::tablebase_t(std::istream *instream)
 {
     parse_XML(instream);
 }
@@ -5615,7 +5617,7 @@ tablebase_t * parse_XML_control_file(char *filename)
     instream.push(input_file);
 
     // XXX this might throw an exception
-    tb = new tablebase(& instream);
+    tb = new tablebase_t(& instream);
 
     auto tablebase = tb->xml->get_root_node();
 
@@ -5777,7 +5779,7 @@ public:
 
 typedef basic_gzip_decompressor<> gzip_decompressor;
 
-tablebase::tablebase(Glib::ustring filename) : offset(0), invert_colors(false), num_pieces(0), filename(filename)
+tablebase_t::tablebase_t(Glib::ustring filename) : offset(0), invert_colors(false), num_pieces(0), filename(filename)
 {
     std::ifstream * input_file = new std::ifstream;
 
@@ -6013,7 +6015,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 #endif
 
 	try {
-	    futurebases.push_back(tablebase(filename));
+	    futurebases.push_back(tablebase_t(filename));
 	} catch (const char * msg) {
 	    fatal("%s: futurebase preload failed: %s\n", filename.c_str(), msg);
 	    return false;
@@ -7048,7 +7050,7 @@ thread_local tablebase_t * cached_tb = nullptr;
 thread_local char * cached_entries = nullptr;
 thread_local index_t cached_index;
 
-index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
+index_t tablebase_t::fetch_entry(index_t index = INVALID_INDEX)
 {
     /* If we're switching tablebases, discard old cache.  No locking required since we're working on
      * thread_local variables.
@@ -7136,19 +7138,19 @@ index_t tablebase::fetch_entry(index_t index = INVALID_INDEX)
  * cached_entries.
  */
 
-int tablebase::get_DTM(index_t index)
+int tablebase_t::get_DTM(index_t index)
 {
     index -= fetch_entry(index);
     return get_int_field(cached_entries, format.dtm_offset + index * format.bits, format.dtm_bits);
 }
 
-bool tablebase::get_flag(index_t index)
+bool tablebase_t::get_flag(index_t index)
 {
     index -= fetch_entry(index);
     return get_bit_field(cached_entries, format.flag_offset + index * format.bits);
 }
 
-unsigned int tablebase::get_basic(index_t index)
+unsigned int tablebase_t::get_basic(index_t index)
 {
     index -= fetch_entry(index);
     return get_unsigned_int_field(cached_entries, format.basic_offset + index * format.bits, 2);
@@ -14526,7 +14528,7 @@ int main(int argc, char *argv[])
     for (argi=optind; argi<argc; argi++) {
 	info("Loading '%s'\n", argv[argi]);
 	try {
-	    tbs[i] = new tablebase(argv[argi]);
+	    tbs[i] = new tablebase_t(argv[argi]);
 	} catch (const char *msg) {
 	    fatal("Error loading tablebase '%s': %s\n", argv[argi], msg);
 	} catch (std::exception &ex) {
