@@ -543,33 +543,32 @@ const uint8_t ILLEGAL_POSITION = 0xff;
 /* XXX only needed here for the friend declaration below */
 struct translation_result;
 
-/* XXX these friends use struct tablebase and struct local_position because the types haven't been
- * defined yet.
- */
+/* XXX these friends use tablebase_t and local_position_t, which haven't been defined yet. */
 
 class tablebase_t;
+class local_position_t;
 
 /* XXX initialize local_position meaningfully so we can drop a lot of these friends */
 
-template<typename MemberOfWhichClass, typename primative>
+template<typename primative>
 class ReadOnly {
-    friend MemberOfWhichClass;
+    friend local_position_t;
     friend class naive_index;
     friend class naive2_index;
     friend class simple_index;
     friend class compact_index;
     friend class combinadic_index;
 
-    friend void normalize_position(const tablebase_t *, struct local_position *);
-    friend index_t normalized_position_to_index(const tablebase_t *, struct local_position *);
-    friend bool index_to_local_position(const tablebase_t *tb, index_t index, int reflection, struct local_position *position);
+    friend void normalize_position(const tablebase_t *, local_position_t *);
+    friend index_t normalized_position_to_index(const tablebase_t *, local_position_t *);
+    friend bool index_to_local_position(const tablebase_t *tb, index_t index, int reflection, local_position_t *position);
     friend int check_1000_positions(tablebase_t *);
-    friend translation_result translate_foreign_position_to_local_position(tablebase_t *foreign_tb, struct local_position *foreign_position,
-									   tablebase_t *local_tb, struct local_position *local_position,
+    friend translation_result translate_foreign_position_to_local_position(tablebase_t *foreign_tb, local_position_t *foreign_position,
+									   tablebase_t *local_tb, local_position_t *local_position,
 									   bool invert_colors);
-    friend translation_result global_position_to_local_position(tablebase_t *tb, struct global_position *global, struct local_position *local);
-    friend bool place_piece_in_local_position(tablebase_t *tb, struct local_position *pos, int square, int color, int type);
-    friend bool parse_FEN_to_local_position(char *, tablebase_t *, struct local_position *);
+    friend translation_result global_position_to_local_position(tablebase_t *tb, struct global_position *global, local_position_t *local);
+    friend bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type);
+    friend bool parse_FEN_to_local_position(char *, tablebase_t *, local_position_t *);
 
 public:
     inline operator primative() const                 { return x; }
@@ -584,7 +583,9 @@ protected:
     primative x;
 };
 
-typedef struct local_position {
+class local_position_t {
+
+public:
 
     /* decoded - Does the structure accurately decode the index/reflection?
      *
@@ -609,16 +610,16 @@ typedef struct local_position {
     index_t pawngen_base_index;
     int reflection;
 
-    ReadOnly<struct local_position, uint64_t> board_vector;
-    ReadOnly<struct local_position, uint64_t> PTM_vector;
-    //std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> piece_position = {{ILLEGAL_POSITION}};
-    std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> unreflected_piece_position;
-    std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> piece_position;
-    std::array<ReadOnly<struct local_position, uint8_t>, MAX_PIECES> permuted_piece;
-    ReadOnly<struct local_position, uint8_t> side_to_move;
-    ReadOnly<struct local_position, uint8_t> unreflected_en_passant_square;
-    ReadOnly<struct local_position, uint8_t> en_passant_square;
-    ReadOnly<struct local_position, uint8_t> multiplicity;
+    ReadOnly<uint64_t> board_vector;
+    ReadOnly<uint64_t> PTM_vector;
+    //std::array<ReadOnly<uint8_t>, MAX_PIECES> piece_position = {{ILLEGAL_POSITION}};
+    std::array<ReadOnly<uint8_t>, MAX_PIECES> unreflected_piece_position;
+    std::array<ReadOnly<uint8_t>, MAX_PIECES> piece_position;
+    std::array<ReadOnly<uint8_t>, MAX_PIECES> permuted_piece;
+    ReadOnly<uint8_t> side_to_move;
+    ReadOnly<uint8_t> unreflected_en_passant_square;
+    ReadOnly<uint8_t> en_passant_square;
+    ReadOnly<uint8_t> multiplicity;
 
     /* I go to the trouble to update board_vector here so we can check en passant legality in
      * propagate_one_move_within_table().
@@ -680,7 +681,7 @@ typedef struct local_position {
 	decoded = false;
     }
 
-} local_position_t;
+};
 
 /* This is a global position, that doesn't depend on a particular tablebase.  It's slower to
  * manipulate, but is suitable for probing tablebases.  Each char in the array is either 0 for an
