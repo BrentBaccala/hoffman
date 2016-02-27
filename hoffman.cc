@@ -585,6 +585,8 @@ protected:
 
 class local_position_t {
 
+    const tablebase_t *tb;
+
 public:
 
     /* decoded - Does the structure accurately decode the index/reflection?
@@ -620,6 +622,8 @@ public:
     ReadOnly<uint8_t> unreflected_en_passant_square;
     ReadOnly<uint8_t> en_passant_square;
     ReadOnly<uint8_t> multiplicity;
+
+    local_position_t(const tablebase_t *tb) : tb(tb) { }
 
     /* I go to the trouble to update board_vector here so we can check en passant legality in
      * propagate_one_move_within_table().
@@ -4539,8 +4543,8 @@ int index_to_side_to_move(tablebase_t *tb, index_t index)
 
 int check_1000_positions(tablebase_t *tb)
 {
-    local_position_t position1;
-    local_position_t position2;
+    local_position_t position1(tb);
+    local_position_t position2(tb);
     index_t index;
     int positions;
     int piece;
@@ -4610,7 +4614,7 @@ int check_1000_positions(tablebase_t *tb)
 
 int check_1000_indices(tablebase_t *tb)
 {
-    local_position_t position;
+    local_position_t position(tb);
     index_t index;
     index_t index2;
     int positions;
@@ -6511,7 +6515,7 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 translation_result translate_foreign_index_to_local_position(tablebase_t *foreign_tb, index_t index1, int reflection,
 							     tablebase_t *local_tb, local_position_t *local_position, bool invert_colors)
 {
-    local_position_t foreign_position;
+    local_position_t foreign_position(foreign_tb);
 
     if (! index_to_local_position(foreign_tb, index1, reflection, &foreign_position)) {
 #ifdef DEBUG_FUTUREMOVE
@@ -6529,7 +6533,7 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
 {
     int square;
     tablebase_t fake_tb;
-    local_position_t fake_position;
+    local_position_t fake_position(&fake_tb);
 
     //memset(&fake_tb, 0, sizeof(fake_tb));
     memset(&fake_position, 0, sizeof(fake_position));
@@ -6567,7 +6571,7 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
 
 index_t global_position_to_index(tablebase_t *tb, global_position_t *global)
 {
-    local_position_t local;
+    local_position_t local(tb);
 
     if (global_position_to_local_position(tb, global, &local) != trivial_translation) return INVALID_INDEX;
 
@@ -6603,7 +6607,7 @@ void local_position_to_global_position(const tablebase_t *tb, const local_positi
 
 bool index_to_global_position(const tablebase_t *tb, index_t index, global_position_t *global)
 {
-    local_position_t local;
+    local_position_t local(tb);
 
     if (! index_to_local_position(tb, index, REFLECTION_NONE, &local)) return false;
 
@@ -9784,8 +9788,8 @@ std::atomic<index_t> next_future_index;
 
 void propagate_moves_from_promotion_futurebase(index_t future_index, int reflection)
 {
-    local_position_t foreign_position;
-    local_position_t position;
+    local_position_t foreign_position(futurebase);
+    local_position_t position(current_tb);
     translation_result translation;
     int true_pawn;
 
@@ -9903,8 +9907,8 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 
 void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int reflection)
 {
-    local_position_t foreign_position;
-    local_position_t position;
+    local_position_t foreign_position(futurebase);
+    local_position_t position(current_tb);
     translation_result translation;
     int true_captured_piece;
     int true_pawn;
@@ -10253,7 +10257,7 @@ void consider_possible_captures(const index_t future_index, const local_position
 
 void propagate_moves_from_capture_futurebase(index_t future_index, int reflection)
 {
-    local_position_t position;
+    local_position_t position(current_tb);
     int piece;
     translation_result translation;
 
@@ -10357,8 +10361,8 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 
 void propagate_moves_from_normal_futurebase(index_t future_index, int reflection)
 {
-    local_position_t parent_position;
-    local_position_t current_position; /* i.e, last position that moved to parent_position */
+    local_position_t parent_position(current_tb);
+    local_position_t current_position(current_tb); /* i.e, last position that moved to parent_position */
     translation_result translation;
     int piece;
     int dir;
@@ -10755,7 +10759,7 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
 	for (futuremove = 0; futuremove < num_futuremoves[stm]; futuremove ++) {
 	    if (futurevector & FUTUREVECTOR(futuremove) & discarded_futuremoves[stm]) {
 
-		local_position_t position;
+		local_position_t position(tb);
 
 		index_to_local_position(tb, index, REFLECTION_NONE, &position);
 
@@ -11808,7 +11812,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 
 void back_propagate_index_within_table(index_t index, int reflection)
 {
-    local_position_t position;
+    local_position_t position(current_tb);
     int piece;
     int dir;
     int origin_square;
@@ -12793,7 +12797,7 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 
 futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 {
-    local_position_t position;
+    local_position_t position(tb);
 
     return initialize_tablebase_entry(tb, index, position);
 }
@@ -12808,7 +12812,7 @@ futurevector_t initialize_tablebase_entry(tablebase_t *tb, index_t index)
 void initialize_tablebase_section(index_t start_index, index_t end_index)
 {
     index_t index;
-    local_position_t position;
+    local_position_t position(current_tb);
 
     for (index=start_index; index <= end_index; index++) {
 	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
@@ -13342,7 +13346,7 @@ void verify_tablebase_internally_thread(void)
     while (1) {
 	index_t index = (next_verify_index ++);
 	index_t next_index;
-	local_position_t position;
+	local_position_t position(current_tb);
 	int piece;
 	int dir;
 	int origin_square;
@@ -13543,7 +13547,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 {
     index_t index;
     global_position_t global;
-    local_position_t local;
+    local_position_t local(tb);
     int score;
 
     info("Verifying tablebase against Nalimov\n");
