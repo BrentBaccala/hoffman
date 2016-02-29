@@ -631,12 +631,7 @@ public:
      * XXX Should we update PTM_vector?
      */
 
-    void move_piece(int piece, int destination_square) {
-	board_vector &= ~BITVECTOR(piece_position[piece]);
-	piece_position[piece] = destination_square;
-	board_vector |= BITVECTOR(piece_position[piece]);
-	decoded = false;
-    };
+    void move_piece(int piece, int destination_square);
 
     void place_piece(int piece, int destination_square) {
 	if (piece_position[piece] != ILLEGAL_POSITION) {
@@ -675,8 +670,10 @@ public:
 
     void clear_en_passant_square(void)
     {
-	en_passant_square = ILLEGAL_POSITION;
-	decoded = false;
+	if (en_passant_square != ILLEGAL_POSITION) {
+	    en_passant_square = ILLEGAL_POSITION;
+	    decoded = false;
+	}
     }
 
     void set_en_passant_square(int square)
@@ -1954,6 +1951,9 @@ public:
     uint8_t position[MAX_PIECES];
     int en_passant_pawn;
 
+    uint8_t prev_position[MAX_PIECES];
+    int delta_pawngen_index[MAX_PIECES];
+
     bool valid(void) const
     {
 	return ((white_queens_required == 0) && (black_queens_required == 0) &&
@@ -2354,6 +2354,35 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 	index ++;
     }
 
+    /* Figure which pawn positions arise from moving each pawn one step backwards, and save the
+     * corresponding change in index in delta_pawngen_index.
+     */
+
+    for (index = 0; index < pawngen->pawn_positions_by_index.size(); index ++) {
+	for (int piece = 0; piece < num_pieces; piece ++) {
+	    pawngen->pawn_positions_by_index[index].prev_position[piece] = ILLEGAL_POSITION;
+	    if (pieces[piece].piece_type == PAWN) {
+		pawn_position prev_pp = pawngen->pawn_positions_by_index[index];
+		if (pieces[piece].color == WHITE) {
+		    prev_pp.remove_white_pawn(prev_pp.position[piece]);
+		    prev_pp.add_white_pawn(prev_pp.position[piece] - 8);
+		} else {
+		    prev_pp.remove_black_pawn(prev_pp.position[piece]);
+		    prev_pp.add_black_pawn(prev_pp.position[piece] + 8);
+		}
+		auto it = std::find(pawngen->pawn_positions_by_index.begin(),
+				    pawngen->pawn_positions_by_index.end(),
+				    prev_pp);
+		if (it != pawngen->pawn_positions_by_index.end()) {
+		    pawngen->pawn_positions_by_index[index].prev_position[piece] = prev_pp.position[piece];
+		    pawngen->pawn_positions_by_index[index].delta_pawngen_index[piece]
+			= it->index - pawngen->pawn_positions_by_index[index].index;
+		}
+	    }
+	}
+	pawngen->pawn_positions_by_position[index] = pawngen->pawn_positions_by_index[index];
+    }
+
     std::sort(pawngen->pawn_positions_by_position.begin(), pawngen->pawn_positions_by_position.end(), pawn_position_fast_compare);
 
 #if DEBUG
@@ -2373,6 +2402,7 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
     valid_pawn_positions.clear();
     invalid_pawn_positions.clear();
 }
+
 
 /***** NORMALIZATION *****/
 
@@ -2488,6 +2518,8 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
 {
     int piece, piece2;
     uint8_t permutation[MAX_PIECES];
+
+    if (position->decoded) return;
 
     /* The 'combinadic4' index might not encode side-to-move at all.  In this case, if black is to
      * move, then we have to invert the entire board.  We've precomputed how to exchange the pieces;
@@ -4222,6 +4254,8 @@ index_t local_position_to_index(const tablebase_t *tb, local_position_t *origina
 {
     index_t index;
 
+    if (original->decoded) return original->index;
+
     /* We don't want to change around the original position, during these next transformations, so
      * we use a copy of it.  We do, however, update the multiplicity in the original structure.
      */
@@ -4634,6 +4668,41 @@ int check_1000_indices(tablebase_t *tb)
     }
 
     return ret;
+}
+
+/***** LOCAL POSITION MOVE PIECE *****/
+
+void local_position_t::move_piece(int piece, int destination_square) {
+    board_vector &= ~BITVECTOR(piece_position[piece]);
+    piece_position[piece] = destination_square;
+    if (board_vector & BITVECTOR(piece_position[piece])) {
+	/* If we're moving a piece to an occupied space, then the position is invalid since we have
+	 * overlapping pieces.  We usually don't call this routine in this case, but it's best to
+	 * check for it here.  Flag the position un-decoded and fix it up later.
+	 */
+	decoded = false;
+	return;
+    }
+    board_vector |= BITVECTOR(piece_position[piece]);
+    if (!decoded || !valid) {
+	/* XXX should never happen.  We should only call this routine on a valid position. */
+	return;
+    }
+    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN) && (reflection == REFLECTION_NONE)) {
+	/* Moving a pawngen pawn.  All we have to do is adjust the pawngen field in the index, which
+	 * is always the most significant bits, and the position can remain 'decoded'.
+	 */
+	pawn_position& pp = tb->pawngen->pawn_positions_by_index[pawngen_index];
+	if (pp.prev_position[piece] == destination_square) {
+	    pawngen_index += pp.delta_pawngen_index[piece];
+	    pawngen_base_index += pp.delta_pawngen_index[piece] * tb->encoding->size;
+	    index += pp.delta_pawngen_index[piece] * tb->encoding->size * (tb->encode_stm ? 2 : 1);
+	} else {
+	    decoded = false;
+	}
+    } else {
+	decoded = false;
+    }
 }
 
 /***** XML TABLEBASE INTERACTION *****/
