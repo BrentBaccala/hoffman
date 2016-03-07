@@ -553,6 +553,7 @@ class local_position_t;
 template<typename primative>
 class ReadOnly {
     friend local_position_t;
+    friend class index_encoding;
     friend class naive_index;
     friend class naive2_index;
     friend class simple_index;
@@ -660,13 +661,7 @@ public:
 	std::swap(piece_position[piece1], piece_position[piece2]);
     }
 
-    void flip_side_to_move(void)
-    {
-	if (side_to_move == WHITE) side_to_move = BLACK;
-	else side_to_move = WHITE;
-
-	decoded = false;
-    };
+    void flip_side_to_move(void);
 
     void clear_en_passant_square(void)
     {
@@ -2694,11 +2689,13 @@ class index_encoding {
 public:
     virtual index_t position_to_index(const tablebase_t *tb, local_position_t *pos) = 0;
     virtual bool index_to_position(const tablebase_t * tb, index_t index, local_position_t *pos) = 0;
-#if 0
-    virtual bool move_piece(tablebase_t * tb, local_position_t *pos, int piece, int destination_square) {
-	// move piece and recompute index
+
+    virtual bool move_piece(const tablebase_t * tb, local_position_t *pos, const int piece, const int destination_square) {
+	pos->board_vector &= ~BITVECTOR(pos->piece_position[piece]);
+	pos->piece_position[piece] = destination_square;
+	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
+	pos->decoded = false;
     }
-#endif
 
     /* 'size' is the number of indices generated the index encoding, which is different from the
      * number of indices in the tablebase, because 'size' excludes side-to-move and pawngen.
@@ -4672,27 +4669,49 @@ int check_1000_indices(tablebase_t *tb)
 
 /***** LOCAL POSITION MOVE PIECE *****/
 
+void local_position_t::flip_side_to_move(void)
+{
+    if (side_to_move == WHITE) side_to_move = BLACK;
+    else side_to_move = WHITE;
+
+    if (decoded && valid && tb->encode_stm) {
+	index ^= 1;
+    } else {
+	decoded = false;
+    }
+
+};
+
 void local_position_t::move_piece(int piece, int destination_square) {
-    board_vector &= ~BITVECTOR(piece_position[piece]);
-    piece_position[piece] = destination_square;
-    if (board_vector & BITVECTOR(piece_position[piece])) {
-	/* If we're moving a piece to an occupied space, then the position is invalid since we have
-	 * overlapping pieces.  We usually don't call this routine in this case, but it's best to
-	 * check for it here.  Flag the position un-decoded and fix it up later.
-	 */
+
+    if (!decoded || !valid) {
+	/* XXX should never happen.  We should only call this routine on a valid position. */
+	/* XXX does happen when we've done something like set_en_passant_square first */
+	board_vector &= ~BITVECTOR(piece_position[piece]);
+	piece_position[piece] = destination_square;
+	board_vector |= BITVECTOR(piece_position[piece]);
 	decoded = false;
 	return;
     }
-    board_vector |= BITVECTOR(piece_position[piece]);
-    if (!decoded || !valid) {
-	/* XXX should never happen.  We should only call this routine on a valid position. */
-	return;
-    }
+
     if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN) && (reflection == REFLECTION_NONE)) {
 	/* Moving a pawngen pawn.  All we have to do is adjust the pawngen field in the index, which
 	 * is always the most significant bits, and the position can remain 'decoded'.
 	 */
+	board_vector &= ~BITVECTOR(piece_position[piece]);
+	piece_position[piece] = destination_square;
+	if (board_vector & BITVECTOR(piece_position[piece])) {
+	    /* If we're moving a piece to an occupied space, then the position is invalid since we have
+	     * overlapping pieces.  We usually don't call this routine in this case, but it's best to
+	     * check for it here.  Flag the position un-decoded and fix it up later.
+	     */
+	    decoded = false;
+	    return;
+	}
+	board_vector |= BITVECTOR(piece_position[piece]);
+
 	pawn_position& pp = tb->pawngen->pawn_positions_by_index[pawngen_index];
+
 	if (pp.prev_position[piece] == destination_square) {
 	    pawngen_index += pp.delta_pawngen_index[piece];
 	    pawngen_base_index += pp.delta_pawngen_index[piece] * tb->encoding->size;
@@ -4701,7 +4720,7 @@ void local_position_t::move_piece(int piece, int destination_square) {
 	    decoded = false;
 	}
     } else {
-	decoded = false;
+	tb->encoding->move_piece(tb, this, piece, destination_square);
     }
 }
 
