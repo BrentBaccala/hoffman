@@ -474,3 +474,5 @@ the corresponding slow encryption.
 - "Couldn't find future piece in local tablebase" - should this be a warning, not an error?
 
 - when probing, don't print prunes as "NO DATA"
+
+- replace BITVECTOR with vector<bool> (or something like that)
