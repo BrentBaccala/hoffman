@@ -6493,6 +6493,10 @@ struct translation_result {
 	    (extra_piece != other.extra_piece) ||
 	    (restricted_piece != other.restricted_piece);
     }
+
+    operator uint32_t() const {
+	return missing_piece1 | (missing_piece2 << 8) | (extra_piece << 16) | (restricted_piece << 24);
+    }
 };
 
 translation_result invalid_translation = {0xff, 0xff, 0xff, 0xff};
@@ -10365,13 +10369,11 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 							    current_tb, &position,
 							    futurebase->invert_colors);
 
-#if 0
 #ifdef DEBUG_FUTUREMOVE
     if (future_index == DEBUG_FUTUREMOVE) {
-	info("capture backprop; reflection=%d; conversion_result=%x\n",
-	     reflections[reflection], conversion_result);
+	info("capture backprop; reflection=%d; translation=%x\n",
+	     reflections[reflection], translation);
     }
-#endif
 #endif
 
     if (translation != invalid_translation) {
