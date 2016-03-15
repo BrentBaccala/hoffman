@@ -9529,7 +9529,7 @@ int propagation_pass(int target_dtm)
  */
 
 void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
-				     short movecnt, int futuremove, index_t current_index)
+				     short movecnt, int futuremove, index_t current_index, int reflection)
 {
     if (futuremove == -1) {
 	global_position_t global;
@@ -9546,8 +9546,8 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
 	index_to_global_position(tb, current_index, &global1);
 	index_to_global_position(futurebase, future_index, &global2);
-	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s\n",
-	     current_index, global_position_to_FEN(&global1), futurebase->filename.c_str(), future_index, global_position_to_FEN(&global2));
+	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s refl %d\n",
+	     current_index, global_position_to_FEN(&global1), futurebase->filename.c_str(), future_index, global_position_to_FEN(&global2), reflection);
     }
 #endif
 
@@ -9557,8 +9557,8 @@ void propagate_index_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, i
 
 	index_to_global_position(tb, current_index, &global1);
 	index_to_global_position(futurebase, future_index, &global1);
-	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s\n",
-	     current_index, global_position_to_FEN(&global1), futurebase->filename.c_str(), future_index, global_position_to_FEN(&global2));
+	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s refl %d\n",
+	     current_index, global_position_to_FEN(&global1), futurebase->filename.c_str(), future_index, global_position_to_FEN(&global2), reflection);
     }
 #endif
 
@@ -9640,7 +9640,7 @@ void propagate_minilocal_position_from_futurebase(tablebase_t *tb, tablebase_t *
      */
 
     propagate_index_from_futurebase(tb, futurebase, future_index, current_position->multiplicity,
-				    futuremove, current_index);
+				    futuremove, current_index, current_position->reflection);
 }
 
 void propagate_local_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
@@ -9716,7 +9716,7 @@ void propagate_mini_normalized_position_from_futurebase(tablebase_t *tb, tableba
      */
 
     propagate_index_from_futurebase(tb, futurebase, future_index, current_position->multiplicity,
-				    futuremove, current_index);
+				    futuremove, current_index, current_position->reflection);
 }
 
 void propagate_normalized_position_from_futurebase(tablebase_t *tb, tablebase_t *futurebase, index_t future_index,
