@@ -9452,6 +9452,8 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 
 	    if (! test_and_set_bit_field(current_tb->futurevectors, bit_offset + futuremove, 0)) {
+		info("commit_update; futuremove processed; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
+		     index, dtm, movecnt, futuremove);
 		return;
 	    }
 
