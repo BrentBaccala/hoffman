@@ -7275,7 +7275,17 @@ index_t tablebase_t::fetch_entry(index_t index = INVALID_INDEX)
 int tablebase_t::get_DTM(index_t index)
 {
     index -= fetch_entry(index);
-    return get_int_field(cached_entries, format.dtm_offset + index * format.bits, format.dtm_bits);
+
+    /* Normally, we encode signed DTM fields, but single bit DTM fields are an exception, as we
+     * always wish to encode 1 (PNTM in check) since these positions should not be backproped.  So
+     * single bit fields encode unsigned as 0 and 1, instead of 0 and -1.
+     */
+
+    if (format.dtm_bits == 1) {
+	return get_unsigned_int_field(cached_entries, format.dtm_offset + index * format.bits, format.dtm_bits);
+    } else {
+	return get_int_field(cached_entries, format.dtm_offset + index * format.bits, format.dtm_bits);
+    }
 }
 
 bool tablebase_t::get_flag(index_t index)
