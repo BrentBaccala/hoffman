@@ -54,6 +54,16 @@ sub printnl {
 my @normal_futurebases;
 my @inverse_futurebases;
 
+# The combinadic4 index does not encode side-to-move for color
+# symmetric tablebases.
+#
+# For these tablebases, we don't need or use inverse futurebases
+# (those with colors swapped).  This global variable affects the
+# behavior of &mkfuturebase - does it print XML statements for inverse
+# futurebases?
+
+my $use_inverse_futurebases = true;
+
 my $suicide;
 my $option;
 my @promotion_pieces;
@@ -108,9 +118,11 @@ sub mkfuturebase {
     my ($invert, $filename) = &mkfilename($white_pieces, $black_pieces);
 
     if ($invert) {
-	if (grep($_ eq $filename, @inverse_futurebases) == 0) {
-	    printnl '   <futurebase filename="' . $filename . '.htb" colors="invert"/>';
-	    push @inverse_futurebases, $filename;
+	if ($use_inverse_futurebases) {
+	    if (grep($_ eq $filename, @inverse_futurebases) == 0) {
+		printnl '   <futurebase filename="' . $filename . '.htb" colors="invert"/>';
+		push @inverse_futurebases, $filename;
+	    }
 	}
     } else {
 	if (grep($_ eq $filename, @normal_futurebases) == 0) {
@@ -158,8 +170,10 @@ sub write_cntl_file {
     printnl '   <basic/>' if ($option =~ /-basic/);
     printnl '   <flag type="white-wins"/>' if ($option =~ /-whitewins/);
 
+    my $index = "";
+
     if ($option =~ /($indices)/) {
-	my $index = substr($1, 1);
+	$index = substr($1, 1);
 	printnl "   <index type=\"$index\"/>";
     }
 
@@ -194,6 +208,16 @@ sub write_cntl_file {
 	} else {
 	    printnl '   <piece color="black" type="' . $pieces{$piece} . '"' . $location . '/>';
 	}
+    }
+
+    # Don't use inverse futurebases with combinadic4 indices on color
+    # symmetric tablebases (those with identical white and black
+    # pieces).
+
+    if ((($index eq "") or ($index eq "combinadic4")) and ($white_pieces eq $black_pieces)) {
+	$use_inverse_futurebases = undef;
+    } else {
+	$use_inverse_futurebases = true;
     }
 
     # These are global variables that will updated by the various
