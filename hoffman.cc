@@ -9493,7 +9493,7 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
 	    if (! test_and_set_bit_field(current_tb->futurevectors, bit_offset + futuremove, 0)) {
 #if 1
-		if (entriesTable[index].get_raw_DTM() != 1) {
+		if ((entriesTable[index].get_raw_DTM() != 1) && entriesTable[index].is_normal_movecnt()) {
 		    fatal("commit_update; futuremove processed; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
 			  index, dtm, movecnt, futuremove);
 		}
@@ -9593,15 +9593,19 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 	return;
     }
 
-    /* local_position_to_index() updated the position structure's multiplicity, so we know it's
-     * correct.  It actually should be a little more complex than this, but since we're only dealing
-     * with 8-way symmetry where multiplicity is either 1 or 2, this should do.  If we're
-     * backproping from a single multiplicity position into one with double multiplicity, then this
-     * function will get called twice on the same index, because that index will get generated
-     * twice during back prop from the single future position, but since we're using the futuremove
-     * number to toss out additional function calls, we can safely just use the multiplicity here
-     * without worrying about it getting called again.
+    /* local_position_to_index() updated the position structure's multiplicity and reflection, so we
+     * know they're correct.  If we're back proping into an 8-way symmetric tablebase (the only way
+     * REFLECTION_DIAGONAL will ever be set), we must be back proping from an 8-way symmetric
+     * futurebase (since futurebases can never have less symmetry than the current tablebase).  In
+     * this case, if diagonal reflection is required on the current position, then discard this case
+     * since we'll be called again without diagonal reflection.  Otherwise, use the 8-way
+     * multiplicity (2 and 4 way symmetry are ignored when computing multiplicity, which is thus
+     * always either 1 or 2) as a movecnt.
      */
+
+    if ((current_position.multiplicity == 2) && (current_position.reflection & REFLECTION_DIAGONAL)) {
+	return;
+    }
 
     const int movecnt = current_position.multiplicity;
 
