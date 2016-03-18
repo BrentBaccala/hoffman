@@ -9610,20 +9610,12 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 	return;
     }
 
-    if (future_index == debug_futuremove) {
-	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
+    if ((current_index == debug_move) || (future_index == debug_futuremove)) {
+	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %s %" PRIindex " %s refl %d mul %d\n",
 	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
-	     foreign_position.tb->filename.c_str(),
-	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
-	     foreign_position.reflection);
-    }
-
-    if (current_index == debug_move) {
-	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
-	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
-	     foreign_position.tb->filename.c_str(),
-	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
-	     foreign_position.reflection);
+	     foreign_position.tb->filename.c_str(), foreign_position.tb->invert_colors ? "(Inv)" : "",
+	     foreign_position.index, foreign_position.FEN(), foreign_position.reflection,
+	     foreign_position.multiplicity);
     }
 
     if (futurebase->format.dtm_bits > 0) {
