@@ -9605,17 +9605,21 @@ void propagate_mini_normalized_position_from_futurebase(local_position_t &curren
 
 #ifdef DEBUG_FUTUREMOVE
     if (future_index == DEBUG_FUTUREMOVE) {
-	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s refl %d\n",
-	     current_index, current_position.FEN(), foreign_position.tb->filename.c_str(),
-	     foreign_position.index, foreign_position.FEN(), foreign_position.reflection);
+	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
+	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
+	     foreign_position.tb->filename.c_str(),
+	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
+	     foreign_position.reflection);
     }
 #endif
 
 #ifdef DEBUG_MOVE
     if (current_index == DEBUG_MOVE) {
-	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s refl %d\n",
-	     current_index, current_position.FEN(), foreign_position.tb->filename.c_str(),
-	     foreign_position.index, foreign_position.FEN(), foreign_position.reflection);
+	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
+	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
+	     foreign_position.tb->filename.c_str(),
+	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
+	     foreign_position.reflection);
     }
 #endif
 
@@ -9708,17 +9712,21 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 
 #ifdef DEBUG_FUTUREMOVE
     if (future_index == DEBUG_FUTUREMOVE) {
-	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s refl %d\n",
-	     current_index, current_position.FEN(), foreign_position.tb->filename.c_str(),
-	     foreign_position.index, foreign_position.FEN(), foreign_position.reflection);
+	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
+	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
+	     foreign_position.tb->filename.c_str(),
+	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
+	     foreign_position.reflection);
     }
 #endif
 
 #ifdef DEBUG_MOVE
     if (current_index == DEBUG_MOVE) {
-	info("propagate_index_from_futurebase; %" PRIindex " %s from %s %" PRIindex " %s refl %d\n",
-	     current_index, current_position.FEN(), foreign_position.tb->filename.c_str(),
-	     foreign_position.index, foreign_position.FEN(), foreign_position.reflection);
+	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
+	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
+	     foreign_position.tb->filename.c_str(),
+	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
+	     foreign_position.reflection);
     }
 #endif
 
