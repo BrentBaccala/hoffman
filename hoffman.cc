@@ -1027,8 +1027,6 @@ int verbose = 1;
 
 index_t debug_move = INVALID_INDEX;
 index_t debug_futuremove = INVALID_INDEX;
-#define DEBUG_MOVE debug_move
-#define DEBUG_FUTUREMOVE debug_futuremove
 
 
 /***** UTILITY FUNCTIONS *****/
@@ -6648,11 +6646,11 @@ translation_result translate_foreign_index_to_local_position(tablebase_t *foreig
     local_position_t foreign_position(foreign_tb);
 
     if (! index_to_local_position(foreign_tb, index1, reflection, &foreign_position)) {
-#ifdef DEBUG_FUTUREMOVE
-	if (index1 == DEBUG_FUTUREMOVE) {
+
+	if (index1 == debug_futuremove) {
 	    info("translate_foreign_index_to_local_position: index_to_local_position failed\n");
 	}
-#endif
+
 	return invalid_translation;
     }
 
@@ -7658,12 +7656,11 @@ class EntriesTable {
      */
 
     void initialize_entry(index_t index, int movecnt, int dtm) {
-#ifdef DEBUG_MOVE
-	if (index == DEBUG_MOVE) {
+
+	if (index == debug_move) {
 	    info("initialize index %" PRIindex " %s movecnt %d; dtm %d\n",
 		 index, index_to_FEN(current_tb, index), movecnt, dtm);
 	}
-#endif
 
 	/* We always initialize with fairly small DTMs (never bigger than two), so we don't need to
 	 * check these array bounds for overflow here.
@@ -8086,11 +8083,10 @@ inline void PTM_wins(index_t index, int dtm)
     nonatomic_entry expected = entriesTable[index];
     nonatomic_entry desired;
 
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
+    if (index == debug_move) {
 	info("PTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
 	     index, dtm, expected.get_raw_DTM());
-#endif
+    }
 
     do {
 	desired = expected;
@@ -8132,11 +8128,10 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
     nonatomic_entry expected = entriesTable[index];
     nonatomic_entry desired;
 
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
+    if (index == debug_move) {
 	info("add_one_to_PNTM_wins; index=%" PRIindex "; dtm=%d; table dtm=%d\n",
 	     index, dtm, expected.get_raw_DTM());
-#endif
+    }
 
     do {
 	desired = expected;
@@ -9294,11 +9289,10 @@ void proptable_pass_thread(int target_dtm)
 
 	for (auto pt_entry = current_pt_entries.begin(); pt_entry != current_pt_entries.end(); pt_entry ++) {
 
-#ifdef DEBUG_MOVE
-	    if (index == DEBUG_MOVE)
+	    if (index == debug_move) {
 		info("Commiting proptable entry: index %" PRIindex ", dtm %d, movecnt %u, futuremove %d\n",
 		     pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
-#endif
+	    }
 
 	    if (target_dtm != 0) {
 
@@ -9473,11 +9467,10 @@ void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, int futu
 void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 {
 
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
+    if (index == debug_move) {
 	info("commit_update; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
 	     index, dtm, movecnt, futuremove);
-#endif
+    }
 
     backproped_moves_this_pass ++;
 
@@ -9499,9 +9492,11 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 
 	    if (! test_and_set_bit_field(current_tb->futurevectors, bit_offset + futuremove, 0)) {
-#if 0
-		info("commit_update; futuremove processed; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
-		     index, dtm, movecnt, futuremove);
+#if 1
+		if (entriesTable[index].get_raw_DTM() != 1) {
+		    fatal("commit_update; futuremove processed; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
+			  index, dtm, movecnt, futuremove);
+		}
 #endif
 		return;
 	    }
@@ -9615,25 +9610,21 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 	return;
     }
 
-#ifdef DEBUG_FUTUREMOVE
-    if (future_index == DEBUG_FUTUREMOVE) {
+    if (future_index == debug_futuremove) {
 	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
 	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
 	     foreign_position.tb->filename.c_str(),
 	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
 	     foreign_position.reflection);
     }
-#endif
 
-#ifdef DEBUG_MOVE
-    if (current_index == DEBUG_MOVE) {
+    if (current_index == debug_move) {
 	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
 	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
 	     foreign_position.tb->filename.c_str(),
 	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
 	     foreign_position.reflection);
     }
-#endif
 
     if (futurebase->format.dtm_bits > 0) {
 
@@ -10342,12 +10333,10 @@ void propagate_moves_from_capture_futurebase(index_t future_index, int reflectio
 							       current_tb, &position,
 							       futurebase->invert_colors);
 
-#ifdef DEBUG_FUTUREMOVE
-    if (future_index == DEBUG_FUTUREMOVE) {
+    if (future_index == debug_futuremove) {
 	info("capture backprop; reflection=%d; translation=%x\n",
 	     reflections[reflection], translation);
     }
-#endif
 
     if (translation != invalid_translation) {
 
@@ -11779,22 +11768,21 @@ void propagate_one_minimove_within_table(tablebase_t *tb, index_t future_index, 
     current_index = local_position_to_index(tb, current_position);
 
     if (current_index == INVALID_INDEX) {
-#ifdef DEBUG_MOVE
-	if (future_index == DEBUG_MOVE) {
+
+	if (future_index == debug_move) {
 	    info("propagate_one_minimove_within_table:  current_index=INVALID"
 		 "; future_index=%" PRIindex "; dtm=%d\n",
 		 future_index, dtm);
 	}
-#endif
+
 	return;
     }
 
-#ifdef DEBUG_MOVE
-    if ((current_index == DEBUG_MOVE) || (future_index == DEBUG_MOVE))
+    if ((current_index == debug_move) || (future_index == debug_move)) {
 	info("propagate_one_minimove_within_table:  current_index=%"
 	     PRIindex "; future_index=%" PRIindex "; dtm=%d\n",
 	     current_index, future_index, dtm);
-#endif
+    }
 
     /* Parent position is the FUTURE position.  We now back-propagate to
      * the current position, which is the PAST position.
@@ -11885,18 +11873,18 @@ void back_propagate_index_within_table(index_t index, int reflection)
     /* This can fail if the reflection isn't valid for this index */
 
     if (! index_to_local_position(current_tb, index, reflection, &position)) {
-#ifdef DEBUG_MOVE
-	if (index == DEBUG_MOVE)
+
+	if (index == debug_move) {
 	    info("back_propagate_index_within_table; index=%" PRIindex "; reflection %d; INVALID\n",
 		 index, reflection);
-#endif
+	}
+
 	return;
     }
 
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
+    if (index == debug_move) {
 	info("back_propagate_index_within_table; index=%" PRIindex "; reflection %d\n", index, reflection);
-#endif
+    }
 
     position.flip_side_to_move();
 
@@ -12827,12 +12815,10 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 
 	entriesTable[index].set_capture_possible_flag((capturecnt != 0));
 
-#ifdef DEBUG_MOVE
-	if (index == DEBUG_MOVE) {
-	    /* other fields were printed by DEBUG_MOVE statement in initialize_entry() */
+	if (index == debug_move) {
+	    /* other fields were printed by debug_move statement in initialize_entry() */
 	    info("   futurevector " FUTUREVECTOR_HEX_FORMAT "\n", futurevector);
 	}
-#endif
 
 	return futurevector;
     }
@@ -12840,10 +12826,9 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 
 futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t index, local_position_t &position)
 {
-#ifdef DEBUG_MOVE
-    if (index == DEBUG_MOVE)
+    if (index == debug_move) {
 	info("Initializing %" PRIindex "\n", index);
-#endif
+    }
 
     print_progress_dot(current_tb);
 
@@ -13072,12 +13057,10 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 
     for (index_t index = 0; index < tb->num_indices; index ++) {
 
-#ifdef DEBUG_MOVE
-	if (index == DEBUG_MOVE) {
+	if (index == debug_move) {
 	    info("Writing %" PRIindex ": DTM %d; movecnt %d\n", index,
 		 entriesTable[index].get_DTM(), entriesTable[index].get_movecnt());
 	}
-#endif
 
 	/* Right now, there's only three possible fields in the tablebase format itself (as opposed
 	 * to the intermediate entries and proptable formats) - dtm, basic, and flag.
@@ -14441,20 +14424,13 @@ int main(int argc, char *argv[])
     init_reflections();
     initialize_board_masks();
 
-#ifdef DEBUG_MOVE
-#define DEBUG_FLAG "d:"
-#else
-#define DEBUG_FLAG ""
-#endif
-
     while (1) {
-	c = getopt_long (argc, argv, "hiqgpsvo:n:P:t:" DEBUG_FLAG, options, NULL);
+	c = getopt_long (argc, argv, "hiqgpsvo:n:P:t:d:", options, NULL);
 
 	if (c == -1) break;
 
 	switch (c) {
 
-#ifdef DEBUG_MOVE
 	case 'd':
 	    /* XXX might want strtoll or something here */
 	    if (strtol(optarg, nullptr, 0) > 0) {
@@ -14465,7 +14441,7 @@ int main(int argc, char *argv[])
 		fatal("can't parse debugging index %s\n", optarg);
 	    }
 	    break;
-#endif
+
 	case 'i':
 	    dump_info = 1;
 	    break;
