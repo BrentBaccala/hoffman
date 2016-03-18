@@ -9628,7 +9628,10 @@ void propagate_mini_normalized_position_from_futurebase(local_position_t &curren
 	int dtm = futurebase->get_DTM(future_index);
 
 	if (dtm > 0) {
-	    commit_update(current_index, -dtm, movecnt, futuremove);
+	    /* Don't backprop DTM 1 (PNTM in check) because we don't count illegal moves */
+	    if (dtm != 1) {
+		commit_update(current_index, -dtm, movecnt, futuremove);
+	    }
 	} else if (dtm < 0) {
 	    commit_update(current_index, -dtm+1, movecnt, futuremove);
 	} else {
@@ -9735,7 +9738,10 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 	int dtm = futurebase->get_DTM(future_index);
 
 	if (dtm > 0) {
-	    commit_update(current_index, -dtm, movecnt, futuremove);
+	    /* Don't backprop DTM 1 (PNTM in check) because we don't count illegal moves */
+	    if (dtm != 1) {
+		commit_update(current_index, -dtm, movecnt, futuremove);
+	    }
 	} else if (dtm < 0) {
 	    commit_update(current_index, -dtm+1, movecnt, futuremove);
 	} else {
