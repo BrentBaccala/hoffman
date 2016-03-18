@@ -9577,11 +9577,9 @@ int propagation_pass(int target_dtm)
  * set, but we didn't use it.
  */
 
-/* XXX combine these next two functions */
-
-void propagate_mini_normalized_position_from_futurebase(local_position_t &current_position,
-							const local_position_t &foreign_position,
-							const int futuremove)
+void propagate_minilocal_position_from_futurebase(local_position_t &current_position,
+						  const local_position_t &foreign_position,
+						  const int futuremove, bool normalize)
 {
     /* XXX get rid of this const_cast ; need it because get_DTM might modify its tablebase */
     tablebase_t * futurebase = const_cast<tablebase_t *>(foreign_position.tb);
@@ -9590,7 +9588,11 @@ void propagate_mini_normalized_position_from_futurebase(local_position_t &curren
 
     /* Look up the position in the current tablebase... */
 
-    current_index = normalized_position_to_index(current_position);
+    if (normalize) {
+	current_index = normalized_position_to_index(current_position);
+    } else {
+	current_index = local_position_to_index(current_position);
+    }
 
     if (current_index == INVALID_INDEX) {
 	return;
@@ -9689,122 +9691,10 @@ void propagate_mini_normalized_position_from_futurebase(local_position_t &curren
 
     }
 }
-
-void propagate_minilocal_position_from_futurebase(local_position_t &current_position,
-						  const local_position_t &foreign_position,
-						  const int futuremove)
-{
-    tablebase_t * futurebase = const_cast<tablebase_t *>(foreign_position.tb);
-    index_t current_index;
-    const index_t future_index = foreign_position.index;
-
-    /* Look up the position in the current tablebase... */
-
-    current_index = local_position_to_index(current_position);
-
-    if (current_index == INVALID_INDEX) {
-	return;
-    }
-
-    /* local_position_to_index() updated the position structure's multiplicity, so we know it's
-     * correct.  It actually should be a little more complex than this, but since we're only dealing
-     * with 8-way symmetry where multiplicity is either 1 or 2, this should do.  If we're
-     * backproping from a single multiplicity position into one with double multiplicity, then this
-     * function will get called twice on the same index, because that index will get generated
-     * twice during back prop from the single future position, but since we're using the futuremove
-     * number to toss out additional function calls, we can safely just use the multiplicity here
-     * without worrying about it getting called again.
-     */
-
-    const int movecnt = current_position.multiplicity;
-
-    if (futuremove == -1) {
-	fatal("Futuremove never assigned: %s\n", current_position.FEN());
-	return;
-    }
-
-#ifdef DEBUG_FUTUREMOVE
-    if (future_index == DEBUG_FUTUREMOVE) {
-	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
-	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
-	     foreign_position.tb->filename.c_str(),
-	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
-	     foreign_position.reflection);
-    }
-#endif
-
-#ifdef DEBUG_MOVE
-    if (current_index == DEBUG_MOVE) {
-	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %" PRIindex " %s mul %d refl %d\n",
-	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
-	     foreign_position.tb->filename.c_str(),
-	     foreign_position.index, foreign_position.FEN(), foreign_position.multiplicity,
-	     foreign_position.reflection);
-    }
-#endif
-
-    if (futurebase->format.dtm_bits > 0) {
-
-	int dtm = futurebase->get_DTM(future_index);
-
-	if (dtm > 0) {
-	    /* Don't backprop DTM 1 (PNTM in check) because we don't count illegal moves */
-	    if (dtm != 1) {
-		commit_update(current_index, -dtm, movecnt, futuremove);
-	    }
-	} else if (dtm < 0) {
-	    commit_update(current_index, -dtm+1, movecnt, futuremove);
-	} else {
-	    /* We insert even if dtm is zero because we have to track futuremoves,
-	     * but we use movecnt=0 since this is a draw, which is different
-	     * from a discard.
-	     */
-	    commit_update(current_index, 0, 0, futuremove);
-	}
-
-    } else if (futurebase->format.basic_offset != -1) {
-
-	int basic = futurebase->get_basic(future_index);
-
-	if (basic == 1) {
-	    commit_update(current_index, -2, movecnt, futuremove);
-	} else if (basic == 2) {
-	    commit_update(current_index, 2, movecnt, futuremove);
-	} else {
-	    commit_update(current_index, 0, 0, futuremove);
-	}
-
-    } else {
-
-	bool flag = futurebase->get_flag(future_index);
-	int stm = index_to_side_to_move(futurebase, future_index);
-
-	/* What happens if we're back propagating a flag from a color-inverted futurebase?
-	 *
-	 * Well, first of all, a "white-wins" flag in an inverted futurebase becomes a "black-wins"
-	 * flag here, which is basically a "NOT white-draws" flag, so we have to be careful to
-	 * backprop from draw flags to win flags and from win flags to draw flags if the colors have
-	 * been inverted.  Other than that, since the side to move we just fetched is in the
-	 * futurebase, the white/black sense of the flag matches with it, so we don't need to invert
-	 * anything to figure out if this is a PTM win or a PNTM win.
-	 */
-
-	/* I use twos here because there's a lot of stuff that gets cut out for the special case of 1 */
-
-	if ((flag && (stm == WHITE)) || (!flag && (stm == BLACK))) {
-	    commit_update(current_index, -2, movecnt, futuremove);
-	} else {
-	    commit_update(current_index, 2, movecnt, futuremove);
-	}
-
-    }
-}
-
-/* XXX combine the next two functions */
 
 void propagate_local_position_from_futurebase(local_position_t &position,
-					      local_position_t &foreign_position,
-					      const int futuremove)
+					      const local_position_t &foreign_position,
+					      const int futuremove, bool normalize)
 {
     int piece;
     const tablebase_t * const tb = position.tb;
@@ -9819,7 +9709,7 @@ void propagate_local_position_from_futurebase(local_position_t &position,
      * en passant positions.
      */
 
-    propagate_minilocal_position_from_futurebase(position, foreign_position, futuremove);
+    propagate_minilocal_position_from_futurebase(position, foreign_position, futuremove, normalize);
 
     if (position.en_passant_square == ILLEGAL_POSITION) {
 
@@ -9837,7 +9727,7 @@ void propagate_local_position_from_futurebase(local_position_t &position,
 		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] - 8))
 		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] - 16))) {
 		position.set_en_passant_square(position.piece_position[piece] - 8);
-		propagate_minilocal_position_from_futurebase(position, foreign_position, futuremove);
+		propagate_minilocal_position_from_futurebase(position, foreign_position, futuremove, normalize);
 	    }
 
 	    if ((tb->pieces[piece].color == BLACK)
@@ -9845,58 +9735,7 @@ void propagate_local_position_from_futurebase(local_position_t &position,
 		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] + 8))
 		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] + 16))) {
 		position.set_en_passant_square(position.piece_position[piece] + 8);
-		propagate_minilocal_position_from_futurebase(position, foreign_position, futuremove);
-	    }
-
-	    position.clear_en_passant_square();
-	}
-    }
-}
-
-void propagate_normalized_position_from_futurebase(local_position_t &position,
-						   const local_position_t &foreign_position,
-						   const int futuremove)
-{
-    int piece;
-    const tablebase_t * const tb = position.tb;
-
-    /* We may need to consider a bunch of additional positions here that are identical to the base
-     * position except that a single one of the pawns on the fourth or fifth ranks was capturable en
-     * passant.
-     * 
-     * We key off the en_passant flag in the position that was passed in.  If it's set, then we're
-     * back propagating a position that requires en passant, so we just do it.  Otherwise, we're
-     * back propagating a position that doesn't require en passant, so we check for additional
-     * en passant positions.
-     */
-
-    propagate_mini_normalized_position_from_futurebase(position, foreign_position, futuremove);
-
-    if (position.en_passant_square == ILLEGAL_POSITION) {
-
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
-
-	    if (tb->pieces[piece].color == position.side_to_move) continue;
-	    if (tb->pieces[piece].piece_type != PAWN) continue;
-
-	    /* I took care in the calling routines to update board_vector specifically so we can
-	     * check for en passant legality here.
-	     */
-
-	    if ((tb->pieces[piece].color == WHITE)
-		&& (ROW(position.piece_position[piece]) == 3)
-		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] - 8))
-		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] - 16))) {
-		position.set_en_passant_square(position.piece_position[piece] - 8);
-		propagate_mini_normalized_position_from_futurebase(position, foreign_position, futuremove);
-	    }
-
-	    if ((tb->pieces[piece].color == BLACK)
-		&& (ROW(position.piece_position[piece]) == 4)
-		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] + 8))
-		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] + 16))) {
-		position.set_en_passant_square(position.piece_position[piece] + 8);
-		propagate_mini_normalized_position_from_futurebase(position, foreign_position, futuremove);
+		propagate_minilocal_position_from_futurebase(position, foreign_position, futuremove, normalize);
 	    }
 
 	    position.clear_en_passant_square();
@@ -10112,8 +9951,8 @@ void propagate_moves_from_promotion_futurebase(index_t future_index, int reflect
 
 		    true_pawn = new_position.permuted_piece[pawn];
 
-		    propagate_normalized_position_from_futurebase(new_position, foreign_position,
-								  promotions[true_pawn][futurebase->promotion]);
+		    propagate_local_position_from_futurebase(new_position, foreign_position,
+							     promotions[true_pawn][futurebase->promotion], true);
 		}
 
 	    }
@@ -10240,8 +10079,8 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 		     * from the side that didn't promote in an en passant state.
 		     */
 
-		    propagate_normalized_position_from_futurebase(new_position, foreign_position,
-								  promotion_captures[true_pawn][true_captured_piece][futurebase->promotion]);
+		    propagate_local_position_from_futurebase(new_position, foreign_position,
+							     promotion_captures[true_pawn][true_captured_piece][futurebase->promotion], true);
 
 		}
 
@@ -10268,8 +10107,8 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 		    true_captured_piece = new_position.permuted_piece[translation.missing_piece2];
 		    true_pawn = new_position.permuted_piece[translation.missing_piece1];
 
-		    propagate_normalized_position_from_futurebase(new_position, foreign_position,
-								  promotion_captures[true_pawn][true_captured_piece][futurebase->promotion]);
+		    propagate_local_position_from_futurebase(new_position, foreign_position,
+							     promotion_captures[true_pawn][true_captured_piece][futurebase->promotion], true);
 
 		}
 
@@ -10362,8 +10201,8 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 		true_capturing_piece = new_position.permuted_piece[capturing_piece];
 		true_captured_piece = new_position.permuted_piece[captured_piece];
 
-		propagate_normalized_position_from_futurebase(new_position, foreign_position,
-							      futurecaptures[true_capturing_piece][true_captured_piece]);
+		propagate_local_position_from_futurebase(new_position, foreign_position,
+							 futurecaptures[true_capturing_piece][true_captured_piece], true);
 	    }
 	}
 
@@ -10397,8 +10236,8 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 		true_capturing_piece = new_position.permuted_piece[capturing_piece];
 		true_captured_piece = new_position.permuted_piece[captured_piece];
 
-		propagate_normalized_position_from_futurebase(new_position, foreign_position,
-							      futurecaptures[true_capturing_piece][true_captured_piece]);
+		propagate_local_position_from_futurebase(new_position, foreign_position,
+							 futurecaptures[true_capturing_piece][true_captured_piece], true);
 
 	    }
 
@@ -10438,8 +10277,8 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 			true_capturing_piece = new_position.permuted_piece[capturing_piece];
 			true_captured_piece = new_position.permuted_piece[captured_piece];
 
-			propagate_normalized_position_from_futurebase(new_position, foreign_position,
-								      futurecaptures[true_capturing_piece][true_captured_piece]);
+			propagate_local_position_from_futurebase(new_position, foreign_position,
+								 futurecaptures[true_capturing_piece][true_captured_piece], true);
 
 		    }
 
@@ -10468,8 +10307,8 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 			true_capturing_piece = new_position.permuted_piece[capturing_piece];
 			true_captured_piece = new_position.permuted_piece[captured_piece];
 
-			propagate_normalized_position_from_futurebase(new_position, foreign_position,
-								      futurecaptures[true_capturing_piece][true_captured_piece]);
+			propagate_local_position_from_futurebase(new_position, foreign_position,
+								 futurecaptures[true_capturing_piece][true_captured_piece], true);
 
 		    }
 		}
@@ -10670,7 +10509,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 	    }
 
 	    propagate_local_position_from_futurebase(current_position, foreign_position,
-						     futuremoves[piece][origin_square]);
+						     futuremoves[piece][origin_square], false);
 
 	    return;
 	}
@@ -10719,7 +10558,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 		    current_position.move_piece(piece, movementptr->square);
 
 		    propagate_local_position_from_futurebase(current_position, foreign_position,
-							     futuremoves[piece][origin_square]);
+							     futuremoves[piece][origin_square], false);
 		}
 	    }
 
@@ -10766,7 +10605,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 		current_position.move_piece(piece, movementptr->square);
 
 		propagate_local_position_from_futurebase(current_position, foreign_position,
-							 futuremoves[piece][origin_square]);
+							 futuremoves[piece][origin_square], false);
 	    }
 	}
     }
