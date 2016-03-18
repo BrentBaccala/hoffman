@@ -9645,12 +9645,14 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 
 	int basic = futurebase->get_basic(future_index);
 
-	if (basic == 1) {
+	if (basic == 0) {
+	    commit_update(current_index, 0, 0, futuremove);
+	} else if (basic == 1) {
 	    commit_update(current_index, -2, movecnt, futuremove);
 	} else if (basic == 2) {
 	    commit_update(current_index, 2, movecnt, futuremove);
 	} else {
-	    commit_update(current_index, 0, 0, futuremove);
+	    /* basic == 3: illegal position, PNTM in check, no backprop */
 	}
 
     } else {
@@ -13072,11 +13074,23 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 	if (tb->format.basic_offset != -1) {
 	    int basic;
 
-	    /* "3" is reserved to flag an illegal position, but we don't do that now, because we
-	     * don't distinguish illegal positions from draws - see initialize_entry_as_illegal()
+	    /* 2-bit BASIC format
+	     *
+	     * 0 - draw
+	     * 1 - PTM wins
+	     * 2 - PNTM wins
+	     * 3 - illegal position (PNTM in check)
+	     *
+	     * Indices that generate illegal positions, not in the above sense, but in the sense of
+	     * multiple pieces mapping to the same square, will get recorded as draws, but these can
+	     * be easily identified by the index-to-position function, so their values in the
+	     * tablebase are largely irrelevant.  Type 3 illegal positions (PNTM in check) are not
+	     * so obvious and need to be flagged as such to avoid using them during backprop.
 	     */
 
-	    if (entriesTable[index].does_PTM_win()) {
+	    if (entriesTable[index].get_DTM() == 1) {
+		basic = 3;
+	    } else if (entriesTable[index].does_PTM_win()) {
 		basic = 1;
 	    } else if (entriesTable[index].does_PNTM_win()) {
 		basic = 2;

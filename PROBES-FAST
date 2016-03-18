@@ -92,6 +92,13 @@ c21a2a5a49963fdf0d274300762c4c20 8/6k1/6p1/8/q7/4R3/5PK1/8\ w fortress.htb
 ba8c06b99e8865c14f160477f06f230a 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-simple.htb
 254b28060524ea0caf42ee3f2c90cdfa 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-compact.htb
 515098ff1682b68b5116eaa6805ac6c4 8/3k4/8/8/8/4Q3/8/1K1Q4\ b kqqk-naive2.htb
+7aa0639fd632d01cd0c1eae03d61a667 8/8/K6k/8/3pP3/8/8/8\ w kpkp-naive.htb kpk-naive.htb kqk-naive.htb
+
+# check alternate formats
+1f9d2d82414a812f1a86a267bf26ca75 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-basic.htb
+
+# bug test r981
+154dc9243d90a19e081b0ca737b25a74 8/3k4/8/8/8/4B3/8/1K1Q4\ b kqbk-basic.htb
 
 # test various bugs
 6ff1d8e170f972b66ac3f25ec63d4736 234 r779a.htb kqpk.htb
