@@ -54,6 +54,12 @@ sub printnl {
 my @normal_futurebases;
 my @inverse_futurebases;
 
+# Most (but not all) calling combinations allow futurebases like kqkb
+# to be used inverted as kbkq, cutting the required number of
+# futurebases roughly in half.
+
+my $use_inverse_futurebases = true;
+
 # The combinadic4 index does not encode side-to-move for color
 # symmetric tablebases.
 #
@@ -62,7 +68,7 @@ my @inverse_futurebases;
 # behavior of &mkfuturebase - does it print XML statements for inverse
 # futurebases?
 
-my $use_inverse_futurebases = true;
+my $ignore_inverse_futurebases = true;
 
 my $suicide;
 my $option;
@@ -90,8 +96,9 @@ sub mkfilename {
 	$black_value += $values{$black_piece};
     }
 
-    if (($option !~ /-[24]x[48]/) && ((length($black_pieces) > length($white_pieces)) or
-				      ((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value)))) {
+    if ($use_inverse_futurebases and
+	((length($black_pieces) > length($white_pieces)) or
+	 ((length($black_pieces) == length($white_pieces)) and ($black_value > $white_value)))) {
 	$invert = 1;
 	if ($suicide) {
 	    $filename = $black_pieces . "v" . $white_pieces . $option;
@@ -118,7 +125,7 @@ sub mkfuturebase {
     my ($invert, $filename) = &mkfilename($white_pieces, $black_pieces);
 
     if ($invert) {
-	if ($use_inverse_futurebases) {
+	if (not $ignore_inverse_futurebases) {
 	    if (grep($_ eq $filename, @inverse_futurebases) == 0) {
 		printnl '   <futurebase filename="' . $filename . '.htb" colors="invert"/>';
 		push @inverse_futurebases, $filename;
@@ -210,14 +217,20 @@ sub write_cntl_file {
 	}
     }
 
-    # Don't use inverse futurebases with combinadic4 indices on color
+    # Don't use inverse futurebases with restricted boards or
+    # bitbases, since inversion produces incompatible futurebases in
+    # both cases.
+
+    $use_inverse_futurebases = (($option !~ /-[24]x[48]/) and ($option !~ /-whitewins/));
+
+    # Ignore inverse futurebases with combinadic4 indices on color
     # symmetric tablebases (those with identical white and black
     # pieces).
 
     if ((($index eq "") or ($index eq "combinadic4")) and ($white_pieces eq $black_pieces)) {
-	$use_inverse_futurebases = undef;
+	$ignore_inverse_futurebases = true;
     } else {
-	$use_inverse_futurebases = true;
+	$ignore_inverse_futurebases = undef;
     }
 
     # These are global variables that will updated by the various
