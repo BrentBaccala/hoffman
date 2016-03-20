@@ -5624,7 +5624,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     /* Do we encode side-to-move? */
 
-    if ((index_type == COMBINADIC4_INDEX) && is_color_symmetric()) {
+    if ((index_type == COMBINADIC4_INDEX) && is_color_symmetric() && (format.flag_type == FORMAT_FLAG_NONE)) {
 	encode_stm = false;
     } else {
 	encode_stm = true;

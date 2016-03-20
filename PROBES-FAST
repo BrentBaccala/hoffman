@@ -100,6 +100,9 @@ ba8c06b99e8865c14f160477f06f230a 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-simple.htb
 # bug test r981
 154dc9243d90a19e081b0ca737b25a74 8/3k4/8/8/8/4B3/8/1K1Q4\ b kqbk-basic.htb
 
+# bug test r982
+87bca4763df2a28559aa1109f608ec62 8/3k4/8/8/8/8/8/1Kb5\ w kkb-whitewins.htb kk-whitewins.htb
+
 # test various bugs
 6ff1d8e170f972b66ac3f25ec63d4736 234 r779a.htb kqpk.htb
 8601d924b2624a814cd6fac46bed83d2 21499040 r779e.htb r779c.htb
