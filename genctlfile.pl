@@ -153,6 +153,30 @@ sub write_cntl_file {
     $suicide = ($2 eq 'v');
     $option = $4;
 
+    # Parse index from options
+
+    my $index = "";
+
+    if ($option =~ /($indices)/) {
+	$index = substr($1, 1);
+    }
+
+    # Don't use inverse futurebases with restricted boards or
+    # bitbases, since inversion produces incompatible futurebases in
+    # both cases.
+
+    $use_inverse_futurebases = (($option !~ /-[24]x[48]/) and ($option !~ /-whitewins/));
+
+    # Ignore inverse futurebases with combinadic4 indices on color
+    # symmetric tablebases (those with identical white and black
+    # pieces).
+
+    if ((($index eq "") or ($index eq "combinadic4")) and ($white_pieces eq $black_pieces)) {
+	$ignore_inverse_futurebases = true;
+    } else {
+	$ignore_inverse_futurebases = undef;
+    }
+
     my $filename = &mkfilename($white_pieces, $black_pieces);
 
     die "Improper control filename $cntl_filename\n" if $cntl_filename ne "$filename.xml";
@@ -177,10 +201,7 @@ sub write_cntl_file {
     printnl '   <basic/>' if ($option =~ /-basic/);
     printnl '   <flag type="white-wins"/>' if ($option =~ /-whitewins/);
 
-    my $index = "";
-
-    if ($option =~ /($indices)/) {
-	$index = substr($1, 1);
+    if ($index ne "") {
 	printnl "   <index type=\"$index\"/>";
     }
 
@@ -215,22 +236,6 @@ sub write_cntl_file {
 	} else {
 	    printnl '   <piece color="black" type="' . $pieces{$piece} . '"' . $location . '/>';
 	}
-    }
-
-    # Don't use inverse futurebases with restricted boards or
-    # bitbases, since inversion produces incompatible futurebases in
-    # both cases.
-
-    $use_inverse_futurebases = (($option !~ /-[24]x[48]/) and ($option !~ /-whitewins/));
-
-    # Ignore inverse futurebases with combinadic4 indices on color
-    # symmetric tablebases (those with identical white and black
-    # pieces).
-
-    if ((($index eq "") or ($index eq "combinadic4")) and ($white_pieces eq $black_pieces)) {
-	$ignore_inverse_futurebases = true;
-    } else {
-	$ignore_inverse_futurebases = undef;
     }
 
     # These are global variables that will updated by the various
