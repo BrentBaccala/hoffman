@@ -64,6 +64,9 @@ dc6593ec0a6ab7b06315b8372a86698d 8/8/K6k/8/8/8/5p2/8\ b\\nf2f1=b k[qrbnp]k.htb
 # Check a capture promotion move
 c301a041297d70291106c9efad735fb5 1q6/P7/K6k/8/8/8/8/8\ w\\na7xb8=Q kqk?.htb k[qrbnp]k.htb
 
+# Verify a tablebase with a 'normal' futurebase
+817457fab6899ebeac623d04a6072986 8/8/K6k/8/8/3P4/8/8\ w kpk23.htb kpk4+.htb
+
 # Probe a suicide tablebase
 f1b03d7bedb122391df12f2f48858f43 KRq5/8/8/8/8/8/8/8\ w krvq.htb
 03da94741406062e0535d55f7e6e4f7e KRq5/8/8/8/8/8/8/8\ b krvq.htb kvq.htb
