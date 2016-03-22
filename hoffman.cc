@@ -12010,35 +12010,16 @@ void back_propagate_index_within_table(index_t index, int reflection)
 		 *
 		 * The only way we could have gotten an en passant pawn is if THIS MOVE created it.
 		 * We handle that as a special case above, so we shouldn't have to worry about
-		 * clearing en passant pawns here - there should be none.  Checking additional en
-		 * passant positions is taken care of in propagate_one_move_within_table()
+		 * clearing en passant pawns here - there should be none.
 		 *
-		 * There are three basic possibilities, depending on the index type:
+		 * We're considering a position without en passant set, but from which a backwards
+		 * double pawn move is possible.  We want to know if it has a matching position with
+		 * en passant set.  If so, we do nothing here, since the double pawn move will be
+		 * handled by the en passant position.  If not, we process the double pawn move
+		 * here.
 		 *
-		 * 1. Our index has en passant positions for all positions with pawns on the fourth
-		 * or fifth rank.  (most of them)
-		 *
-		 * In this case, we skip all double pawn moves here.  We only consider double pawn
-		 * moves when we handle en passant positions at the beginning of this function.
-		 *
-		 * 2. Our index has no en passant positions. (no-en-passant)
-		 *
-		 * In this case, we process all double pawn moves here, as there are no en passant
-		 * positions to process at the beginning of this function.
-		 *
-		 * 3. Our index has en passant positions only if a pawn is capturable en
-		 * passant. (pawngen)
-		 *
-		 * In this case, we process here only double pawn moves that do not create en
-		 * passant possibilities.
-		 *
-		 * In short, we're considering a position without en passant set, but from which a
-		 * backwards double pawn move is possible.  We want to know if it has a matching
-		 * position with en passant set.  If so, we do nothing here, since the double pawn
-		 * move will be handled by the en passant position.  If not, we process the double
-		 * pawn move here.
-		 *
-		 * XXX what a mess...
+		 * Checking additional en passant positions is taken care of in
+		 * propagate_one_move_within_table()
 		 */
 
 		if (((movementptr->square - origin_square) == 16)
