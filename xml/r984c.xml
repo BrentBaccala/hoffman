@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- NEGATIVE BUILD -->
+<!-- This test case is expected to fail, due to futuremoves not being handled -->
+
+<tablebase>
+   <prune-enable color="white" type="discard"/>
+   <prune-enable color="black" type="discard"/>
+   <dtm/>
+   <index type="combinadic4" symmetry="1"/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="rook"/>
+   <piece color="black" type="queen"/>
+   <futurebase filename="krk-4x4.htb"/>
+   <futurebase filename="kqk.htb" colors="invert"/>
+   <output filename="r984c.htb"/>
+</tablebase>

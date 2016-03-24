@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- NEGATIVE BUILD -->
+<!-- This test case is expected to fail, due to multiple futuremoves -->
+
+<tablebase>
+   <dtm/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="queen"/>
+   <piece color="black" type="queen"/>
+   <futurebase filename="kqk.htb"/>
+   <futurebase filename="kqk.htb"/>
+   <futurebase filename="kqk.htb"/>
+   <output filename="r984b.htb"/>
+</tablebase>

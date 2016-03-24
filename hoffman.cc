@@ -433,6 +433,16 @@ bimap colors = {{"WHITE", WHITE}, {"BLACK", BLACK}};
  * for the particular tablebase being generated.
  */
 
+/* ignore_futurevectors: set true to ignore futurevector bits (they will still be allocated), and
+ * assume that the backprop code works correctly without them; set false to process them strictly
+ * and make processing missing or duplicate futurevectors a fatal error.
+ *
+ * XXX setting this true currently causes the 'qqvp' test to fail and the 'r984' negatives to
+ * succeed
+ */
+
+const bool ignore_futurevectors = false;
+
 typedef uint32_t futurevector_t;
 #define get_futurevector_t_field get_uint32_t_field
 #define set_futurevector_t_field set_uint32_t_field
@@ -9476,31 +9486,39 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
     if (!using_proptables) {
 
-	if (futuremove != NO_FUTUREMOVE) {
+	if (! ignore_futurevectors) {
 
-	    /* Futuremove - check off bits in an array that got filled in when we initialized
-	     *
-	     * Do nothing if the bit is clear, either because we were never to process this
-	     * futuremove at all (this is how a suicide analysis rejects non-capture futuremoves
-	     * from a position where captures are possible), or because a previous pass through this
-	     * code has already processed it.  We can't tell the difference at this point, and
-	     * probably need to use proptables for more accurate checking.
-	     *
-	     * This has to be atomically, because there will be other indices in this bit vector.
-	     */
+	    if (futuremove != NO_FUTUREMOVE) {
 
-	    long long bit_offset = ((long long)index * current_tb->futurevector_bits);
+		/* Futuremove - check off bits in an array that got filled in when we initialized
+		 *
+		 * Do nothing if the bit is clear, either because we were never to process this
+		 * futuremove at all (this is how a suicide analysis rejects non-capture futuremoves
+		 * from a position where captures are possible), or because a previous pass through
+		 * this code has already processed it.  In the later case, we fatally complain if
+		 * the the entriesTable contains a normal position with DTM not 1 (PNTM in check).
+		 *
+		 * We can't tell the difference at this point, and probably need to use proptables
+		 * for more accurate checking.
+		 *
+		 * This is done atomically, because there will be other indices in this bit vector.
+		 */
 
-	    if (! test_and_set_bit_field(current_tb->futurevectors, bit_offset + futuremove, 0)) {
-#if 1
-		if ((entriesTable[index].get_raw_DTM() != 1) && entriesTable[index].is_normal_movecnt()) {
-		    fatal("commit_update; futuremove processed; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
-			  index, dtm, movecnt, futuremove);
+		long long bit_offset = ((long long)index * current_tb->futurevector_bits);
+
+		if (! test_and_set_bit_field(current_tb->futurevectors, bit_offset + futuremove, 0)) {
+
+		    if ((entriesTable[index].get_raw_DTM() != 1) && entriesTable[index].is_normal_movecnt()
+			&& (current_tb->variant != VARIANT_SUICIDE)) {
+
+			fatal("commit_update; futuremove processed; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
+			      index, dtm, movecnt, futuremove);
+		    }
+
+		    return;
 		}
-#endif
-		return;
-	    }
 
+	    }
 	}
 
 	finalize_update(index, dtm, movecnt, futuremove);
@@ -9572,6 +9590,8 @@ int propagation_pass(int target_dtm)
  * set, but we didn't use it.
  */
 
+bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position);
+
 void propagate_minilocal_position_from_futurebase(local_position_t &current_position,
 						  const local_position_t &foreign_position,
 						  const int futuremove, bool normalize)
@@ -9603,11 +9623,17 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
      * always either 1 or 2) as a movecnt.
      */
 
-    if ((current_position.multiplicity == 2) && (current_position.reflection & REFLECTION_DIAGONAL)) {
-	return;
-    }
+    int movecnt;
 
-    const int movecnt = current_position.multiplicity;
+    if (ignore_futurevectors) {
+	movecnt = 1;
+    } else {
+	if ((current_position.multiplicity == 2) && (current_position.reflection & REFLECTION_DIAGONAL)) {
+	    return;
+	}
+
+	movecnt = current_position.multiplicity;
+    }
 
     if (futuremove == -1) {
 	fatal("Futuremove never assigned: %s\n", current_position.FEN());
@@ -9659,6 +9685,12 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 
 	bool flag = futurebase->get_flag(future_index);
 	int stm = index_to_side_to_move(futurebase, future_index);
+
+	if (ignore_futurevectors) {
+	    if (PNTM_in_check(futurebase, &foreign_position)) {
+		return;
+	    }
+	}
 
 	/* What happens if we're back propagating a flag from a color-inverted futurebase?
 	 *
@@ -10825,6 +10857,8 @@ void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futureve
  */
 
 bool have_all_futuremoves_been_handled(tablebase_t *tb) {
+
+    if (ignore_futurevectors) return true;
 
     index_t index;
 
@@ -12252,7 +12286,7 @@ bool global_PNTM_in_check(global_position_t *position)
     return false;
 }
 
-bool PNTM_in_check(tablebase_t *tb, local_position_t *position)
+bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position)
 {
     int piece;
     int dir;
