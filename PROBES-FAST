@@ -70,6 +70,8 @@ c301a041297d70291106c9efad735fb5 1q6/P7/K6k/8/8/8/8/8\ w\\na7xb8=Q kqk?.htb k[qr
 # Probe a suicide tablebase
 f1b03d7bedb122391df12f2f48858f43 KRq5/8/8/8/8/8/8/8\ w krvq.htb
 03da94741406062e0535d55f7e6e4f7e KRq5/8/8/8/8/8/8/8\ b krvq.htb kvq.htb
+26449dde89dabb075a56d7e03f5ad4d9 1Rq5/8/8/K7/8/8/8/8\ b krvq.htb kvq.htb
+ac014a021a61cd874ef0cb793241bbaf 2Q5/8/8/8/8/8/4p3/3Q4\ b qqvp.htb qqv[kqrbn].htb qv[qrbnp].htb kvq.htb
 
 # Illegally attempt to probe suicide and normal tablebases together
 41540d597c127e959ac99ed604ce3260 ignored krvq.htb kqk.htb
