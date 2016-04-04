@@ -192,86 +192,6 @@ typedef uint64_t index_t;
 
 unsigned int num_threads = 1;
 
-/***** GLOBAL CONSTANTS *****/
-
-/* Maximum number of pieces; used to simplify various arrays
- *
- * Since this includes frozen as well as mobile pieces, "16" may seem absurd, but it's probably
- * about right.  4 fully mobile pieces are easily doable in memory.  5 mobiles can often be done in
- * memory if you use either symmetry or a machine with lots of RAM.  6 mobiles requires sweeping
- * passes across a file on disk.  7 or more mobiles are only doable with severe restrictions on the
- * movements of the pieces.
- */
-
-#define MAX_PIECES 16
-
-/* Maximum number of possibilities for pawn promotions (see promotion_possibilities below). */
-
-#define MAX_PROMOTION_POSSIBILITIES 5
-
-/* seven possible pieces: KQRBNP; 64 possible squares, up to 8 directions per piece, up to 7
- * movements in one direction
- */
-
-#define NUM_PIECES 6
-#define NUM_SQUARES 64
-#define NUM_DIR 8
-#define NUM_MOVEMENTS 7
-
-/* Variables for gathering statistics */
-
-std::atomic<uint64_t> total_legal_positions(0);
-std::atomic<uint64_t> total_PNTM_mated_positions(0);
-std::atomic<uint64_t> total_stalemate_positions(0);
-std::atomic<uint64_t> total_moves(0);
-std::atomic<uint64_t> total_futuremoves(0);
-uint64_t total_backproped_moves = 0;
-std::atomic<uint64_t> player_wins[2] {ATOMIC_VAR_INIT(0), ATOMIC_VAR_INIT(0)};
-int max_dtm = 0;
-int min_dtm = 0;
-
-/* How we were called - XXX hardwired max */
-char options_string[256];
-
-struct timeval program_start_time;
-struct timeval program_end_time;
-
-unsigned int progress_dots = 100;
-
-/* per-pass statistics */
-
-int total_passes = 0;
-int max_passes = 0;
-
-const char ** pass_type = nullptr;
-int * pass_target_dtms = nullptr;
-
-std::atomic<int> positions_finalized_this_pass;
-std::vector<int> positions_finalized;
-
-std::atomic<uint64_t> backproped_moves_this_pass;
-std::vector<uint64_t> backproped_moves;
-
-/* If we're generating a DTM tablebase, then we make a series of passes, one for each DTM value in
- * the tablebase.  A DTM 15 position, for example, won't get finalised until the DTM 15 pass, which
- * ensures that if a better mate (say DTM 12) appears, it will change the position into a DTM 12.
- *
- * How, you might wonder, could a DTM 15 position appear except from the DTM -14 pass?  Futurebases.
- * Furthermore, we don't want to waste time running passes for DTM values that don't appear at all,
- * so we track DTMs, mainly during futurebase backpropagation, keeping a record of which DTM values
- * have been seen, and skipping passes entirely for non-existent DTM values.
- *
- * If we're generating a bitbase (no DTM metric), we don't delay finalising a position, since all
- * wins are equivalent.
- */
-
-bool tracking_dtm = true;   // XXX should clear this variable if we're generating a bitbase
-int min_tracked_dtm = -2;
-int max_tracked_dtm = 2;
-bool * positive_passes_needed = nullptr;
-bool * negative_passes_needed = nullptr;
-
-
 /***** C++ TEMPLATE TRICKS *****/
 
 /* dynamic_cast'ing a pointer returns nullptr if the cast fails, but usually I want an exception
@@ -312,9 +232,6 @@ struct dereference<std::shared_ptr<T>> {
 
 template <class T>
 class synchronized : public T, public std::mutex { };
-
-
-/***** DATA STRUCTURES *****/
 
 /* From Guru of The Week #29 [http://www.gotw.ca/gotw/029.htm]
  *
@@ -384,6 +301,31 @@ public:
     }
 };
 
+template<typename A, typename B, typename C = std::less<A>>
+class bimap3 : public std::map<A, B, C> {
+public:
+    using std::map<A, B, C>::map;
+    using std::map<A, B, C>::begin;
+    using std::map<A, B, C>::end;
+    using std::map<A, B, C>::at;
+    A at(B value)
+    {
+	for (auto it = begin(); it != end(); it++) {
+	    if (it->second == value) return it->first;
+	}
+	throw new std::out_of_range("bimap");
+    }
+#if 0
+    A operator[] (B value)
+    {
+	for (auto it = begin(); it != end(); it++) {
+	    if (it->second == value) return it->first.c_str();
+	}
+	return nullptr;
+    }
+#endif
+};
+
 /* Sometimes we want to catch and rethrow an exception after adding some information to it.
  * nested_exception does this, but imperfectly.  First, it carries around a pointer to the inner
  * exception; it'd be nice to make a copy of it, but we can't do this without knowing more about its
@@ -417,12 +359,146 @@ public:
     const char * what() const throw() { return msg.c_str(); }
 };
 
+
+/***** GLOBAL CONSTANTS *****/
+
+/* Maximum number of pieces; used to simplify various arrays
+ *
+ * Since this includes frozen as well as mobile pieces, "16" may seem absurd, but it's probably
+ * about right.  4 fully mobile pieces are easily doable in memory.  5 mobiles can often be done in
+ * memory if you use either symmetry or a machine with lots of RAM.  6 mobiles requires sweeping
+ * passes across a file on disk.  7 or more mobiles are only doable with severe restrictions on the
+ * movements of the pieces.
+ */
+
+#define MAX_PIECES 16
+
+/* Maximum number of possibilities for pawn promotions (see promotion_possibilities below). */
+
+#define MAX_PROMOTION_POSSIBILITIES 5
+
+/* seven possible pieces: KQRBNP; 64 possible squares, up to 8 directions per piece, up to 7
+ * movements in one direction
+ */
+
+#define NUM_PIECES 6
+#define NUM_SQUARES 64
+#define NUM_DIR 8
+#define NUM_MOVEMENTS 7
+
 /* Colors */
 
-#define WHITE 0
-#define BLACK 1
+enum class PieceColor { White, Black };
 
-bimap colors = {{"WHITE", WHITE}, {"BLACK", BLACK}};
+const std::vector<PieceColor> BothColors = { PieceColor::White, PieceColor::Black };
+
+bimap3<Glib::ustring, PieceColor, casefold_compare> colors = {{"WHITE", PieceColor::White}, {"BLACK", PieceColor::Black}};
+
+PieceColor operator~ (const PieceColor &x) {
+    return (x == PieceColor::White) ? PieceColor::Black : PieceColor::White;
+}
+
+/* Piece Types */
+
+enum class PieceType { King, Queen, Rook, Bishop, Knight, Pawn };
+
+bimap3<std::string, PieceType, casefold_compare2> piece_name =
+    {{"KING", PieceType::King}, {"QUEEN", PieceType::Queen}, {"ROOK", PieceType::Rook},
+     {"BISHOP", PieceType::Bishop}, {"KNIGHT", PieceType::Knight}, {"PAWN", PieceType::Pawn}};
+
+std::map<PieceType, char> piece_char =
+    {{PieceType::King, 'K'},
+     {PieceType::Queen, 'Q'},
+     {PieceType::Rook, 'R'},
+     {PieceType::Bishop, 'B'},
+     {PieceType::Knight, 'N'},
+     {PieceType::Pawn, 'P'}};
+
+unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
+					      {'k', 'q', 'r', 'b', 'n', 'p'}};
+
+bimap3<std::pair<PieceColor, PieceType>, char> global_pieces2 = 
+    {{{PieceColor::White, PieceType::King}, 'K'},
+     {{PieceColor::White, PieceType::Queen}, 'Q'},
+     {{PieceColor::White, PieceType::Rook}, 'R'},
+     {{PieceColor::White, PieceType::Bishop}, 'B'},
+     {{PieceColor::White, PieceType::Knight}, 'N'},
+     {{PieceColor::White, PieceType::Pawn}, 'P'},
+
+     {{PieceColor::Black, PieceType::King}, 'k'},
+     {{PieceColor::Black, PieceType::Queen}, 'q'},
+     {{PieceColor::Black, PieceType::Rook}, 'r'},
+     {{PieceColor::Black, PieceType::Bishop}, 'b'},
+     {{PieceColor::Black, PieceType::Knight}, 'n'},
+     {{PieceColor::Black, PieceType::Pawn}, 'p'},
+    };
+
+/* Possibilities for pawn promotions.  "2" means queen and knight, but that can cause some problems,
+ * as I've learned the hard (and embarrassing) way.  "4" is typical, but "5" is used for suicide
+ * analysis, where promotion to king is allowed.
+ */
+
+int promotion_possibilities = 4;
+PieceType promoted_pieces[] = {PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight, PieceType::King};
+
+const std::vector<PieceType> AllPieceTypes = {PieceType::King, PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight, PieceType::Pawn};
+
+
+/* Variables for gathering statistics */
+
+std::atomic<uint64_t> total_legal_positions(0);
+std::atomic<uint64_t> total_PNTM_mated_positions(0);
+std::atomic<uint64_t> total_stalemate_positions(0);
+std::atomic<uint64_t> total_moves(0);
+std::atomic<uint64_t> total_futuremoves(0);
+uint64_t total_backproped_moves = 0;
+std::map<PieceColor, std::atomic<uint64_t>> player_wins;
+int max_dtm = 0;
+int min_dtm = 0;
+
+/* How we were called - XXX hardwired max */
+char options_string[256];
+
+struct timeval program_start_time;
+struct timeval program_end_time;
+
+unsigned int progress_dots = 100;
+
+/* per-pass statistics */
+
+int total_passes = 0;
+int max_passes = 0;
+
+const char ** pass_type = nullptr;
+int * pass_target_dtms = nullptr;
+
+std::atomic<int> positions_finalized_this_pass;
+std::vector<int> positions_finalized;
+
+std::atomic<uint64_t> backproped_moves_this_pass;
+std::vector<uint64_t> backproped_moves;
+
+/* If we're generating a DTM tablebase, then we make a series of passes, one for each DTM value in
+ * the tablebase.  A DTM 15 position, for example, won't get finalised until the DTM 15 pass, which
+ * ensures that if a better mate (say DTM 12) appears, it will change the position into a DTM 12.
+ *
+ * How, you might wonder, could a DTM 15 position appear except from the DTM -14 pass?  Futurebases.
+ * Furthermore, we don't want to waste time running passes for DTM values that don't appear at all,
+ * so we track DTMs, mainly during futurebase backpropagation, keeping a record of which DTM values
+ * have been seen, and skipping passes entirely for non-existent DTM values.
+ *
+ * If we're generating a bitbase (no DTM metric), we don't delay finalising a position, since all
+ * wins are equivalent.
+ */
+
+bool tracking_dtm = true;   // XXX should clear this variable if we're generating a bitbase
+int min_tracked_dtm = -2;
+int max_tracked_dtm = 2;
+bool * positive_passes_needed = nullptr;
+bool * negative_passes_needed = nullptr;
+
+
+/***** DATA STRUCTURES *****/
 
 /* Futuremoves are moves like captures and promotions that lead to a different tablebase.
  * 'futurevectors' are bit vectors used to track which futuremoves have been handled in a particular
@@ -469,7 +545,7 @@ typedef uint32_t futurevector_t;
  * XXX We don't actually have a 'resign' option on a prune statement, but RESIGN_FUTUREMOVE is used
  * implicitly if a player's last piece is captured in a suicide analysis.
  *
- * num_futuremoves[WHITE] and num_futuremoves[BLACK] are the total number of futurevector bits
+ * num_futuremoves[PieceColor::White] and num_futuremoves[PieceColor::Black] are the total number of futurevector bits
  * assigned for each color, NOT the total number of possible futuremoves, since futuremoves can be
  * multiply assigned to bits (if two futuremoves can't both happen from the same position, they can
  * be safely assigned to the same bit), or completely pruned with a -2, -3, or -4 (no bit position).
@@ -479,15 +555,22 @@ typedef uint32_t futurevector_t;
  * ordering in piece_name and piece_char.
  */
 
-unsigned int num_futuremoves[2] = {0, 0};
+std::map<PieceColor, unsigned int> num_futuremoves;
 int futurecaptures[MAX_PIECES][MAX_PIECES];
 int promotion_captures[MAX_PIECES][MAX_PIECES][MAX_PROMOTION_POSSIBILITIES];
 int promotions[MAX_PIECES][MAX_PROMOTION_POSSIBILITIES];
 int futuremoves[MAX_PIECES][64];
 
-/* XXX hardwired 100 futuremove max per color here */
+/* movestr
+ *
+ * A map from color/futuremove to the string that defines the move.  The strings are created on the
+ * stack in assign_numbers_to_futuremoves() and then strdup'ed when we place them in this map.
+ *
+ * XXX rework this to either use std::string or eliminate the need for this entirely
+ */
+
 #define MOVESTR_CHARS 16
-char movestr[2][100][MOVESTR_CHARS];
+std::map<PieceColor, std::map<int, char *> > movestr;
 
 /* Pairs of futurevectors (one for each color) indicating which futuremoves have been pruned by
  * either conceding or discarding them.  pruned_futuremoves = conceded_futuremoves |
@@ -496,11 +579,11 @@ char movestr[2][100][MOVESTR_CHARS];
  * could match them and can thus be handled during initialization.
  */
 
-futurevector_t pruned_futuremoves[2] = {0, 0};
-futurevector_t unpruned_futuremoves[2] = {0, 0};
-futurevector_t conceded_futuremoves[2] = {0, 0};
-futurevector_t discarded_futuremoves[2] = {0, 0};
-futurevector_t optimized_futuremoves[2] = {0, 0};
+std::map<PieceColor, futurevector_t> pruned_futuremoves;
+std::map<PieceColor, futurevector_t> unpruned_futuremoves;
+std::map<PieceColor, futurevector_t> conceded_futuremoves;
+std::map<PieceColor, futurevector_t> discarded_futuremoves;
+std::map<PieceColor, futurevector_t> optimized_futuremoves;
 
 /* position - the data structures that represents a board position
  *
@@ -578,7 +661,7 @@ class ReadOnly {
 									   tablebase_t *local_tb, local_position_t *local_position,
 									   bool invert_colors);
     friend translation_result global_position_to_local_position(tablebase_t *tb, struct global_position *global, local_position_t *local);
-    friend bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type);
+    friend bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, PieceColor color, PieceType type);
     friend bool parse_FEN_to_local_position(char *, tablebase_t *, local_position_t *);
 
 public:
@@ -629,7 +712,7 @@ public:
     std::array<ReadOnly<uint8_t>, MAX_PIECES> unreflected_piece_position;
     std::array<ReadOnly<uint8_t>, MAX_PIECES> piece_position;
     std::array<ReadOnly<uint8_t>, MAX_PIECES> permuted_piece;
-    ReadOnly<uint8_t> side_to_move;
+    ReadOnly<PieceColor> side_to_move;
     ReadOnly<uint8_t> unreflected_en_passant_square;
     ReadOnly<uint8_t> en_passant_square;
     ReadOnly<uint8_t> multiplicity;
@@ -697,11 +780,44 @@ public:
  * empty square, and one of the FEN characters for a chess piece.
  */
 
+typedef short square_t;
+
+std::string algebraic_notation(const square_t square) {
+    return std::string(1, 'a' + square%8) + std::string(1, '1' + square/8);
+}
+
 typedef struct global_position {
     unsigned char board[64];
-    short side_to_move;
+    PieceColor side_to_move;
     short en_passant_square;
     short variant;
+
+    void move_piece(square_t from, square_t to)
+    {
+	std::swap(board[from], board[to]);
+    }
+
+    void capture_piece(square_t from, square_t to)
+    {
+	board[to] = board[from];
+	board[from] = 0;
+    }
+
+    void flip_side_to_move(void)
+    {
+	side_to_move = ~ side_to_move;
+    }
+
+    void clear_en_passant_square(void)
+    {
+	en_passant_square = ILLEGAL_POSITION;
+    }
+
+    void set_en_passant_square(int square)
+    {
+	en_passant_square = square;
+    }
+
 } global_position_t;
 
 
@@ -715,32 +831,8 @@ typedef struct global_position {
 
 /* tablebase - the data structure used to hold tablebases
  *
- * WHITE and BLACK are also used for the side_to_move variable in the position type above
+ * PieceColor::White and PieceColor::Black are also used for the side_to_move variable in the position type above
  */
-
-#define KING 0
-#define QUEEN 1
-#define ROOK 2
-#define BISHOP 3
-#define KNIGHT 4
-#define PAWN 5
-
-bimap2 piece_name = {{"KING", KING}, {"QUEEN", QUEEN}, {"ROOK", ROOK},
-		    {"BISHOP", BISHOP}, {"KNIGHT", KNIGHT}, {"PAWN", PAWN}};
-
-const char piece_char[NUM_PIECES+1] = {'K', 'Q', 'R', 'B', 'N', 'P', 0};
-
-unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
-					      {'k', 'q', 'r', 'b', 'n', 'p'}};
-
-/* Possibilities for pawn promotions.  "2" means queen and knight, but that can cause some problems,
- * as I've learned the hard (and embarrassing) way.  "4" is typical, but "5" is used for suicide
- * analysis, where promotion to king is allowed.
- */
-
-int promotion_possibilities = 4;
-int promoted_pieces[] = {QUEEN, ROOK, BISHOP, KNIGHT, KING};
-
 
 /* Hoffman uses "dynamic structures" extensively, for its entries and proptable arrays.  A dynamic
  * structure is one whose bit layout is specified at run time by the XML control file.  Since we
@@ -855,8 +947,8 @@ std::map<Glib::ustring, int> variant_names =
 
 struct piece {
 
-    short piece_type;
-    short color;
+    PieceType piece_type;
+    PieceColor color;
 
     /* Pieces can restricted according to which squares they are allowed to move on.
      *
@@ -898,7 +990,7 @@ struct piece {
 
     int matching_local_semilegal_group[64];
 
-    piece(short color, short type, uint64_t legal_squares = ALL_ONES_BITVECTOR)
+    piece(PieceColor color, PieceType type, uint64_t legal_squares = ALL_ONES_BITVECTOR)
 	: color(color), piece_type(type), legal_squares(legal_squares) {}
     piece(xmlpp::Node *);
 };
@@ -966,16 +1058,16 @@ public:
     /* Pieces */
 
     int num_pieces;
-    short num_pieces_by_color[2];
+    std::map<PieceColor, short> num_pieces_by_color;
     std::vector<piece> pieces;
 
     uint64_t frozen_pieces_vector;
 
     bool encode_stm;
 
-    int prune_enable[2];		/* one for each color */
+    std::map<PieceColor, int> prune_enable;
     int stalemate_prune_type;		/* only RESTRICTION_NONE (0) or RESTRICTION_CONCEDE (2) allowed */
-    int stalemate_prune_color;
+    PieceColor stalemate_prune_color;
 
     char *futurevectors;
     int futurevector_bits;
@@ -1286,6 +1378,8 @@ struct movement {
 
 struct movement movements[NUM_PIECES][NUM_SQUARES][NUM_DIR][NUM_MOVEMENTS+1];
 
+std::map<std::pair<PieceType, square_t>, std::vector<std::vector<square_t>>> movements2;
+
 /* Pawns are, of course, special.  We have seperate vectors for different types of pawn movements.
  * Each array is indexed first by square number, then by side (WHITE or BLACK - this doesn't exist
  * for other pieces), then by the number of possibilities (at most two normal movements, at most two
@@ -1297,16 +1391,85 @@ struct movement movements[NUM_PIECES][NUM_SQUARES][NUM_DIR][NUM_MOVEMENTS+1];
 struct movement normal_pawn_movements[NUM_SQUARES][2][3];
 struct movement capture_pawn_movements[NUM_SQUARES][2][3];
 
+std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> normal_pawn_movements2;
+std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> capture_pawn_movements2;
+
+std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> normal_pawn_movements_bkwd2;
+std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> capture_pawn_movements_bkwd2;
+
 struct movement normal_pawn_movements_bkwd[NUM_SQUARES][2][3];
 struct movement capture_pawn_movements_bkwd[NUM_SQUARES][2][3];
+
+namespace Movement2 {
+    enum Direction { Forward, Backward };
+    enum Type { AllMoves, Capture, NonCapture, NoDoublePawn };
+};
+
+const std::vector<std::vector<square_t>> movements3(PieceType type, PieceColor color, square_t square,
+						    Movement2::Direction dir, Movement2::Type mvmt_type)
+{
+    if (type != PieceType::Pawn) return movements2[std::make_pair(type, square)];
+    else {
+	std::vector<std::vector<square_t>> result;
+	switch (dir) {
+	case Movement2::Forward:
+	    switch (mvmt_type) {
+	    case Movement2::NonCapture:
+		result.push_back(normal_pawn_movements2[std::make_pair(color, square)]);
+		break;
+	    case Movement2::Capture:
+		for (auto x : capture_pawn_movements2[std::make_pair(color, square)]) {
+		    result.push_back(std::vector<square_t>(1, x));
+		}
+		break;
+	    case Movement2::AllMoves:
+		result.push_back(normal_pawn_movements2[std::make_pair(color, square)]);
+		for (auto x : capture_pawn_movements2[std::make_pair(color, square)]) {
+		    result.push_back(std::vector<square_t>(1, x));
+		}
+		break;
+	    case Movement2::NoDoublePawn:
+		fatal("NoDoublePawn\n");
+		break;
+	    }
+	    break;
+	case Movement2::Backward:
+	    switch (mvmt_type) {
+	    case Movement2::NonCapture:
+		result.push_back(normal_pawn_movements_bkwd2[std::make_pair(color, square)]);
+		break;
+	    case Movement2::Capture:
+		for (auto x : capture_pawn_movements_bkwd2[std::make_pair(color, square)]) {
+		    result.push_back(std::vector<square_t>(1, x));
+		}
+		break;
+	    case Movement2::AllMoves:
+		result.push_back(normal_pawn_movements_bkwd2[std::make_pair(color, square)]);
+		for (auto x : capture_pawn_movements_bkwd2[std::make_pair(color, square)]) {
+		    result.push_back(std::vector<square_t>(1, x));
+		}
+		break;
+	    case Movement2::NoDoublePawn:
+		fatal("NoDoublePawn\n");
+		break;
+	    }
+	    break;
+	}
+	return result;
+    }
+}
 
 /* How many different directions can each piece move in?  Knights have 8 directions because they
  * can't be blocked in any of them.  Pawns are handled separately.
  */
 
-int number_of_movement_directions[NUM_PIECES] = {8,8,4,4,8,0};
+std::map<PieceType, int> number_of_movement_directions =
+    {{PieceType::King, 8}, {PieceType::Queen, 8}, {PieceType::Rook, 4}, {PieceType::Bishop, 4}, {PieceType::Knight, 8}};
+
+// [NUM_PIECES] = {8,8,4,4,8,0};
 int maximum_movements_in_one_direction[NUM_PIECES] = {1,7,7,7,1,0};
 
+#if 0
 enum {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR, KNIGHTmove}
 movementdir[5][8] = {
     {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},	/* King */
@@ -1315,30 +1478,52 @@ movementdir[5][8] = {
     {DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},				/* Bishop */
     {KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove},	/* Knights are special... */
 };
+#endif
+
+enum Direction { RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR, KNIGHTmoves };
+
+std::vector<Direction> all_directions = { RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR };
+
+class Movement {
+public:
+    std::vector<Direction> directions;
+    int max_distance;
+};
+
+std::map<PieceType, Movement> new_movements =
+    {{PieceType::King, {all_directions, 1}},
+     {PieceType::Queen, {all_directions, 8}},
+     {PieceType::Rook, {{RIGHT, LEFT, UP, DOWN}, 8}},
+     {PieceType::Bishop, {{DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR}, 8}},
+     {PieceType::Knight, {{KNIGHTmoves}, 1}}};
 
 
 
-char algebraic_notation[64][3];
+// char algebraic_notation[64][3];
 
 void init_movements()
 {
-    int square, piece, dir, mvmt, color;
+    int square, dir, mvmt;
 
+#if 0
     for (square=0; square < NUM_SQUARES; square++) {
 	algebraic_notation[square][0] = 'a' + square%8;
 	algebraic_notation[square][1] = '1' + square/8;
 	algebraic_notation[square][2] = '\0';
     }
+#endif
 
-    for (piece=KING; piece <= KNIGHT; piece++) {
+    for (auto piece : AllPieceTypes) {
 
 	for (square=0; square < NUM_SQUARES; square++) {
 
-	    for (dir=0; dir < number_of_movement_directions[piece]; dir++) {
+	    for (auto dir : new_movements[piece].directions) {
 
 		int current_square = square;
 
-		for (mvmt=0; mvmt < maximum_movements_in_one_direction[piece]; mvmt ++) {
+		std::vector<square_t> movement;
+
+		for (mvmt=0; mvmt < new_movements[piece].max_distance; mvmt ++) {
 
 		    bool RIGHT_MOVEMENT_POSSIBLE = ((current_square%8)<7);
 		    bool RIGHT2_MOVEMENT_POSSIBLE = ((current_square%8)<6);
@@ -1349,195 +1534,92 @@ void init_movements()
 		    bool DOWN_MOVEMENT_POSSIBLE = (current_square>7);
 		    bool DOWN2_MOVEMENT_POSSIBLE = (current_square>15);
 
-		    switch (movementdir[piece][dir]) {
+		    switch (dir) {
 		    case RIGHT:
 			if (RIGHT_MOVEMENT_POSSIBLE) {
 			    current_square++;
-			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
-			} else {
-			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
+			    movement.push_back(current_square);
 			}
 			break;
 		    case LEFT:
 			if (LEFT_MOVEMENT_POSSIBLE) {
 			    current_square--;
-			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
-			} else {
-			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
+			    movement.push_back(current_square);
 			}
 			break;
 		    case UP:
 			if (UP_MOVEMENT_POSSIBLE) {
 			    current_square+=8;
-			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
-			} else {
-			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
+			    movement.push_back(current_square);
 			}
 			break;
 		    case DOWN:
 			if (DOWN_MOVEMENT_POSSIBLE) {
 			    current_square-=8;
-			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
-			} else {
-			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
+			    movement.push_back(current_square);
 			}
 			break;
 		    case DIAG_UL:
 			if (LEFT_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
 			    current_square+=8;
 			    current_square--;
-			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
-			} else {
-			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
+			    movement.push_back(current_square);
 			}
 			break;
 		    case DIAG_UR:
 			if (RIGHT_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
 			    current_square+=8;
 			    current_square++;
-			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
-			} else {
-			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
+			    movement.push_back(current_square);
 			}
 			break;
 		    case DIAG_DL:
 			if (LEFT_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
 			    current_square-=8;
 			    current_square--;
-			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
-			} else {
-			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
+			    movement.push_back(current_square);
 			}
 			break;
 		    case DIAG_DR:
 			if (RIGHT_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
 			    current_square-=8;
 			    current_square++;
-			    movements[piece][square][dir][mvmt].square = current_square;
-			    movements[piece][square][dir][mvmt].vector = BITVECTOR(current_square);
-			} else {
-			    movements[piece][square][dir][mvmt].square = -1;
-			    movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
+			    movement.push_back(current_square);
 			}
 			break;
-		    case KNIGHTmove:
-			current_square=square;
-			switch (dir) {
-			case 0:
-			    if (RIGHT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square = square + 2 + 8;
-				movements[piece][square][dir][0].vector = BITVECTOR(square + 2 + 8);
-				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
-			    } else {
-				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
-			    }
-			    break;
-			case 1:
-			    if (RIGHT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square = square + 2 - 8;
-				movements[piece][square][dir][0].vector = BITVECTOR(square + 2 - 8);
-				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
-			    } else {
-				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
-			    }
-			    break;
-			case 2:
-			    if (LEFT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square = square - 2 + 8;
-				movements[piece][square][dir][0].vector = BITVECTOR(square - 2 + 8);
-				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
-			    } else {
-				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
-			    }
-			    break;
-			case 3:
-			    if (LEFT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square = square - 2 - 8;
-				movements[piece][square][dir][0].vector = BITVECTOR(square - 2 - 8);
-				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
-			    } else {
-				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
-			    }
-			    break;
-			case 4:
-			    if (RIGHT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square = square + 1 + 16;
-				movements[piece][square][dir][0].vector = BITVECTOR(square + 1 + 16);
-				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
-			    } else {
-				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
-			    }
-			    break;
-			case 5:
-			    if (RIGHT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square = square + 1 - 16;
-				movements[piece][square][dir][0].vector = BITVECTOR(square + 1 - 16);
-				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
-			    } else {
-				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
-			    }
-			    break;
-			case 6:
-			    if (LEFT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square = square - 1 + 16;
-				movements[piece][square][dir][0].vector = BITVECTOR(square - 1 + 16);
-				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
-			    } else {
-				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
-			    }
-			    break;
-			case 7:
-			    if (LEFT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
-				movements[piece][square][dir][0].square = square - 1 - 16;
-				movements[piece][square][dir][0].vector = BITVECTOR(square - 1 - 16);
-				movements[piece][square][dir][1].square = -1;
-				movements[piece][square][dir][1].vector = ALL_ONES_BITVECTOR;
-			    } else {
-				movements[piece][square][dir][0].square = -1;
-				movements[piece][square][dir][0].vector = ALL_ONES_BITVECTOR;
-			    }
-			    break;
+		    case KNIGHTmoves:
+			if (RIGHT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
+			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 2 + 8));
+			}
+			if (RIGHT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
+			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 2 - 8));
+			}
+			if (LEFT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
+			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 2 + 8));
+			}
+			if (LEFT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
+			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 2 - 8));
+			}
+			if (RIGHT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
+			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 1 + 16));
+			}
+			if (RIGHT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
+			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 1 - 16));
+			}
+			if (LEFT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
+			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 1 + 16));
+			}
+			if (LEFT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
+			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 1 - 16));
 			}
 			break;
 
 		    }
 		}
 
-		/* Always put an ALL_ONES_BITVECTOR at the end of the movement vector
-		 * to make sure we stop!
-		 */
-
-		movements[piece][square][dir][mvmt].square = -1;
-		movements[piece][square][dir][mvmt].vector = ALL_ONES_BITVECTOR;
-
+		if (! movement.empty()) {
+		    movements2[std::make_pair(piece, square)].push_back(movement);
+		}
 	    }
 	}
     }
@@ -1546,10 +1628,10 @@ void init_movements()
 
     for (square=0; square < NUM_SQUARES; square ++) {
 
-	for (color = WHITE; color <= BLACK; color ++) {
+	for (auto color : BothColors) {
 
-	    int forwards_pawn_move = ((color == WHITE) ? 8 : -8);
-	    int backwards_pawn_move = ((color == WHITE) ? -8 : 8);
+	    int forwards_pawn_move = ((color == PieceColor::White) ? 8 : -8);
+	    int backwards_pawn_move = ((color == PieceColor::White) ? -8 : 8);
 
 	    /* Forward pawn movements
 	     *
@@ -1558,112 +1640,65 @@ void init_movements()
 	     * well.
 	     */
 
-	    mvmt = 0;
-
 	    if ((ROW(square) >= 1) && (ROW(square) <= 6)) {
 
-		normal_pawn_movements[square][color][mvmt].square = square + forwards_pawn_move;
-		normal_pawn_movements[square][color][mvmt].vector = BITVECTOR(square + forwards_pawn_move);
-
-		mvmt ++;
-	    }
-
-	    if (((color == WHITE) && (ROW(square) == 1)) || ((color == BLACK) && (ROW(square) == 6))) {
-
-		normal_pawn_movements[square][color][mvmt].square = square + 2*forwards_pawn_move;
-		normal_pawn_movements[square][color][mvmt].vector = BITVECTOR(square + 2*forwards_pawn_move);
-
-		mvmt ++;
+		normal_pawn_movements2[std::make_pair(color, square)].push_back(square + forwards_pawn_move);
 
 	    }
 
-	    normal_pawn_movements[square][color][mvmt].square = -1;
-	    normal_pawn_movements[square][color][mvmt].vector = ALL_ONES_BITVECTOR;
+	    if (((color == PieceColor::White) && (ROW(square) == 1)) || ((color == PieceColor::Black) && (ROW(square) == 6))) {
+
+		normal_pawn_movements2[std::make_pair(color, square)].push_back(square + 2*forwards_pawn_move);
+
+	    }
 
 	    /* Backwards pawn movements */
 
-	    mvmt = 0;
+	    if (((color == PieceColor::White) && (ROW(square) > 1)) || ((color == PieceColor::Black) && (ROW(square) < 6))) {
 
-	    if (((color == WHITE) && (ROW(square) > 1)) || ((color == BLACK) && (ROW(square) < 6))) {
+		normal_pawn_movements_bkwd2[std::make_pair(color, square)].push_back(square + backwards_pawn_move);
 
-		normal_pawn_movements_bkwd[square][color][mvmt].square = square + backwards_pawn_move;
-		normal_pawn_movements_bkwd[square][color][mvmt].vector = BITVECTOR(square + backwards_pawn_move);
-		mvmt ++;
 	    }
 
-	    if (((color == WHITE) && (ROW(square) == 3)) || ((color == BLACK) && (ROW(square) == 4))) {
+	    if (((color == PieceColor::White) && (ROW(square) == 3)) || ((color == PieceColor::Black) && (ROW(square) == 4))) {
 
-		normal_pawn_movements_bkwd[square][color][mvmt].square = square + 2*backwards_pawn_move;
-		normal_pawn_movements_bkwd[square][color][mvmt].vector = BITVECTOR(square + 2*backwards_pawn_move);
-		mvmt ++;
+		normal_pawn_movements_bkwd2[std::make_pair(color, square)].push_back(square + 2*backwards_pawn_move);
+
 	    }
-
-	    normal_pawn_movements_bkwd[square][color][mvmt].square = -1;
-	    normal_pawn_movements_bkwd[square][color][mvmt].vector = ALL_ONES_BITVECTOR;
 
 	    /* Forward pawn captures. */
-
-	    mvmt = 0;
 
 	    if ((ROW(square) >= 1) && (ROW(square) <= 6)) {
 
 		if (COL(square) > 0) {
 
-		    capture_pawn_movements[square][color][mvmt].square
-			= square + forwards_pawn_move - 1;
-		    capture_pawn_movements[square][color][mvmt].vector
-			= BITVECTOR(square + forwards_pawn_move - 1);
-
-		    mvmt ++;
+		    capture_pawn_movements2[std::make_pair(color, square)].push_back(square + forwards_pawn_move - 1);
 
 		}
 
 		if (COL(square) < 7) {
 
-		    capture_pawn_movements[square][color][mvmt].square
-			= square + forwards_pawn_move + 1;
-		    capture_pawn_movements[square][color][mvmt].vector
-			= BITVECTOR(square + forwards_pawn_move + 1);
-
-		    mvmt ++;
+		    capture_pawn_movements2[std::make_pair(color, square)].push_back(square + forwards_pawn_move + 1);
 
 		}
 	    }
-
-	    capture_pawn_movements[square][color][mvmt].square = -1;
-	    capture_pawn_movements[square][color][mvmt].vector = ALL_ONES_BITVECTOR;
 
 	    /* Backwards pawn captures */
 
-	    mvmt = 0;
-
-	    if (((color == WHITE) && (ROW(square) > 1)) || ((color == BLACK) && (ROW(square) < 6))) {
+	    if (((color == PieceColor::White) && (ROW(square) > 1)) || ((color == PieceColor::Black) && (ROW(square) < 6))) {
 
 		if (COL(square) > 0) {
 
-		    capture_pawn_movements_bkwd[square][color][mvmt].square
-			= square + backwards_pawn_move - 1;
-		    capture_pawn_movements_bkwd[square][color][mvmt].vector
-			= BITVECTOR(square + backwards_pawn_move - 1);
-
-		    mvmt ++;
+		    capture_pawn_movements_bkwd2[std::make_pair(color, square)].push_back(square + backwards_pawn_move - 1);
 
 		}
 
 		if (COL(square) < 7) {
 
-		    capture_pawn_movements_bkwd[square][color][mvmt].square
-			= square + backwards_pawn_move + 1;
-		    capture_pawn_movements_bkwd[square][color][mvmt].vector
-			= BITVECTOR(square + backwards_pawn_move + 1);
-
-		    mvmt ++;
+		    capture_pawn_movements_bkwd2[std::make_pair(color, square)].push_back(square + backwards_pawn_move + 1);
 
 		}
 	    }
-
-	    capture_pawn_movements_bkwd[square][color][mvmt].square = -1;
-	    capture_pawn_movements_bkwd[square][color][mvmt].vector = ALL_ONES_BITVECTOR;
 
 	}
 
@@ -1677,6 +1712,7 @@ void init_movements()
  * this code.
  */
 
+#if 0
 void verify_movements()
 {
     int piece;
@@ -1690,7 +1726,8 @@ void verify_movements()
      * B to A...
      */
 
-    for (piece=KING; piece <= KNIGHT; piece ++) {
+    //for (piece=PieceType::King; piece <= PieceType::Knight; piece ++) {
+    for (auto piece : AllPieceTypes) {
 
 	for (squareA=0; squareA < NUM_SQUARES; squareA ++) {
 
@@ -1702,7 +1739,11 @@ void verify_movements()
 		/* check for possible self-movement, if A and B are the same square */
 
 		if (squareA == squareB) {
-		    for (dir = 0; dir < number_of_movement_directions[piece]; dir++) {
+		    for (auto &dir: movements2[std::make_pair(piece, squareA)]) {
+			for (auto &movementptr : dir) {
+			    if (movementptr == squareB) {
+			    }
+			}
 			for (movementptr = movements[piece][squareA][dir];
 			     (movementptr->vector & BITVECTOR(squareB)) == 0;
 			     movementptr++) ;
@@ -1772,14 +1813,14 @@ void verify_movements()
 
     /* Pawns are special */
 
-    piece = PAWN;
+    piece = PieceType::Pawn;
 
     for (pawn_option = 0; pawn_option < 4; pawn_option ++) {
 
 	struct movement * fwd_movement;
 	struct movement * rev_movement;
 
-	for (color = WHITE; color <= BLACK; color ++) {
+	for (auto color : BothColors) {
 
 	    /* fprintf(stderr, "Pawn option %d; color %s\n", pawn_option, colors[color]); */
 
@@ -1875,6 +1916,7 @@ void verify_movements()
 	}
     }
 }
+#endif
 
 
 /***** PAWNGEN *****/
@@ -2272,12 +2314,12 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 {
     pawn_position initial_position;
 
-    for (short color = WHITE; color <= BLACK; color ++) {
+    for (auto color : BothColors) {
 
 	Glib::ustring location;
 	int j = 0;
 
-	if (color == WHITE) {
+	if (color == PieceColor::White) {
 	    location = xml->eval_to_string("@white-pawn-locations");
 	} else {
 	    location = xml->eval_to_string("@black-pawn-locations");
@@ -2287,7 +2329,7 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 	       && (location[j+1] >= '1') && (location[j+1] <= '8')) {
 	    int square = rowcol2square(location[j+1] - '1', location[j] - 'a');
 
-	    if (color == WHITE) {
+	    if (color == PieceColor::White) {
 		initial_position.add_white_pawn(square);
 	    } else {
 		initial_position.add_black_pawn(square);
@@ -2367,9 +2409,9 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
     for (index = 0; index < pawngen->pawn_positions_by_index.size(); index ++) {
 	for (int piece = 0; piece < num_pieces; piece ++) {
 	    pawngen->pawn_positions_by_index[index].prev_position[piece] = ILLEGAL_POSITION;
-	    if (pieces[piece].piece_type == PAWN) {
+	    if (pieces[piece].piece_type == PieceType::Pawn) {
 		pawn_position prev_pp = pawngen->pawn_positions_by_index[index];
-		if (pieces[piece].color == WHITE) {
+		if (pieces[piece].color == PieceColor::White) {
 		    prev_pp.remove_white_pawn(prev_pp.position[piece]);
 		    prev_pp.add_white_pawn(prev_pp.position[piece] - 8);
 		} else {
@@ -2396,12 +2438,12 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 #endif
 
     for (int i=0; i < white_pawns_required; i++) {
-	pieces.push_back(piece(WHITE, PAWN, legal_white_squares));
+	pieces.push_back(piece(PieceColor::White, PieceType::Pawn, legal_white_squares));
 	num_pieces ++;
     }
 
     for (int i=0; i < black_pawns_required; i++) {
-	pieces.push_back(piece(BLACK, PAWN, legal_black_squares));
+	pieces.push_back(piece(PieceColor::Black, PieceType::Pawn, legal_black_squares));
 	num_pieces ++;
     }
 
@@ -2533,7 +2575,7 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
      * because it will change the king positions that are used next to compute reflections.
      */
 
-    if ((! tb->encode_stm) && (position->side_to_move == BLACK)) {
+    if ((! tb->encode_stm) && (position->side_to_move == PieceColor::Black)) {
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 	    permutation[piece] = tb->pieces[piece].color_symmetric_transpose;
@@ -2547,7 +2589,7 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
 	if (position->en_passant_square != ILLEGAL_POSITION) {
 	    position->en_passant_square = 63 - position->en_passant_square;
 	}
-	position->side_to_move = WHITE;
+	position->side_to_move = PieceColor::White;
 
     } else {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -2744,16 +2786,16 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    /* The way we encode en passant capturable pawns is use the column number of the
 	     * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	     * this is completely legit.
 	     */
-	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-		&& (((tb->pieces[piece].color == WHITE)
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == PieceColor::White)
 		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		    || ((tb->pieces[piece].color == BLACK)
+		    || ((tb->pieces[piece].color == PieceColor::Black)
 			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 		index |= COL(pos->en_passant_square) << shift_count;
 		shift_count += 6;  /* because 2^6=64 */
@@ -2782,7 +2824,7 @@ public:
     {
 	for (int piece = 0; piece < tb->num_pieces; piece++) {
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    int square;
 
@@ -2798,14 +2840,14 @@ public:
 	    }
 
 	    /* En passant */
-	    if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (square < 8)) {
 		if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-		if (tb->pieces[piece].color == WHITE) {
-		    if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
+		if (tb->pieces[piece].color == PieceColor::White) {
+		    if (p->side_to_move != PieceColor::Black) return false; /* en passant pawn has to be capturable */
 		    p->en_passant_square = square + 2*8;
 		    square += 3*8;
 		} else {
-		    if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
+		    if (p->side_to_move != PieceColor::White) return false; /* en passant pawn has to be capturable */
 		    p->en_passant_square = square + 5*8;
 		    square += 4*8;
 		}
@@ -2829,7 +2871,7 @@ public:
 	int encoded_pieces = 0;
 
 	for (int piece = 0; piece < tb->num_pieces; piece++) {
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 	    encoded_pieces ++;
 	}
 
@@ -2874,16 +2916,16 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    /* The way we encode en passant capturable pawns is use the column number of the
 	     * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	     * this is completely legit.
 	     */
-	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-		&& (((tb->pieces[piece].color == WHITE)
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == PieceColor::White)
 		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		    || ((tb->pieces[piece].color == BLACK)
+		    || ((tb->pieces[piece].color == PieceColor::Black)
 			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 		vals[piece] = COL(pos->en_passant_square);
 	    } else {
@@ -2907,7 +2949,7 @@ public:
 	 */
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 	    if (next_piece_in_encoding_group[piece] != -1) {
 
 		if (((vals[piece] < vals[next_piece_in_encoding_group[piece]])
@@ -2957,7 +2999,7 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece++) {
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    if ((tb->symmetry == 2) && (piece == tb->white_king)) {
 		vals[piece] = rowcol2square(index & 7, (index >> 3) & 3);
@@ -2996,19 +3038,19 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece++) {
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    int square = vals[piece];
 
 	    /* En passant */
-	    if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (square < 8)) {
 		if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-		if (tb->pieces[piece].color == WHITE) {
-		    if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
+		if (tb->pieces[piece].color == PieceColor::White) {
+		    if (p->side_to_move != PieceColor::Black) return false; /* en passant pawn has to be capturable */
 		    p->en_passant_square = square + 2*8;
 		    square += 3*8;
 		} else {
-		    if (p->side_to_move != WHITE) return 0; /* en passant pawn has to be capturable */
+		    if (p->side_to_move != PieceColor::White) return 0; /* en passant pawn has to be capturable */
 		    p->en_passant_square = square + 5*8;
 		    square += 4*8;
 		}
@@ -3052,7 +3094,7 @@ public:
 
 	    if (piece == tb->white_king) continue;
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
 		&& (tb->pieces[piece].next_piece_in_semilegal_group != -1)) {
@@ -3095,10 +3137,10 @@ public:
 	     * Since there can never be a pawn (of either color) on the first rank, this is
 	     * completely legit.
 	     */
-	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-		&& (((tb->pieces[piece].color == WHITE)
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == PieceColor::White)
 		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		    || ((tb->pieces[piece].color == BLACK)
+		    || ((tb->pieces[piece].color == PieceColor::Black)
 			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 		index += piece_index[piece][COL(pos->en_passant_square)];
 	    } else {
@@ -3119,14 +3161,14 @@ public:
 	    index /= total_legal_positions[piece];
 
 	    /* En passant */
-	    if ((tb->pieces[piece].piece_type == PAWN) && (square < 8)) {
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (square < 8)) {
 		if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-		if (tb->pieces[piece].color == WHITE) {
-		    if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
+		if (tb->pieces[piece].color == PieceColor::White) {
+		    if (p->side_to_move != PieceColor::Black) return false; /* en passant pawn has to be capturable */
 		    p->en_passant_square = square + 2*8;
 		    square += 3*8;
 		} else {
-		    if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
+		    if (p->side_to_move != PieceColor::White) return false; /* en passant pawn has to be capturable */
 		    p->en_passant_square = square + 5*8;
 		    square += 4*8;
 		}
@@ -3167,9 +3209,9 @@ public:
 		total_legal_positions[piece] ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
-		if ((tb->pieces[piece].piece_type == PAWN)
-		    && (((tb->pieces[piece].color == WHITE) && (ROW(square) == 3))
-			|| ((tb->pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
+		if ((tb->pieces[piece].piece_type == PieceType::Pawn)
+		    && (((tb->pieces[piece].color == PieceColor::White) && (ROW(square) == 3))
+			|| ((tb->pieces[piece].color == PieceColor::Black) && (ROW(square) == 4)))) {
 		    piece_position[piece][total_legal_positions[piece]] = COL(square);
 		    piece_index[piece][COL(square)] = total_legal_positions[piece];
 		    total_legal_positions[piece] ++;
@@ -3262,10 +3304,10 @@ public:
 	     * pawn.  Since there can never be a pawn (of either color) on the first rank,
 	     * this is completely legit.
 	     */
-	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-		&& (((tb->pieces[piece].color == WHITE)
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == PieceColor::White)
 		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		    || ((tb->pieces[piece].color == BLACK)
+		    || ((tb->pieces[piece].color == PieceColor::Black)
 			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 		vals[piece] = piece_index[piece][COL(pos->en_passant_square)];
 	    } else {
@@ -3389,14 +3431,14 @@ public:
 	    vals[piece] = piece_position[piece][vals[piece]];
 
 	    /* En passant */
-	    if ((tb->pieces[piece].piece_type == PAWN) && (vals[piece] < 8)) {
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (vals[piece] < 8)) {
 		if (p->en_passant_square != ILLEGAL_POSITION) return false;  /* can't have two en passant pawns */
-		if (tb->pieces[piece].color == WHITE) {
-		    if (p->side_to_move != BLACK) return false; /* en passant pawn has to be capturable */
+		if (tb->pieces[piece].color == PieceColor::White) {
+		    if (p->side_to_move != PieceColor::Black) return false; /* en passant pawn has to be capturable */
 		    p->en_passant_square = vals[piece] + 2*8;
 		    vals[piece] += 3*8;
 		} else {
-		    if (p->side_to_move != WHITE) return false; /* en passant pawn has to be capturable */
+		    if (p->side_to_move != PieceColor::White) return false; /* en passant pawn has to be capturable */
 		    p->en_passant_square = vals[piece] + 5*8;
 		    vals[piece] += 4*8;
 		}
@@ -3534,9 +3576,9 @@ public:
 		total_legal_positions[piece] ++;
 
 		/* if the pawn is en-passant capturable, add an index for that */
-		if ((tb->pieces[piece].piece_type == PAWN)
-		    && (((tb->pieces[piece].color == WHITE) && (ROW(square) == 3))
-			|| ((tb->pieces[piece].color == BLACK) && (ROW(square) == 4)))) {
+		if ((tb->pieces[piece].piece_type == PieceType::Pawn)
+		    && (((tb->pieces[piece].color == PieceColor::White) && (ROW(square) == 3))
+			|| ((tb->pieces[piece].color == PieceColor::Black) && (ROW(square) == 4)))) {
 		    piece_position[piece][total_legal_positions[piece]] = COL(square);
 		    piece_index[piece][COL(square)] = total_legal_positions[piece];
 		    total_legal_positions[piece] ++;
@@ -3631,7 +3673,7 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    int decrement = 0;
 
@@ -3639,10 +3681,10 @@ public:
 	     * Since there can never be a pawn (of either color) on the first rank, this is
 	     * completely legit.
 	     */
-	    if ((tb->pieces[piece].piece_type == PAWN) && (pos->en_passant_square != ILLEGAL_POSITION)
-		&& (((tb->pieces[piece].color == WHITE)
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (pos->en_passant_square != ILLEGAL_POSITION)
+		&& (((tb->pieces[piece].color == PieceColor::White)
 		     && (pos->en_passant_square + 8 == pos->piece_position[piece]))
-		    || ((tb->pieces[piece].color == BLACK)
+		    || ((tb->pieces[piece].color == PieceColor::Black)
 			&& (pos->en_passant_square - 8 == pos->piece_position[piece])))) {
 		vals[piece] = value[piece][COL(pos->en_passant_square)];
 		continue;  /* Have to do this, as we never change en-passant values */
@@ -3675,7 +3717,7 @@ public:
 	/* Sort encoding groups so that the lowest values always come first. */
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 	    piece2 = piece;
 	    while ((prev_piece_in_encoding_group[piece2] != -1)
 		   && (vals[piece2] < vals[prev_piece_in_encoding_group[piece2]])) {
@@ -3692,7 +3734,7 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    index += piece_index[piece][vals[piece]];
 	}
@@ -3711,7 +3753,7 @@ public:
     {
 	int piece;
 	int en_passant_pawn = -1;
-	int en_passant_color = 0;
+	PieceColor en_passant_color;
 	uint8_t vals[MAX_PIECES];
 	uint64_t overlapping_pieces[MAX_PIECES] = {0};
 
@@ -3725,7 +3767,7 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    vals[piece]
 		= std::lower_bound(piece_index[piece], piece_index[piece] + 64, index+1)
@@ -3733,19 +3775,19 @@ public:
 
 	    index -= piece_index[piece][vals[piece]];
 
-	    if ((tb->pieces[piece].piece_type == PAWN) && (piece_position[piece][vals[piece]] < 8)) {
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (piece_position[piece][vals[piece]] < 8)) {
 
 		if (en_passant_pawn != -1) return false; /* can't have two en passant pawns */
 
 		en_passant_pawn = piece;
 
 		/* If there's an en passant pawn, it must be the opposite color of PTM */
-		en_passant_color = 1 - p->side_to_move;
+		en_passant_color = ~ p->side_to_move;
 
 		/* En passant pawns are encoded on the first row and never have their values reduced */
 		p->piece_position[en_passant_pawn] = piece_position[en_passant_pawn][vals[en_passant_pawn]];
 
-		if (en_passant_color == WHITE) {
+		if (en_passant_color == PieceColor::White) {
 		    p->en_passant_square = p->piece_position[en_passant_pawn] + 2*8;
 		    p->piece_position[en_passant_pawn] += 3*8;
 		} else {
@@ -3812,7 +3854,7 @@ public:
 	     */
  
 	    if ((piece != tb->white_king) && (piece != tb->black_king) && (piece != en_passant_pawn)
-		&& (! tb->pawngen || (tb->pieces[piece].piece_type != PAWN))) {
+		&& (! tb->pawngen || (tb->pieces[piece].piece_type != PieceType::Pawn))) {
  
 		p->piece_position[piece] = piece_position[piece][vals[piece]];
 
@@ -3889,7 +3931,7 @@ public:
 
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    if (tb->pieces[piece].permutations) {
 
@@ -3958,7 +4000,7 @@ public:
 	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
 	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    /* An important special case - handle two opposing plus-pawns by combining their
 	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
@@ -3971,7 +4013,7 @@ public:
 
 		int piece2;
 
-		if ((tb->pieces[piece].blocking_piece > piece) && (tb->pieces[piece].color != WHITE)) {
+		if ((tb->pieces[piece].blocking_piece > piece) && (tb->pieces[piece].color != PieceColor::White)) {
 		    throw "Mutually blocking pawns must currently be specified white pawn first";
 		}
 
@@ -4037,7 +4079,7 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
 	    int piece_in_set;
 
@@ -4060,10 +4102,10 @@ public:
 	    for (int square = 0; square < 64; square ++) {
 
 		if ((tb->pieces[piece].semilegal_squares & BITVECTOR(square))
-		    || ((tb->pieces[piece].piece_type == PAWN)
+		    || ((tb->pieces[piece].piece_type == PieceType::Pawn)
 			&& (square < 8)
 			&& (tb->pieces[piece].semilegal_squares
-			    & BITVECTOR(rowcol2square(tb->pieces[piece].color == WHITE ? 3 : 4, square))))) {
+			    & BITVECTOR(rowcol2square(tb->pieces[piece].color == PieceColor::White ? 3 : 4, square))))) {
 
 		    value[piece][square] = total_legal_positions[piece];
 		    piece_position[piece][total_legal_positions[piece]] = square;
@@ -4117,7 +4159,7 @@ public:
 
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-	    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN)) continue;
+	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 	    for (int value = total_legal_piece_values[piece]; value < 64; value ++) {
 		piece_index[piece][value] = size;
 	    }
@@ -4157,8 +4199,8 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 	 * blocking it.
 	 */
 
-	if ((tb->pieces[piece].piece_type == PAWN) && (tb->pieces[piece].blocking_piece != -1)) {
-	    if (tb->pieces[piece].color == WHITE) {
+	if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (tb->pieces[piece].blocking_piece != -1)) {
+	    if (tb->pieces[piece].color == PieceColor::White) {
 		if (position->piece_position[piece] > position->piece_position[tb->pieces[piece].blocking_piece]) {
 		    return INVALID_INDEX;
 		}
@@ -4177,7 +4219,7 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 
     if (position->en_passant_square != ILLEGAL_POSITION) {
 	if (position->board_vector & BITVECTOR(position->en_passant_square)) return INVALID_INDEX;
-	if (position->side_to_move == WHITE) {
+	if (position->side_to_move == PieceColor::White) {
 	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return INVALID_INDEX;
 	} else {
 	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return INVALID_INDEX;
@@ -4195,8 +4237,8 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 	pawn_position pawns;
 
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
-	    if (tb->pieces[piece].piece_type == PAWN) {
-		if (tb->pieces[piece].color == WHITE) {
+	    if (tb->pieces[piece].piece_type == PieceType::Pawn) {
+		if (tb->pieces[piece].color == PieceColor::White) {
 		    pawns.add_white_pawn(position->piece_position[piece]);
 		} else {
 		    pawns.add_black_pawn(position->piece_position[piece]);
@@ -4232,7 +4274,7 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 
     if (tb->encode_stm) {
 	index <<= 1;
-	index += position->side_to_move;  /* WHITE is 0; BLACK is 1 */
+	index += (position->side_to_move == PieceColor::White) ? 0 : 1;
     }
 
     /* Multiplicity - number of non-identical positions that this index corresponds to.  We want to
@@ -4341,10 +4383,10 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
      */
 
     if (tb->encode_stm) {
-	position->side_to_move = index % 2;
+	position->side_to_move = (index % 2 == 0) ? PieceColor::White : PieceColor::Black;
 	index >>= 1;
     } else {
-	position->side_to_move = WHITE;
+	position->side_to_move = PieceColor::White;
     }
 
     /* Extract pawngen pawn encoding from the most significant bits */
@@ -4398,7 +4440,7 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 
 	    if ( false ) {
 		for (piece = 0; piece < tb->num_pieces; piece ++) {
-		    if (tb->pieces[piece].piece_type == PAWN) {
+		    if (tb->pieces[piece].piece_type == PieceType::Pawn) {
 			position->piece_position[piece]
 			    = tb->pawngen->pawn_positions_by_index[position->pawngen_index].position[piece];
 		    }
@@ -4447,8 +4489,8 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
      */
 
     for (piece = 0; piece < tb->num_pieces; piece++) {
-	if ((tb->pieces[piece].piece_type == PAWN) && (tb->pieces[piece].blocking_piece != -1)) {
-	    if (tb->pieces[piece].color == WHITE) {
+	if ((tb->pieces[piece].piece_type == PieceType::Pawn) && (tb->pieces[piece].blocking_piece != -1)) {
+	    if (tb->pieces[piece].color == PieceColor::White) {
 		if (position->piece_position[piece] > position->piece_position[tb->pieces[piece].blocking_piece]) {
 		    return false;
 		}
@@ -4555,7 +4597,7 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	if (position->en_passant_square != ILLEGAL_POSITION) {
 	    position->en_passant_square = 63 - position->en_passant_square;
 	}
-	position->side_to_move = BLACK;
+	position->side_to_move = PieceColor::Black;
     }
 
     /* If there is an en passant capturable pawn in this position, then there can't be anything on
@@ -4565,7 +4607,7 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 
     if (position->en_passant_square != ILLEGAL_POSITION) {
 	if (position->board_vector & BITVECTOR(position->en_passant_square)) return false;
-	if (position->side_to_move == WHITE) {
+	if (position->side_to_move == PieceColor::White) {
 	    if (position->board_vector & BITVECTOR(position->en_passant_square + 8)) return false;
 	} else {
 	    if (position->board_vector & BITVECTOR(position->en_passant_square - 8)) return false;
@@ -4589,12 +4631,16 @@ index_t num_indices(tablebase_t * tb)
     return tb->num_indices;
 }
 
-int index_to_side_to_move(tablebase_t *tb, index_t index)
+PieceColor index_to_side_to_move(tablebase_t *tb, index_t index)
 {
     if (tb->encode_stm) {
-	return index & 1;
+	if (index & 1) {
+	    return PieceColor::Black;
+	} else {
+	    return PieceColor::White;
+	}
     } else {
-	return WHITE;
+	return PieceColor::White;
     }
 }
 
@@ -4613,7 +4659,7 @@ int check_1000_positions(tablebase_t *tb)
 
 	memset(&position1, 0, sizeof(position1));
 
-	position1.side_to_move = rand() % 2;
+	position1.side_to_move = (rand() % 2 == 0) ? PieceColor::White : PieceColor::Black;
 	position1.en_passant_square = ILLEGAL_POSITION;
 	position1.decoded = false;
 
@@ -4699,8 +4745,7 @@ int check_1000_indices(tablebase_t *tb)
 
 void local_position_t::flip_side_to_move(void)
 {
-    if (side_to_move == WHITE) side_to_move = BLACK;
-    else side_to_move = WHITE;
+    side_to_move = ~ side_to_move;
 
     if (decoded && valid && tb->encode_stm) {
 	index ^= 1;
@@ -4738,7 +4783,7 @@ void local_position_t::move_piece(int piece, int destination_square) {
 	return;
     }
 
-    if (tb->pawngen && (tb->pieces[piece].piece_type == PAWN) && (reflection == REFLECTION_NONE)) {
+    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn) && (reflection == REFLECTION_NONE)) {
 	/* Moving a pawngen pawn.  All we have to do is adjust the pawngen field in the index, which
 	 * is always the most significant bits, and the position can remain 'decoded'.
 	 */
@@ -4917,7 +4962,7 @@ piece::piece(xmlpp::Node * xml)
     }
 
     if (location == "") {
-	if (piece_type == PAWN) {
+	if (piece_type == PieceType::Pawn) {
 	    legal_squares = LEGAL_PAWN_BITVECTOR;
 	} else {
 	    legal_squares = ALL_ONES_BITVECTOR;
@@ -4930,13 +4975,13 @@ piece::piece(xmlpp::Node * xml)
 	    legal_squares
 		|= BITVECTOR(rowcol2square(location[j+1] - '1', location[j] - 'a'));
 	    j += 2;
-	    if ((piece_type == PAWN) && (j == 2) && (location[j] == '+')) j++;
+	    if ((piece_type == PieceType::Pawn) && (j == 2) && (location[j] == '+')) j++;
 	    while (location[j] == ' ') j ++;
 	}
 	if (location[j] != '\0') {
 	    fatal("Illegal piece location (%s)\n", location.c_str());
 	}
-	if ((piece_type == PAWN) && (legal_squares & ~LEGAL_PAWN_BITVECTOR)) {
+	if ((piece_type == PieceType::Pawn) && (legal_squares & ~LEGAL_PAWN_BITVECTOR)) {
 	    fatal("Illegal pawn location (%s)\n", location.c_str());
 	}
     }
@@ -5024,8 +5069,8 @@ void tablebase_t::parse_XML(std::istream *instream)
     white_king = -1;
     black_king = -1;
 
-    num_pieces_by_color[WHITE] = 0;
-    num_pieces_by_color[BLACK] = 0;
+    num_pieces_by_color[PieceColor::White] = 0;
+    num_pieces_by_color[PieceColor::Black] = 0;
     num_pieces = 0;
 
     for (auto it = result.begin(); it != result.end(); it ++) {
@@ -5036,7 +5081,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
 	    if (variant != VARIANT_SUICIDE) {
 
-		if ((new_piece.color == WHITE) && (new_piece.piece_type == KING)) {
+		if ((new_piece.color == PieceColor::White) && (new_piece.piece_type == PieceType::King)) {
 		    if (white_king != -1) {
 			fatal("Must have one white king and one black one!\n");
 		    } else {
@@ -5044,7 +5089,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 		    }
 		}
 
-		if ((new_piece.color == BLACK) && (new_piece.piece_type == KING)) {
+		if ((new_piece.color == PieceColor::Black) && (new_piece.piece_type == PieceType::King)) {
 		    if (black_king != -1) {
 			fatal("Must have one white king and one black one!\n");
 		    } else {
@@ -5068,7 +5113,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     }
 
-    if ((num_pieces_by_color[WHITE] == 0) || (num_pieces_by_color[BLACK] == 0)) {
+    if ((num_pieces_by_color[PieceColor::White] == 0) || (num_pieces_by_color[PieceColor::Black] == 0)) {
 	throw "Must have at least one white piece and one black piece!";
     }
 
@@ -5123,14 +5168,14 @@ void tablebase_t::parse_XML(std::istream *instream)
 
 	pieces[piece].blocking_piece = -1;
 
-	if (pieces[piece].piece_type == PAWN) {
+	if (pieces[piece].piece_type == PieceType::Pawn) {
 
 	    uint64_t pawn_positions = 0xffffffffffffffffLL;
 
 	    if ((pieces[piece].location != "") && (pieces[piece].location[2] == '+')) {
 
 		int square = rowcol2square(pieces[piece].location[1] - '1', pieces[piece].location[0] - 'a');
-		int dir = (pieces[piece].color == WHITE) ? 8 : -8;
+		int dir = (pieces[piece].color == PieceColor::White) ? 8 : -8;
 
 		pawn_positions &= ~BITVECTOR(square);
 		square += dir;
@@ -5151,12 +5196,12 @@ void tablebase_t::parse_XML(std::istream *instream)
 		 * in the correct order in the piece list.
 		 */
 
-		if ((pieces[piece].blocking_piece != -1) && (pieces[pieces[piece].blocking_piece].piece_type == PAWN)
+		if ((pieces[piece].blocking_piece != -1) && (pieces[pieces[piece].blocking_piece].piece_type == PieceType::Pawn)
 		    && (pieces[pieces[piece].blocking_piece].color == pieces[piece].color)) {
-		    if ((pieces[piece].color == WHITE) && (pieces[piece].blocking_piece < piece)) {
+		    if ((pieces[piece].color == PieceColor::White) && (pieces[piece].blocking_piece < piece)) {
 			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
 		    }
-		    if ((pieces[piece].color == BLACK) && (pieces[piece].blocking_piece > piece)) {
+		    if ((pieces[piece].color == PieceColor::Black) && (pieces[piece].blocking_piece > piece)) {
 			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
 		    }
 		}
@@ -5177,12 +5222,12 @@ void tablebase_t::parse_XML(std::istream *instream)
 
 	for (piece = 0; piece < num_pieces; piece ++) {
 
-	    if (pieces[piece].piece_type == PAWN) {
+	    if (pieces[piece].piece_type == PieceType::Pawn) {
 
 		if ((pieces[piece].location != "") && (pieces[piece].location[2] == '+')) {
 
 		    int square = rowcol2square(pieces[piece].location[1] - '1', pieces[piece].location[0] - 'a');
-		    int dir = (pieces[piece].color == WHITE) ? 8 : -8;
+		    int dir = (pieces[piece].color == PieceColor::White) ? 8 : -8;
 
 		    square += dir;
 		    while ((square < 56) && (square > 7)) {
@@ -5330,7 +5375,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 #if DEBUG
     for (piece = 0; piece < num_pieces; piece ++) {
 	info("Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
-	     piece, piece_name[pieces[piece].piece_type], colors[pieces[piece].color].c_str(),
+	     piece, piece_name[pieces[piece].piece_type], colors.at(pieces[piece].color).c_str(),
 	     pieces[piece].legal_squares, pieces[piece].semilegal_squares);
     }
 #endif
@@ -5484,11 +5529,11 @@ void tablebase_t::parse_XML(std::istream *instream)
 	    symmetry = 4;
 	}
 	for (piece = 0; piece < num_pieces; piece ++) {
-	    if (pieces[piece].piece_type == PAWN) {
+	    if (pieces[piece].piece_type == PieceType::Pawn) {
 		symmetry = 2;
 	    }
-	    if (((pieces[piece].piece_type != PAWN) && (pieces[piece].legal_squares != ALL_ONES_BITVECTOR))
-		|| ((pieces[piece].piece_type == PAWN) && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))) {
+	    if (((pieces[piece].piece_type != PieceType::Pawn) && (pieces[piece].legal_squares != ALL_ONES_BITVECTOR))
+		|| ((pieces[piece].piece_type == PieceType::Pawn) && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))) {
 		symmetry = 1;
 	    }
 	}
@@ -5526,7 +5571,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     if (symmetry >= 4) {
 	for (piece = 0; piece < num_pieces; piece ++) {
-	    if (pieces[piece].piece_type == PAWN) {
+	    if (pieces[piece].piece_type == PieceType::Pawn) {
 		throw "Pawns not allowed with 4/8-way symmetric indices";
 	    }
 	}
@@ -5538,8 +5583,8 @@ void tablebase_t::parse_XML(std::istream *instream)
 	    throw "Pawngen not allowed with symmetric indices (yet)";
 	}
 	for (piece = 0; piece < num_pieces; piece ++) {
-	    if (((pieces[piece].piece_type != PAWN) && (pieces[piece].legal_squares != ALL_ONES_BITVECTOR))
-		|| ((pieces[piece].piece_type == PAWN) && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))) {
+	    if (((pieces[piece].piece_type != PieceType::Pawn) && (pieces[piece].legal_squares != ALL_ONES_BITVECTOR))
+		|| ((pieces[piece].piece_type == PieceType::Pawn) && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))) {
 		throw "Piece restrictions not allowed with symmetric indices (yet)";
 	    }
 	}
@@ -5608,15 +5653,15 @@ void tablebase_t::parse_XML(std::istream *instream)
     if (index_type == NO_EN_PASSANT_INDEX) {
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    int col;
-	    int row1 = (pieces[piece].color == WHITE) ? 1 : 6;
-	    int row3 = (pieces[piece].color == WHITE) ? 3 : 4;
-	    int row4 = (pieces[piece].color == WHITE) ? 4 : 3;
-	    if (pieces[piece].piece_type != PAWN) continue;
+	    int row1 = (pieces[piece].color == PieceColor::White) ? 1 : 6;
+	    int row3 = (pieces[piece].color == PieceColor::White) ? 3 : 4;
+	    int row4 = (pieces[piece].color == PieceColor::White) ? 4 : 3;
+	    if (pieces[piece].piece_type != PieceType::Pawn) continue;
 	    for (col = 0; col < 8; col ++) {
 		if (pieces[piece].legal_squares
 		    & (BITVECTOR(rowcol2square(row1, col)) | BITVECTOR(rowcol2square(row3, col)))) {
 		    for (piece2 = 0; piece2 < num_pieces; piece2 ++) {
-			if (pieces[piece2].piece_type != PAWN) continue;
+			if (pieces[piece2].piece_type != PieceType::Pawn) continue;
 			if (pieces[piece2].color == pieces[piece].color) continue;
 			if ((col > 0)
 			    && (pieces[piece2].legal_squares & BITVECTOR(rowcol2square(row4, col-1)))) {
@@ -5694,17 +5739,18 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     /* Fetch any prune enable elements */
 
-    prune_enable[BLACK] = 0;
-    prune_enable[WHITE] = 0;
+    prune_enable[PieceColor::Black] = 0;
+    prune_enable[PieceColor::White] = 0;
     result = tablebase->find("//prune-enable | //move-restriction");
     if (! result.empty()) {
 	for (auto i=0U; i < result.size(); i++) {
 	    auto color_str = ((xmlpp::Element *) result[i])->get_attribute_value("color");
 	    auto type_str = ((xmlpp::Element *) result[i])->get_attribute_value("type");
-	    int color = colors.at(color_str);
+
+	    PieceColor color = colors.at(color_str);
 	    int type = restriction_types.at(type_str);
 
-	    if ((color == -1) || (type == -1)) {
+	    if (type == -1) {
 		fatal("Illegal prune-enable\n");
 	    } else {
 		prune_enable[color] |= type;
@@ -6062,7 +6108,7 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t &futurebase)
 	}
 
 	if (! found_matching_piece) {
-	    if ((futurebase.extra_piece == -1) && (futurebase.pieces[future_piece].piece_type != PAWN)) {
+	    if ((futurebase.extra_piece == -1) && (futurebase.pieces[future_piece].piece_type != PieceType::Pawn)) {
 		futurebase.extra_piece = future_piece;
 	    } else {
 		throw "Couldn't find future piece in local tablebase";
@@ -6072,7 +6118,7 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t &futurebase)
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 	if (!(local_piece_vector & (1 << piece))) {
-	    if (tb->pieces[piece].piece_type == PAWN) {
+	    if (tb->pieces[piece].piece_type == PieceType::Pawn) {
 		if (futurebase.missing_pawn == -1) {
 		    futurebase.missing_pawn = piece;
 		} else {
@@ -6183,8 +6229,8 @@ bool preload_all_futurebases(tablebase_t *tb)
 
 	/* Check futurebase to make sure its prune enable(s) match our own */
 
-	for (int color = 0; color < 2; color ++) {
-	    if (futurebases[fbnum].prune_enable[color] & ~(tb->prune_enable[futurebases[fbnum].invert_colors ? 1 - color : color])) {
+	for (auto color : BothColors) {
+	    if (futurebases[fbnum].prune_enable[color] & ~(tb->prune_enable[futurebases[fbnum].invert_colors ? ~ color : color])) {
 		fatal("'%s': Futurebase doesn't match prune-enables!\n", filename.c_str());
 		return false;
 	    }
@@ -6378,15 +6424,15 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
 
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
 	node->add_child_text("\n      ");
-	node->add_child("white-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[WHITE]));
+	node->add_child("white-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[PieceColor::White]));
     }
     if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1)) {
 	node->add_child_text("\n      ");
-	node->add_child("black-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[BLACK]));
+	node->add_child("black-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[PieceColor::Black]));
     }
     if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
 	node->add_child_text("\n      ");
-	node->add_child("white-wins-or-draws-positions")->set_child_text(boost::lexical_cast<std::string>(total_legal_positions - player_wins[BLACK]));
+	node->add_child("white-wins-or-draws-positions")->set_child_text(boost::lexical_cast<std::string>(total_legal_positions - player_wins[PieceColor::Black]));
     }
 
     node->add_child_text("\n      ");
@@ -6408,14 +6454,6 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
 
 
 /***** INDICES AND POSITIONS *****/
-
-inline void flip_side_to_move_global(global_position_t *position)
-{
-    if (position->side_to_move == WHITE)
-	position->side_to_move = BLACK;
-    else
-	position->side_to_move = WHITE;
-}
 
 /* invert_colors_of_global_position - just what its name implies
  *
@@ -6453,11 +6491,11 @@ void invert_colors_of_global_position(global_position_t *global)
 	global->board[squareB] = pieceA;
     }
 
-    if (global->side_to_move == WHITE) {
-	global->side_to_move = BLACK;
+    if (global->side_to_move == PieceColor::White) {
+	global->side_to_move = PieceColor::Black;
 	if (global->en_passant_square != ILLEGAL_POSITION) global->en_passant_square -= 3*8;
     } else {
-	global->side_to_move = WHITE;
+	global->side_to_move = PieceColor::White;
 	if (global->en_passant_square != ILLEGAL_POSITION) global->en_passant_square += 3*8;
     }
 }
@@ -6633,7 +6671,7 @@ translation_result translate_foreign_position_to_local_position(tablebase_t *for
 	    } else if (result.missing_piece1 == NONE) {
 		result.missing_piece1 = local_piece;
 	    } else if (result.missing_piece2 == NONE) {
-		if (local_tb->pieces[local_piece].piece_type == PAWN) {
+		if (local_tb->pieces[local_piece].piece_type == PieceType::Pawn) {
 		    result.missing_piece2 = result.missing_piece1;
 		    result.missing_piece1 = local_piece;
 		} else {
@@ -6683,12 +6721,11 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
     for (square = 0; square < NUM_SQUARES; square ++) {
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
 	    int color;
-	    int type;
 
-	    for (color = WHITE; color <= BLACK; color ++) {
-		for (type = KING; type <= PAWN; type ++) {
+	    for (auto color : BothColors) {
+		for (auto type : AllPieceTypes) {
 
-		    if (global->board[square] == global_pieces[color][type]) {
+		    if (global->board[square] == global_pieces2[std::make_pair(color, type)]) {
 			fake_tb.pieces.push_back(piece(color, type));
 			fake_position.piece_position[fake_tb.num_pieces] = square;
 			fake_tb.num_pieces ++;
@@ -6736,9 +6773,9 @@ void local_position_to_global_position(const tablebase_t *tb, const local_positi
     global->en_passant_square = local.en_passant_square;
     global->variant = tb->variant;
 
-    for (int piece = 0; piece < tb->num_pieces; piece++) {
+    for (int piece = 0; piece < tb->num_pieces; piece ++) {
 	global->board[local.piece_position[piece]]
-	    = global_pieces[tb->pieces[piece].color][tb->pieces[piece].piece_type];
+	    = global_pieces2[std::make_pair(tb->pieces[piece].color, tb->pieces[piece].piece_type)];
     }
 }
 
@@ -6756,7 +6793,7 @@ bool index_to_global_position(const tablebase_t *tb, index_t index, global_posit
 
 /***** PARSING FEN TO/FROM POSITION STRUCTURES *****/
 
-bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, int color, int type)
+bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int square, PieceColor color, PieceType type)
 {
     int piece;
 
@@ -6776,9 +6813,9 @@ bool place_piece_in_local_position(tablebase_t *tb, local_position_t *pos, int s
     return false;
 }
 
-bool place_piece_in_global_position(global_position_t *position, int square, int color, int type)
+bool place_piece_in_global_position(global_position_t *position, int square, PieceColor color, PieceType type)
 {
-    position->board[square] = global_pieces[color][type];
+    position->board[square] = global_pieces2[std::make_pair(color, type)];
     return true;
 }
 
@@ -6815,45 +6852,45 @@ bool parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_positi
 		break;
 
 	    case 'k':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, KING)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::Black, PieceType::King)) return false;
 		break;
 	    case 'K':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, KING)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::White, PieceType::King)) return false;
 		break;
 
 	    case 'q':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, QUEEN)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::Black, PieceType::Queen)) return false;
 		break;
 	    case 'Q':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, QUEEN)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::White, PieceType::Queen)) return false;
 		break;
 
 	    case 'r':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, ROOK)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::Black, PieceType::Rook)) return false;
 		break;
 	    case 'R':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, ROOK)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::White, PieceType::Rook)) return false;
 		break;
 
 	    case 'b':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, BISHOP)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::Black, PieceType::Bishop)) return false;
 		break;
 	    case 'B':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, BISHOP)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::White, PieceType::Bishop)) return false;
 		break;
 
 	    case 'n':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, KNIGHT)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::Black, PieceType::Knight)) return false;
 		break;
 	    case 'N':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, KNIGHT)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::White, PieceType::Knight)) return false;
 		break;
 
 	    case 'p':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), BLACK, PAWN)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::Black, PieceType::Pawn)) return false;
 		break;
 	    case 'P':
-		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), WHITE, PAWN)) return false;
+		if (!place_piece_in_local_position(tb, pos, rowcol2square(row, col), PieceColor::White, PieceType::Pawn)) return false;
 		break;
 
 	    default:
@@ -6871,9 +6908,9 @@ bool parse_FEN_to_local_position(char *FEN_string, tablebase_t *tb, local_positi
     while (*FEN_string == ' ') FEN_string ++;
 
     if (*FEN_string == 'w') {
-      pos->side_to_move = WHITE;
+      pos->side_to_move = PieceColor::White;
     } else if (*FEN_string == 'b') {
-      pos->side_to_move = BLACK;
+      pos->side_to_move = PieceColor::Black;
     } else {
       return false;
     }
@@ -6924,45 +6961,45 @@ bool parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
 		break;
 
 	    case 'k':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, KING)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::Black, PieceType::King)) return false;
 		break;
 	    case 'K':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, KING)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::White, PieceType::King)) return false;
 		break;
 
 	    case 'q':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, QUEEN)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::Black, PieceType::Queen)) return false;
 		break;
 	    case 'Q':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, QUEEN)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::White, PieceType::Queen)) return false;
 		break;
 
 	    case 'r':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, ROOK)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::Black, PieceType::Rook)) return false;
 		break;
 	    case 'R':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, ROOK)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::White, PieceType::Rook)) return false;
 		break;
 
 	    case 'b':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, BISHOP)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::Black, PieceType::Bishop)) return false;
 		break;
 	    case 'B':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, BISHOP)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::White, PieceType::Bishop)) return false;
 		break;
 
 	    case 'n':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, KNIGHT)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::Black, PieceType::Knight)) return false;
 		break;
 	    case 'N':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, KNIGHT)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::White, PieceType::Knight)) return false;
 		break;
 
 	    case 'p':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), BLACK, PAWN)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::Black, PieceType::Pawn)) return false;
 		break;
 	    case 'P':
-		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), WHITE, PAWN)) return false;
+		if (!place_piece_in_global_position(&localpos, rowcol2square(row, col), PieceColor::White, PieceType::Pawn)) return false;
 		break;
 
 	    default:
@@ -6980,9 +7017,9 @@ bool parse_FEN_to_global_position(char *FEN_string, global_position_t *pos)
     while (*FEN_string == ' ') FEN_string ++;
 
     if (*FEN_string == 'w') {
-      localpos.side_to_move = WHITE;
+      localpos.side_to_move = PieceColor::White;
     } else if (*FEN_string == 'b') {
-      localpos.side_to_move = BLACK;
+      localpos.side_to_move = PieceColor::Black;
     } else {
       return false;
     }
@@ -7044,7 +7081,7 @@ char * global_position_to_FEN(global_position_t *position)
 
     *(ptr++) = ' ';
 
-    *(ptr++) = (position->side_to_move == WHITE) ? 'w' : 'b';
+    *(ptr++) = (position->side_to_move == PieceColor::White) ? 'w' : 'b';
 
     /* no castling rights */
 
@@ -7107,11 +7144,11 @@ bool parse_move_in_global_position(char *movestr, global_position_t *global)
     }
 
     if (!(global->board[origin_square] >= 'A' && global->board[origin_square] <= 'Z')
-	&& global->side_to_move == WHITE)
+	&& global->side_to_move == PieceColor::White)
 	return false;
 
     if (!(global->board[origin_square] >= 'a' && global->board[origin_square] <= 'z')
-	&& global->side_to_move == BLACK)
+	&& global->side_to_move == PieceColor::Black)
 	return false;
 
     if (global->board[destination_square] >= 'A' && !is_capture) return false;
@@ -7119,7 +7156,7 @@ bool parse_move_in_global_position(char *movestr, global_position_t *global)
     if (((global->board[origin_square] == 'P') || (global->board[origin_square] == 'p'))
 	&& is_capture && (destination_square == global->en_passant_square)) {
 
-	if (global->side_to_move == WHITE) {
+	if (global->side_to_move == PieceColor::White) {
 	    global->board[global->en_passant_square - 8] = 0;
 	} else {
 	    global->board[global->en_passant_square + 8] = 0;
@@ -7128,21 +7165,21 @@ bool parse_move_in_global_position(char *movestr, global_position_t *global)
     } else {
 
 	if (!(global->board[destination_square] >= 'A' && global->board[destination_square] <= 'Z')
-	    && is_capture && global->side_to_move == BLACK)
+	    && is_capture && global->side_to_move == PieceColor::Black)
 	    return false;
 
 	if (!(global->board[destination_square] >= 'a' && global->board[destination_square] <= 'z')
-	    && is_capture && global->side_to_move == WHITE)
+	    && is_capture && global->side_to_move == PieceColor::White)
 	    return false;
     }
 
     global->board[destination_square] = promotion_piece ? promotion_piece : global->board[origin_square];
     global->board[origin_square] = 0;
 
-    if (global->side_to_move == WHITE)
-	global->side_to_move = BLACK;
+    if (global->side_to_move == PieceColor::White)
+	global->side_to_move = PieceColor::Black;
     else
-	global->side_to_move = WHITE;
+	global->side_to_move = PieceColor::White;
 
     global->en_passant_square = ILLEGAL_POSITION;
 
@@ -7547,17 +7584,17 @@ class EntriesTable {
 	/* Compute the moves available to each side and use this to size the movecnt field */
 
 	for (int piece = 0; piece < current_tb->num_pieces; piece ++) {
-	    unsigned int *max_moves = (current_tb->pieces[piece].color == WHITE) ? &max_white_moves : &max_black_moves;
+	    unsigned int *max_moves = (current_tb->pieces[piece].color == PieceColor::White) ? &max_white_moves : &max_black_moves;
 	    switch (current_tb->pieces[piece].piece_type) {
-	    case KING:
-	    case KNIGHT:
+	    case PieceType::King:
+	    case PieceType::Knight:
 		*max_moves += 8; break;
-	    case QUEEN:
+	    case PieceType::Queen:
 		*max_moves += 28; break;
-	    case ROOK:
-	    case BISHOP:
+	    case PieceType::Rook:
+	    case PieceType::Bishop:
 		*max_moves += 14; break;
-	    case PAWN:
+	    case PieceType::Pawn:
 		*max_moves += 12; break;
 	    }
 	}
@@ -8292,7 +8329,7 @@ void back_propagate_index(index_t index, int target_dtm)
 	if (expected.does_PTM_win()) {
 	    if (target_dtm > 1) player_wins[index_to_side_to_move(current_tb, index)] ++;
 	} else {
-	    player_wins[1 - index_to_side_to_move(current_tb, index)] ++;
+	    player_wins[~ index_to_side_to_move(current_tb, index)] ++;
 	}
     }
 }
@@ -9684,7 +9721,7 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
     } else {
 
 	bool flag = futurebase->get_flag(future_index);
-	int stm = index_to_side_to_move(futurebase, future_index);
+	PieceColor stm = index_to_side_to_move(futurebase, future_index);
 
 	if (ignore_futurevectors) {
 	    if (PNTM_in_check(futurebase, &foreign_position)) {
@@ -9704,7 +9741,7 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 
 	/* I use twos here because there's a lot of stuff that gets cut out for the special case of 1 */
 
-	if ((flag && (stm == WHITE)) || (!flag && (stm == BLACK))) {
+	if ((flag && (stm == PieceColor::White)) || (!flag && (stm == PieceColor::Black))) {
 	    commit_update(current_index, -2, movecnt, futuremove);
 	} else {
 	    commit_update(current_index, 2, movecnt, futuremove);
@@ -9737,13 +9774,13 @@ void propagate_local_position_from_futurebase(local_position_t &position,
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    if (tb->pieces[piece].color == position.side_to_move) continue;
-	    if (tb->pieces[piece].piece_type != PAWN) continue;
+	    if (tb->pieces[piece].piece_type != PieceType::Pawn) continue;
 
 	    /* I took care in the calling routines to update board_vector specifically so we can
 	     * check for en passant legality here.
 	     */
 
-	    if ((tb->pieces[piece].color == WHITE)
+	    if ((tb->pieces[piece].color == PieceColor::White)
 		&& (ROW(position.piece_position[piece]) == 3)
 		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] - 8))
 		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] - 16))) {
@@ -9751,7 +9788,7 @@ void propagate_local_position_from_futurebase(local_position_t &position,
 		propagate_minilocal_position_from_futurebase(position, foreign_position, futuremove, normalize);
 	    }
 
-	    if ((tb->pieces[piece].color == BLACK)
+	    if ((tb->pieces[piece].color == PieceColor::Black)
 		&& (ROW(position.piece_position[piece]) == 4)
 		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] + 8))
 		&& !(position.board_vector & BITVECTOR(position.piece_position[piece] + 16))) {
@@ -9825,7 +9862,7 @@ int compute_reflections(tablebase_t *tb, tablebase_t *futurebase, int *reflectio
 int max_reflection;
 int reflections[16];
 
-int promotion_color;
+PieceColor promotion_color;
 int first_back_rank_square;
 int last_back_rank_square;
 int promotion_move;
@@ -10164,15 +10201,6 @@ void propagate_moves_from_promotion_capture_futurebase(index_t future_index, int
 void consider_possible_captures(const local_position_t &foreign_position, const local_position_t *position,
 				const int capturing_piece, const int captured_piece)
 {
-    int dir;
-    struct movement *movementptr;
-    int true_captured_piece;
-    int true_capturing_piece;
-
-    /* We only want to consider pieces of the side which captured... */
-
-    if (current_tb->pieces[capturing_piece].color == current_tb->pieces[captured_piece].color) return;
-
     /* When we finally convert the position to an index (in local_position_to_index()), we'll make a
      * copy of the position and normalize it by sorting the identical pieces so that they are in
      * ascending order.  But we have to at least be aware of this here, in order to figure out which
@@ -10180,102 +10208,38 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
      * number of any identical pieces), so we can figure out which futuremove number to use.
      */
 
-    /* Now consider all possible backwards movements of the capturing piece. */
+    int true_captured_piece;
+    int true_capturing_piece;
 
-    if (current_tb->pieces[capturing_piece].piece_type != PAWN) {
+    /* We only want to consider pieces of the side which captured... */
 
-	/* If the square we're about to put the captured piece on isn't semilegal for it, then don't
-	 * consider this capturing piece in this future position any more.  This is after the "if"
-	 * instead of before it because an en passant pawn capture is special, since then the
-	 * capturing piece ends up on a different square from the captured piece.
-	 */
+    if (current_tb->pieces[capturing_piece].color == current_tb->pieces[captured_piece].color) return;
 
-	if (!(current_tb->pieces[captured_piece].semilegal_squares
-	      & BITVECTOR(position->piece_position[capturing_piece]))) {
-	    return;
-	}
+    /* The en passant special case:
+     *
+     * If both the piece that captured and the piece that was captured are both pawns, and either a
+     * white pawn captured from the fifth rank, or a black pawn captured from the fourth, then there
+     * are two possible back prop positions - the obvious one, and the one where the captured pawn
+     * was in an en passant state.  We also make sure right away that the rank is clear where the
+     * pawn had to come from, and the rank is clear where the pawn had to go to, ensuring that an en
+     * passant move was even possible.
+     */
 
-	for (dir = 0; dir < number_of_movement_directions[current_tb->pieces[capturing_piece].piece_type]; dir++) {
+    /* XXX if statements inside the for loop can be moved out of it */
 
-	    for (movementptr = movements[current_tb->pieces[capturing_piece].piece_type][position->piece_position[capturing_piece]][dir];
-		 (movementptr->vector & position->board_vector) == 0;
-		 movementptr++) {
+    if ((current_tb->pieces[capturing_piece].piece_type == PieceType::Pawn)
+	&& (current_tb->pieces[captured_piece].piece_type == PieceType::Pawn)
+	&& !(position->board_vector & BITVECTOR(position->piece_position[capturing_piece]-8))
+	&& !(position->board_vector & BITVECTOR(position->piece_position[capturing_piece]+8))) {
 
-		/* We already checked that the captured piece was on a semilegal square for it.  Now
-		 * check the capturing piece.
-		 */
+	for (auto &dir : movements3(current_tb->pieces[capturing_piece].piece_type,
+				    current_tb->pieces[capturing_piece].color,
+				    position->piece_position[capturing_piece],
+				    Movement2::Backward, Movement2::Capture)) {
 
-		if (! (current_tb->pieces[capturing_piece].semilegal_squares & movementptr->vector)) continue;
+	    for (auto &movement : dir) {
 
-		/* Move the capturing piece, normalize the position, and back prop it.
-		 *
-		 * We have to figure out the "true" capturing and captured pieces, which might not
-		 * be the pieces we started with (see comments on normalization).
-		 */
-
-		local_position_t new_position = *position;
-
-		new_position.uncapture_piece(capturing_piece, captured_piece, movementptr->square);
-
-		normalize_position(current_tb, &new_position);
-
-		true_capturing_piece = new_position.permuted_piece[capturing_piece];
-		true_captured_piece = new_position.permuted_piece[captured_piece];
-
-		propagate_local_position_from_futurebase(new_position, foreign_position,
-							 futurecaptures[true_capturing_piece][true_captured_piece], true);
-	    }
-	}
-
-    } else {
-
-	/* Yes, pawn captures are special */
-
-	for (movementptr = capture_pawn_movements_bkwd[position->piece_position[capturing_piece]][current_tb->pieces[capturing_piece].color];
-	     movementptr->square != -1;
-	     movementptr++) {
-
-	    /* Is there anything on the square the pawn had to capture from? */
-
-	    if ((movementptr->vector & position->board_vector) != 0) continue;
-
-	    /* See if it came from a semilegal square for it. */
-
-	    if (! (current_tb->pieces[capturing_piece].semilegal_squares & movementptr->vector)) continue;
-
-	    /* And if the captured piece will end up on a semilegal square for it... */
-
-	    if ((current_tb->pieces[captured_piece].semilegal_squares
-		 & BITVECTOR(position->piece_position[capturing_piece]))) {
-
-		local_position_t new_position = *position;
-
-		new_position.uncapture_piece(capturing_piece, captured_piece, movementptr->square);
-
-		normalize_position(current_tb, &new_position);
-
-		true_capturing_piece = new_position.permuted_piece[capturing_piece];
-		true_captured_piece = new_position.permuted_piece[captured_piece];
-
-		propagate_local_position_from_futurebase(new_position, foreign_position,
-							 futurecaptures[true_capturing_piece][true_captured_piece], true);
-
-	    }
-
-	    /* The en passant special case: if both the piece that captured and the piece that was
-	     * captured are both pawns, and either a white pawn captured from the fifth rank, or a
-	     * black pawn captured from the fourth, then there are two possible back prop positions
-	     * - the obvious one we just handled, and the one where the captured pawn was in an en
-	     * passant state.  We also make sure right away that the rank is clear where the pawn
-	     * had to come from, and the rank is clear where the pawn had to go to, ensuring that an
-	     * en passant move was even possible.
-	     */
-
-	    if ((current_tb->pieces[captured_piece].piece_type == PAWN)
-		&& !(position->board_vector & BITVECTOR(position->piece_position[capturing_piece]-8))
-		&& !(position->board_vector & BITVECTOR(position->piece_position[capturing_piece]+8))) {
-
-		if ((current_tb->pieces[capturing_piece].color == BLACK) && (ROW(movementptr->square) == 3)) {
+		if ((current_tb->pieces[capturing_piece].color == PieceColor::Black) && (ROW(movement) == 3)) {
 
 		    /* A black pawn capturing a white one (en passant)
 		     *
@@ -10287,7 +10251,7 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 
 			local_position_t new_position = *position;
 
-			new_position.uncapture_piece(capturing_piece, captured_piece, movementptr->square);
+			new_position.uncapture_piece(capturing_piece, captured_piece, movement);
 
 			new_position.set_en_passant_square(new_position.piece_position[captured_piece]);
 
@@ -10305,7 +10269,7 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 
 		}
 
-		if ((current_tb->pieces[capturing_piece].color == WHITE) && (ROW(movementptr->square) == 4)) {
+		if ((current_tb->pieces[capturing_piece].color == PieceColor::White) && (ROW(movement) == 4)) {
 
 		    /* A white pawn capturing a black one (en passant)
 		     *
@@ -10317,7 +10281,7 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 
 			local_position_t new_position = *position;
 
-			new_position.uncapture_piece(capturing_piece, captured_piece, movementptr->square);
+			new_position.uncapture_piece(capturing_piece, captured_piece, movement);
 
 			new_position.set_en_passant_square(new_position.piece_position[captured_piece]);
 
@@ -10336,6 +10300,55 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 	    }
 	}
     }
+
+    /* If the square we're about to put the captured piece on isn't semilegal for it, then don't
+     * consider this capturing piece in this future position any more.  This is after the en passant
+     * case because an en passant pawn capture is special, since then the capturing piece ends up on
+     * a different square from the captured piece.
+     */
+
+    if (!(current_tb->pieces[captured_piece].semilegal_squares
+	  & BITVECTOR(position->piece_position[capturing_piece]))) {
+	return;
+    }
+
+    /* Now consider all possible backwards movements of the capturing piece. */
+
+    for (auto &dir : movements3(current_tb->pieces[capturing_piece].piece_type,
+				current_tb->pieces[capturing_piece].color,
+				position->piece_position[capturing_piece],
+				Movement2::Backward, Movement2::Capture)) {
+
+	for (auto &movement : dir) {
+
+	    if (BITVECTOR(movement) & position->board_vector) break;
+
+	    /* We already checked that the captured piece was on a semilegal square for it.  Now
+	     * check the capturing piece.
+	     */
+
+	    if (! (current_tb->pieces[capturing_piece].semilegal_squares & BITVECTOR(movement))) continue;
+
+	    /* Move the capturing piece, normalize the position, and back prop it.
+	     *
+	     * We have to figure out the "true" capturing and captured pieces, which might not
+	     * be the pieces we started with (see comments on normalization).
+	     */
+
+	    local_position_t new_position = *position;
+
+	    new_position.uncapture_piece(capturing_piece, captured_piece, movement);
+
+	    normalize_position(current_tb, &new_position);
+
+	    true_capturing_piece = new_position.permuted_piece[capturing_piece];
+	    true_captured_piece = new_position.permuted_piece[captured_piece];
+
+	    propagate_local_position_from_futurebase(new_position, foreign_position,
+						     futurecaptures[true_capturing_piece][true_captured_piece], true);
+	}
+    }
+
 }
 
 void propagate_moves_from_capture_futurebase(index_t future_index, int reflection)
@@ -10496,11 +10509,11 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 	if (current_position.en_passant_square != ILLEGAL_POSITION) {
 
-	    if (current_tb->pieces[piece].piece_type != PAWN) return;
+	    if (current_tb->pieces[piece].piece_type != PieceType::Pawn) return;
 
-	    if (((current_tb->pieces[piece].color == WHITE)
+	    if (((current_tb->pieces[piece].color == PieceColor::White)
 		 && (current_position.piece_position[piece] != current_position.en_passant_square + 8))
-		|| ((current_tb->pieces[piece].color == BLACK)
+		|| ((current_tb->pieces[piece].color == PieceColor::Black)
 		    && (current_position.piece_position[piece] != current_position.en_passant_square - 8))) {
 
 		/* No reason to complain here.  Maybe some other pawn was the en passant pawn. */
@@ -10511,7 +10524,7 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 	    current_position.clear_en_passant_square();
 
 	    int square;
-	    if (current_tb->pieces[piece].color == WHITE)
+	    if (current_tb->pieces[piece].color == PieceColor::White)
 		square = current_position.piece_position[piece] - 16;
 	    else
 		square = current_position.piece_position[piece] + 16;
@@ -10539,94 +10552,50 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 	parent_position = current_position;
 
-	if (current_tb->pieces[piece].piece_type != PAWN) {
+	for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
+				    current_tb->pieces[piece].color,
+				    parent_position.piece_position[piece],
+				    Movement2::Backward, Movement2::NonCapture)) {
 
-	    for (dir = 0; dir < number_of_movement_directions[current_tb->pieces[piece].piece_type]; dir++) {
-
-		/* What about captures?  Well, first of all, there are no captures here!  We're
-		 * moving BACKWARDS in the game... and pieces don't appear out of thin air.
-		 * Captures are handled by back-propagation from futurebases, not here in the
-		 * movement code.  The piece moving had to come from somewhere, and that somewhere
-		 * will now be an empty square, so once we've hit another piece along a movement
-		 * vector, there's absolutely no need to consider anything further.
-		 */
-
-		for (movementptr
-			 = movements[current_tb->pieces[piece].piece_type][parent_position.piece_position[piece]][dir];
-		     (movementptr->vector & parent_position.board_vector) == 0;
-		     movementptr++) {
-
-		    /* We never back out into a restricted position (obviously) */
-
-		    if (! (current_tb->pieces[piece].semilegal_squares & movementptr->vector)) continue;
-
-		    /* Back stepping a half move here involves several things: flipping the
-		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
-		     * the piece (backwards), and considering a bunch of additional positions
-		     * identical to the base position except that a single one of the pawns on the
-		     * fourth or fifth ranks was capturable en passant.
-		     *
-		     * Of course, the only way we could have gotten an en passant pawn is if THIS
-		     * MOVE created it.  Since this isn't a pawn move, that can't happen.  Checking
-		     * additional en passant positions is taken care of in
-		     * propagate_one_move_within_table()
-		     */
-
-		    current_position.flip_side_to_move();
-
-		    current_position.move_piece(piece, movementptr->square);
-
-		    propagate_local_position_from_futurebase(current_position, foreign_position,
-							     futuremoves[piece][origin_square], false);
-		}
-	    }
-
-	} else {
-
-	    /* Usual special case for pawns */
-
-	    for (movementptr = normal_pawn_movements_bkwd[parent_position.piece_position[piece]][current_tb->pieces[piece].color];
-		 (movementptr->vector & parent_position.board_vector) == 0;
-		 movementptr++) {
+	    for (auto &movement : dir) {
 
 		/* We never back out into a restricted position (obviously) */
 
-		if (! (current_tb->pieces[piece].semilegal_squares & movementptr->vector)) continue;
+		if (! (current_tb->pieces[piece].semilegal_squares & BITVECTOR(movement))) continue;
 
-		/* Do we have a backwards pawn move here?
-		 *
-		 * Back stepping a half move here involves several things: flipping the side-to-move
+		/* Back stepping a half move here involves several things: flipping the side-to-move
 		 * flag, clearing any en passant pawns into regular pawns, moving the piece
 		 * (backwards), and considering a bunch of additional positions identical to the
 		 * base position except that a single one of the pawns on the fourth or fifth ranks
 		 * was capturable en passant.
 		 *
 		 * Of course, the only way we could have gotten an en passant pawn is if THIS MOVE
-		 * created it.  We handle that as a special case above, so we shouldn't have to
-		 * worry about clearing en passant pawns here - there should be none.  Checking
+		 * created it.  Since this isn't a pawn move, that can't happen.  Checking
 		 * additional en passant positions is taken care of in
 		 * propagate_one_move_within_table()
-		 *
-		 * But we start with an extra check to make sure this isn't a double pawn move, it
+		 */
+
+		/* But we start with an extra check to make sure this isn't a double pawn move, it
 		 * which case it would result in an en passant position, not the non-en passant
 		 * position we are in now (en passant got taken care of in the special case above).
 		 */
 
-		if (((movementptr->square - parent_position.piece_position[piece]) == 16)
-		    || ((movementptr->square - parent_position.piece_position[piece]) == -16)) {
+		/* XXX should be unnecessary because of NoDoublePawn */
+
+		if (((movement - parent_position.piece_position[piece]) == 16)
+		    || ((movement - parent_position.piece_position[piece]) == -16)) {
 		    continue;
 		}
 
-		current_position = parent_position;
-
 		current_position.flip_side_to_move();
 
-		current_position.move_piece(piece, movementptr->square);
+		current_position.move_piece(piece, movement);
 
 		propagate_local_position_from_futurebase(current_position, foreign_position,
 							 futuremoves[piece][origin_square], false);
 	    }
 	}
+
     }
 }
 
@@ -10702,9 +10671,9 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 
 		promotion_color = tb->pieces[futurebase->missing_pawn].color;
-		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
-		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
-		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
+		first_back_rank_square = ((promotion_color == PieceColor::White) ? 56 : 0);
+		last_back_rank_square = ((promotion_color == PieceColor::White) ? 63 : 7);
+		promotion_move = ((promotion_color == PieceColor::White) ? 8 : -8);
 
 		backprop_function = &propagate_moves_from_promotion_futurebase;
 	    }
@@ -10717,9 +10686,9 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 
 		promotion_color = tb->pieces[futurebase->missing_pawn].color;
-		first_back_rank_square = ((promotion_color == WHITE) ? 56 : 0);
-		last_back_rank_square = ((promotion_color == WHITE) ? 63 : 7);
-		promotion_move = ((promotion_color == WHITE) ? 8 : -8);
+		first_back_rank_square = ((promotion_color == PieceColor::White) ? 56 : 0);
+		last_back_rank_square = ((promotion_color == PieceColor::White) ? 63 : 7);
+		promotion_move = ((promotion_color == PieceColor::White) ? 8 : -8);
 
 		backprop_function = &propagate_moves_from_promotion_capture_futurebase;
 	    }
@@ -10806,7 +10775,7 @@ bool all_futuremoves_handled = true;
 void finalize_futuremove(tablebase_t *tb, index_t index, futurevector_t futurevector) {
 
     unsigned int futuremove;
-    int stm = index_to_side_to_move(tb, index);
+    PieceColor stm = index_to_side_to_move(tb, index);
 
     if (futurevector & unpruned_futuremoves[stm]) {
 	global_position_t global;
@@ -10895,7 +10864,7 @@ bool have_all_futuremoves_been_handled(tablebase_t *tb) {
  * of the same type; a fatal error if their types are different.
  */
 
-int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
+int match_pruning_statement(tablebase_t *tb, PieceColor color, const char *pruning_statement)
 {
     xmlpp::NodeSet result;
     int type = RESTRICTION_NONE;
@@ -10922,10 +10891,10 @@ int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
 		type = restriction_types.at(prune_type);
 	    } else if (type != restriction_types.at(prune_type)) {
 		fatal("Conflicting %s pruning statements match futuremove %s\n",
-		      colors[color].c_str(), pruning_statement);
+		      colors.at(color).c_str(), pruning_statement);
 	    } else {
 		warning("Multiple %s pruning statements match futuremove %s\n",
-			colors[color].c_str(), pruning_statement);
+			colors.at(color).c_str(), pruning_statement);
 	    }
 	}
     }
@@ -10933,10 +10902,10 @@ int match_pruning_statement(tablebase_t *tb, int color, char *pruning_statement)
     return type;
 }
 
-void assign_pruning_statement(tablebase_t *tb, int color, int futuremove)
+void assign_pruning_statement(tablebase_t *tb, PieceColor color, int futuremove)
 {
     int type;
-    char * pruning_statement = movestr[color][futuremove];
+    const char * pruning_statement = movestr[color][futuremove];
 
     if (futuremove == -1) return;
 
@@ -11003,9 +10972,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     int captured_piece;
     int capturing_piece;
     int sq;
-    int dir;
     int promotion;
-    struct movement *movementptr;
     uint64_t possible_captures[MAX_PIECES];
     char local_movestr[MOVESTR_CHARS];
     int futurebase_cnt;
@@ -11028,22 +10995,18 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	     */
 
 	    if (tb->pieces[piece].legal_squares & BITVECTOR(sq)) {
-		if (tb->pieces[piece].piece_type != PAWN) {
-		    for (dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
-			for (movementptr = movements[tb->pieces[piece].piece_type][sq][dir];
-			     movementptr->square != -1; movementptr++) {
 
-			    possible_captures[piece] |= movementptr->vector;
+		for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
+					    current_tb->pieces[piece].color,
+					    sq,
+					    Movement2::Forward, Movement2::Capture)) {
 
-			    /* If we hit a frozen piece, then this movement direction ends here */
-			    if (movementptr->vector & tb->frozen_pieces_vector) break;
-			}
-		    }
-		} else {
-		    for (movementptr = capture_pawn_movements[sq][tb->pieces[piece].color];
-			 movementptr->square != -1; movementptr++) {
+		    for (auto &movement : dir) {
 
-			possible_captures[piece] |= movementptr->vector;
+			possible_captures[piece] |= BITVECTOR(movement);
+
+			/* If we hit a frozen piece, then this movement direction ends here */
+			if (BITVECTOR(movement) & tb->frozen_pieces_vector) break;
 		    }
 		}
 	    }
@@ -11087,17 +11050,17 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	    if (tb->pieces[capturing_piece].color == tb->pieces[captured_piece].color) continue;
 
-	    if (tb->pieces[capturing_piece].piece_type != PAWN) {
+	    if (tb->pieces[capturing_piece].piece_type != PieceType::Pawn) {
 
 		if (possible_captures[capturing_piece] & tb->pieces[captured_piece].legal_squares) {
 
-		    char * my_movestr
-			= movestr[tb->pieces[capturing_piece].color]
-			[num_futuremoves[tb->pieces[capturing_piece].color]];
-
-		    sprintf(my_movestr, "%cx%c",
+		    sprintf(local_movestr, "%cx%c",
 			    piece_char[tb->pieces[capturing_piece].piece_type],
 			    piece_char[tb->pieces[captured_piece].piece_type]);
+
+		    movestr[tb->pieces[capturing_piece].color]
+			[num_futuremoves[tb->pieces[capturing_piece].color]]
+			= strdup(local_movestr);
 
 		    futurecaptures[capturing_piece][captured_piece]
 			= num_futuremoves[tb->pieces[capturing_piece].color] ++;
@@ -11108,24 +11071,23 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		/* if it's a pawn-takes-pawn situation, check for en passant as well */
 
 		if ((possible_captures[capturing_piece] & tb->pieces[captured_piece].legal_squares)
-		    | ((tb->pieces[captured_piece].piece_type == PAWN)
-		       && (((tb->pieces[capturing_piece].color == WHITE)
+		    | ((tb->pieces[captured_piece].piece_type == PieceType::Pawn)
+		       && (((tb->pieces[capturing_piece].color == PieceColor::White)
 			    ? ((possible_captures[capturing_piece] & 0x0000ff0000000000LL) >> 8)
 			    : ((possible_captures[capturing_piece] & 0x0000000000ff0000LL) << 8))
 			   & tb->pieces[captured_piece].legal_squares))) {
 
 		    int candidate_futuremove = NO_FUTUREMOVE;
-		    char candidate_movestr[MOVESTR_CHARS];
 
 		    /* start by dishing out a non-promotion futurecapture */
 
-		    char * my_movestr
-			= movestr[tb->pieces[capturing_piece].color]
-			[num_futuremoves[tb->pieces[capturing_piece].color]];
-
-		    sprintf(my_movestr, "%cx%c",
+		    sprintf(local_movestr, "%cx%c",
 			    piece_char[tb->pieces[capturing_piece].piece_type],
 			    piece_char[tb->pieces[captured_piece].piece_type]);
+
+		    movestr[tb->pieces[capturing_piece].color]
+			[num_futuremoves[tb->pieces[capturing_piece].color]]
+			= strdup(local_movestr);
 
 		    futurecaptures[capturing_piece][captured_piece]
 			= num_futuremoves[tb->pieces[capturing_piece].color] ++;
@@ -11133,7 +11095,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 		    /* Keep going only if it's a pawn capture that results in promotion */
 
 		    if (! (possible_captures[capturing_piece] & tb->pieces[captured_piece].legal_squares
-			   & ((tb->pieces[capturing_piece].color == WHITE)
+			   & ((tb->pieces[capturing_piece].color == PieceColor::White)
 			      ? 0xff00000000000000LL : 0x00000000000000ffLL))) {
 			continue;
 		    }
@@ -11142,7 +11104,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			candidate_futuremove = NO_FUTUREMOVE;
 
-			sprintf(candidate_movestr, "Px%c=%c",
+			sprintf(local_movestr, "Px%c=%c",
 				piece_char[tb->pieces[captured_piece].piece_type],
 				piece_char[promoted_pieces[promotion]]);
 
@@ -11166,7 +11128,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			    if (tb->pieces[piece].color != tb->pieces[capturing_piece].color) continue;
 			    if (promotion_captures[piece][captured_piece][promotion] != NO_FUTUREMOVE) {
 				if ((! (possible_captures[capturing_piece] & possible_captures[piece]))
-				    && (! strcmp(candidate_movestr, movestr[tb->pieces[piece].color][promotion_captures[piece][captured_piece][promotion]]))) {
+				    && (! strcmp(local_movestr, movestr[tb->pieces[piece].color][promotion_captures[piece][captured_piece][promotion]]))) {
 				    candidate_futuremove = promotion_captures[piece][captured_piece][promotion];
 				}
 			    }
@@ -11187,7 +11149,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			if (candidate_futuremove == NO_FUTUREMOVE) {
 			    candidate_futuremove = num_futuremoves[tb->pieces[capturing_piece].color] ++;
-			    strcpy(movestr[tb->pieces[capturing_piece].color][candidate_futuremove], candidate_movestr);
+			    movestr[tb->pieces[capturing_piece].color][candidate_futuremove] = strdup(local_movestr);
 			}
 
 			promotion_captures[capturing_piece][captured_piece][promotion] = candidate_futuremove;
@@ -11212,15 +11174,15 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 	    promotions[piece][promotion] = NO_FUTUREMOVE;
 	}
-	if (tb->pieces[piece].piece_type == PAWN) {
-	    for (sq = (tb->pieces[piece].color == WHITE ? 48 : 8);
-		 sq <= (tb->pieces[piece].color == WHITE ? 55 : 15); sq++) {
+	if (tb->pieces[piece].piece_type == PieceType::Pawn) {
+	    for (sq = (tb->pieces[piece].color == PieceColor::White ? 48 : 8);
+		 sq <= (tb->pieces[piece].color == PieceColor::White ? 55 : 15); sq++) {
 		if (tb->pieces[piece].legal_squares & BITVECTOR(sq)) {
 
 		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 			promotions[piece][promotion] = num_futuremoves[tb->pieces[piece].color];
-			sprintf(movestr[tb->pieces[piece].color][promotions[piece][promotion]],
-				"P=%c", piece_char[promoted_pieces[promotion]]);
+			sprintf(local_movestr, "P=%c", piece_char[promoted_pieces[promotion]]);
+			movestr[tb->pieces[piece].color][promotions[piece][promotion]] = strdup(local_movestr);
 			num_futuremoves[tb->pieces[piece].color] ++;
 		    }
 
@@ -11252,107 +11214,57 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	    if (! (tb->pieces[piece].legal_squares & BITVECTOR(sq))) continue;
 
-	    if (tb->pieces[piece].piece_type != PAWN) {
+	    for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
+					current_tb->pieces[piece].color,
+					sq,
+					Movement2::Forward, Movement2::NonCapture)) {
 
-		for (dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
-
-		    for (movementptr = movements[tb->pieces[piece].piece_type][sq][dir];
-			 movementptr->square != -1; movementptr++) {
-
-			/* If we hit a frozen piece, movement has to stop.  We don't consider
-			 * captures here; they were handled above.
-			 */
-
-			if (movementptr->vector & tb->frozen_pieces_vector) break;
-
-			/* If the piece is moving outside its semilegal squares, it's a futuremove.
-			 * If it's moving from a legal square to a semilegal square, it's also a
-			 * futuremove... except for a special case.  Obviously the other piece in
-			 * its semilegal group can't be on either the square it's moving from or the
-			 * square it's moving to (no other piece can be).  If all remaining legal
-			 * squares available to that other piece are also legal squares for this
-			 * piece, then we can always successfully flip the two pieces and this isn't
-			 * a futuremove.  The converse is that there must be at least one legal
-			 * square available to the other piece that isn't a legal square for this
-			 * piece; in other words, this piece must have another semilegal square that
-			 * isn't legal.
-			 */
-
-			if (!(tb->pieces[piece].semilegal_squares & BITVECTOR(movementptr->square))
-
-			    || (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-				&& ( tb->pieces[piece].semilegal_squares & ~(tb->pieces[piece].legal_squares)
-				     & ~BITVECTOR(movementptr->square) & ~BITVECTOR(sq) ))) {
-
-			    if (futuremoves[piece][movementptr->square] == NO_FUTUREMOVE) {
-
-				sprintf(local_movestr, "%c%c%c", piece_char[tb->pieces[piece].piece_type],
-					'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-
-				if (futurebase_cnt > 0) {
-				    futuremoves[piece][movementptr->square]
-					= num_futuremoves[tb->pieces[piece].color];
-				    strcpy(movestr[tb->pieces[piece].color][num_futuremoves[tb->pieces[piece].color]],
-					   local_movestr);
-				    num_futuremoves[tb->pieces[piece].color] ++;
-				} else {
-				    switch (match_pruning_statement(tb, tb->pieces[piece].color,
-								    local_movestr)) {
-				    case RESTRICTION_DISCARD:
-					futuremoves[piece][movementptr->square] = DISCARD_FUTUREMOVE;
-					break;
-				    case RESTRICTION_CONCEDE:
-					futuremoves[piece][movementptr->square] = CONCEDE_FUTUREMOVE;
-					break;
-				    }
-				}
-			    }
-			}
-		    }
-		}
-
-	    } else {
-
-		/* Pawns, as always, are special */
-
-		for (movementptr = normal_pawn_movements[sq][tb->pieces[piece].color];
-		     movementptr->square != -1; movementptr++) {
+		for (auto &movement : dir) {
 
 		    /* If we hit a frozen piece, movement has to stop.  We don't consider captures
 		     * here; they were handled above.
 		     */
 
-		    if (movementptr->vector & tb->frozen_pieces_vector) break;
+		    if (BITVECTOR(movement) & tb->frozen_pieces_vector) break;
 
-		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
+		    /* If the piece is moving outside its semilegal squares, it's a futuremove.  If
+		     * it's moving from a legal square to a semilegal square, it's also a
+		     * futuremove... except for a special case.  Obviously the other piece in its
+		     * semilegal group can't be on either the square it's moving from or the square
+		     * it's moving to (no other piece can be).  If all remaining legal squares
+		     * available to that other piece are also legal squares for this piece, then we
+		     * can always successfully flip the two pieces and this isn't a futuremove.  The
+		     * converse is that there must be at least one legal square available to the
+		     * other piece that isn't a legal square for this piece; in other words, this
+		     * piece must have another semilegal square that isn't legal.
+		     */
 
-			/* might want to put the promotion code here */
+		    if (!(tb->pieces[piece].semilegal_squares & BITVECTOR(movement))
 
-		    } else if (! tb->pawngen) {
+			|| (!(tb->pieces[piece].legal_squares & BITVECTOR(movement))
+			    && ( tb->pieces[piece].semilegal_squares & ~(tb->pieces[piece].legal_squares)
+				 & ~BITVECTOR(movement) & ~BITVECTOR(sq) ))) {
 
-			/* If the pawn is moving outside its restricted squares, it's a futuremove,
-			 * unless the pawn is blocked, in which case the pawn will never be able to
-			 * move outside its restriction (except via capture).
-			 *
-			 * If we're using 'pawngen', then we never assign futuremoves here, because
-			 * pawngen has taken all possible normal pawn moves into account.
-			 */
+			if (futuremoves[piece][movement] == NO_FUTUREMOVE) {
 
-			if (!(tb->pieces[piece].semilegal_squares & BITVECTOR(movementptr->square))
+			    sprintf(local_movestr, "%c%c%c", piece_char[tb->pieces[piece].piece_type],
+				    'a' + COL(movement), '1' + ROW(movement));
 
-			    || (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-				&& ( tb->pieces[piece].semilegal_squares & ~(tb->pieces[piece].legal_squares)
-				     & ~BITVECTOR(movementptr->square) & ~BITVECTOR(sq) ))) {
-
-			    if (tb->pieces[piece].blocking_piece == -1) {
-
-				if (futuremoves[piece][movementptr->square] == NO_FUTUREMOVE) {
-				    futuremoves[piece][movementptr->square]
-					= num_futuremoves[tb->pieces[piece].color];
-				    sprintf(movestr[tb->pieces[piece].color][num_futuremoves[tb->pieces[piece].color]],
-					    "%c%c%c", piece_char[tb->pieces[piece].piece_type],
-					    'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-				    num_futuremoves[tb->pieces[piece].color] ++;
+			    if (futurebase_cnt > 0) {
+				futuremoves[piece][movement]
+				    = num_futuremoves[tb->pieces[piece].color];
+				movestr[tb->pieces[piece].color][num_futuremoves[tb->pieces[piece].color]]
+				    = strdup(local_movestr);
+				num_futuremoves[tb->pieces[piece].color] ++;
+			    } else {
+				switch (match_pruning_statement(tb, tb->pieces[piece].color,
+								local_movestr)) {
+				case RESTRICTION_DISCARD:
+				    futuremoves[piece][movement] = DISCARD_FUTUREMOVE;
+				    break;
+				case RESTRICTION_CONCEDE:
+				    futuremoves[piece][movement] = CONCEDE_FUTUREMOVE;
+				    break;
 				}
 			    }
 			}
@@ -11362,17 +11274,17 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	}
     }
 
-    info("%d possible WHITE futuremoves\n", num_futuremoves[WHITE]);
-    if (tb->encode_stm) info("%d possible BLACK futuremoves\n", num_futuremoves[BLACK]);
+    info("%d possible WHITE futuremoves\n", num_futuremoves[PieceColor::White]);
+    if (tb->encode_stm) info("%d possible BLACK futuremoves\n", num_futuremoves[PieceColor::Black]);
 
-    if (num_futuremoves[WHITE] > sizeof(futurevector_t)*8) {
+    if (num_futuremoves[PieceColor::White] > sizeof(futurevector_t)*8) {
 	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-	      num_futuremoves[WHITE], sizeof(futurevector_t)*8);
+	      num_futuremoves[PieceColor::White], sizeof(futurevector_t)*8);
 	terminate();
     }
-    if (num_futuremoves[BLACK] > sizeof(futurevector_t)*8) {
+    if (num_futuremoves[PieceColor::Black] > sizeof(futurevector_t)*8) {
 	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-	      num_futuremoves[BLACK], sizeof(futurevector_t)*8);
+	      num_futuremoves[PieceColor::Black], sizeof(futurevector_t)*8);
 	terminate();
     }
 
@@ -11382,14 +11294,14 @@ void print_futuremoves(void)
 {
     unsigned int i;
 
-    info("%d unpruned WHITE futuremoves\n", num_futuremoves[WHITE]);
-    if (current_tb->encode_stm) info("%d unpruned BLACK futuremoves\n", num_futuremoves[BLACK]);
+    info("%d unpruned WHITE futuremoves\n", num_futuremoves[PieceColor::White]);
+    if (current_tb->encode_stm) info("%d unpruned BLACK futuremoves\n", num_futuremoves[PieceColor::Black]);
 
-    for (i=0; i < num_futuremoves[WHITE]; i ++) {
-	info("WHITE Futuremove %i: %s\n", i, movestr[WHITE][i]);
+    for (i=0; i < num_futuremoves[PieceColor::White]; i ++) {
+	info("WHITE Futuremove %i: %s\n", i, movestr[PieceColor::White][i]);
     }
-    for (i=0; i < num_futuremoves[BLACK]; i ++) {
-	if (current_tb->encode_stm) info("BLACK Futuremove %i: %s\n", i, movestr[BLACK][i]);
+    for (i=0; i < num_futuremoves[PieceColor::Black]; i ++) {
+	if (current_tb->encode_stm) info("BLACK Futuremove %i: %s\n", i, movestr[PieceColor::Black][i]);
     }
 }
 
@@ -11416,7 +11328,7 @@ bool compute_pruned_futuremoves(tablebase_t *tb)
 	Glib::ustring prune_color = (*prune)->eval_to_string("@color");
 	Glib::ustring prune_type = (*prune)->eval_to_string("@type");
 
-	int color = colors.at(prune_color);
+	PieceColor color = colors.at(prune_color);
 	int type = restriction_types.at(prune_type);
 
 	if (! (type & tb->prune_enable[color])) {
@@ -11426,14 +11338,14 @@ bool compute_pruned_futuremoves(tablebase_t *tb)
 
     if (fatal_errors != 0) return false;
 
-    for (auto color = WHITE; color <= BLACK; color ++) {
+    for (auto color : BothColors) {
 	for (auto fm = 0U; fm < num_futuremoves[color]; fm ++) {
 	    assign_pruning_statement(tb, color, fm);
 	}
     }
 
-    unpruned_futuremoves[WHITE] = ~pruned_futuremoves[WHITE];
-    unpruned_futuremoves[BLACK] = ~pruned_futuremoves[BLACK];
+    unpruned_futuremoves[PieceColor::White] = ~pruned_futuremoves[PieceColor::White];
+    unpruned_futuremoves[PieceColor::Black] = ~pruned_futuremoves[PieceColor::Black];
 
     return (fatal_errors == 0);
 }
@@ -11489,7 +11401,7 @@ bool check_pruning(tablebase_t *tb) {
 	 */
 
 	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	    if (tb->pieces[captured_piece].piece_type == PAWN) {
+	    if (tb->pieces[captured_piece].piece_type == PieceType::Pawn) {
 		if ((futurebases[fbnum].extra_piece == -1)
 		    && (futurebases[fbnum].missing_pawn != -1)
 		    && (tb->pieces[futurebases[fbnum].missing_pawn].color == tb->pieces[captured_piece].color)
@@ -11515,14 +11427,14 @@ bool check_pruning(tablebase_t *tb) {
 		 * are WHITE positions, so we don't care if the capturing piece is BLACK
 		 */
 
-		if ((! tb->encode_stm) && (tb->pieces[capturing_piece].color == BLACK)) continue;
+		if ((! tb->encode_stm) && (tb->pieces[capturing_piece].color == PieceColor::Black)) continue;
 
 		if (futurecaptures[capturing_piece][captured_piece] >= 0) {
 
 		    if (! (pruned_futuremoves[tb->pieces[capturing_piece].color]
 			   & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
 			fatal("No futurebase or pruning for %s move %s\n",
-			      colors[tb->pieces[capturing_piece].color].c_str(),
+			      colors.at(tb->pieces[capturing_piece].color).c_str(),
 			      movestr[tb->pieces[capturing_piece].color][futurecaptures[capturing_piece][captured_piece]]);
 			return false;
 		    } else if (discarded_futuremoves[tb->pieces[capturing_piece].color]
@@ -11549,9 +11461,9 @@ bool check_pruning(tablebase_t *tb) {
 
 	int promotion;
 
-	if (tb->pieces[pawn].piece_type != PAWN) continue;
+	if (tb->pieces[pawn].piece_type != PieceType::Pawn) continue;
 
-	if ((! tb->encode_stm) && (tb->pieces[pawn].color == BLACK)) continue;
+	if ((! tb->encode_stm) && (tb->pieces[pawn].color == PieceColor::Black)) continue;
 
 	/* First, we're looking for promotion capture futurebases. */
 
@@ -11563,7 +11475,7 @@ bool check_pruning(tablebase_t *tb) {
 	     * possible.
 	     */
 
-	    if (tb->pieces[pawn].color == WHITE) {
+	    if (tb->pieces[pawn].color == PieceColor::White) {
 		if (! (tb->pieces[pawn].legal_squares & 0x00ff000000000000LL)) break;
 	    } else {
 		if (! (tb->pieces[pawn].legal_squares & 0x000000000000ff00LL)) break;
@@ -11577,7 +11489,7 @@ bool check_pruning(tablebase_t *tb) {
 	     * that promotion was possible in?
 	     */
 
-	    if (tb->pieces[pawn].color == WHITE) {
+	    if (tb->pieces[pawn].color == PieceColor::White) {
 		if (! (tb->pieces[captured_piece].legal_squares & 0xff00000000000000LL)) continue;
 	    } else {
 		if (! (tb->pieces[captured_piece].legal_squares & 0x00000000000000ffLL)) continue;
@@ -11594,7 +11506,7 @@ bool check_pruning(tablebase_t *tb) {
 		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		    if ((futurebases[fbnum].extra_piece != -1)
 			&& (futurebases[fbnum].pieces[futurebases[fbnum].extra_piece].color
-			    == (futurebases[fbnum].invert_colors ? 1 - tb->pieces[pawn].color : tb->pieces[pawn].color))
+			    == (futurebases[fbnum].invert_colors ? ~ tb->pieces[pawn].color : tb->pieces[pawn].color))
 			&& (futurebases[fbnum].missing_non_pawn != -1)
 			&& (tb->pieces[futurebases[fbnum].missing_non_pawn].color
 			    == tb->pieces[captured_piece].color)
@@ -11617,7 +11529,7 @@ bool check_pruning(tablebase_t *tb) {
 		if (! (pruned_futuremoves[tb->pieces[pawn].color]
 		       & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]))) {
 		    fatal("No futurebase or pruning for %s move %s\n",
-			  colors[tb->pieces[pawn].color].c_str(),
+			  colors.at(tb->pieces[pawn].color).c_str(),
 			  movestr[tb->pieces[pawn].color][promotion_captures[pawn][captured_piece][promotion]]);
 		    return false;
 		} else if (discarded_futuremoves[tb->pieces[pawn].color]
@@ -11658,7 +11570,7 @@ bool check_pruning(tablebase_t *tb) {
 
 	    if (! (pruned_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion]))) {
 		fatal("No futurebase or pruning for %s move %s\n",
-		      colors[tb->pieces[pawn].color].c_str(),
+		      colors.at(tb->pieces[pawn].color).c_str(),
 		      movestr[tb->pieces[pawn].color][promotions[pawn][promotion]]);
 		return false;
 	    } else if (discarded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
@@ -11694,13 +11606,13 @@ bool check_pruning(tablebase_t *tb) {
 
     if (futurebase_cnt == 0) {
 	for (piece = 0; piece < tb->num_pieces; piece ++) {
-	    if ((! tb->encode_stm) && (tb->pieces[piece].color == BLACK)) continue;
+	    if ((! tb->encode_stm) && (tb->pieces[piece].color == PieceColor::Black)) continue;
 	    for (sq = 0; sq < 64; sq ++) {
 		if (futuremoves[piece][sq] >= 0) {
 
 		    if (! (pruned_futuremoves[tb->pieces[piece].color] & FUTUREVECTOR(futuremoves[piece][sq]))) {
 			fatal("No futurebase or pruning for %s move %s\n",
-			      colors[tb->pieces[piece].color].c_str(),
+			      colors.at(tb->pieces[piece].color).c_str(),
 			      movestr[tb->pieces[piece].color][futuremoves[piece][sq]]);
 			return false;
 		    }
@@ -11727,9 +11639,9 @@ void remove_futuremove(futurevector_t *fvp, int fm)
 
 void optimize_futuremoves(tablebase_t *tb)
 {
-    int color, fm, fm2, piece, piece2, sq, promotion;
+    int fm, fm2, piece, piece2, sq, promotion;
 
-    for (color = WHITE; color <= BLACK; color ++) {
+    for (auto color : BothColors) {
 
 	for (fm = 0; fm < (int) num_futuremoves[color]; fm++) {
 
@@ -11743,7 +11655,7 @@ void optimize_futuremoves(tablebase_t *tb)
 			    if (futurecaptures[piece][piece2] > fm) {
 				futurecaptures[piece][piece2] --;
 			    }
-			    if (tb->pieces[piece].piece_type == PAWN) {
+			    if (tb->pieces[piece].piece_type == PieceType::Pawn) {
 				for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 				    if (promotion_captures[piece][piece2][promotion] > fm) {
 					promotion_captures[piece][piece2][promotion] --;
@@ -11758,7 +11670,7 @@ void optimize_futuremoves(tablebase_t *tb)
 			    }
 			}
 
-			if (tb->pieces[piece].piece_type == PAWN) {
+			if (tb->pieces[piece].piece_type == PieceType::Pawn) {
 			    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 				if (promotions[piece][promotion] > fm) {
 				    promotions[piece][promotion] --;
@@ -11773,7 +11685,7 @@ void optimize_futuremoves(tablebase_t *tb)
 		remove_futuremove(&(discarded_futuremoves[color]), fm);
 		remove_futuremove(&(optimized_futuremoves[color]), fm);
 
-		info("Pruned %s futuremove %s\n", colors[color].c_str(), movestr[color][fm]);
+		info("Pruned %s futuremove %s\n", colors.at(color).c_str(), movestr[color][fm]);
 
 		for (fm2 = fm + 1; fm2 < (int) num_futuremoves[color]; fm2++) {
 		    strcpy(movestr[color][fm2-1], movestr[color][fm2]);
@@ -11862,13 +11774,13 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
     for (piece = 0; piece < tb->num_pieces; piece ++) {
 
 	if (tb->pieces[piece].color == position->side_to_move) continue;
-	if (tb->pieces[piece].piece_type != PAWN) continue;
+	if (tb->pieces[piece].piece_type != PieceType::Pawn) continue;
 
 	/* I've taken care to update board_vector in the routine that calls here specifically so we
 	 * can check for en passant legality here.
 	 */
 
-	if ((tb->pieces[piece].color == WHITE)
+	if ((tb->pieces[piece].color == PieceColor::White)
 	    && (ROW(position->piece_position[piece]) == 3)
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] - 8))
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] - 16))) {
@@ -11876,7 +11788,7 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 	    propagate_one_minimove_within_table(tb, future_index, position);
 	}
 
-	if ((tb->pieces[piece].color == BLACK)
+	if ((tb->pieces[piece].color == PieceColor::Black)
 	    && (ROW(position->piece_position[piece]) == 4)
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] + 8))
 	    && !(position->board_vector & BITVECTOR(position->piece_position[piece] + 16))) {
@@ -11897,10 +11809,6 @@ void propagate_one_move_within_table(tablebase_t *tb, index_t future_index, loca
 void back_propagate_index_within_table(index_t index, int reflection)
 {
     local_position_t position(current_tb);
-    int piece;
-    int dir;
-    int origin_square;
-    struct movement *movementptr;
 
     /* This can fail if the reflection isn't valid for this index */
 
@@ -11931,14 +11839,14 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	/* XXX let's store en_passant_pawn in the local position structure and avoid this loop */
 
-	for (piece = 0; piece < current_tb->num_pieces; piece++) {
+	for (int piece = 0; piece < current_tb->num_pieces; piece++) {
 
 	    if (current_tb->pieces[piece].color != position.side_to_move) continue;
-	    if (current_tb->pieces[piece].piece_type != PAWN) continue;
+	    if (current_tb->pieces[piece].piece_type != PieceType::Pawn) continue;
 
-	    if (((current_tb->pieces[piece].color == WHITE)
+	    if (((current_tb->pieces[piece].color == PieceColor::White)
 		 && (position.piece_position[piece] - 8 == position.en_passant_square))
-		|| ((current_tb->pieces[piece].color == BLACK)
+		|| ((current_tb->pieces[piece].color == PieceColor::Black)
 		    && (position.piece_position[piece] + 8 == position.en_passant_square))) {
 		if (en_passant_pawn != -1) fatal("Two en passant pawns in back prop?!\n");
 		en_passant_pawn = piece;
@@ -11950,7 +11858,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	    int square;
 
-	    if (current_tb->pieces[en_passant_pawn].color == WHITE)
+	    if (current_tb->pieces[en_passant_pawn].color == PieceColor::White)
 		square = position.piece_position[en_passant_pawn] - 16;
 	    else
 		square = position.piece_position[en_passant_pawn] + 16;
@@ -11977,7 +11885,7 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
     /* foreach (mobile piece of player NOT TO PLAY) { */
 
-    for (piece = 0; piece < current_tb->num_pieces; piece++) {
+    for (int piece = 0; piece < current_tb->num_pieces; piece++) {
 
 	/* We've moving BACKWARDS in the game, so we want the pieces of the player who is NOT TO
 	 * PLAY here - this is the LAST move we're considering, not the next move.
@@ -11986,82 +11894,57 @@ void back_propagate_index_within_table(index_t index, int reflection)
 	if (current_tb->pieces[piece].color != position.side_to_move)
 	    continue;
 
-	origin_square = position.piece_position[piece];
+	square_t origin_square = position.piece_position[piece];
 
-	if (current_tb->pieces[piece].piece_type != PAWN) {
+	for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
+				    current_tb->pieces[piece].color,
+				    origin_square,
+				    Movement2::Backward, Movement2::NonCapture)) {
 
-	    for (dir = 0; dir < number_of_movement_directions[current_tb->pieces[piece].piece_type]; dir++) {
+	    /* What about captures?  Well, first of all, there are no captures here!  We're moving
+	     * BACKWARDS in the game... and pieces don't appear out of thin air.  Captures are
+	     * handled by back-propagation from futurebases, not here in the movement code.  The
+	     * piece moving had to come from somewhere, and that somewhere will now be an empty
+	     * square, so once we've hit another piece along a movement vector, there's absolutely
+	     * no need to consider anything further.
+	     */
 
-		/* What about captures?  Well, first of all, there are no captures here!  We're
-		 * moving BACKWARDS in the game... and pieces don't appear out of thin air.
-		 * Captures are handled by back-propagation from futurebases, not here in the
-		 * movement code.  The piece moving had to come from somewhere, and that somewhere
-		 * will now be an empty square, so once we've hit another piece along a movement
-		 * vector, there's absolutely no need to consider anything further.
-		 */
+	    for (auto &movement : dir) {
 
-		for (movementptr = movements[current_tb->pieces[piece].piece_type][origin_square][dir];
-		     (movementptr->vector & position.board_vector) == 0;
-		     movementptr++) {
-
-		    /* We never back out into a restricted position (obviously) */
-
-		    if (! (current_tb->pieces[piece].semilegal_squares & movementptr->vector)) continue;
-
-		    /* Back stepping a half move here involves several things: flipping the
-		     * side-to-move flag, clearing any en passant pawns into regular pawns, moving
-		     * the piece (backwards), and considering a bunch of additional positions
-		     * identical to the base position except that a single one of the pawns on the
-		     * fourth or fifth ranks was capturable en passant.
-		     *
-		     * Of course, the only way we could have gotten an en passant pawn is if THIS
-		     * MOVE created it.  Since this isn't a pawn move, that can't happen.  Checking
-		     * additional en passant positions is taken care of in
-		     * propagate_one_move_within_table()
-		     */
-
-		    local_position_t new_position = position;
-
-		    new_position.move_piece(piece, movementptr->square);
-
-		    propagate_one_move_within_table(current_tb, index, &new_position);
-		}
-	    }
-
-	} else {
-
-	    /* Usual special case for pawns */
-
-	    for (movementptr = normal_pawn_movements_bkwd[origin_square][current_tb->pieces[piece].color];
-		 (movementptr->vector & position.board_vector) == 0;
-		 movementptr++) {
+		if ((position.board_vector & BITVECTOR(movement)) != 0) break;
 
 		/* We never back out into a restricted position (obviously) */
 
-		if (! (current_tb->pieces[piece].semilegal_squares & movementptr->vector)) continue;
+		if (! (current_tb->pieces[piece].semilegal_squares & BITVECTOR(movement))) continue;
 
-		/* En passant.
+		/* Back stepping a half move here involves several things: flipping the side-to-move
+		 * flag, clearing any en passant pawns into regular pawns, moving the piece
+		 * (backwards), and considering a bunch of additional positions identical to the
+		 * base position except that a single one of the pawns on the fourth or fifth ranks
+		 * was capturable en passant.
+		 *
+		 * En passant.
 		 *
 		 * The only way we could have gotten an en passant pawn is if THIS MOVE created it.
 		 * We handle that as a special case above, so we shouldn't have to worry about
 		 * clearing en passant pawns here - there should be none.
 		 *
-		 * We're considering a position without en passant set, but from which a backwards
-		 * double pawn move is possible.  We want to know if it has a matching position with
-		 * en passant set.  If so, we do nothing here, since the double pawn move will be
-		 * handled by the en passant position.  If not, we process the double pawn move
-		 * here.
+		 * However, we may be considering a position without en passant set, but from which
+		 * a backwards double pawn move is possible.  We want to know if it has a matching
+		 * position with en passant set.  If so, we do nothing here, since the double pawn
+		 * move will be handled by the en passant code above.  If not, we process the double
+		 * pawn move here.
 		 *
 		 * Checking additional en passant positions is taken care of in
 		 * propagate_one_move_within_table()
 		 */
 
-		if (((movementptr->square - origin_square) == 16)
-		    || ((movementptr->square - origin_square) == -16)) {
+		if ((current_tb->pieces[piece].piece_type == PieceType::Pawn)
+		    && (abs(movement - origin_square) == 16)) {
 
 		    local_position_t new_position = position;
 
-		    if (new_position.side_to_move == WHITE) {
+		    if (new_position.side_to_move == PieceColor::White) {
 			new_position.set_en_passant_square(origin_square - 8);
 		    } else {
 			new_position.set_en_passant_square(origin_square + 8);
@@ -12075,11 +11958,12 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 		local_position_t new_position = position;
 
-		new_position.move_piece(piece, movementptr->square);
+		new_position.move_piece(piece, movement);
 
 		propagate_one_move_within_table(current_tb, index, &new_position);
 	    }
 	}
+
     }
 }
 
@@ -12102,38 +11986,60 @@ void back_propagate_index_within_table(index_t index, int reflection)
  * during generation, so they're not as important.
  */
 
-uint64_t board_mask[7][64][64];
+//board_mask[7][64][64];
+
+std::map<PieceType, uint64_t[64][64]> board_mask;
+std::map<PieceColor, bool[64][64]> pawn_board_mask;
 
 void initialize_board_masks(void)
 {
     /* Initialize entire array with ALL_ONES_BITVECTOR */
-    memset(board_mask, 0xff, sizeof(board_mask));
+    for (square_t A = 0; A < 64; A ++) {
+	for (square_t B = 0; B < 64; B ++) {
+	    for (auto piece : AllPieceTypes) {
+		board_mask[piece][A][B] = ALL_ONES_BITVECTOR;
+	    }
+	    for (auto color : BothColors) {
+		pawn_board_mask[color][A][B] = false;
+	    }
+	}
+    }
 
-    for (int piece = KING; piece <= PAWN+1; piece++) {
+    for (int piece_square = 0; piece_square < 64; piece_square ++) {
 
-	for (int piece_square = 0; piece_square < 64; piece_square ++) {
+	for (auto piece : AllPieceTypes) {
 
-	    if (piece < PAWN) {
+	    if (piece != PieceType::Pawn) {
 
-		for (int dir = 0; dir < number_of_movement_directions[piece]; dir++) {
+		for (auto &dir : movements3(piece, PieceColor::White,
+					    piece_square,
+					    Movement2::Forward, Movement2::Capture)) {
 
 		    uint64_t mask = 0;
 
-		    for (auto movementptr = movements[piece][piece_square][dir];
-			 movementptr->square != -1; movementptr++) {
+		    for (auto &movement : dir) {
 
-			board_mask[piece][piece_square][movementptr->square] = mask;
+			board_mask[piece][piece_square][movement] = mask;
 
-			mask |= movementptr->vector;
+			mask |= BITVECTOR(movement);
+
 		    }
-
 		}
 
 	    } else {
-		for (auto movementptr = capture_pawn_movements[piece_square][piece - PAWN];
-		     movementptr->square != -1; movementptr++) {
 
-		    board_mask[piece][piece_square][movementptr->square] = 0;
+		for (auto color : BothColors) {
+
+		    for (auto &dir : movements3(piece, color,
+						piece_square,
+						Movement2::Forward, Movement2::Capture)) {
+
+			for (auto &movement : dir) {
+
+			    pawn_board_mask[color][piece_square][movement] = true;
+
+			}
+		    }
 		}
 	    }
 	}
@@ -12142,7 +12048,7 @@ void initialize_board_masks(void)
 
 bool PTM_in_check(const tablebase_t *tb, const local_position_t *position)
 {
-    int king_position = position->piece_position[(position->side_to_move == WHITE) ? tb->white_king : tb->black_king];
+    int king_position = position->piece_position[(position->side_to_move == PieceColor::White) ? tb->white_king : tb->black_king];
 
     /* The concept of check doesn't exist in suicide - kings are normal pieces */
 
@@ -12158,15 +12064,15 @@ bool PTM_in_check(const tablebase_t *tb, const local_position_t *position)
 
 	if (position->piece_position[piece] == ILLEGAL_POSITION) continue;
 
-	if (tb->pieces[piece].piece_type != PAWN) {
+	if (tb->pieces[piece].piece_type != PieceType::Pawn) {
 
 	    if ((board_mask[tb->pieces[piece].piece_type][position->piece_position[piece]][king_position]
 		 & position->board_vector) == 0) return true;
 
 	} else {
 
-	    if (board_mask[tb->pieces[piece].piece_type + tb->pieces[piece].color][position->piece_position[piece]][king_position]
-		== 0) return true;
+	    if (pawn_board_mask[tb->pieces[piece].color][position->piece_position[piece]][king_position])
+		return true;
 
 	}
     }
@@ -12176,51 +12082,37 @@ bool PTM_in_check(const tablebase_t *tb, const local_position_t *position)
 
 bool global_PTM_in_check(global_position_t *position)
 {
-    int piece_type;
-    int piece_color = 1 - position->side_to_move;
-    int square;
-    int dir;
-    struct movement *movementptr;
-
     if (position->variant == VARIANT_SUICIDE) return false;
 
-    for (square = 0; square < 64; square ++) {
+    for (square_t square = 0; square < 64; square ++) {
+
+	if (position->board[square] == 0) continue;
+
+	auto const pair = global_pieces2.at(position->board[square]);
 
 	/* We only want to consider pieces of the side which is NOT to move... */
 
-	for (piece_type = 0; piece_type < NUM_PIECES; piece_type ++) {
-	    if (position->board[square] == global_pieces[piece_color][piece_type]) break;
-	}
-	if (piece_type == NUM_PIECES) continue;
+	if (position->side_to_move == pair.first) continue;
 
-	if (piece_type != PAWN) {
+	const PieceType piece_type = pair.second;
 
-	    for (dir = 0; dir < number_of_movement_directions[piece_type]; dir++) {
+	for (auto &dir : movements3(piece_type, pair.first, square,
+				    Movement2::Forward, Movement2::Capture)) {
 
-		for (movementptr = movements[piece_type][square][dir];
-		     ((movementptr->square != -1) && (position->board[movementptr->square] == 0));
-		     movementptr++) {
-		}
+	    for (auto &movement : dir) {
 
 		/* Now check to see if the movement ended because we hit against the king
 		 * of the opposite color.  If so, we're in check.
 		 */
 
-		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'K'))
+		if ((position->side_to_move == PieceColor::White) && (position->board[movement] == 'K'))
 		    return true;
-		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'k'))
+		if ((position->side_to_move == PieceColor::Black) && (position->board[movement] == 'k'))
 		    return true;
+		
+		/* Otherwise, if we hit a piece, end this movement and go on to the next one */
 
-	    }
-	} else {
-	    for (movementptr = capture_pawn_movements[square][piece_color];
-		 movementptr->square != -1;
-		 movementptr++) {
-
-		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'K'))
-		    return true;
-		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'k'))
-		    return true;
+		if (position->board[movement] != 0) break;
 
 	    }
 	}
@@ -12229,57 +12121,43 @@ bool global_PTM_in_check(global_position_t *position)
     return false;
 }
 
+/* XXX very similar to global_PTM_in_check */
+
 bool global_PNTM_in_check(global_position_t *position)
 {
-    int piece_type;
-    int piece_color = position->side_to_move;
-    int square;
-    int dir;
-    struct movement *movementptr;
-
     if (position->variant == VARIANT_SUICIDE) return false;
 
-    for (square = 0; square < 64; square ++) {
+    for (square_t square = 0; square < 64; square ++) {
+
+	if (position->board[square] == 0) continue;
+
+	auto const pair = global_pieces2.at(position->board[square]);
 
 	/* We only want to consider pieces of the side which is to move... */
 
-	for (piece_type = 0; piece_type < NUM_PIECES; piece_type ++) {
-	    if (position->board[square] == global_pieces[piece_color][piece_type]) break;
-	}
-	if (piece_type == NUM_PIECES) continue;
+	if (position->side_to_move != pair.first) continue;
 
-	if (piece_type != PAWN) {
+	const PieceType piece_type = pair.second;
 
-	    for (dir = 0; dir < number_of_movement_directions[piece_type]; dir++) {
+	for (auto &dir : movements3(piece_type, pair.first, square,
+				    Movement2::Forward, Movement2::Capture)) {
 
-		for (movementptr = movements[piece_type][square][dir];
-		     ((movementptr->square != -1) && (position->board[movementptr->square] == 0));
-		     movementptr++) {
-		}
+	    for (auto &movement : dir) {
 
 		/* Now check to see if the movement ended because we hit against the king
 		 * of the opposite color.  If so, we're in check.
 		 */
 
-		if (movementptr->square != -1) {
-		    if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'k'))
-			return true;
-		    if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'K'))
-			return true;
-		}
-
-	    }
-	} else {
-	    for (movementptr = capture_pawn_movements[square][piece_color];
-		 movementptr->square != -1;
-		 movementptr++) {
-
-		if ((position->side_to_move == WHITE) && (position->board[movementptr->square] == 'k'))
+		if ((position->side_to_move == PieceColor::White) && (position->board[movement] == 'k'))
 		    return true;
-		if ((position->side_to_move == BLACK) && (position->board[movementptr->square] == 'K'))
+		if ((position->side_to_move == PieceColor::Black) && (position->board[movement] == 'K'))
 		    return true;
 
+		/* Otherwise, if we hit a piece, end this movement and go on to the next one */
+
+		if (position->board[movement] != 0) break;
 	    }
+
 	}
     }
 
@@ -12288,52 +12166,32 @@ bool global_PNTM_in_check(global_position_t *position)
 
 bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position)
 {
-    int piece;
-    int dir;
-    int origin_square;
-    struct movement *movementptr;
-
     if (tb->variant == VARIANT_SUICIDE) return false;
 
-    for (piece = 0; piece < tb->num_pieces; piece++) {
+    for (int piece = 0; piece < tb->num_pieces; piece++) {
 
 	/* We only want to consider pieces of the side which is to move... */
 
 	if (tb->pieces[piece].color != position->side_to_move) continue;
 
-	origin_square = position->piece_position[piece];
+	for (auto &dir : movements3(tb->pieces[piece].piece_type,
+				    tb->pieces[piece].color,
+				    position->piece_position[piece],
+				    Movement2::Forward, Movement2::Capture)) {
 
-	if (tb->pieces[piece].piece_type != PAWN) {
-
-	    for (dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
-
-		for (movementptr = movements[tb->pieces[piece].piece_type][origin_square][dir];
-		     (movementptr->vector & position->board_vector) == 0;
-		     movementptr++) {
-		}
+	    for (auto &movement : dir) {
 
 		/* Now check to see if the movement ended because we hit against the king
 		 * of the opposite color.  If so, we're in check.
 		 */
 
-		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[tb->black_king])) return true;
+		if ((position->side_to_move == PieceColor::White)
+		    && (movement == position->piece_position[tb->black_king])) return true;
 
-		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[tb->white_king])) return true;
+		if ((position->side_to_move == PieceColor::Black)
+		    && (movement == position->piece_position[tb->white_king])) return true;
 
-	    }
-	} else {
-	    for (movementptr = capture_pawn_movements[origin_square][tb->pieces[piece].color];
-		 movementptr->square != -1;
-		 movementptr++) {
-
-		if ((position->side_to_move == WHITE)
-		    && (movementptr->square == position->piece_position[tb->black_king])) return true;
-
-		if ((position->side_to_move == BLACK)
-		    && (movementptr->square == position->piece_position[tb->white_king])) return true;
-
+		if (position->board_vector & BITVECTOR(movement)) break;
 	    }
 	}
     }
@@ -12384,6 +12242,463 @@ bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position)
  * than creating a new position from scratch.
  */
 
+class move {
+
+    PieceType piece_type;
+    square_t origin_square;
+    square_t destination_square;
+    PieceType promotion_type;
+
+public:
+
+    bool is_capture;
+    bool is_promotion;
+
+    bool is_futuremove;
+    int futuremove;
+
+    move(PieceType piece_type, square_t origin_square, square_t destination_square)
+	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
+	  is_futuremove(false), is_capture(false), is_promotion(false)
+    { }
+
+    move(PieceType piece_type, square_t origin_square, square_t destination_square, int futuremove)
+	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
+	  is_futuremove(true), is_capture(false), is_promotion(false),
+	  futuremove(futuremove)
+    { }
+
+    move(PieceType piece_type, square_t origin_square, square_t destination_square, PieceType promotion_type)
+	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
+	  is_futuremove(true), is_capture(false), is_promotion(true),
+	  promotion_type(promotion_type)
+    { }
+
+    move(PieceType piece_type, square_t origin_square, square_t destination_square, PieceType promotion_type, int futuremove)
+	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
+	  is_futuremove(true), is_capture(false), is_promotion(true),
+	  promotion_type(promotion_type), futuremove(futuremove)
+    { }
+
+    move(PieceType piece_type, square_t origin_square, square_t destination_square, bool is_capture)
+	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
+	  is_futuremove(true), is_capture(is_capture), is_promotion(false)
+    { }
+
+    move(PieceType piece_type, square_t origin_square, square_t destination_square, bool is_capture, int futuremove)
+	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
+	  is_futuremove(true), is_capture(is_capture), is_promotion(false),
+	  futuremove(futuremove)
+    { }
+
+    move(PieceType piece_type, square_t origin_square, square_t destination_square, bool is_capture, PieceType promotion_type)
+	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
+	  is_futuremove(true), is_capture(is_capture), is_promotion(true),
+	  promotion_type(promotion_type)
+    { }
+
+    move(PieceType piece_type, square_t origin_square, square_t destination_square, bool is_capture, PieceType promotion_type, int futuremove)
+	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
+	  is_futuremove(true), is_capture(is_capture), is_promotion(true),
+	  promotion_type(promotion_type), futuremove(futuremove)
+    { }
+
+    operator std::string() const {
+	return piece_char[piece_type] + algebraic_notation(origin_square)
+	    + (is_capture ? "x" : "") + algebraic_notation(destination_square)
+	    + (is_promotion ? (std::string)"=" + piece_char[promotion_type] : "");
+    }
+
+    const char * c_str() const {
+	return ((std::string)(*this)).c_str();
+    }
+};
+
+/* XXX perhaps collapse the next two functions together using templates  */
+
+/* This is a special exception value for PNTM mated positions.
+ *
+ * Since detecting a PNTM mate allows us to break out of the move generator and flag the position
+ * invalid, this exception probably doesn't cost much of a performance penalty vs continuing
+ * to run the loop.
+ */
+
+class PNTM_mated : public std::exception { };
+
+std::vector<move> generate_moves(const local_position_t &position)
+{
+    std::vector<move> result;
+    const tablebase_t *tb = position.tb;
+
+    for (int piece = 0; piece < tb->num_pieces; piece++) {
+
+	/* We only want to consider pieces of the side which is to move... */
+
+	if (tb->pieces[piece].color != position.side_to_move) continue;
+
+	int origin_square = position.piece_position[piece];
+
+	for (auto &dir : movements3(tb->pieces[piece].piece_type,
+				    tb->pieces[piece].color,
+				    position.piece_position[piece],
+				    Movement2::Forward, Movement2::AllMoves)) {
+
+	    for (auto &movement : dir) {
+
+		bool is_promotion = ((tb->pieces[piece].piece_type == PieceType::Pawn)
+				     && ((ROW(movement) == 7) || (ROW(movement) == 0)));
+
+		bool is_pawn_capture = ((tb->pieces[piece].piece_type == PieceType::Pawn)
+					&& (COL(movement) != COL(position.piece_position[piece])));
+
+		bool is_non_capture = ((BITVECTOR(movement) & position.board_vector) == 0) && !is_pawn_capture;
+
+		bool is_normal_capture = ((tb->pieces[piece].piece_type != PieceType::Pawn) || is_pawn_capture)
+		    && ((BITVECTOR(movement) & position.board_vector) != 0)
+		    && ((BITVECTOR(movement) & position.PTM_vector) == 0);
+
+		bool is_en_passant_capture = is_pawn_capture
+		    && (movement == position.en_passant_square);
+
+		if (is_non_capture) {
+
+		    /* Non-capture case: move the piece, so we can test the new position for check */
+
+		    local_position_t new_position = position;
+
+		    new_position.move_piece(piece, movement);
+
+		    /* If we're NOT moving into check AND the piece is moving outside its legal
+		     * squares AND we can't permute the pieces into a position where everything is
+		     * legal, we regard this as a futuremove (since it will require back prop from
+		     * futurebases).  We could just check if local_position_to_index() returns a
+		     * valid index, but checking the legal_squares bitvector first makes this a
+		     * little faster.
+		     */
+
+		    if (! PTM_in_check(tb, &new_position)) {
+
+			/* If the piece is a pawn and we're moving to the last rank, then this has
+			 * to be a promotion move, in fact, promotion_possibilities moves.  (queen,
+			 * knight, maybe rook and bishop, king for suicide).  As such, they will
+			 * require back propagation from futurebases and must therefore be flagged
+			 * as futuremoves.
+			 */
+
+			if (is_promotion) {
+
+			    for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
+
+				result.push_back(move(tb->pieces[piece].piece_type, origin_square, movement,
+						      promoted_pieces[promotion], promotions[piece][promotion]));
+
+			    }
+
+			} else if (!(tb->pieces[piece].legal_squares & BITVECTOR(movement))
+			    && (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
+
+			    result.push_back(move(tb->pieces[piece].piece_type, origin_square, movement,
+						  futuremoves[piece][movement]));
+
+			} else {
+
+			    result.push_back(move(tb->pieces[piece].piece_type, origin_square, movement));
+
+			}
+
+		    }
+
+		}
+
+		if (is_normal_capture) {
+
+		    /* Capture case.
+		     *
+		     * Check to see if the movement ended because we hit against another piece of
+		     * the opposite color.  If so, add another move for the capture.  As before,
+		     * ignore moves into check.
+		     *
+		     * Actually, we check to see that we DIDN'T hit a piece of our OWN color.  The
+		     * difference is that this way we don't register a capture if we hit the end of
+		     * the list of movements in a given direction.
+		     *
+		     * We also check to see if the capture was against the enemy king! in which case
+		     * this position is a PNTM-mated.
+		     */
+
+		    int captured_piece;
+
+		    for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+
+			if (movement == position.piece_position[captured_piece]) {
+
+			    if ((captured_piece == tb->black_king) || (captured_piece == tb->white_king)) {
+				throw PNTM_mated();
+			    }
+
+			    local_position_t new_position = position;
+
+			    new_position.capture_piece(piece, captured_piece);
+
+			    if (! PTM_in_check(tb, &new_position)) {
+
+				if (! is_promotion) {
+
+				    result.push_back(move(tb->pieces[piece].piece_type, origin_square, movement,
+							  true, futurecaptures[piece][captured_piece]));
+
+				} else {
+
+				    /* Promotion capture case
+				     *
+				     * In this part of the code, we're just counting forward moves, and
+				     * all captures are futurebase moves, so the only difference to us
+				     * whether this is a promotion move or not is how many futuremoves
+				     * get recorded.
+				     */
+
+
+				    for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
+
+					result.push_back(move(tb->pieces[piece].piece_type, origin_square, movement,
+							      true, promoted_pieces[promotion], promotion_captures[piece][captured_piece][promotion]));
+				    }
+				}
+			    }
+
+			    break;
+			}
+		    }
+
+		    if (captured_piece == tb->num_pieces) {
+			fatal("Couldn't match capture!\n");
+		    }
+		}
+
+		if (is_en_passant_capture) {
+
+		    int captured_piece;
+
+		    /* XXX recording en passant piece in position structure would avoid this loop */
+
+		    for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+
+			if (movement ==
+			    (position.piece_position[captured_piece]
+			     + ((position.side_to_move == PieceColor::White) ? 8 : -8))) {
+
+			    local_position_t new_position = position;
+
+			    new_position.move_piece(captured_piece, position.en_passant_square);
+
+			    new_position.capture_piece(piece, captured_piece);
+
+			    if (! PTM_in_check(tb, &new_position)) {
+
+				result.push_back(move(tb->pieces[piece].piece_type, origin_square, movement,
+						      true, futurecaptures[piece][captured_piece]));
+
+			    }
+
+			    break;
+			}
+		    }
+
+		    if (captured_piece == tb->num_pieces) {
+			fatal("Couldn't match en passant capture!\n");
+		    }
+		}
+
+		/* If we hit a piece (either a capture or our own piece), end this direction of movement */
+
+		if (! is_non_capture) break;
+	    }
+	}
+    }
+
+    return result;
+}
+
+std::vector<std::pair<move, global_position_t>> generate_moves(const global_position_t &position)
+{
+    std::vector<std::pair<move, global_position_t>> result;
+
+    for (square_t origin_square = 0; origin_square < 64; origin_square ++) {
+
+	if (position.board[origin_square] == 0) continue;
+
+	PieceColor piece_color = global_pieces2.at(position.board[origin_square]).first;
+	PieceType piece_type = global_pieces2.at(position.board[origin_square]).second;
+
+	/* We only want to consider pieces of the side which is to move... */
+
+	if (piece_color != position.side_to_move) continue;
+
+	for (auto &dir : movements3(piece_type, piece_color, origin_square,
+				    Movement2::Forward, Movement2::AllMoves)) {
+
+	    for (auto &movement : dir) {
+
+		bool is_promotion = ((piece_type == PieceType::Pawn)
+				     && ((ROW(movement) == 7) || (ROW(movement) == 0)));
+
+		bool is_pawn_capture = ((piece_type == PieceType::Pawn)
+					&& (COL(movement) != COL(origin_square)));
+
+		bool is_non_capture = (position.board[movement] == 0) && !is_pawn_capture;
+
+		bool is_normal_capture = ((piece_type != PieceType::Pawn) || is_pawn_capture)
+		    && (position.board[movement] != 0)
+		    && (global_pieces2.at(position.board[movement]).first != position.side_to_move);
+
+		bool is_en_passant_capture = is_pawn_capture
+		    && (movement == position.en_passant_square);
+
+		if (is_non_capture) {
+
+		    /* Non-capture case: move the piece, so we can test the new position for check */
+
+		    global_position_t new_position = position;
+
+		    new_position.flip_side_to_move();
+
+		    if ((piece_type == PieceType::Pawn) && (abs(movement - origin_square) == 16)) {
+			new_position.set_en_passant_square((movement + origin_square)/2);
+		    } else {
+			new_position.clear_en_passant_square();
+		    }
+
+		    new_position.move_piece(origin_square, movement);
+
+		    /* If we're NOT moving into check AND the piece is moving outside its legal
+		     * squares AND we can't permute the pieces into a position where everything is
+		     * legal, we regard this as a futuremove (since it will require back prop from
+		     * futurebases).  We could just check if local_position_to_index() returns a
+		     * valid index, but checking the legal_squares bitvector first makes this a
+		     * little faster.
+		     */
+
+		    if (! global_PNTM_in_check(&new_position)) {
+
+			/* If the piece is a pawn and we're moving to the last rank, then this has
+			 * to be a promotion move, in fact, promotion_possibilities moves.  (queen,
+			 * knight, maybe rook and bishop, king for suicide).  As such, they will
+			 * require back propagation from futurebases and must therefore be flagged
+			 * as futuremoves.
+			 */
+
+			if (is_promotion) {
+
+			    for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
+
+				place_piece_in_global_position(&new_position, movement,
+							       piece_color, promoted_pieces[promotion]);
+
+				result.push_back(std::make_pair(move(piece_type, origin_square, movement,
+								     promoted_pieces[promotion]),
+								new_position));
+
+			    }
+
+			} else {
+
+			    result.push_back(std::make_pair(move(piece_type, origin_square, movement),
+							    new_position));
+
+			}
+
+		    }
+
+		}
+
+		if (is_normal_capture) {
+
+		    /* Capture case.
+		     *
+		     * We also check to see if the capture was against the enemy king in which case
+		     * this position is a PNTM-mated.
+		     */
+
+		    PieceColor captured_piece_color = global_pieces2.at(position.board[movement]).first;
+		    PieceType captured_piece_type = global_pieces2.at(position.board[movement]).second;
+
+		    if (captured_piece_type == PieceType::King) {
+			throw PNTM_mated();
+		    }
+
+		    global_position_t new_position = position;
+
+		    new_position.flip_side_to_move();
+
+		    new_position.clear_en_passant_square();
+
+		    new_position.capture_piece(origin_square, movement);
+
+		    if (! global_PNTM_in_check(&new_position)) {
+
+			if (! is_promotion) {
+
+			    result.push_back(std::make_pair(move(piece_type, origin_square, movement, true),
+							    new_position));
+
+			} else {
+
+			    /* Promotion capture case
+			     *
+			     * In this part of the code, we're just counting forward moves, and
+			     * all captures are futurebase moves, so the only difference to us
+			     * whether this is a promotion move or not is how many futuremoves
+			     * get recorded.
+			     */
+
+
+			    for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
+
+				place_piece_in_global_position(&new_position, movement,
+							       piece_color, promoted_pieces[promotion]);
+
+				result.push_back(std::make_pair(move(piece_type, origin_square, movement,
+								     true, promoted_pieces[promotion]),
+								new_position));
+			    }
+			}
+		    }
+
+		    break;
+		}
+
+		if (is_en_passant_capture) {
+
+		    global_position_t new_position = position;
+
+		    new_position.clear_en_passant_square();
+
+		    new_position.move_piece(movement + ((position.side_to_move == PieceColor::White) ? -8 : 8), movement);
+
+		    new_position.capture_piece(origin_square, movement);
+
+		    new_position.flip_side_to_move();
+
+		    if (! global_PNTM_in_check(&new_position)) {
+
+			result.push_back(std::make_pair(move(piece_type, origin_square, movement, true),
+							new_position));
+
+		    }
+		}
+
+		/* If we hit a piece (either a capture or our own piece), end this direction of movement */
+
+		if (!is_non_capture) break;
+	    }
+
+	}
+
+    }
+
+    return result;
+}
+
 futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t index, const local_position_t &position)
 {
     /* Now we need to count moves.  FORWARD moves. */
@@ -12405,370 +12720,59 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
      * We do have to count one or two possible extra en passant pawn captures, though...
      */
 
-    for (int piece = 0; piece < tb->num_pieces; piece++) {
+    try {
+	for (auto &move : generate_moves(position)) {
 
-	/* We only want to consider pieces of the side which is to move... */
-
-	if (tb->pieces[piece].color != position.side_to_move) continue;
-
-	int origin_square = position.piece_position[piece];
-
-	if (tb->pieces[piece].piece_type != PAWN) {
-
-	    for (int dir = 0; dir < number_of_movement_directions[tb->pieces[piece].piece_type]; dir++) {
-
-		struct movement * movementptr;
-
-		for (movementptr = movements[tb->pieces[piece].piece_type][origin_square][dir];
-		     (movementptr->vector & position.board_vector) == 0;
-		     movementptr++) {
-
-		    /* Move the piece, so we can test the new position for check */
-
-		    local_position_t new_position = position;
-
-		    new_position.move_piece(piece, movementptr->square);
-
-		    /* If we're NOT moving into check AND the piece is moving outside its legal
-		     * squares AND we can't permute the pieces into a position where everything is
-		     * legal, we regard this as a futuremove (since it will require back prop from
-		     * futurebases).  We could just check if local_position_to_index() returns a
-		     * valid index, but checking the legal_squares bitvector first makes this a
-		     * little faster.
-		     */
-
-		    if (! PTM_in_check(tb, &new_position)) {
-
-			if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-			    && (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
-
-			    if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
-				/* it's a discard - decrement movecnt so net change is zero */
-				movecnt --;
-			    } else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
-				concede_prune = true;
-			    } else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
-				resign_prune = true;
-			    } else if (futuremoves[piece][movementptr->square] < 0) {
-				global_position_t global;
-				index_to_global_position(tb, index, &global);
-				fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
-				      piece_char[tb->pieces[piece].piece_type],
-				      'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-			    } else if (futurevector
-				       & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				fatal("Duplicate futuremove!\n");
-			    } else {
-				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-				futuremovecnt ++;
-			    }
-			}
-
-			movecnt ++;
-		    }
-
-		}
-
-		/* Now check to see if the movement ended because we hit against another piece of
-		 * the opposite color.  If so, add another move for the capture.  As before, ignore
-		 * moves into check.
-		 *
-		 * Actually, we check to see that we DIDN'T hit a piece of our OWN color.  The
-		 * difference is that this way we don't register a capture if we hit the end of the
-		 * list of movements in a given direction.
-		 *
-		 * We also check to see if the capture was against the enemy king! in which case
-		 * this position is a PNTM-mated.
-		 */
-
-		if ((movementptr->vector & position.PTM_vector) == 0) {
-
-		    int captured_piece;
-
-		    for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
-			if (movementptr->square == position.piece_position[captured_piece]) {
-			    if ((captured_piece == tb->black_king) || (captured_piece == tb->white_king)) {
-				entriesTable->initialize_entry_with_PNTM_mated(index);
-				return 0;
-			    }
-
-			    local_position_t new_position = position;
-
-			    new_position.capture_piece(piece, captured_piece);
-
-			    if (! PTM_in_check(tb, &new_position)) {
-
-				if (futurecaptures[piece][captured_piece] == DISCARD_FUTUREMOVE) {
-				    /* discard prune - do nothing */
-				} else if (futurecaptures[piece][captured_piece] == CONCEDE_FUTUREMOVE) {
-				    concede_prune = true;
-				} else if (futurecaptures[piece][captured_piece] == RESIGN_FUTUREMOVE) {
-				    resign_prune = true;
-				} else if (futurecaptures[piece][captured_piece] < 0) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->pieces[piece].piece_type],
-					  piece_char[tb->pieces[captured_piece].piece_type]);
-				} else if (futurevector & FUTUREVECTOR(futurecaptures[piece][captured_piece])) {
-				    fatal("Duplicate futuremove!\n");
-				} else {
-				    capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
-				    futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
-				    futuremovecnt ++;
-				    capturecnt ++;
-				    movecnt ++;
-				}
-			    }
-
-			    break;
-			}
-		    }
-		    if (captured_piece == tb->num_pieces) {
-			fatal("Couldn't match capture!\n");
-		    }
-		}
+	    if (index == debug_move) {
+		info("%s ", move.c_str());
 	    }
 
-	} else {
+	    movecnt ++;
 
-	    /* Pawns, as always, are special */
-
-	    for (auto movementptr = normal_pawn_movements[origin_square][tb->pieces[piece].color];
-		 (movementptr->vector & position.board_vector) == 0;
-		 movementptr++) {
-
-		local_position_t new_position = position;
-
-		new_position.move_piece(piece, movementptr->square);
-
-		/* What about pawn promotions here?  Well, we're looking to see if the moving side
-		 * is in check after the pawn move, and the only way the pawn could affect this is
-		 * by blocking the check.  It still blocks no matter what it promotes into, so we
-		 * don't have to distinguish between promotion and non-promotion moves here.
-		 */
-
-		if (! PTM_in_check(tb, &new_position)) {
-
-		    /* If the piece is a pawn and we're moving to the last rank, then this has to be
-		     * a promotion move, in fact, promotion_possibilities moves.  (queen, knight,
-		     * maybe rook and bishop, king for suicide).  As such, they will require back
-		     * propagation from futurebases and must therefore be flagged as futuremoves.
-		     */
-
-		    if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
-
-			for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
-
-			    if (promotions[piece][promotion] == DISCARD_FUTUREMOVE) {
-				/* discard prune - do nothing */
-			    } else if (promotions[piece][promotion] == CONCEDE_FUTUREMOVE) {
-				concede_prune = true;
-			    } else if (promotions[piece][promotion] == RESIGN_FUTUREMOVE) {
-				resign_prune = true;
-			    } else if (promotions[piece][promotion] < 0) {
-				global_position_t global;
-				index_to_global_position(tb, index, &global);
-				fatal("No futuremove: %s %c=%c\n", global_position_to_FEN(&global),
-				      piece_char[tb->pieces[piece].piece_type], piece_char[promoted_pieces[promotion]]);
-			    } else if (futurevector & FUTUREVECTOR(promotions[piece][promotion])) {
-				global_position_t global;
-				index_to_global_position(tb, index, &global);
-				fatal("Duplicate futuremove: %s %s\n", global_position_to_FEN(&global),
-				      movestr[tb->pieces[piece].color][promotions[piece][promotion]]);
-			    } else {
-				futurevector |= FUTUREVECTOR(promotions[piece][promotion]);
-				futuremovecnt ++;
-				movecnt ++;
-			    }
-			}
-
-		    } else {
-
-			/* If a piece is moving outside its legal squares AND we can't permute the
-			 * pieces into a position where everything is legal, we regard this as a
-			 * futuremove (since it will require back prop from futurebases).
-			 */
-
-			if (!(tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-			    && (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
-
-			    if (futuremoves[piece][movementptr->square] == DISCARD_FUTUREMOVE) {
-				/* discard prune */
-				movecnt --;
-			    } else if (futuremoves[piece][movementptr->square] == CONCEDE_FUTUREMOVE) {
-				concede_prune = true;
-			    } else if (futuremoves[piece][movementptr->square] == RESIGN_FUTUREMOVE) {
-				resign_prune = true;
-			    } else if (futuremoves[piece][movementptr->square] < 0) {
-				global_position_t global;
-				index_to_global_position(tb, index, &global);
-				fatal("No futuremove: %s %c%c%c\n", global_position_to_FEN(&global),
-				      piece_char[tb->pieces[piece].piece_type],
-				      'a' + COL(movementptr->square), '1' + ROW(movementptr->square));
-			    } else if (futurevector
-				       & FUTUREVECTOR(futuremoves[piece][movementptr->square])) {
-				fatal("Duplicate futuremove!\n");
-			    } else {
-				futurevector |= FUTUREVECTOR(futuremoves[piece][movementptr->square]);
-				futuremovecnt ++;
-			    }
-			}
-
-			movecnt ++;
-		    }
+	    if (move.is_futuremove) {
+		if (move.futuremove == DISCARD_FUTUREMOVE) {
+		    /* it's a discard - decrement movecnt so net change is zero */
+		    movecnt --;
+		    /* discard prune - do nothing */
+		} else if (move.futuremove == CONCEDE_FUTUREMOVE) {
+		    concede_prune = true;
+		} else if (move.futuremove == RESIGN_FUTUREMOVE) {
+		    resign_prune = true;
+		} else if (move.futuremove < 0) {
+		    global_position_t global;
+		    index_to_global_position(tb, index, &global);
+		    fatal("No futuremove: %" PRIindex " %s %s\n", index, global_position_to_FEN(&global), move.c_str());
+		} else if (futurevector & FUTUREVECTOR(move.futuremove)) {
+		    global_position_t global;
+		    index_to_global_position(tb, index, &global);
+		    // fatal("Duplicate futuremove: %s %s\n", global_position_to_FEN(&global), move.c_str());
+		    fatal("Duplicate futuremove: %" PRIindex " %s %s\n", index, global_position_to_FEN(&global),
+			  movestr[position.side_to_move][move.futuremove]);
+		} else {
+		    futurevector |= FUTUREVECTOR(move.futuremove);
 		}
+		futuremovecnt ++;
 	    }
-
-
-	    /* Pawn captures.
-	     *
-	     * In this part of the code, we're just counting forward moves, and all captures are
-	     * futurebase moves, so the only difference to us whether this is a promotion move or
-	     * not is how many futuremoves get recorded.
-	     */
-
-	    struct movement * movementptr;
-
-	    for (movementptr = capture_pawn_movements[origin_square][tb->pieces[piece].color];
-		 movementptr->square != -1;
-		 movementptr++) {
-
-		/* If we're capturing to the last rank, then this has to be a promotion move, in
-		 * fact, promotion_possibilities moves.
-		 */
-
-		bool is_promotion_capture =
-		    ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0));
-
-		/* A special check for en passant captures.  */
-
-		if (movementptr->square == position.en_passant_square) {
-
-		    /* XXX record en_passant_pawn in local position to avoid this loop */
-
-		    for (int captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
-			//if ((i == tb->white_king) || (i == tb->black_king)) continue;
-			if (movementptr->square + (tb->pieces[piece].color == WHITE ? -8 : 8)
-			    == position.piece_position[captured_piece]) {
-
-			    local_position_t new_position = position;
-
-			    new_position.move_piece(captured_piece, position.en_passant_square);
-			    new_position.capture_piece(piece, captured_piece);
-
-			    if (! PTM_in_check(tb, &new_position)) {
-				if (futurecaptures[piece][captured_piece] == DISCARD_FUTUREMOVE) {
-				    /* discard prune - do nothing */
-				} else if (futurecaptures[piece][captured_piece] == CONCEDE_FUTUREMOVE) {
-				    concede_prune = true;
-				} else if (futurecaptures[piece][captured_piece] == RESIGN_FUTUREMOVE) {
-				    resign_prune = true;
-				} else if (futurecaptures[piece][captured_piece] < 0) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->pieces[piece].piece_type],
-					  piece_char[tb->pieces[captured_piece].piece_type]);
-				} else if (futurevector & FUTUREVECTOR(futurecaptures[piece][captured_piece])) {
-				    fatal("Duplicate futuremove!\n");
-				} else {
-				    capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
-				    futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
-				    futuremovecnt ++;
-				    capturecnt ++;
-				    movecnt ++;
-				}
-			    }
-
-			    break;
-			}
-		    }
-		    continue;
-		}
-
-		if (((movementptr->vector & position.board_vector) == 0)
-		    || ((movementptr->vector & position.PTM_vector) != 0)) continue;
-
-		int captured_piece;
-
-		for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
-		    if (movementptr->square == position.piece_position[captured_piece]) {
-			if ((captured_piece == tb->black_king) || (captured_piece == tb->white_king)) {
-			    entriesTable->initialize_entry_with_PNTM_mated(index);
-			    return 0;
-			}
-
-			local_position_t new_position = position;
-
-			new_position.capture_piece(piece, captured_piece);
-
-			if (! PTM_in_check(tb, &new_position)) {
-			    if (! is_promotion_capture) {
-				if (futurecaptures[piece][captured_piece] == DISCARD_FUTUREMOVE) {
-				    /* discard prune - do nothing */
-				} else if (futurecaptures[piece][captured_piece] == CONCEDE_FUTUREMOVE) {
-				    concede_prune = true;
-				} else if (futurecaptures[piece][captured_piece] == RESIGN_FUTUREMOVE) {
-				    resign_prune = true;
-				} else if (futurecaptures[piece][captured_piece] < 0) {
-				    global_position_t global;
-				    index_to_global_position(tb, index, &global);
-				    fatal("No futuremove: %s %cx%c\n", global_position_to_FEN(&global),
-					  piece_char[tb->pieces[piece].piece_type],
-					  piece_char[tb->pieces[captured_piece].piece_type]);
-				} else if (futurevector & FUTUREVECTOR(futurecaptures[piece][captured_piece])) {
-				    fatal("Duplicate futuremove!\n");
-				} else {
-				    capture_futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
-				    futurevector |= FUTUREVECTOR(futurecaptures[piece][captured_piece]);
-				    futuremovecnt ++;
-				    capturecnt ++;
-				    movecnt ++;
-				}
-			    } else {
-
-				for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
-
-				    if (promotion_captures[piece][captured_piece][promotion] == DISCARD_FUTUREMOVE) {
-					/* discard prune - do nothing */
-				    } else if (promotion_captures[piece][captured_piece][promotion] == CONCEDE_FUTUREMOVE) {
-					concede_prune = true;
-				    } else if (promotion_captures[piece][captured_piece][promotion] == RESIGN_FUTUREMOVE) {
-					resign_prune = true;
-				    } else if (promotion_captures[piece][captured_piece][promotion] < 0) {
-					global_position_t global;
-					index_to_global_position(tb, index, &global);
-					fatal("No futuremove: %s %cx%c=%c\n", global_position_to_FEN(&global),
-					      piece_char[tb->pieces[piece].piece_type],
-					      piece_char[tb->pieces[captured_piece].piece_type],
-					      piece_char[promoted_pieces[promotion]]);
-				    } else if (futurevector & FUTUREVECTOR(promotion_captures[piece][captured_piece][promotion])) {
-					fatal("Duplicate futuremove!\n");
-				    } else {
-					capture_futurevector |= FUTUREVECTOR(promotion_captures[piece][captured_piece][promotion]);
-					futurevector |= FUTUREVECTOR(promotion_captures[piece][captured_piece][promotion]);
-					futuremovecnt ++;
-					capturecnt ++;
-					movecnt ++;
-				    }
-				}
-			    }
-			}
-
-			break;
-		    }
-		}
-
-		if (captured_piece == tb->num_pieces) {
-		    fatal("Couldn't match pawn capture!\n");
-		}
-
-	    }
-
 	}
-
+    } catch (PNTM_mated ex) {
+	entriesTable->initialize_entry_with_PNTM_mated(index);
+	return 0;
     }
+
+    /* If we're NOT moving into check AND the piece is moving outside its legal
+     * squares AND we can't permute the pieces into a position where everything is
+     * legal, we regard this as a futuremove (since it will require back prop from
+     * futurebases).  We could just check if local_position_to_index() returns a
+     * valid index, but checking the legal_squares bitvector first makes this a
+     * little faster.
+     */
+
+    /* If the piece is a pawn and we're moving to the last rank, then this has
+     * to be a promotion move, in fact, promotion_possibilities moves.  (queen,
+     * knight, maybe rook and bishop, king for suicide).  As such, they will
+     * require back propagation from futurebases and must therefore be flagged
+     * as futuremoves.
+     */
 
     if (concede_prune) {
 	entriesTable->initialize_entry_with_concede(index);
@@ -13121,13 +13125,13 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 	case FORMAT_FLAG_WHITE_WINS:
 	    set_bit_field(entrybuf,
 			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
-			  (index_to_side_to_move(tb, index) == WHITE)
+			  (index_to_side_to_move(tb, index) == PieceColor::White)
 			  ? entriesTable[index].does_PTM_win() : entriesTable[index].does_PNTM_win());
 	    break;
 	case FORMAT_FLAG_WHITE_DRAWS:
 	    set_bit_field(entrybuf,
 			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
-			  (index_to_side_to_move(tb, index) == WHITE)
+			  (index_to_side_to_move(tb, index) == PieceColor::White)
 			  ? ! entriesTable[index].does_PNTM_win() : ! entriesTable[index].does_PTM_win());
 	    break;
 	}
@@ -13246,10 +13250,10 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	entriesTable = new MemoryEntriesTable;
 
 	/* tb->futurevectors = (futurevector_t *) calloc(tb->num_indices + 1, sizeof(futurevector_t)); */
-        if (num_futuremoves[WHITE] > num_futuremoves[BLACK])
-	    tb->futurevector_bits = num_futuremoves[WHITE];
+        if (num_futuremoves[PieceColor::White] > num_futuremoves[PieceColor::Black])
+	    tb->futurevector_bits = num_futuremoves[PieceColor::White];
 	else
-	    tb->futurevector_bits = num_futuremoves[BLACK];
+	    tb->futurevector_bits = num_futuremoves[PieceColor::Black];
 
 	futurevector_bytes = (((tb->num_indices * tb->futurevector_bits) + 7) >> 3) + 2*sizeof(int);
 	tb->futurevectors = (char *) malloc(futurevector_bytes);
@@ -13344,7 +13348,7 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	 */
 
 	proptable_format format(tb->num_indices, min_tracked_dtm, max_tracked_dtm,
-				1, std::max(num_futuremoves[WHITE], num_futuremoves[BLACK]));
+				1, std::max(num_futuremoves[PieceColor::White], num_futuremoves[PieceColor::Black]));
 
 	info("Initial proptable format: %d bits index; %d bits dtm; %d bit movecnt; %d bits futuremove\n",
 	     format.index_bits, format.dtm_bits, format.movecnt_bits, format.futuremove_bits);
@@ -13420,9 +13424,7 @@ void verify_tablebase_internally_thread(void)
 	index_t next_index;
 	local_position_t position(current_tb);
 	int piece;
-	int dir;
 	int origin_square;
-	struct movement *movementptr;
 
 	if (index >= current_tb->num_indices) break;
 
@@ -13441,73 +13443,38 @@ void verify_tablebase_internally_thread(void)
 
 	    origin_square = position.piece_position[piece];
 
-	    if (current_tb->pieces[piece].piece_type != PAWN) {
+	    for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
+					current_tb->pieces[piece].color,
+					position.piece_position[piece],
+					Movement2::Forward, Movement2::NonCapture)) {
 
-		for (dir = 0; dir < number_of_movement_directions[current_tb->pieces[piece].piece_type]; dir++) {
+		for (auto &movement : dir) {
 
-		    for (movementptr = movements[current_tb->pieces[piece].piece_type][origin_square][dir];
-			 (movementptr->vector & position.board_vector) == 0;
-			 movementptr++) {
+		    if (position.board_vector & BITVECTOR(movement)) break;
 
-			/* Move the piece, so we can test the new position for check */
-
-			local_position_t new_position = position;
-
-			new_position.move_piece(piece, movementptr->square);
-
-			/* We could just check if local_position_to_index() returns a valid index,
-			 * but checking the legal_squares bitvector first makes this a little
-			 * faster.
-			 *
-			 * XXX what really should we use here?
-			 */
-
-			if (! PNTM_in_check(current_tb, &new_position)
-			    && (current_tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
-			    && ((next_index = local_position_to_index(current_tb, &new_position)) != INVALID_INDEX)) {
-
-			    /* check this position */
-			    int n = entriesTable[index].get_DTM();
-			    if (n < 0) {
-				/* PNTM mates in (-n)-1 after this move, so next_index must be a PTM wins
-				 * in -n moves or less.
-				 */
-				if ((entriesTable[next_index].get_DTM() <= 0)
-				    || (entriesTable[next_index].get_DTM() > -n)) {
-
-				    fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
-					  index, n, next_index, entriesTable[next_index].get_DTM());
-				}
-			    } else if (n == 0) {
-				if (entriesTable[next_index].get_DTM() < 0) {
-
-				    fatal("index %" PRIindex " DTM %d inconsistent with %" PRIindex " DTM %d\n",
-					  index, n, next_index, entriesTable[next_index].get_DTM());
-				}
-			    }
-			}
-		    }
-		}
-
-	    } else {
-
-		/* Pawns, as always, are special */
-
-		for (movementptr = normal_pawn_movements[origin_square][current_tb->pieces[piece].color];
-		     (movementptr->vector & position.board_vector) == 0;
-		     movementptr++) {
+		    /* Move the piece, so we can test the new position for check */
 
 		    local_position_t new_position = position;
 
-		    new_position.move_piece(piece, movementptr->square);
+		    new_position.move_piece(piece, movement);
 
-		    if (abs(movementptr->square - origin_square) == 16) {
-			new_position.set_en_passant_square((movementptr->square + origin_square) / 2);
+		    /* XXX wrap this into move_piece */
+		    if ((current_tb->pieces[piece].piece_type == PieceType::Pawn)
+			&& (abs(movement - origin_square) == 16)) {
+			new_position.set_en_passant_square((movement + origin_square) / 2);
 		    }
 
-		    if (! PNTM_in_check(current_tb, &new_position)
-			&& (ROW(movementptr->square) != 7) && (ROW(movementptr->square) != 0)
-			&& (current_tb->pieces[piece].legal_squares & BITVECTOR(movementptr->square))
+		    bool is_promotion = ((current_tb->pieces[piece].piece_type == PieceType::Pawn)
+					 && ((ROW(movement) == 7) || (ROW(movement) == 0)));
+
+		    /* We could just check if local_position_to_index() returns a valid index, but
+		     * checking the legal_squares bitvector first makes this a little faster.
+		     *
+		     * XXX what really should we use here?
+		     */
+
+		    if (! PNTM_in_check(current_tb, &new_position) && ! is_promotion
+			&& (current_tb->pieces[piece].legal_squares & BITVECTOR(movement))
 			&& ((next_index = local_position_to_index(current_tb, &new_position)) != INVALID_INDEX)) {
 
 			/* check this position */
@@ -13636,22 +13603,22 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 	    } else if ((global.en_passant_square != ILLEGAL_POSITION)
 		       && ((global.board[global.en_passant_square - 9] != 'P')
 			   || (global.en_passant_square == 40)
-			   || (global.side_to_move == BLACK))
+			   || (global.side_to_move == PieceColor::Black))
 		       && ((global.board[global.en_passant_square - 7] != 'P')
 			   || (global.en_passant_square == 47)
-			   || (global.side_to_move == BLACK))
+			   || (global.side_to_move == PieceColor::Black))
 		       && ((global.board[global.en_passant_square + 7] != 'p')
 			   || (global.en_passant_square == 16)
-			   || (global.side_to_move == WHITE))
+			   || (global.side_to_move == PieceColor::White))
 		       && ((global.board[global.en_passant_square + 9] != 'p')
 			   || (global.en_passant_square == 23)
-			   || (global.side_to_move == WHITE))) {
+			   || (global.side_to_move == PieceColor::White))) {
 
 		/* Nor does Nalimov like it if the en passant pawn can't actually be captured by
 		 * another pawn.
 		 */
 
-	    } else if (EGTBProbe(global.side_to_move == WHITE, global.board,
+	    } else if (EGTBProbe(global.side_to_move == PieceColor::White, global.board,
 				 global.en_passant_square == ILLEGAL_POSITION ? -1 : global.en_passant_square, &score) == 1) {
 
 		if (tb->format.dtm_bits > 0) {
@@ -13701,7 +13668,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		    bool flag = tb->get_flag(index);
 
-		    if (global.side_to_move == BLACK) score *= -1;
+		    if (global.side_to_move == PieceColor::Black) score *= -1;
 
 		    if (flag && (score < 0)) {
 			fatal("%s (%" PRIindex "): Nalimov says black wins, but we say white wins or draws\n",
@@ -13783,7 +13750,7 @@ public:
 	    black = "White";
 	}
 
-	if (index_to_side_to_move(tb, index) == WHITE) {
+	if (index_to_side_to_move(tb, index) == PieceColor::White) {
 	    ptm = white;
 	    pntm = black;
 	} else {
@@ -13864,341 +13831,38 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 {
     global_position_t global_position, saved_global_position;
     int dir, square;
-    int piece_color;
-    int piece_type;
     int promotion;
-    struct movement * movementptr;
     int moves_printed = 0;
 
     saved_global_position = *global_position_ptr;
-    piece_color = saved_global_position.side_to_move;
+    PieceColor piece_color = saved_global_position.side_to_move;
 
-    for (square = 0; square < 64; square ++) {
+    try {
+	for (auto pair : generate_moves(*global_position_ptr)) {
 
-	if (saved_global_position.board[square] == 0) continue;
+	    auto move = pair.first;
+	    auto position = pair.second;
 
-	global_position = saved_global_position;
-	global_position.en_passant_square = ILLEGAL_POSITION;
+	    if (move.is_capture && !print_captures) continue;
+	    if (!move.is_capture && !print_non_captures) continue;
 
-	flip_side_to_move_global(&global_position);
+	    search_result result = search_tablebases_for_global_position(tbs, &position);
 
-	/* We only want to consider pieces of the side which is to move... */
+	    if (result) {
+		printf("   %-8s ", move.c_str());
+		result.print_score(1);
+	    } else if ((tb->variant == VARIANT_SUICIDE)
+		       && (tb->num_pieces_by_color[~ piece_color] == 1)) {
+		printf("   %s   %s WINS\n", move.c_str(),
+		       colors.at(~ piece_color).c_str());
+	    } else {
+		printf("   %s    NO DATA\n", move.c_str());
+	    }
 
-	for (piece_type = 0; piece_type < NUM_PIECES; piece_type ++) {
-	    if (global_position.board[square] == global_pieces[piece_color][piece_type]) break;
+	    moves_printed ++;
 	}
-
-	if (piece_type == NUM_PIECES) continue;
-
-	global_position.board[square] = 0;
-
-	if (piece_type != PAWN) {
-
-	    for (dir = 0; dir < number_of_movement_directions[piece_type]; dir++) {
-
-		for (movementptr = movements[piece_type][square][dir];
-		     (movementptr->square != -1) && (global_position.board[movementptr->square] == 0);
-		     movementptr++) {
-
-		    global_position.board[movementptr->square]
-			= global_pieces[piece_color][piece_type];
-
-		    if (! global_PNTM_in_check(&global_position) && print_non_captures) {
-			search_result result = search_tablebases_for_global_position(tbs, &global_position);
-			if (result) {
-			    printf("   %c%s%s    ", piece_char[piece_type],
-				   algebraic_notation[square],
-				   algebraic_notation[movementptr->square]);
-			    result.print_score(1);
-			} else {
-			    printf("   %c%s%s    NO DATA\n", piece_char[piece_type],
-				   algebraic_notation[square],
-				   algebraic_notation[movementptr->square]);
-			}
-			moves_printed ++;
-		    }
-
-		    global_position.board[movementptr->square] = 0;
-
-		}
-
-		/* Now we consider possible captures */
-
-		if (movementptr->square == -1) continue;
-
-		if (((piece_color == WHITE)
-		     && (global_position.board[movementptr->square] >= 'a')
-		     && (global_position.board[movementptr->square] <= 'z'))
-		    || ((piece_color == BLACK)
-			&& (global_position.board[movementptr->square] >= 'A')
-			&& (global_position.board[movementptr->square] <= 'Z'))) {
-
-		    char captured_piece = global_position.board[movementptr->square];
-
-		    if ((global_position.variant != VARIANT_SUICIDE)
-			&& ((captured_piece == 'K') || (captured_piece == 'k'))) {
-
-			/* printf("MATE\n"); */
-
-		    } else {
-
-			place_piece_in_global_position(&global_position, movementptr->square,
-						       piece_color, piece_type);
-
-			if (! global_PNTM_in_check(&global_position) && print_captures) {
-			    search_result result = search_tablebases_for_global_position(tbs, &global_position);
-			    if (result) {
-				printf ("   %c%sx%s   ", piece_char[piece_type],
-					algebraic_notation[square],
-					algebraic_notation[movementptr->square]);
-				result.print_score(1);
-			    } else if ((tb->variant == VARIANT_SUICIDE)
-				       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
-				printf("   %c%sx%s   %s WINS\n", piece_char[piece_type],
-				       algebraic_notation[square],
-				       algebraic_notation[movementptr->square],
-				       colors[1 - piece_color].c_str());
-			    } else {
-				printf("   %c%sx%s   NO DATA\n", piece_char[piece_type],
-				       algebraic_notation[square],
-				       algebraic_notation[movementptr->square]);
-			    }
-			    moves_printed ++;
-			}
-
-		    }
-
-		    global_position.board[movementptr->square] = captured_piece;
-		}
-
-		/* end of capture search */
-	    }
-
-	    global_position.board[square] = global_pieces[piece_color][piece_type];
-
-	} else {
-
-	    /* PAWNs */
-
-	    for (movementptr = normal_pawn_movements[square][piece_color];
-		 movementptr->square != -1;
-		 movementptr++) {
-
-		/* break, not continue, because pawns can't jump over pieces */
-		if (global_position.board[movementptr->square] != 0) break;
-
-		if ((ROW(movementptr->square) != 0) && (ROW(movementptr->square) != 7)) {
-
-		    global_position.board[movementptr->square] = global_pieces[piece_color][PAWN];
-
-		    if ((movementptr->square == square + 16)
-			&& (((square % 8 != 0) && (global_position.board[square + 16 - 1] == 'p'))
-			    || ((square % 8 != 7) && (global_position.board[square + 16 + 1] == 'p')))) {
-
-			global_position.en_passant_square = square + 8;
-		    }
-
-		    if ((movementptr->square == square - 16)
-			&& (((square % 8 != 0) && (global_position.board[square - 16 - 1] == 'P'))
-			    || ((square % 8 != 7) && (global_position.board[square - 16 + 1] == 'P')))) {
-
-			global_position.en_passant_square = square - 8;
-		    }
-
-		    if (! global_PNTM_in_check(&global_position) && print_non_captures) {
-			search_result result = search_tablebases_for_global_position(tbs, &global_position);
-			if (result) {
-			    printf("   P%s%s    ",
-				   algebraic_notation[square],
-				   algebraic_notation[movementptr->square]);
-			    result.print_score(1);
-			} else {
-			    printf("   P%s%s    NO DATA\n",
-				   algebraic_notation[square],
-				   algebraic_notation[movementptr->square]);
-			}
-			moves_printed ++;
-		    }
-
-		    global_position.board[movementptr->square] = 0;
-		    global_position.en_passant_square = ILLEGAL_POSITION;
-
-		} else {
-
-		    /* non-capture promotion */
-
-		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-
-			place_piece_in_global_position(&global_position, movementptr->square,
-						       piece_color, promoted_pieces[promotion]);
-
-
-			if (! global_PNTM_in_check(&global_position) && print_non_captures) {
-			    search_result result = search_tablebases_for_global_position(tbs, &global_position);
-			    if (result) {
-				printf ("   P%s%s=%c  ",
-					algebraic_notation[square],
-					algebraic_notation[movementptr->square],
-					piece_char[promoted_pieces[promotion]]);
-				result.print_score(1);
-			    } else {
-				printf("   P%s%s=%c  NO DATA\n",
-				       algebraic_notation[square],
-				       algebraic_notation[movementptr->square],
-				       piece_char[promoted_pieces[promotion]]);
-			    }
-			    moves_printed ++;
-			}
-		    }
-
-		    global_position.board[movementptr->square] = 0;
-		}
-	    }
-
-	    /* capture pawn moves */
-
-	    for (movementptr = capture_pawn_movements[square][piece_color];
-		 movementptr->square != -1;
-		 movementptr++) {
-
-		if (movementptr->square == saved_global_position.en_passant_square) {
-
-		    /* en passant capture */
-
-		    place_piece_in_global_position(&global_position, movementptr->square,
-						   piece_color, PAWN);
-
-		    if (piece_color == WHITE) {
-			global_position.board[saved_global_position.en_passant_square - 8] = 0;
-		    } else {
-			global_position.board[saved_global_position.en_passant_square + 8] = 0;
-		    }
-
-		    if (! global_PNTM_in_check(&global_position) && print_captures) {
-			search_result result = search_tablebases_for_global_position(tbs, &global_position);
-			if (result) {
-			    printf ("   P%sx%s   ",
-				    algebraic_notation[square],
-				    algebraic_notation[movementptr->square]);
-			    result.print_score(1);
-			} else if ((tb->variant == VARIANT_SUICIDE)
-				   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
-			    printf("   P%sx%s   %s WINS\n",
-				   algebraic_notation[square],
-				   algebraic_notation[movementptr->square],
-				   colors[1 - piece_color].c_str());
-			} else {
-			    printf("   P%sx%s   NO DATA\n",
-				   algebraic_notation[square],
-				   algebraic_notation[movementptr->square]);
-			}
-			moves_printed ++;
-		    }
-
-		    if (piece_color == WHITE) {
-			global_position.board[saved_global_position.en_passant_square - 8] = 'p';
-		    } else {
-			global_position.board[saved_global_position.en_passant_square + 8] = 'P';
-		    }
-
-		    continue;
-		}
-
-		if (global_position.board[movementptr->square] == 0) continue;
-
-		if (((piece_color == WHITE)
-		     && (global_position.board[movementptr->square] >= 'A')
-		     && (global_position.board[movementptr->square] <= 'Z'))
-		    || ((piece_color == BLACK)
-			&& (global_position.board[movementptr->square] >= 'a')
-			&& (global_position.board[movementptr->square] <= 'z'))) {
-		    continue;
-		}
-
-		if ((global_position.variant != VARIANT_SUICIDE)
-		    && ((global_position.board[movementptr->square] == 'K')
-			|| (global_position.board[movementptr->square] == 'k'))) {
-
-		    /* printf("MATE\n"); */
-		    continue;
-
-		}
-
-		if ((ROW(movementptr->square) == 7) || (ROW(movementptr->square) == 0)) {
-
-		    /* promotion capture */
-
-		    char captured_piece = global_position.board[movementptr->square];
-
-		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
-
-			place_piece_in_global_position(&global_position, movementptr->square,
-						       piece_color, promoted_pieces[promotion]);
-
-			if (! global_PNTM_in_check(&global_position) && print_captures) {
-			    search_result result = search_tablebases_for_global_position(tbs, &global_position);
-			    if (result) {
-				printf ("   P%sx%s=%c ",
-					algebraic_notation[square],
-					algebraic_notation[movementptr->square],
-					piece_char[promoted_pieces[promotion]]);
-				result.print_score(1);
-			    } else if ((tb->variant == VARIANT_SUICIDE)
-				       && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
-				printf("   P%sx%s=%c %s WINS\n",
-				       algebraic_notation[square],
-				       algebraic_notation[movementptr->square],
-				       piece_char[promoted_pieces[promotion]],
-				       colors[1 - piece_color].c_str());
-			    } else {
-				printf("   P%sx%s=%c NO DATA\n",
-				       algebraic_notation[square],
-				       algebraic_notation[movementptr->square],
-				       piece_char[promoted_pieces[promotion]]);
-			    }
-			    moves_printed ++;
-			}
-		    }
-
-		    global_position.board[movementptr->square] = captured_piece;
-
-		    continue;
-
-		} else {
-
-		    char captured_piece = global_position.board[movementptr->square];
-
-		    global_position.board[square] = 0;
-		    place_piece_in_global_position(&global_position, movementptr->square,
-						   piece_color, PAWN);
-
-		    if (! global_PNTM_in_check(&global_position) && print_captures) {
-			search_result result = search_tablebases_for_global_position(tbs, &global_position);
-			if (result) {
-			    printf ("   P%sx%s   ",
-				    algebraic_notation[square],
-				    algebraic_notation[movementptr->square]);
-			    result.print_score(1);
-			} else if ((tb->variant == VARIANT_SUICIDE)
-				   && (tb->num_pieces_by_color[1 - piece_color] == 1)) {
-			    printf("   P%sx%s   %s WINS\n",
-				   algebraic_notation[square],
-				   algebraic_notation[movementptr->square],
-				   colors[1 - piece_color].c_str());
-			} else {
-			    printf("   P%sx%s   NO DATA\n",
-				   algebraic_notation[square],
-				   algebraic_notation[movementptr->square]);
-			}
-			moves_printed ++;
-		    }
-
-		    global_position.board[movementptr->square] = captured_piece;
-		}
-	    }
-	    /* end of capture search */
-
-	}
+    } catch (PNTM_mated ex) {
+	// printf("  PNTM mated\n");
     }
 
     return moves_printed;
@@ -14317,7 +13981,7 @@ void probe_tablebases(tablebase_t **tbs) {
 
 	    printf("Index %" PRIindex " (%s)\n", result.index, result.tb->filename.c_str());
 
-	    if (global_position.side_to_move == WHITE) {
+	    if (global_position.side_to_move == PieceColor::White) {
 		ptm = "White";
 		pntm = "Black";
 	    } else {
@@ -14329,7 +13993,7 @@ void probe_tablebases(tablebase_t **tbs) {
 
 #ifdef USE_NALIMOV
 	    if ((global_position.variant == VARIANT_NORMAL) && (nalimov_num > 0)
-		&& EGTBProbe(global_position.side_to_move == WHITE, global_position.board, -1, &score) == 1) {
+		&& EGTBProbe(global_position.side_to_move == PieceColor::White, global_position.board, -1, &score) == 1) {
 		printf("\nNalimov score: ");
 		if (score > 0) {
 		    printf("%s wins in %d.5\n", ptm, ((65536-4)/2)-score+1);
@@ -14445,7 +14109,7 @@ int main(int argc, char *argv[])
 
     /* Initialize various global data structures */
     init_movements();
-    verify_movements();
+    //verify_movements();
     init_reflections();
     initialize_board_masks();
 
