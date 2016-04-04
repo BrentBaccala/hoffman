@@ -12368,12 +12368,8 @@ std::vector<move> generate_moves(const local_position_t &position)
 
 		    new_position.move_piece(piece, movement);
 
-		    /* If we're NOT moving into check AND the piece is moving outside its legal
-		     * squares AND we can't permute the pieces into a position where everything is
-		     * legal, we regard this as a futuremove (since it will require back prop from
-		     * futurebases).  We could just check if local_position_to_index() returns a
-		     * valid index, but checking the legal_squares bitvector first makes this a
-		     * little faster.
+		    /* We don't set en passant square here since it doesn't affect the in-check
+		     * calculation, and we're not using the position for anything else.
 		     */
 
 		    if (! PTM_in_check(tb, &new_position)) {
@@ -12393,6 +12389,15 @@ std::vector<move> generate_moves(const local_position_t &position)
 						      promoted_pieces[promotion], promotions[piece][promotion]));
 
 			    }
+
+			    /* If we're NOT moving into check AND the piece is moving outside its
+			     * legal squares AND we can't permute the pieces into a position where
+			     * everything is legal (local_position_to_index), we regard this as a
+			     * futuremove (since it will require back prop from futurebases).  We
+			     * could just check if local_position_to_index() returns a valid index,
+			     * but checking the legal_squares bitvector first makes this a little
+			     * faster.
+			     */
 
 			} else if (!(tb->pieces[piece].legal_squares & BITVECTOR(movement))
 			    && (local_position_to_index(tb, &new_position) == INVALID_INDEX)) {
@@ -12562,30 +12567,21 @@ std::vector<std::pair<move, global_position_t>> generate_moves(const global_posi
 
 		    new_position.flip_side_to_move();
 
-		    if ((piece_type == PieceType::Pawn) && (abs(movement - origin_square) == 16)) {
-			new_position.set_en_passant_square((movement + origin_square)/2);
+		    if ((piece_type == PieceType::Pawn) && (movement - origin_square == 16)
+			&& (   ((COL(movement) != 0) && (position.board[movement-1] == 'p'))
+			       || ((COL(movement) != 7) && (position.board[movement+1] == 'p')))) {
+			new_position.set_en_passant_square(origin_square + 8);
+		    } else if ((piece_type == PieceType::Pawn) && (movement - origin_square == -16)
+			&& (   ((COL(movement) != 0) && (position.board[movement-1] == 'P'))
+			       || ((COL(movement) != 7) && (position.board[movement+1] == 'P')))) {
+			new_position.set_en_passant_square(origin_square - 8);
 		    } else {
 			new_position.clear_en_passant_square();
 		    }
 
 		    new_position.move_piece(origin_square, movement);
 
-		    /* If we're NOT moving into check AND the piece is moving outside its legal
-		     * squares AND we can't permute the pieces into a position where everything is
-		     * legal, we regard this as a futuremove (since it will require back prop from
-		     * futurebases).  We could just check if local_position_to_index() returns a
-		     * valid index, but checking the legal_squares bitvector first makes this a
-		     * little faster.
-		     */
-
 		    if (! global_PNTM_in_check(&new_position)) {
-
-			/* If the piece is a pawn and we're moving to the last rank, then this has
-			 * to be a promotion move, in fact, promotion_possibilities moves.  (queen,
-			 * knight, maybe rook and bishop, king for suicide).  As such, they will
-			 * require back propagation from futurebases and must therefore be flagged
-			 * as futuremoves.
-			 */
 
 			if (is_promotion) {
 
