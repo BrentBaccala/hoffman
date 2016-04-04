@@ -13852,7 +13852,7 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 		printf("   %s   %s WINS\n", move.c_str(),
 		       colors.at(~ piece_color).c_str());
 	    } else {
-		printf("   %s    NO DATA\n", move.c_str());
+		printf("   %-8s NO DATA\n", move.c_str());
 	    }
 
 	    moves_printed ++;
