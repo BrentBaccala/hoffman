@@ -1355,356 +1355,302 @@ void expand_per_pass_statistics(void)
     bzero(pass_target_dtms + total_passes, (max_passes-total_passes)*sizeof(int));
 }
 
-/***** MOVEMENT VECTORS *****/
+/***** PIECE MOVEMENT *****/
 
-/* The idea here is to calculate piece movements, and to do it FAST.
- *
- * We build a table of "movements" organized into "directions".  Each direction is just that - the
- * direction that a piece (like a queen) moves.  When we want to check for what movements are
- * possible in a given direction, we run through the direction until we "hit" another pieces - until
- * the bit in the vector matches something already in the position vector.  At the end of the
- * direction, an all-ones vector will "hit" the end of the board and end the direction.  I know,
- * kinda confusing.  It's because it's designed to be fast; we have to do this a lot.
+/* namespace Movement primarily exports a single function, movements(), which is passed a piece type
+ * and color, a starting square, direction (Forward or Backward), and movement type (AllMoves,
+ * Capture, or NonCapture).  Return value is a vector of "directions", each direction being a vector
+ * of squares.  Movement along each direction is possible until a square is occupied.  No attempt is
+ * made to detect whether a square is occupied in a particular position; that's the caller's job.
+ * All we're doing here is to produce a list of squares the piece can move to if there was nothing
+ * else on the board.
  */
 
-struct movement {
-    uint64_t vector;
-    short square;
-};
+namespace Movement {
 
-/* we add one to NUM_MOVEMENTS to leave space at the end for the all-ones bitmask that signals the
- * end of the list
- */
+    enum PieceDirection { RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR, KNIGHTmoves };
 
-struct movement movements[NUM_PIECES][NUM_SQUARES][NUM_DIR][NUM_MOVEMENTS+1];
+    std::vector<PieceDirection> AllPieceDirections = { RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR };
 
-std::map<std::pair<PieceType, square_t>, std::vector<std::vector<square_t>>> movements2;
+    class PieceMovement {
+    public:
+	std::vector<PieceDirection> directions;
+	int max_distance;
+    };
 
-/* Pawns are, of course, special.  We have seperate vectors for different types of pawn movements.
- * Each array is indexed first by square number, then by side (WHITE or BLACK - this doesn't exist
- * for other pieces), then by the number of possibilities (at most two normal movements, at most two
- * captures, and one more for the all-ones bitvector to terminate)
- *
- * All of these are FORWARD motions.
- */
+    std::map<PieceType, PieceMovement> PieceMovements =
+	{{PieceType::King, {AllPieceDirections, 1}},
+	 {PieceType::Queen, {AllPieceDirections, 8}},
+	 {PieceType::Rook, {{RIGHT, LEFT, UP, DOWN}, 8}},
+	 {PieceType::Bishop, {{DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR}, 8}},
+	 {PieceType::Knight, {{KNIGHTmoves}, 1}}};
 
-struct movement normal_pawn_movements[NUM_SQUARES][2][3];
-struct movement capture_pawn_movements[NUM_SQUARES][2][3];
+    /* XXX is std::map the most efficient thing to use here? */
 
-std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> normal_pawn_movements2;
-std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> capture_pawn_movements2;
+    std::map<std::pair<PieceType, square_t>, std::vector<std::vector<square_t>>> piece_movements;
 
-std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> normal_pawn_movements_bkwd2;
-std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> capture_pawn_movements_bkwd2;
+    std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> normal_pawn_movements;
+    std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> capture_pawn_movements;
 
-struct movement normal_pawn_movements_bkwd[NUM_SQUARES][2][3];
-struct movement capture_pawn_movements_bkwd[NUM_SQUARES][2][3];
+    std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> normal_pawn_movements_bkwd;
+    std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> capture_pawn_movements_bkwd;
 
-namespace Movement2 {
     enum Direction { Forward, Backward };
     enum Type { AllMoves, Capture, NonCapture, NoDoublePawn };
-};
 
-const std::vector<std::vector<square_t>> movements3(PieceType type, PieceColor color, square_t square,
-						    Movement2::Direction dir, Movement2::Type mvmt_type)
-{
-    if (type != PieceType::Pawn) return movements2[std::make_pair(type, square)];
-    else {
-	std::vector<std::vector<square_t>> result;
-	switch (dir) {
-	case Movement2::Forward:
-	    switch (mvmt_type) {
-	    case Movement2::NonCapture:
-		result.push_back(normal_pawn_movements2[std::make_pair(color, square)]);
-		break;
-	    case Movement2::Capture:
-		for (auto x : capture_pawn_movements2[std::make_pair(color, square)]) {
-		    result.push_back(std::vector<square_t>(1, x));
+    const std::vector<std::vector<square_t>> movements(PieceType type, PieceColor color, square_t square,
+						       Direction dir, Type mvmt_type)
+    {
+	if (type != PieceType::Pawn) return piece_movements[std::make_pair(type, square)];
+	else {
+	    std::vector<std::vector<square_t>> result;
+	    switch (dir) {
+	    case Forward:
+		switch (mvmt_type) {
+		case NonCapture:
+		    result.push_back(normal_pawn_movements[std::make_pair(color, square)]);
+		    break;
+		case Capture:
+		    for (auto x : capture_pawn_movements[std::make_pair(color, square)]) {
+			result.push_back(std::vector<square_t>(1, x));
+		    }
+		    break;
+		case AllMoves:
+		    result.push_back(normal_pawn_movements[std::make_pair(color, square)]);
+		    for (auto x : capture_pawn_movements[std::make_pair(color, square)]) {
+			result.push_back(std::vector<square_t>(1, x));
+		    }
+		    break;
+		case NoDoublePawn:
+		    fatal("NoDoublePawn\n");
+		    break;
 		}
 		break;
-	    case Movement2::AllMoves:
-		result.push_back(normal_pawn_movements2[std::make_pair(color, square)]);
-		for (auto x : capture_pawn_movements2[std::make_pair(color, square)]) {
-		    result.push_back(std::vector<square_t>(1, x));
+	    case Backward:
+		switch (mvmt_type) {
+		case NonCapture:
+		    result.push_back(normal_pawn_movements_bkwd[std::make_pair(color, square)]);
+		    break;
+		case Capture:
+		    for (auto x : capture_pawn_movements_bkwd[std::make_pair(color, square)]) {
+			result.push_back(std::vector<square_t>(1, x));
+		    }
+		    break;
+		case AllMoves:
+		    result.push_back(normal_pawn_movements_bkwd[std::make_pair(color, square)]);
+		    for (auto x : capture_pawn_movements_bkwd[std::make_pair(color, square)]) {
+			result.push_back(std::vector<square_t>(1, x));
+		    }
+		    break;
+		case NoDoublePawn:
+		    fatal("NoDoublePawn\n");
+		    break;
 		}
-		break;
-	    case Movement2::NoDoublePawn:
-		fatal("NoDoublePawn\n");
 		break;
 	    }
-	    break;
-	case Movement2::Backward:
-	    switch (mvmt_type) {
-	    case Movement2::NonCapture:
-		result.push_back(normal_pawn_movements_bkwd2[std::make_pair(color, square)]);
-		break;
-	    case Movement2::Capture:
-		for (auto x : capture_pawn_movements_bkwd2[std::make_pair(color, square)]) {
-		    result.push_back(std::vector<square_t>(1, x));
-		}
-		break;
-	    case Movement2::AllMoves:
-		result.push_back(normal_pawn_movements_bkwd2[std::make_pair(color, square)]);
-		for (auto x : capture_pawn_movements_bkwd2[std::make_pair(color, square)]) {
-		    result.push_back(std::vector<square_t>(1, x));
-		}
-		break;
-	    case Movement2::NoDoublePawn:
-		fatal("NoDoublePawn\n");
-		break;
-	    }
-	    break;
+	    return result;
 	}
-	return result;
     }
-}
 
-/* How many different directions can each piece move in?  Knights have 8 directions because they
- * can't be blocked in any of them.  Pawns are handled separately.
- */
+    void init_movements()
+    {
+	for (auto piece : AllPieceTypes) {
 
-std::map<PieceType, int> number_of_movement_directions =
-    {{PieceType::King, 8}, {PieceType::Queen, 8}, {PieceType::Rook, 4}, {PieceType::Bishop, 4}, {PieceType::Knight, 8}};
+	    for (square_t square=0; square < NUM_SQUARES; square++) {
 
-// [NUM_PIECES] = {8,8,4,4,8,0};
-int maximum_movements_in_one_direction[NUM_PIECES] = {1,7,7,7,1,0};
+		for (auto dir : PieceMovements[piece].directions) {
 
-#if 0
-enum {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR, KNIGHTmove}
-movementdir[5][8] = {
-    {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},	/* King */
-    {RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},	/* Queen */
-    {RIGHT, LEFT, UP, DOWN},						/* Rook */
-    {DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR},				/* Bishop */
-    {KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove, KNIGHTmove},	/* Knights are special... */
-};
-#endif
+		    int current_square = square;
 
-enum Direction { RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR, KNIGHTmoves };
+		    std::vector<square_t> movement;
 
-std::vector<Direction> all_directions = { RIGHT, LEFT, UP, DOWN, DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR };
+		    for (int mvmt=0; mvmt < PieceMovements[piece].max_distance; mvmt ++) {
 
-class Movement {
-public:
-    std::vector<Direction> directions;
-    int max_distance;
-};
+			bool RIGHT_MOVEMENT_POSSIBLE = ((current_square%8)<7);
+			bool RIGHT2_MOVEMENT_POSSIBLE = ((current_square%8)<6);
+			bool LEFT_MOVEMENT_POSSIBLE = ((current_square%8)>0);
+			bool LEFT2_MOVEMENT_POSSIBLE = ((current_square%8)>1);
+			bool UP_MOVEMENT_POSSIBLE = (current_square<56);
+			bool UP2_MOVEMENT_POSSIBLE = (current_square<48);
+			bool DOWN_MOVEMENT_POSSIBLE = (current_square>7);
+			bool DOWN2_MOVEMENT_POSSIBLE = (current_square>15);
 
-std::map<PieceType, Movement> new_movements =
-    {{PieceType::King, {all_directions, 1}},
-     {PieceType::Queen, {all_directions, 8}},
-     {PieceType::Rook, {{RIGHT, LEFT, UP, DOWN}, 8}},
-     {PieceType::Bishop, {{DIAG_UL, DIAG_UR, DIAG_DL, DIAG_DR}, 8}},
-     {PieceType::Knight, {{KNIGHTmoves}, 1}}};
+			switch (dir) {
+			case RIGHT:
+			    if (RIGHT_MOVEMENT_POSSIBLE) {
+				current_square++;
+				movement.push_back(current_square);
+			    }
+			    break;
+			case LEFT:
+			    if (LEFT_MOVEMENT_POSSIBLE) {
+				current_square--;
+				movement.push_back(current_square);
+			    }
+			    break;
+			case UP:
+			    if (UP_MOVEMENT_POSSIBLE) {
+				current_square+=8;
+				movement.push_back(current_square);
+			    }
+			    break;
+			case DOWN:
+			    if (DOWN_MOVEMENT_POSSIBLE) {
+				current_square-=8;
+				movement.push_back(current_square);
+			    }
+			    break;
+			case DIAG_UL:
+			    if (LEFT_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
+				current_square+=8;
+				current_square--;
+				movement.push_back(current_square);
+			    }
+			    break;
+			case DIAG_UR:
+			    if (RIGHT_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
+				current_square+=8;
+				current_square++;
+				movement.push_back(current_square);
+			    }
+			    break;
+			case DIAG_DL:
+			    if (LEFT_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
+				current_square-=8;
+				current_square--;
+				movement.push_back(current_square);
+			    }
+			    break;
+			case DIAG_DR:
+			    if (RIGHT_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
+				current_square-=8;
+				current_square++;
+				movement.push_back(current_square);
+			    }
+			    break;
+			case KNIGHTmoves:
+			    if (RIGHT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
+				piece_movements[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 2 + 8));
+			    }
+			    if (RIGHT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
+				piece_movements[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 2 - 8));
+			    }
+			    if (LEFT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
+				piece_movements[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 2 + 8));
+			    }
+			    if (LEFT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
+				piece_movements[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 2 - 8));
+			    }
+			    if (RIGHT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
+				piece_movements[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 1 + 16));
+			    }
+			    if (RIGHT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
+				piece_movements[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 1 - 16));
+			    }
+			    if (LEFT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
+				piece_movements[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 1 + 16));
+			    }
+			    if (LEFT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
+				piece_movements[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 1 - 16));
+			    }
+			    break;
 
-
-
-// char algebraic_notation[64][3];
-
-void init_movements()
-{
-    int square, dir, mvmt;
-
-#if 0
-    for (square=0; square < NUM_SQUARES; square++) {
-	algebraic_notation[square][0] = 'a' + square%8;
-	algebraic_notation[square][1] = '1' + square/8;
-	algebraic_notation[square][2] = '\0';
-    }
-#endif
-
-    for (auto piece : AllPieceTypes) {
-
-	for (square=0; square < NUM_SQUARES; square++) {
-
-	    for (auto dir : new_movements[piece].directions) {
-
-		int current_square = square;
-
-		std::vector<square_t> movement;
-
-		for (mvmt=0; mvmt < new_movements[piece].max_distance; mvmt ++) {
-
-		    bool RIGHT_MOVEMENT_POSSIBLE = ((current_square%8)<7);
-		    bool RIGHT2_MOVEMENT_POSSIBLE = ((current_square%8)<6);
-		    bool LEFT_MOVEMENT_POSSIBLE = ((current_square%8)>0);
-		    bool LEFT2_MOVEMENT_POSSIBLE = ((current_square%8)>1);
-		    bool UP_MOVEMENT_POSSIBLE = (current_square<56);
-		    bool UP2_MOVEMENT_POSSIBLE = (current_square<48);
-		    bool DOWN_MOVEMENT_POSSIBLE = (current_square>7);
-		    bool DOWN2_MOVEMENT_POSSIBLE = (current_square>15);
-
-		    switch (dir) {
-		    case RIGHT:
-			if (RIGHT_MOVEMENT_POSSIBLE) {
-			    current_square++;
-			    movement.push_back(current_square);
 			}
-			break;
-		    case LEFT:
-			if (LEFT_MOVEMENT_POSSIBLE) {
-			    current_square--;
-			    movement.push_back(current_square);
-			}
-			break;
-		    case UP:
-			if (UP_MOVEMENT_POSSIBLE) {
-			    current_square+=8;
-			    movement.push_back(current_square);
-			}
-			break;
-		    case DOWN:
-			if (DOWN_MOVEMENT_POSSIBLE) {
-			    current_square-=8;
-			    movement.push_back(current_square);
-			}
-			break;
-		    case DIAG_UL:
-			if (LEFT_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
-			    current_square+=8;
-			    current_square--;
-			    movement.push_back(current_square);
-			}
-			break;
-		    case DIAG_UR:
-			if (RIGHT_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
-			    current_square+=8;
-			    current_square++;
-			    movement.push_back(current_square);
-			}
-			break;
-		    case DIAG_DL:
-			if (LEFT_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
-			    current_square-=8;
-			    current_square--;
-			    movement.push_back(current_square);
-			}
-			break;
-		    case DIAG_DR:
-			if (RIGHT_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
-			    current_square-=8;
-			    current_square++;
-			    movement.push_back(current_square);
-			}
-			break;
-		    case KNIGHTmoves:
-			if (RIGHT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
-			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 2 + 8));
-			}
-			if (RIGHT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
-			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 2 - 8));
-			}
-			if (LEFT2_MOVEMENT_POSSIBLE && UP_MOVEMENT_POSSIBLE) {
-			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 2 + 8));
-			}
-			if (LEFT2_MOVEMENT_POSSIBLE && DOWN_MOVEMENT_POSSIBLE) {
-			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 2 - 8));
-			}
-			if (RIGHT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
-			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 1 + 16));
-			}
-			if (RIGHT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
-			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square + 1 - 16));
-			}
-			if (LEFT_MOVEMENT_POSSIBLE && UP2_MOVEMENT_POSSIBLE) {
-			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 1 + 16));
-			}
-			if (LEFT_MOVEMENT_POSSIBLE && DOWN2_MOVEMENT_POSSIBLE) {
-			    movements2[std::make_pair(piece, square)].push_back(std::vector<square_t>(1, square - 1 - 16));
-			}
-			break;
+		    }
+
+		    if (! movement.empty()) {
+			piece_movements[std::make_pair(piece, square)].push_back(movement);
+		    }
+		}
+	    }
+	}
+
+	/* Now for the pawns... */
+
+	for (square_t square=0; square < NUM_SQUARES; square ++) {
+
+	    for (auto color : BothColors) {
+
+		int forwards_pawn_move = ((color == PieceColor::White) ? 8 : -8);
+		int backwards_pawn_move = ((color == PieceColor::White) ? -8 : 8);
+
+		/* Forward pawn movements
+		 *
+		 * An ordinary pawn move... unless its a white pawn on the second rank, or a black
+		 * pawn on the seventh.  In these two cases, there is a possible double move as
+		 * well.
+		 */
+
+		if ((ROW(square) >= 1) && (ROW(square) <= 6)) {
+
+		    normal_pawn_movements[std::make_pair(color, square)].push_back(square + forwards_pawn_move);
+
+		}
+
+		if (((color == PieceColor::White) && (ROW(square) == 1)) || ((color == PieceColor::Black) && (ROW(square) == 6))) {
+
+		    normal_pawn_movements[std::make_pair(color, square)].push_back(square + 2*forwards_pawn_move);
+
+		}
+
+		/* Backwards pawn movements */
+
+		if (((color == PieceColor::White) && (ROW(square) > 1)) || ((color == PieceColor::Black) && (ROW(square) < 6))) {
+
+		    normal_pawn_movements_bkwd[std::make_pair(color, square)].push_back(square + backwards_pawn_move);
+
+		}
+
+		if (((color == PieceColor::White) && (ROW(square) == 3)) || ((color == PieceColor::Black) && (ROW(square) == 4))) {
+
+		    normal_pawn_movements_bkwd[std::make_pair(color, square)].push_back(square + 2*backwards_pawn_move);
+
+		}
+
+		/* Forward pawn captures. */
+
+		if ((ROW(square) >= 1) && (ROW(square) <= 6)) {
+
+		    if (COL(square) > 0) {
+
+			capture_pawn_movements[std::make_pair(color, square)].push_back(square + forwards_pawn_move - 1);
+
+		    }
+
+		    if (COL(square) < 7) {
+
+			capture_pawn_movements[std::make_pair(color, square)].push_back(square + forwards_pawn_move + 1);
 
 		    }
 		}
 
-		if (! movement.empty()) {
-		    movements2[std::make_pair(piece, square)].push_back(movement);
-		}
-	    }
-	}
-    }
+		/* Backwards pawn captures */
 
-    /* Now for the pawns... */
+		if (((color == PieceColor::White) && (ROW(square) > 1)) || ((color == PieceColor::Black) && (ROW(square) < 6))) {
 
-    for (square=0; square < NUM_SQUARES; square ++) {
+		    if (COL(square) > 0) {
 
-	for (auto color : BothColors) {
+			capture_pawn_movements_bkwd[std::make_pair(color, square)].push_back(square + backwards_pawn_move - 1);
 
-	    int forwards_pawn_move = ((color == PieceColor::White) ? 8 : -8);
-	    int backwards_pawn_move = ((color == PieceColor::White) ? -8 : 8);
+		    }
 
-	    /* Forward pawn movements
-	     *
-	     * An ordinary pawn move... unless its a white pawn on the second rank, or a black
-	     * pawn on the seventh.  In these two cases, there is a possible double move as
-	     * well.
-	     */
+		    if (COL(square) < 7) {
 
-	    if ((ROW(square) >= 1) && (ROW(square) <= 6)) {
+			capture_pawn_movements_bkwd[std::make_pair(color, square)].push_back(square + backwards_pawn_move + 1);
 
-		normal_pawn_movements2[std::make_pair(color, square)].push_back(square + forwards_pawn_move);
-
-	    }
-
-	    if (((color == PieceColor::White) && (ROW(square) == 1)) || ((color == PieceColor::Black) && (ROW(square) == 6))) {
-
-		normal_pawn_movements2[std::make_pair(color, square)].push_back(square + 2*forwards_pawn_move);
-
-	    }
-
-	    /* Backwards pawn movements */
-
-	    if (((color == PieceColor::White) && (ROW(square) > 1)) || ((color == PieceColor::Black) && (ROW(square) < 6))) {
-
-		normal_pawn_movements_bkwd2[std::make_pair(color, square)].push_back(square + backwards_pawn_move);
-
-	    }
-
-	    if (((color == PieceColor::White) && (ROW(square) == 3)) || ((color == PieceColor::Black) && (ROW(square) == 4))) {
-
-		normal_pawn_movements_bkwd2[std::make_pair(color, square)].push_back(square + 2*backwards_pawn_move);
-
-	    }
-
-	    /* Forward pawn captures. */
-
-	    if ((ROW(square) >= 1) && (ROW(square) <= 6)) {
-
-		if (COL(square) > 0) {
-
-		    capture_pawn_movements2[std::make_pair(color, square)].push_back(square + forwards_pawn_move - 1);
-
+		    }
 		}
 
-		if (COL(square) < 7) {
-
-		    capture_pawn_movements2[std::make_pair(color, square)].push_back(square + forwards_pawn_move + 1);
-
-		}
-	    }
-
-	    /* Backwards pawn captures */
-
-	    if (((color == PieceColor::White) && (ROW(square) > 1)) || ((color == PieceColor::Black) && (ROW(square) < 6))) {
-
-		if (COL(square) > 0) {
-
-		    capture_pawn_movements_bkwd2[std::make_pair(color, square)].push_back(square + backwards_pawn_move - 1);
-
-		}
-
-		if (COL(square) < 7) {
-
-		    capture_pawn_movements_bkwd2[std::make_pair(color, square)].push_back(square + backwards_pawn_move + 1);
-
-		}
 	    }
 
 	}
 
     }
 
-}
+};
+
+using Movement::movements;
+using Movement::init_movements;
 
 /* This routine is pretty fast, so I just call it once every time the program runs.  It has to be
  * used after any changes to the code above to verify that those complex movement vectors are
@@ -10232,10 +10178,10 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 	&& !(position->board_vector & BITVECTOR(position->piece_position[capturing_piece]-8))
 	&& !(position->board_vector & BITVECTOR(position->piece_position[capturing_piece]+8))) {
 
-	for (auto &dir : movements3(current_tb->pieces[capturing_piece].piece_type,
-				    current_tb->pieces[capturing_piece].color,
-				    position->piece_position[capturing_piece],
-				    Movement2::Backward, Movement2::Capture)) {
+	for (auto &dir : movements(current_tb->pieces[capturing_piece].piece_type,
+				   current_tb->pieces[capturing_piece].color,
+				   position->piece_position[capturing_piece],
+				   Movement::Backward, Movement::Capture)) {
 
 	    for (auto &movement : dir) {
 
@@ -10314,10 +10260,10 @@ void consider_possible_captures(const local_position_t &foreign_position, const 
 
     /* Now consider all possible backwards movements of the capturing piece. */
 
-    for (auto &dir : movements3(current_tb->pieces[capturing_piece].piece_type,
-				current_tb->pieces[capturing_piece].color,
-				position->piece_position[capturing_piece],
-				Movement2::Backward, Movement2::Capture)) {
+    for (auto &dir : movements(current_tb->pieces[capturing_piece].piece_type,
+			       current_tb->pieces[capturing_piece].color,
+			       position->piece_position[capturing_piece],
+			       Movement::Backward, Movement::Capture)) {
 
 	for (auto &movement : dir) {
 
@@ -10461,8 +10407,6 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
     local_position_t current_position(current_tb); /* i.e, last position that moved to parent_position */
     translation_result translation;
     int piece;
-    int dir;
-    struct movement *movementptr;
     int origin_square;
 
     /* Translate the futurebase index into a local position.  We have exactly the same number and
@@ -10552,10 +10496,10 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 
 	parent_position = current_position;
 
-	for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
-				    current_tb->pieces[piece].color,
-				    parent_position.piece_position[piece],
-				    Movement2::Backward, Movement2::NonCapture)) {
+	for (auto &dir : movements(current_tb->pieces[piece].piece_type,
+				   current_tb->pieces[piece].color,
+				   parent_position.piece_position[piece],
+				   Movement::Backward, Movement::NonCapture)) {
 
 	    for (auto &movement : dir) {
 
@@ -10996,10 +10940,10 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	    if (tb->pieces[piece].legal_squares & BITVECTOR(sq)) {
 
-		for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
-					    current_tb->pieces[piece].color,
-					    sq,
-					    Movement2::Forward, Movement2::Capture)) {
+		for (auto &dir : movements(current_tb->pieces[piece].piece_type,
+					   current_tb->pieces[piece].color,
+					   sq,
+					   Movement::Forward, Movement::Capture)) {
 
 		    for (auto &movement : dir) {
 
@@ -11214,10 +11158,10 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 	    if (! (tb->pieces[piece].legal_squares & BITVECTOR(sq))) continue;
 
-	    for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
-					current_tb->pieces[piece].color,
-					sq,
-					Movement2::Forward, Movement2::NonCapture)) {
+	    for (auto &dir : movements(current_tb->pieces[piece].piece_type,
+				       current_tb->pieces[piece].color,
+				       sq,
+				       Movement::Forward, Movement::NonCapture)) {
 
 		for (auto &movement : dir) {
 
@@ -11896,10 +11840,10 @@ void back_propagate_index_within_table(index_t index, int reflection)
 
 	square_t origin_square = position.piece_position[piece];
 
-	for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
-				    current_tb->pieces[piece].color,
-				    origin_square,
-				    Movement2::Backward, Movement2::NonCapture)) {
+	for (auto &dir : movements(current_tb->pieces[piece].piece_type,
+				   current_tb->pieces[piece].color,
+				   origin_square,
+				   Movement::Backward, Movement::NonCapture)) {
 
 	    /* What about captures?  Well, first of all, there are no captures here!  We're moving
 	     * BACKWARDS in the game... and pieces don't appear out of thin air.  Captures are
@@ -12011,9 +11955,9 @@ void initialize_board_masks(void)
 
 	    if (piece != PieceType::Pawn) {
 
-		for (auto &dir : movements3(piece, PieceColor::White,
-					    piece_square,
-					    Movement2::Forward, Movement2::Capture)) {
+		for (auto &dir : movements(piece, PieceColor::White,
+					   piece_square,
+					   Movement::Forward, Movement::Capture)) {
 
 		    uint64_t mask = 0;
 
@@ -12030,9 +11974,9 @@ void initialize_board_masks(void)
 
 		for (auto color : BothColors) {
 
-		    for (auto &dir : movements3(piece, color,
-						piece_square,
-						Movement2::Forward, Movement2::Capture)) {
+		    for (auto &dir : movements(piece, color,
+					       piece_square,
+					       Movement::Forward, Movement::Capture)) {
 
 			for (auto &movement : dir) {
 
@@ -12097,8 +12041,8 @@ bool global_PTM_in_check(global_position_t *position)
 
 	const PieceType piece_type = pair.second;
 
-	for (auto &dir : movements3(piece_type, pair.first, square,
-				    Movement2::Forward, Movement2::Capture)) {
+	for (auto &dir : movements(piece_type, pair.first, square,
+				   Movement::Forward, Movement::Capture)) {
 
 	    for (auto &movement : dir) {
 
@@ -12140,8 +12084,8 @@ bool global_PNTM_in_check(global_position_t *position)
 
 	const PieceType piece_type = pair.second;
 
-	for (auto &dir : movements3(piece_type, pair.first, square,
-				    Movement2::Forward, Movement2::Capture)) {
+	for (auto &dir : movements(piece_type, pair.first, square,
+				   Movement::Forward, Movement::Capture)) {
 
 	    for (auto &movement : dir) {
 
@@ -12175,10 +12119,10 @@ bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position)
 
 	if (tb->pieces[piece].color != position->side_to_move) continue;
 
-	for (auto &dir : movements3(tb->pieces[piece].piece_type,
-				    tb->pieces[piece].color,
-				    position->piece_position[piece],
-				    Movement2::Forward, Movement2::Capture)) {
+	for (auto &dir : movements(tb->pieces[piece].piece_type,
+				   tb->pieces[piece].color,
+				   position->piece_position[piece],
+				   Movement::Forward, Movement::Capture)) {
 
 	    for (auto &movement : dir) {
 
@@ -12339,10 +12283,10 @@ std::vector<move> generate_moves(const local_position_t &position)
 
 	int origin_square = position.piece_position[piece];
 
-	for (auto &dir : movements3(tb->pieces[piece].piece_type,
-				    tb->pieces[piece].color,
-				    position.piece_position[piece],
-				    Movement2::Forward, Movement2::AllMoves)) {
+	for (auto &dir : movements(tb->pieces[piece].piece_type,
+				   tb->pieces[piece].color,
+				   position.piece_position[piece],
+				   Movement::Forward, Movement::AllMoves)) {
 
 	    for (auto &movement : dir) {
 
@@ -12540,8 +12484,8 @@ std::vector<std::pair<move, global_position_t>> generate_moves(const global_posi
 
 	if (piece_color != position.side_to_move) continue;
 
-	for (auto &dir : movements3(piece_type, piece_color, origin_square,
-				    Movement2::Forward, Movement2::AllMoves)) {
+	for (auto &dir : movements(piece_type, piece_color, origin_square,
+				   Movement::Forward, Movement::AllMoves)) {
 
 	    for (auto &movement : dir) {
 
@@ -13449,10 +13393,10 @@ void verify_tablebase_internally_thread(void)
 
 	    origin_square = position.piece_position[piece];
 
-	    for (auto &dir : movements3(current_tb->pieces[piece].piece_type,
-					current_tb->pieces[piece].color,
-					position.piece_position[piece],
-					Movement2::Forward, Movement2::NonCapture)) {
+	    for (auto &dir : movements(current_tb->pieces[piece].piece_type,
+				       current_tb->pieces[piece].color,
+				       position.piece_position[piece],
+				       Movement::Forward, Movement::NonCapture)) {
 
 		for (auto &movement : dir) {
 
