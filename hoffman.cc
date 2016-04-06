@@ -9678,11 +9678,11 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
     }
 
     if ((current_index == debug_move) || (future_index == debug_futuremove)) {
-	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %s %" PRIindex " %s refl %d mul %d\n",
+	info("propagate_index_from_futurebase; %" PRIindex " %s refl %d mul %d from %s %s %" PRIindex " %s refl %d mul %d futuremove %d\n",
 	     current_index, current_position.FEN(), current_position.reflection, current_position.multiplicity,
 	     foreign_position.tb->filename.c_str(), foreign_position.tb->invert_colors ? "(Inv)" : "",
 	     foreign_position.index, foreign_position.FEN(), foreign_position.reflection,
-	     foreign_position.multiplicity);
+	     foreign_position.multiplicity, futuremove);
     }
 
     if (futurebase->format.dtm_bits > 0) {
@@ -9690,8 +9690,8 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 	int dtm = futurebase->get_DTM(future_index);
 
 	if (dtm > 0) {
-	    /* Don't backprop DTM 1 (PNTM in check) because we don't count illegal moves */
-	    if (dtm != 1) {
+	    /* Don't backprop DTM 1 (PNTM in check) because we don't count illegal moves (unless it's suicide) */
+	    if ((futurebase->variant == VARIANT_SUICIDE) || (dtm != 1)) {
 		commit_update(current_index, -dtm, movecnt, futuremove);
 	    }
 	} else if (dtm < 0) {
@@ -12048,11 +12048,12 @@ void initialize_board_masks(void)
 
 bool PTM_in_check(const tablebase_t *tb, const local_position_t *position)
 {
-    int king_position = position->piece_position[(position->side_to_move == PieceColor::White) ? tb->white_king : tb->black_king];
-
     /* The concept of check doesn't exist in suicide - kings are normal pieces */
 
     if (tb->variant == VARIANT_SUICIDE) return false;
+
+    const int king = (position->side_to_move == PieceColor::White) ? tb->white_king : tb->black_king;
+    const int king_position = position->piece_position[king];
 
     for (int piece = 0; piece < tb->num_pieces; piece++) {
 
@@ -12725,6 +12726,10 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 
 	    movecnt ++;
 
+	    if (move.is_capture) {
+		capturecnt ++;
+	    }
+
 	    if (move.is_futuremove) {
 		if (move.futuremove == DISCARD_FUTUREMOVE) {
 		    /* it's a discard - decrement movecnt so net change is zero */
@@ -12746,6 +12751,9 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 			  movestr[position.side_to_move][move.futuremove]);
 		} else {
 		    futurevector |= FUTUREVECTOR(move.futuremove);
+		    if (move.is_capture) {
+			capture_futurevector |= FUTUREVECTOR(move.futuremove);
+		    }
 		}
 		futuremovecnt ++;
 	    }
@@ -12797,6 +12805,8 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 	return 0;
 
     } else {
+
+	/* XXX is this right for suicide? */
 
 	total_moves += movecnt;
 	total_futuremoves += futuremovecnt;
@@ -13844,15 +13854,15 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 
 	    search_result result = search_tablebases_for_global_position(tbs, &position);
 
+	    printf("   %-8s ", move.c_str());
+
 	    if (result) {
-		printf("   %-8s ", move.c_str());
 		result.print_score(1);
 	    } else if ((tb->variant == VARIANT_SUICIDE)
 		       && (tb->num_pieces_by_color[~ piece_color] == 1)) {
-		printf("   %s   %s WINS\n", move.c_str(),
-		       colors.at(~ piece_color).c_str());
+		printf("%s WINS\n", colors.at(~ piece_color).c_str());
 	    } else {
-		printf("   %-8s NO DATA\n", move.c_str());
+		printf("NO DATA\n");
 	    }
 
 	    moves_printed ++;
