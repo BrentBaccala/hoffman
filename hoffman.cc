@@ -1387,40 +1387,41 @@ namespace Movement {
 
     /* XXX is std::map the most efficient thing to use here? */
 
-    std::map<std::pair<PieceType, square_t>, std::vector<std::vector<square_t>>> piece_movements;
+    typedef std::vector<std::vector<square_t>> direction_vectors;
 
-    std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> normal_pawn_movements;
-    std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> capture_pawn_movements;
+    std::map<std::pair<PieceType, square_t>, direction_vectors> piece_movements;
 
-    std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> normal_pawn_movements_bkwd;
-    std::map<std::pair<PieceColor, square_t>, std::vector<square_t>> capture_pawn_movements_bkwd;
+    std::map<std::pair<PieceColor, square_t>, direction_vectors> normal_pawn_movements;
+    std::map<std::pair<PieceColor, square_t>, direction_vectors> capture_pawn_movements;
+
+    std::map<std::pair<PieceColor, square_t>, direction_vectors> normal_pawn_movements_bkwd;
+    std::map<std::pair<PieceColor, square_t>, direction_vectors> capture_pawn_movements_bkwd;
+
+    std::map<std::pair<PieceColor, square_t>, direction_vectors> all_pawn_movements;
+    std::map<std::pair<PieceColor, square_t>, direction_vectors> all_pawn_movements_bkwd;
 
     enum Direction { Forward, Backward };
     enum Type { AllMoves, Capture, NonCapture, NoDoublePawn };
 
-    const std::vector<std::vector<square_t>> movements(PieceType type, PieceColor color, square_t square,
-						       Direction dir, Type mvmt_type)
+    const direction_vectors movements(PieceType type, PieceColor color, square_t square,
+				      Direction dir, Type mvmt_type)
     {
-	if (type != PieceType::Pawn) return piece_movements[std::make_pair(type, square)];
-	else {
-	    std::vector<std::vector<square_t>> result;
+	if (type != PieceType::Pawn) {
+	    return piece_movements[std::make_pair(type, square)];
+	} else {
+
 	    switch (dir) {
 	    case Forward:
 		switch (mvmt_type) {
 		case NonCapture:
-		    result.push_back(normal_pawn_movements[std::make_pair(color, square)]);
-		    break;
+		    return normal_pawn_movements[std::make_pair(color, square)];
+
 		case Capture:
-		    for (auto x : capture_pawn_movements[std::make_pair(color, square)]) {
-			result.push_back(std::vector<square_t>(1, x));
-		    }
-		    break;
+		    return capture_pawn_movements[std::make_pair(color, square)];
+
 		case AllMoves:
-		    result.push_back(normal_pawn_movements[std::make_pair(color, square)]);
-		    for (auto x : capture_pawn_movements[std::make_pair(color, square)]) {
-			result.push_back(std::vector<square_t>(1, x));
-		    }
-		    break;
+		    return all_pawn_movements[std::make_pair(color, square)];
+
 		case NoDoublePawn:
 		    fatal("NoDoublePawn\n");
 		    break;
@@ -1429,26 +1430,20 @@ namespace Movement {
 	    case Backward:
 		switch (mvmt_type) {
 		case NonCapture:
-		    result.push_back(normal_pawn_movements_bkwd[std::make_pair(color, square)]);
-		    break;
+		    return normal_pawn_movements_bkwd[std::make_pair(color, square)];
+
 		case Capture:
-		    for (auto x : capture_pawn_movements_bkwd[std::make_pair(color, square)]) {
-			result.push_back(std::vector<square_t>(1, x));
-		    }
-		    break;
+		    return capture_pawn_movements_bkwd[std::make_pair(color, square)];
+
 		case AllMoves:
-		    result.push_back(normal_pawn_movements_bkwd[std::make_pair(color, square)]);
-		    for (auto x : capture_pawn_movements_bkwd[std::make_pair(color, square)]) {
-			result.push_back(std::vector<square_t>(1, x));
-		    }
-		    break;
+		    return all_pawn_movements_bkwd[std::make_pair(color, square)];
+
 		case NoDoublePawn:
 		    fatal("NoDoublePawn\n");
 		    break;
 		}
 		break;
 	    }
-	    return result;
 	}
     }
 
@@ -1581,31 +1576,42 @@ namespace Movement {
 		 * well.
 		 */
 
+		std::vector<square_t> movement;
+
 		if ((ROW(square) >= 1) && (ROW(square) <= 6)) {
 
-		    normal_pawn_movements[std::make_pair(color, square)].push_back(square + forwards_pawn_move);
+		    movement.push_back(square + forwards_pawn_move);
 
 		}
 
-		if (((color == PieceColor::White) && (ROW(square) == 1)) || ((color == PieceColor::Black) && (ROW(square) == 6))) {
+		if (((color == PieceColor::White) && (ROW(square) == 1))
+		    || ((color == PieceColor::Black) && (ROW(square) == 6))) {
 
-		    normal_pawn_movements[std::make_pair(color, square)].push_back(square + 2*forwards_pawn_move);
+		    movement.push_back(square + 2 * forwards_pawn_move);
 
 		}
+
+		normal_pawn_movements[std::make_pair(color, square)].push_back(movement);
 
 		/* Backwards pawn movements */
 
-		if (((color == PieceColor::White) && (ROW(square) > 1)) || ((color == PieceColor::Black) && (ROW(square) < 6))) {
+		movement.clear();
 
-		    normal_pawn_movements_bkwd[std::make_pair(color, square)].push_back(square + backwards_pawn_move);
+		if (((color == PieceColor::White) && (ROW(square) > 1))
+		    || ((color == PieceColor::Black) && (ROW(square) < 6))) {
+
+		    movement.push_back(square + backwards_pawn_move);
+
+		}
+
+		if (((color == PieceColor::White) && (ROW(square) == 3))
+		    || ((color == PieceColor::Black) && (ROW(square) == 4))) {
+
+		    movement.push_back(square + 2 * backwards_pawn_move);
 
 		}
 
-		if (((color == PieceColor::White) && (ROW(square) == 3)) || ((color == PieceColor::Black) && (ROW(square) == 4))) {
-
-		    normal_pawn_movements_bkwd[std::make_pair(color, square)].push_back(square + 2*backwards_pawn_move);
-
-		}
+		normal_pawn_movements_bkwd[std::make_pair(color, square)].push_back(movement);
 
 		/* Forward pawn captures. */
 
@@ -1613,13 +1619,17 @@ namespace Movement {
 
 		    if (COL(square) > 0) {
 
-			capture_pawn_movements[std::make_pair(color, square)].push_back(square + forwards_pawn_move - 1);
+			movement.clear();
+			movement.push_back(square + forwards_pawn_move - 1);
+			capture_pawn_movements[std::make_pair(color, square)].push_back(movement);
 
 		    }
 
 		    if (COL(square) < 7) {
 
-			capture_pawn_movements[std::make_pair(color, square)].push_back(square + forwards_pawn_move + 1);
+			movement.clear();
+			movement.push_back(square + forwards_pawn_move + 1);
+			capture_pawn_movements[std::make_pair(color, square)].push_back(movement);
 
 		    }
 		}
@@ -1630,17 +1640,36 @@ namespace Movement {
 
 		    if (COL(square) > 0) {
 
-			capture_pawn_movements_bkwd[std::make_pair(color, square)].push_back(square + backwards_pawn_move - 1);
+			movement.clear();
+			movement.push_back(square + backwards_pawn_move - 1);
+			capture_pawn_movements_bkwd[std::make_pair(color, square)].push_back(movement);
 
 		    }
 
 		    if (COL(square) < 7) {
 
-			capture_pawn_movements_bkwd[std::make_pair(color, square)].push_back(square + backwards_pawn_move + 1);
+			movement.clear();
+			movement.push_back(square + backwards_pawn_move + 1);
+			capture_pawn_movements_bkwd[std::make_pair(color, square)].push_back(movement);
 
 		    }
 		}
 
+		/* Combine normal and capture pawn moves into all_pawn_movements */
+
+		direction_vectors result;
+
+		result = normal_pawn_movements[std::make_pair(color, square)];
+		for (auto x : capture_pawn_movements[std::make_pair(color, square)]) {
+		    result.push_back(x);
+		}
+		all_pawn_movements[std::make_pair(color, square)] = result;
+
+		result = normal_pawn_movements_bkwd[std::make_pair(color, square)];
+		for (auto x : capture_pawn_movements_bkwd[std::make_pair(color, square)]) {
+		    result.push_back(x);
+		}
+		all_pawn_movements_bkwd[std::make_pair(color, square)] = result;
 	    }
 
 	}
