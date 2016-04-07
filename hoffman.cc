@@ -402,6 +402,8 @@ PieceColor operator~ (const PieceColor &x) {
 
 enum class PieceType { King, Queen, Rook, Bishop, Knight, Pawn };
 
+const std::vector<PieceType> AllPieceTypes = {PieceType::King, PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight, PieceType::Pawn};
+
 bimap3<std::string, PieceType, casefold_compare2> piece_name =
     {{"KING", PieceType::King}, {"QUEEN", PieceType::Queen}, {"ROOK", PieceType::Rook},
      {"BISHOP", PieceType::Bishop}, {"KNIGHT", PieceType::Knight}, {"PAWN", PieceType::Pawn}};
@@ -441,7 +443,6 @@ bimap3<std::pair<PieceColor, PieceType>, char> global_pieces2 =
 int promotion_possibilities = 4;
 PieceType promoted_pieces[] = {PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight, PieceType::King};
 
-const std::vector<PieceType> AllPieceTypes = {PieceType::King, PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight, PieceType::Pawn};
 
 
 /* Variables for gathering statistics */
