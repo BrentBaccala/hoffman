@@ -514,8 +514,7 @@ bool * negative_passes_needed = nullptr;
  * assume that the backprop code works correctly without them; set false to process them strictly
  * and make processing missing or duplicate futurevectors a fatal error.
  *
- * XXX setting this true currently causes the 'qqvp' test to fail and the 'r984' negatives to
- * succeed
+ * XXX setting this true currently causes the 'r984' negatives to succeed
  */
 
 const bool ignore_futurevectors = false;
@@ -577,7 +576,8 @@ std::map<PieceColor, std::map<int, char *> > movestr;
  * either conceding or discarding them.  pruned_futuremoves = conceded_futuremoves |
  * discarded_futuremoves, and unpruned_futuremoves = ~pruned_futuremoves.  optimized_futuremoves
  * indicates futuremoves that have been flagged for optimization, as they have no futurebases that
- * could match them and can thus be handled during initialization.
+ * could match them and can thus be handled during initialization.  capture_futuremoves indicate
+ * moves that correspond to captures, which are handled differently in the suicide variant.
  */
 
 std::map<PieceColor, futurevector_t> pruned_futuremoves;
@@ -585,6 +585,7 @@ std::map<PieceColor, futurevector_t> unpruned_futuremoves;
 std::map<PieceColor, futurevector_t> conceded_futuremoves;
 std::map<PieceColor, futurevector_t> discarded_futuremoves;
 std::map<PieceColor, futurevector_t> optimized_futuremoves;
+std::map<PieceColor, futurevector_t> capture_futuremoves;
 
 /* position - the data structures that represents a board position
  *
@@ -7999,7 +8000,9 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
      * capture-possible-flag is set.
      */
 
-    if ((current_tb->variant == VARIANT_SUICIDE) && (futuremove == NO_FUTUREMOVE)
+    if ((current_tb->variant == VARIANT_SUICIDE)
+	&& ((futuremove == NO_FUTUREMOVE)
+	    || !(FUTUREVECTOR(futuremove) & capture_futuremoves[index_to_side_to_move(current_tb, index)]))
 	&& entriesTable[index].get_capture_possible_flag()) {
 	return;
     }
@@ -10825,6 +10828,9 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		    futurecaptures[capturing_piece][captured_piece]
 			= num_futuremoves[tb->pieces[capturing_piece].color] ++;
+
+		    capture_futuremoves[tb->pieces[capturing_piece].color]
+			|= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 		}
 
 	    } else {
@@ -10852,6 +10858,9 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		    futurecaptures[capturing_piece][captured_piece]
 			= num_futuremoves[tb->pieces[capturing_piece].color] ++;
+
+		    capture_futuremoves[tb->pieces[capturing_piece].color]
+			|= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 
 		    /* Keep going only if it's a pawn capture that results in promotion */
 
@@ -10915,6 +10924,8 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 			promotion_captures[capturing_piece][captured_piece][promotion] = candidate_futuremove;
 
+			capture_futuremoves[tb->pieces[capturing_piece].color]
+			    |= FUTUREVECTOR(promotion_captures[capturing_piece][captured_piece][promotion]);
 		    }
 		}
 	    }
