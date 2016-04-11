@@ -12535,21 +12535,6 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 	return 0;
     }
 
-    /* If we're NOT moving into check AND the piece is moving outside its legal
-     * squares AND we can't permute the pieces into a position where everything is
-     * legal, we regard this as a futuremove (since it will require back prop from
-     * futurebases).  We could just check if local_position_to_index() returns a
-     * valid index, but checking the legal_squares bitvector first makes this a
-     * little faster.
-     */
-
-    /* If the piece is a pawn and we're moving to the last rank, then this has
-     * to be a promotion move, in fact, promotion_possibilities moves.  (queen,
-     * knight, maybe rook and bishop, king for suicide).  As such, they will
-     * require back propagation from futurebases and must therefore be flagged
-     * as futuremoves.
-     */
-
     if (concede_prune) {
 	entriesTable->initialize_entry_with_concede(index);
 	return 0;
@@ -12578,17 +12563,13 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 
     } else {
 
-	/* XXX is this right for suicide? */
-
-	total_moves += movecnt;
-	total_futuremoves += futuremovecnt;
-
 	/* In suicide, captures are forced, so if any captures are possible they are our only moves.
 	 * Of course, if we can capture the opponent's last piece, then we win!
 	 */
 
 	if ((tb->variant == VARIANT_SUICIDE) && (capturecnt != 0)) {
 	    movecnt = capturecnt;
+	    futuremovecnt = capturecnt;
 	    futurevector = capture_futurevector;
 	}
 
@@ -12614,6 +12595,9 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 	    /* other fields were printed by debug_move statement in initialize_entry() */
 	    info("   futurevector " FUTUREVECTOR_HEX_FORMAT "\n", futurevector);
 	}
+
+	total_moves += movecnt;
+	total_futuremoves += futuremovecnt;
 
 	return futurevector;
     }
