@@ -579,8 +579,7 @@ std::map<PieceColor, std::map<int, char *> > movestr;
  * either conceding or discarding them.  pruned_futuremoves = conceded_futuremoves |
  * discarded_futuremoves, and unpruned_futuremoves = ~pruned_futuremoves.  optimized_futuremoves
  * indicates futuremoves that have been flagged for optimization, as they have no futurebases that
- * could match them and can thus be handled during initialization.  capture_futuremoves indicate
- * moves that correspond to captures, which are handled differently in the suicide variant.
+ * could match them and can thus be handled during initialization.
  */
 
 std::map<PieceColor, futurevector_t> pruned_futuremoves;
@@ -588,7 +587,6 @@ std::map<PieceColor, futurevector_t> unpruned_futuremoves;
 std::map<PieceColor, futurevector_t> conceded_futuremoves;
 std::map<PieceColor, futurevector_t> discarded_futuremoves;
 std::map<PieceColor, futurevector_t> optimized_futuremoves;
-std::map<PieceColor, futurevector_t> capture_futuremoves;
 
 /* position - the data structures that represents a board position
  *
@@ -7983,6 +7981,14 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
     } while (!entriesTable[index].compare_exchange_weak(expected, desired));
 }
 
+/* For suicide analysis, we want to know if the current pass is backproping
+ * from a capture or promotion-capture futurebase.
+ *
+ * XXX is there a more elegant way to flag this than using a global variable?
+ */
+
+bool doing_capture_backprop = false;
+
 void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 {
     int i;
@@ -7996,16 +8002,11 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 #endif
 
     /* If we're doing a suicide analysis, captures are forced, so we never want to back-propagate a
-     * non-capture move into a position where a capture was possible.  For futurebase
-     * back-propagation into such a position, the only futuremoves listed as possible correspond to
-     * capture moves, so the code that called us should have already rejected non-capture
-     * futuremoves into such a position.  Now we check the intra-tablebase case and return if the
-     * capture-possible-flag is set.
+     * non-capture move into a position where a capture was possible.
      */
 
     if ((current_tb->variant == VARIANT_SUICIDE)
-	&& ((futuremove == NO_FUTUREMOVE)
-	    || !(FUTUREVECTOR(futuremove) & capture_futuremoves[index_to_side_to_move(current_tb, index)]))
+	&& !doing_capture_backprop
 	&& entriesTable[index].get_capture_possible_flag()) {
 	return;
     }
@@ -10431,6 +10432,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = &propagate_moves_from_capture_futurebase;
+		doing_capture_backprop = true;
 	    }
 
 	    break;
@@ -10446,6 +10448,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 		promotion_move = ((promotion_color == PieceColor::White) ? 8 : -8);
 
 		backprop_function = &propagate_moves_from_promotion_futurebase;
+		doing_capture_backprop = false;
 	    }
 
 	    break;
@@ -10461,6 +10464,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 		promotion_move = ((promotion_color == PieceColor::White) ? 8 : -8);
 
 		backprop_function = &propagate_moves_from_promotion_capture_futurebase;
+		doing_capture_backprop = true;
 	    }
 
 	    break;
@@ -10470,6 +10474,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = propagate_moves_from_normal_futurebase;
+		doing_capture_backprop = false;
 	    }
 
 	    break;
@@ -10836,9 +10841,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		    futurecaptures[capturing_piece][captured_piece]
 			= num_futuremoves[tb->pieces[capturing_piece].color] ++;
-
-		    capture_futuremoves[tb->pieces[capturing_piece].color]
-			|= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 		}
 
 	    } else {
@@ -10866,9 +10868,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 
 		    futurecaptures[capturing_piece][captured_piece]
 			= num_futuremoves[tb->pieces[capturing_piece].color] ++;
-
-		    capture_futuremoves[tb->pieces[capturing_piece].color]
-			|= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 
 		    /* Keep going only if it's a pawn capture that results in promotion */
 
@@ -10931,9 +10930,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 			}
 
 			promotion_captures[capturing_piece][captured_piece][promotion] = candidate_futuremove;
-
-			capture_futuremoves[tb->pieces[capturing_piece].color]
-			    |= FUTUREVECTOR(promotion_captures[capturing_piece][captured_piece][promotion]);
 		    }
 		}
 	    }
@@ -12776,6 +12772,8 @@ void propagate_all_moves_within_tablebase(tablebase_t *tb)
 {
     int dtm = 1;
     int positions_finalized_on_last_pass = 0;
+
+    doing_capture_backprop = false;
 
     /* DTM 1 positions are illegal (PNTM is in check), so back prop from these positions is not
      * needed or desired because we don't count moves into check as part of movecnt.
