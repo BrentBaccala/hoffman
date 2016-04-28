@@ -529,6 +529,7 @@ typedef uint32_t futurevector_t;
 #define DISCARD_FUTUREMOVE -2
 #define CONCEDE_FUTUREMOVE -3
 #define RESIGN_FUTUREMOVE -4
+#define HANDLED_FUTUREMOVE -5
 
 /* These arrays hold the bit locations in the futurevector of various posible futuremoves -
  * captures, capture-promotions, promotions, and normal movements of a piece to all 64 squares.  The
@@ -9397,7 +9398,7 @@ bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position);
 
 void propagate_minilocal_position_from_futurebase(local_position_t &current_position,
 						  const local_position_t &foreign_position,
-						  const int futuremove, bool normalize)
+						  int futuremove, bool normalize)
 {
     /* XXX get rid of this const_cast ; need it because get_DTM might modify its tablebase */
     tablebase_t * futurebase = const_cast<tablebase_t *>(foreign_position.tb);
@@ -9416,6 +9417,11 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 	return;
     }
 
+    if ((futuremove < 0) && (futuremove != HANDLED_FUTUREMOVE)) {
+	fatal("Futuremove %d never assigned: %s\n", futuremove, current_position.FEN());
+	return;
+    }
+
     /* local_position_to_index() updated the position structure's multiplicity and reflection, so we
      * know they're correct.  If we're back proping into an 8-way symmetric tablebase (the only way
      * REFLECTION_DIAGONAL will ever be set), we must be back proping from an 8-way symmetric
@@ -9428,7 +9434,10 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 
     int movecnt;
 
-    if (ignore_futurevectors) {
+    if (futuremove == HANDLED_FUTUREMOVE) {
+	movecnt = 1;
+	futuremove = NO_FUTUREMOVE;
+    } else if (ignore_futurevectors) {
 	movecnt = 1;
     } else {
 	if ((current_position.multiplicity == 2) && (current_position.reflection & REFLECTION_DIAGONAL)) {
@@ -9436,11 +9445,6 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 	}
 
 	movecnt = current_position.multiplicity;
-    }
-
-    if (futuremove == -1) {
-	fatal("Futuremove never assigned: %s\n", current_position.FEN());
-	return;
     }
 
     if ((current_index == debug_move) || (future_index == debug_futuremove)) {
@@ -11164,6 +11168,12 @@ bool check_pruning(tablebase_t *tb) {
 
 	if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
+	/* If we're not encoding side-to-move, then all of the positions in the tablebase are WHITE
+	 * to move positions, so we don't care if the captured piece is WHITE.
+	 */
+
+	if ((! tb->encode_stm) && (tb->pieces[captured_piece].color == PieceColor::White)) continue;
+
 	futurebase_cnt = 0;
 
 	/* I've made this a bit more liberal now, because if we're dealing with move restrictions,
@@ -11191,15 +11201,9 @@ bool check_pruning(tablebase_t *tb) {
 	 * statement, or it's an error.
 	 */
 
-	if (futurebase_cnt == 0) {
+	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
-	    for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
-
-		/* If we're not encoding side-to-move, then all of the positions in the tablebase
-		 * are WHITE positions, so we don't care if the capturing piece is BLACK
-		 */
-
-		if ((! tb->encode_stm) && (tb->pieces[capturing_piece].color == PieceColor::Black)) continue;
+	    if (futurebase_cnt == 0) {
 
 		if (futurecaptures[capturing_piece][captured_piece] >= 0) {
 
@@ -11221,6 +11225,70 @@ bool check_pruning(tablebase_t *tb) {
 			futurecaptures[capturing_piece][captured_piece] = CONCEDE_FUTUREMOVE;
 		    } else {
 			fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
+		    }
+		}
+
+	    } else {
+		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+		    if (((tb->pieces[captured_piece].piece_type == PieceType::Pawn)
+			 && (futurebases[fbnum].extra_piece == -1)
+			 && (futurebases[fbnum].missing_pawn != -1)
+			 && (tb->pieces[futurebases[fbnum].missing_pawn].color == tb->pieces[captured_piece].color)
+			 && (futurebases[fbnum].missing_non_pawn == -1))
+			|| ((tb->pieces[captured_piece].piece_type != PieceType::Pawn)
+			    && (futurebases[fbnum].extra_piece == -1)
+			    && (futurebases[fbnum].missing_non_pawn != -1)
+			    && (tb->pieces[futurebases[fbnum].missing_non_pawn].color == tb->pieces[captured_piece].color)
+			    && (futurebases[fbnum].missing_pawn == -1))) {
+
+
+			/* We want to determine if this capture will always lead to this futurebase,
+			 * and thus eliminate the need for tracking this futuremove.
+			 *
+			 * The capturing piece will end up on the captured piece's square, so each
+			 * legal square for the captured piece in the current tablebase must be
+			 * legal for the capturing piece in the futurebase.
+			 *
+			 * For other local pieces, there must a corresponding piece in the
+			 * futurebase with a superset of its location restriction.
+			 */
+
+			int local_piece[MAX_PIECES];
+
+			tablebase_t& fb = futurebases[fbnum];
+
+			for (piece = 0; piece < tb->num_pieces - 1; piece ++) {
+			    if (piece < captured_piece) {
+				local_piece[piece] = piece;
+			    } else {
+				local_piece[piece] = piece+1;
+			    }
+			}
+
+			do {
+			    for (piece = 0; piece < tb->num_pieces - 1; piece ++) {
+				if (fb.pieces[piece].piece_type != tb->pieces[local_piece[piece]].piece_type) break;
+				if (!fb.invert_colors && (fb.pieces[piece].color != tb->pieces[local_piece[piece]].color)) break;
+				if (fb.invert_colors && (fb.pieces[piece].color == tb->pieces[local_piece[piece]].color)) break;
+				if ((local_piece[piece] != capturing_piece)
+				    && ((fb.pieces[piece].legal_squares & tb->pieces[local_piece[piece]].legal_squares)
+					!= tb->pieces[local_piece[piece]].legal_squares)) break;
+				if ((local_piece[piece] == capturing_piece)
+				    && ((fb.pieces[piece].legal_squares & tb->pieces[captured_piece].legal_squares)
+					!= tb->pieces[captured_piece].legal_squares)) break;
+			    }
+
+			    /* We've found a mapping of pieces that meets the above criteria. */
+			    if (piece == tb->num_pieces - 1) {
+				if (futurecaptures[capturing_piece][captured_piece] >= 0) {
+				    optimized_futuremoves[tb->pieces[capturing_piece].color]
+					|= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
+				    futurecaptures[capturing_piece][captured_piece] = HANDLED_FUTUREMOVE;
+				}
+				break;
+			    }
+
+			} while (std::next_permutation(local_piece, local_piece + tb->num_pieces - 1));
 		    }
 		}
 	    }
@@ -12511,6 +12579,8 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 		    concede_prune = true;
 		} else if (move.futuremove == RESIGN_FUTUREMOVE) {
 		    resign_prune = true;
+		} else if (move.futuremove == HANDLED_FUTUREMOVE) {
+		    // move doesn't have to be tracked
 		} else if (move.futuremove < 0) {
 		    global_position_t global;
 		    index_to_global_position(tb, index, &global);
