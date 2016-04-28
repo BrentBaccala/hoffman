@@ -11525,14 +11525,17 @@ void optimize_futuremoves(tablebase_t *tb)
 		}
 
 		remove_futuremove(&(pruned_futuremoves[color]), fm);
+		remove_futuremove(&(unpruned_futuremoves[color]), fm);
 		remove_futuremove(&(conceded_futuremoves[color]), fm);
 		remove_futuremove(&(discarded_futuremoves[color]), fm);
 		remove_futuremove(&(optimized_futuremoves[color]), fm);
 
 		info("Pruned %s futuremove %s\n", colors.at(color).c_str(), movestr[color][fm]);
 
+		// free(movestr[color][fm]);
+
 		for (fm2 = fm + 1; fm2 < (int) num_futuremoves[color]; fm2++) {
-		    strcpy(movestr[color][fm2-1], movestr[color][fm2]);
+		    movestr[color][fm2-1] = movestr[color][fm2];
 		}
 
 		num_futuremoves[color] --;
