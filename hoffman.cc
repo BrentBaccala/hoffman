@@ -556,7 +556,9 @@ typedef uint32_t futurevector_t;
  * ordering in piece_name and piece_char.
  */
 
-std::map<PieceColor, unsigned int> num_futuremoves;
+/* XXX figure out if default constructors will take care of this next initialization (and others like it) */
+
+std::map<PieceColor, unsigned int> num_futuremoves = {{PieceColor::White, 0}, {PieceColor::Black, 0}};
 int futurecaptures[MAX_PIECES][MAX_PIECES];
 int promotion_captures[MAX_PIECES][MAX_PIECES][MAX_PROMOTION_POSSIBILITIES];
 int promotions[MAX_PIECES][MAX_PROMOTION_POSSIBILITIES];
@@ -10597,6 +10599,8 @@ bool have_all_futuremoves_been_handled(tablebase_t *tb) {
 
     if (ignore_futurevectors) return true;
 
+    if (tb->futurevector_bits == 0) return true;
+
     index_t index;
 
     /* XXX this code is probably inefficient, and though it appears to assume a little-endian
@@ -11051,7 +11055,11 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     }
 
     info("%d possible WHITE futuremoves\n", num_futuremoves[PieceColor::White]);
-    if (tb->encode_stm) info("%d possible BLACK futuremoves\n", num_futuremoves[PieceColor::Black]);
+    if (tb->encode_stm) {
+	info("%d possible BLACK futuremoves\n", num_futuremoves[PieceColor::Black]);
+    } else {
+	num_futuremoves[PieceColor::Black] = 0;
+    }
 
     if (num_futuremoves[PieceColor::White] > sizeof(futurevector_t)*8) {
 	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
@@ -12715,8 +12723,12 @@ void initialize_tablebase_section(index_t start_index, index_t end_index)
     for (index=start_index; index <= end_index; index++) {
 	long long bit_offset = ((long long)index * current_tb->futurevector_bits);
 
-	set_unsigned_int_field(current_tb->futurevectors, bit_offset, current_tb->futurevector_bits,
-			       initialize_tablebase_entry(current_tb, index, position));
+	if (current_tb->futurevector_bits > 0) {
+	    set_unsigned_int_field(current_tb->futurevectors, bit_offset, current_tb->futurevector_bits,
+				   initialize_tablebase_entry(current_tb, index, position));
+	} else {
+	    initialize_tablebase_entry(current_tb, index, position);
+	}
     }
 }
 
@@ -13087,21 +13099,25 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	else
 	    tb->futurevector_bits = num_futuremoves[PieceColor::Black];
 
-	futurevector_bytes = (((tb->num_indices * tb->futurevector_bits) + 7) >> 3) + 2*sizeof(int);
-	tb->futurevectors = (char *) malloc(futurevector_bytes);
-	if (tb->futurevectors == nullptr) {
-	    fatal("Can't malloc %zdMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
-		  strerror(errno));
-	    return false;
-	} else {
-	    if (futurevector_bytes < 1024*1024) {
-		info("Malloced %zdKB for tablebase futurevectors\n", futurevector_bytes/1024);
+	if (tb->futurevector_bits > 0) {
+	    futurevector_bytes = (((tb->num_indices * tb->futurevector_bits) + 7) >> 3) + 2*sizeof(int);
+	    tb->futurevectors = (char *) malloc(futurevector_bytes);
+	    if (tb->futurevectors == nullptr) {
+		fatal("Can't malloc %zdMB for tablebase futurevectors: %s\n", futurevector_bytes/(1024*1024),
+		      strerror(errno));
+		return false;
 	    } else {
-		info("Malloced %zdMB for tablebase futurevectors\n", futurevector_bytes/(1024*1024));
+		if (futurevector_bytes < 1024*1024) {
+		    info("Malloced %zdKB for tablebase futurevectors\n", futurevector_bytes/1024);
+		} else {
+		    info("Malloced %zdMB for tablebase futurevectors\n", futurevector_bytes/(1024*1024));
+		}
 	    }
+	    /* Don't really need this, since they will all get initialized anyway */
+	    // memset(tb->futurevectors, 0, futurevector_bytes);
+	} else {
+	    tb->futurevectors = NULL;
 	}
-	/* Don't really need this, since they will all get initialized anyway */
-	memset(tb->futurevectors, 0, futurevector_bytes);
 
 	/* Due to the heavily random access pattern of memory during back propagation, this
 	 * application performs horribly if required to swap.  Attempt to lock all of its pages into
