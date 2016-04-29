@@ -11213,20 +11213,17 @@ bool check_pruning(tablebase_t *tb) {
 
 		if (futurecaptures[capturing_piece][captured_piece] >= 0) {
 
-		    if (! (pruned_futuremoves[tb->pieces[capturing_piece].color]
-			   & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]))) {
-			fatal("No futurebase or pruning for %s move %s\n",
-			      colors.at(tb->pieces[capturing_piece].color).c_str(),
-			      movestr[tb->pieces[capturing_piece].color][futurecaptures[capturing_piece][captured_piece]]);
-			return false;
-		    } else if (discarded_futuremoves[tb->pieces[capturing_piece].color]
+		    if (discarded_futuremoves[tb->pieces[capturing_piece].color]
 			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
 			futurecaptures[capturing_piece][captured_piece] = DISCARD_FUTUREMOVE;
 		    } else if (conceded_futuremoves[tb->pieces[capturing_piece].color]
 			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
 			futurecaptures[capturing_piece][captured_piece] = CONCEDE_FUTUREMOVE;
 		    } else {
-			fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
+			fatal("No futurebase or pruning for %s move %s\n",
+			      colors.at(tb->pieces[capturing_piece].color).c_str(),
+			      movestr[tb->pieces[capturing_piece].color][futurecaptures[capturing_piece][captured_piece]]);
+			return false;
 		    }
 		}
 
@@ -11389,20 +11386,17 @@ bool check_pruning(tablebase_t *tb) {
 
 		if (promoted_piece_handled) continue;
 
-		if (! (pruned_futuremoves[tb->pieces[pawn].color]
-		       & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]))) {
-		    fatal("No futurebase or pruning for %s move %s\n",
-			  colors.at(tb->pieces[pawn].color).c_str(),
-			  movestr[tb->pieces[pawn].color][promotion_captures[pawn][captured_piece][promotion]]);
-		    return false;
-		} else if (discarded_futuremoves[tb->pieces[pawn].color]
+		if (discarded_futuremoves[tb->pieces[pawn].color]
 			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
 		    promotion_captures[pawn][captured_piece][promotion] = DISCARD_FUTUREMOVE;
 		} else if (conceded_futuremoves[tb->pieces[pawn].color]
 			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
 		    promotion_captures[pawn][captured_piece][promotion] = CONCEDE_FUTUREMOVE;
 		} else {
-		    fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
+		    fatal("No futurebase or pruning for %s move %s\n",
+			  colors.at(tb->pieces[pawn].color).c_str(),
+			  movestr[tb->pieces[pawn].color][promotion_captures[pawn][captured_piece][promotion]]);
+		    return false;
 		}
 
 	    }
@@ -11429,17 +11423,15 @@ bool check_pruning(tablebase_t *tb) {
 
 	    if (promoted_piece_handled) continue;
 
-	    if (! (pruned_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion]))) {
-		fatal("No futurebase or pruning for %s move %s\n",
-		      colors.at(tb->pieces[pawn].color).c_str(),
-		      movestr[tb->pieces[pawn].color][promotions[pawn][promotion]]);
-		return false;
-	    } else if (discarded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
+	    if (discarded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
 		promotions[pawn][promotion] = DISCARD_FUTUREMOVE;
 	    } else if (conceded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
 		promotions[pawn][promotion] = CONCEDE_FUTUREMOVE;
 	    } else {
-		fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
+		fatal("No futurebase or pruning for %s move %s\n",
+		      colors.at(tb->pieces[pawn].color).c_str(),
+		      movestr[tb->pieces[pawn].color][promotions[pawn][promotion]]);
+		return false;
 	    }
 	}
     }
