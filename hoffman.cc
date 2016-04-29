@@ -1739,13 +1739,13 @@ class pawn_position {
     friend bool operator== (const pawn_position & LHS, const pawn_position & RHS);
     friend bool pawn_position_fast_compare (const pawn_position & LHS, const pawn_position & RHS);
 
-    uint64_t white_pawns = 0;
-    uint64_t black_pawns = 0;
-
     int total_white_pawns = 0;
     int total_black_pawns = 0;
 
 public:
+
+    uint64_t white_pawns = 0;
+    uint64_t black_pawns = 0;
 
     int white_pawn_captures_black_piece_allowed = 0;
     int black_pawn_captures_white_piece_allowed = 0;
@@ -1920,6 +1920,8 @@ std::set<pawn_position> valid_pawn_positions;
 std::set<pawn_position> invalid_pawn_positions;
 
 struct pawngen {
+    uint64_t initial_white_pawns;
+    uint64_t initial_black_pawns;
     std::vector<pawn_position> pawn_positions_by_position;
     std::vector<pawn_position> pawn_positions_by_index;
 };
@@ -2118,6 +2120,9 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
     process_pawn_position(initial_position);
 
     pawngen.reset(new struct pawngen);
+
+    pawngen->initial_white_pawns = initial_position.white_pawns;
+    pawngen->initial_black_pawns = initial_position.black_pawns;
 
     pawngen->pawn_positions_by_position.resize(valid_pawn_positions.size());
     pawngen->pawn_positions_by_index.resize(valid_pawn_positions.size());
@@ -11256,6 +11261,16 @@ bool check_pruning(tablebase_t *tb) {
 
 			tablebase_t& fb = futurebases[fbnum];
 
+			/* If the futurebase uses pawngen, then we will only optimize it out
+			 * if we also use pawngen, and if our initial pawn positions are identical.
+			 */
+
+			if (fb.pawngen) {
+			    if (! tb->pawngen) break;
+			    if (tb->pawngen->initial_white_pawns != fb.pawngen->initial_white_pawns) break;
+			    if (tb->pawngen->initial_black_pawns != fb.pawngen->initial_black_pawns) break;
+			}
+
 			for (piece = 0; piece < tb->num_pieces - 1; piece ++) {
 			    if (piece < captured_piece) {
 				local_piece[piece] = piece;
@@ -11269,6 +11284,10 @@ bool check_pruning(tablebase_t *tb) {
 				if (fb.pieces[piece].piece_type != tb->pieces[local_piece[piece]].piece_type) break;
 				if (!fb.invert_colors && (fb.pieces[piece].color != tb->pieces[local_piece[piece]].color)) break;
 				if (fb.invert_colors && (fb.pieces[piece].color == tb->pieces[local_piece[piece]].color)) break;
+
+				/* If we're using pawngen, we've already checked that the pawns match right */
+				if (fb.pawngen && fb.pieces[piece].piece_type == PieceType::Pawn) continue;
+
 				if ((local_piece[piece] != capturing_piece)
 				    && ((fb.pieces[piece].legal_squares & tb->pieces[local_piece[piece]].legal_squares)
 					!= tb->pieces[local_piece[piece]].legal_squares)) break;
