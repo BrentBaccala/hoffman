@@ -577,16 +577,13 @@ std::map<PieceColor, std::map<int, char *> > movestr;
 
 /* Pairs of futurevectors (one for each color) indicating which futuremoves have been pruned by
  * either conceding or discarding them.  pruned_futuremoves = conceded_futuremoves |
- * discarded_futuremoves, and unpruned_futuremoves = ~pruned_futuremoves.  optimized_futuremoves
- * indicates futuremoves that have been flagged for optimization, as they have no futurebases that
- * could match them and can thus be handled during initialization.
+ * discarded_futuremoves, and unpruned_futuremoves = ~pruned_futuremoves.
  */
 
 std::map<PieceColor, futurevector_t> pruned_futuremoves;
 std::map<PieceColor, futurevector_t> unpruned_futuremoves;
 std::map<PieceColor, futurevector_t> conceded_futuremoves;
 std::map<PieceColor, futurevector_t> discarded_futuremoves;
-std::map<PieceColor, futurevector_t> optimized_futuremoves;
 
 /* position - the data structures that represents a board position
  *
@@ -11219,13 +11216,9 @@ bool check_pruning(tablebase_t *tb) {
 			return false;
 		    } else if (discarded_futuremoves[tb->pieces[capturing_piece].color]
 			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
-			optimized_futuremoves[tb->pieces[capturing_piece].color]
-			    |= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 			futurecaptures[capturing_piece][captured_piece] = DISCARD_FUTUREMOVE;
 		    } else if (conceded_futuremoves[tb->pieces[capturing_piece].color]
 			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
-			optimized_futuremoves[tb->pieces[capturing_piece].color]
-			    |= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 			futurecaptures[capturing_piece][captured_piece] = CONCEDE_FUTUREMOVE;
 		    } else {
 			fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
@@ -11255,6 +11248,8 @@ bool check_pruning(tablebase_t *tb) {
 			 *
 			 * For other local pieces, there must a corresponding piece in the
 			 * futurebase with a superset of its location restriction.
+			 *
+			 * XXX this calculation isn't right if the futurebase uses pawngen
 			 */
 
 			int local_piece[MAX_PIECES];
@@ -11285,8 +11280,6 @@ bool check_pruning(tablebase_t *tb) {
 			    /* We've found a mapping of pieces that meets the above criteria. */
 			    if (piece == tb->num_pieces - 1) {
 				if (futurecaptures[capturing_piece][captured_piece] >= 0) {
-				    optimized_futuremoves[tb->pieces[capturing_piece].color]
-					|= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 				    futurecaptures[capturing_piece][captured_piece] = HANDLED_FUTUREMOVE;
 				}
 				break;
@@ -11378,11 +11371,9 @@ bool check_pruning(tablebase_t *tb) {
 		    return false;
 		} else if (discarded_futuremoves[tb->pieces[pawn].color]
 			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
-		    optimized_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
 		    promotion_captures[pawn][captured_piece][promotion] = DISCARD_FUTUREMOVE;
 		} else if (conceded_futuremoves[tb->pieces[pawn].color]
 			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
-		    optimized_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
 		    promotion_captures[pawn][captured_piece][promotion] = CONCEDE_FUTUREMOVE;
 		} else {
 		    fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
@@ -11418,10 +11409,8 @@ bool check_pruning(tablebase_t *tb) {
 		      movestr[tb->pieces[pawn].color][promotions[pawn][promotion]]);
 		return false;
 	    } else if (discarded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
-		optimized_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotions[pawn][promotion]);
 		promotions[pawn][promotion] = DISCARD_FUTUREMOVE;
 	    } else if (conceded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
-		optimized_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotions[pawn][promotion]);
 		promotions[pawn][promotion] = CONCEDE_FUTUREMOVE;
 	    } else {
 		fatal("Internal error: pruned move is neither conceded nor discarded?!?\n");
@@ -11472,9 +11461,33 @@ bool check_pruning(tablebase_t *tb) {
 /* optimize_futuremoves()
  *
  * Once we've assigned futuremove numbers, then gone and checked pruning, some of those futuremoves
- * might now be completely pruned.  If so, flag them for pruning during initialization (by changing
- * their numbers to -2 or -3) and collapse the remaining futuremoves down into a smaller set.
+ * might now be completely pruned, and their numbers were changed to DISCARD_FUTUREMOVE,
+ * CONCEDE_FUTUREMOVE, RESIGN_FUTUREMOVE or HANDLED_FUTUREMOVE.  Find any unused numbers and
+ * collapse the remaining futuremoves down into a smaller set.
  */
+
+void initialize_futuremoves(tablebase_t *tb)
+{
+    for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	for (int piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
+
+	    futurecaptures[piece][piece2] = NO_FUTUREMOVE;
+
+	    for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
+		promotion_captures[piece][piece2][promotion] = NO_FUTUREMOVE;
+	    }
+	}
+
+	for (square_t sq = 0; sq < 64; sq ++) {
+	    futuremoves[piece][sq] = NO_FUTUREMOVE;
+	}
+
+	for (int promotion = 0; promotion < promotion_possibilities; promotion ++) {
+	    promotions[piece][promotion] = NO_FUTUREMOVE;
+	}
+    }
+}
 
 void remove_futuremove(futurevector_t *fvp, int fm)
 {
@@ -11489,7 +11502,46 @@ void optimize_futuremoves(tablebase_t *tb)
 
 	for (fm = 0; fm < (int) num_futuremoves[color]; fm++) {
 
-	    if (optimized_futuremoves[color] & FUTUREVECTOR(fm)) {
+	    bool optimize_this_futuremove = true;
+
+	    /* XXX make this a subroutine */
+
+	    for (piece = 0; piece < tb->num_pieces; piece ++) {
+
+		if (tb->pieces[piece].color != color) continue;
+
+		for (piece2 = 0; piece2 < tb->num_pieces; piece2 ++) {
+		    if (futurecaptures[piece][piece2] == fm) {
+			optimize_this_futuremove = false;
+			break;
+		    }
+		    if (tb->pieces[piece].piece_type == PieceType::Pawn) {
+			for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
+			    if (promotion_captures[piece][piece2][promotion] == fm) {
+				optimize_this_futuremove = false;
+				break;
+			    }
+			}
+		    }
+		}
+		for (sq = 0; sq < 64; sq ++) {
+		    if (futuremoves[piece][sq] == fm) {
+			optimize_this_futuremove = false;
+			break;
+		    }
+		}
+		if (tb->pieces[piece].piece_type == PieceType::Pawn) {
+		    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
+			if (promotions[piece][promotion] == fm) {
+			    optimize_this_futuremove = false;
+			    break;
+			}
+		    }
+		}
+	    }
+
+
+	    if (optimize_this_futuremove) {
 
 		for (piece = 0; piece < tb->num_pieces; piece ++) {
 
@@ -11528,7 +11580,6 @@ void optimize_futuremoves(tablebase_t *tb)
 		remove_futuremove(&(unpruned_futuremoves[color]), fm);
 		remove_futuremove(&(conceded_futuremoves[color]), fm);
 		remove_futuremove(&(discarded_futuremoves[color]), fm);
-		remove_futuremove(&(optimized_futuremoves[color]), fm);
 
 		info("Pruned %s futuremove %s\n", colors.at(color).c_str(), movestr[color][fm]);
 
@@ -13064,6 +13115,7 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
     }
 
     if (! preload_all_futurebases(tb)) return false;
+    initialize_futuremoves(tb);
     assign_numbers_to_futuremoves(tb);
     if (! compute_pruned_futuremoves(tb)) return false;
     if (! check_pruning(tb)) return false;
