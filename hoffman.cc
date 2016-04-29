@@ -11246,18 +11246,7 @@ bool check_pruning(tablebase_t *tb) {
 
 			/* We want to determine if this capture will always lead to this futurebase,
 			 * and thus eliminate the need for tracking this futuremove.
-			 *
-			 * The capturing piece will end up on the captured piece's square, so each
-			 * legal square for the captured piece in the current tablebase must be
-			 * legal for the capturing piece in the futurebase.
-			 *
-			 * For other local pieces, there must a corresponding piece in the
-			 * futurebase with a superset of its location restriction.
-			 *
-			 * XXX this calculation isn't right if the futurebase uses pawngen
 			 */
-
-			int local_piece[MAX_PIECES];
 
 			tablebase_t& fb = futurebases[fbnum];
 
@@ -11271,6 +11260,14 @@ bool check_pruning(tablebase_t *tb) {
 			    if (tb->pawngen->initial_black_pawns != fb.pawngen->initial_black_pawns) break;
 			}
 
+			/* Now set up a mapping from the futurebase pieces to the local pieces.
+			 * We'll permute this around to consider all possible such mappings.
+			 * Remember that there's one less piece in the futurebase, and that nothing
+			 * in the futurebase maps to the captured piece.
+			 */
+
+			int local_piece[MAX_PIECES];
+
 			for (piece = 0; piece < tb->num_pieces - 1; piece ++) {
 			    if (piece < captured_piece) {
 				local_piece[piece] = piece;
@@ -11278,6 +11275,16 @@ bool check_pruning(tablebase_t *tb) {
 				local_piece[piece] = piece+1;
 			    }
 			}
+
+			/* Can we find a suitable mapping?
+			 *
+			 * The capturing piece will end up on the captured piece's square, so each
+			 * legal square for the captured piece in the current tablebase must be
+			 * legal for the capturing piece in the futurebase.
+			 *
+			 * For other local pieces, there must a corresponding piece in the
+			 * futurebase with a superset of its location restriction.
+			 */
 
 			do {
 			    for (piece = 0; piece < tb->num_pieces - 1; piece ++) {
