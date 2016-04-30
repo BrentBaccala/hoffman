@@ -11203,6 +11203,7 @@ bool check_pruning(tablebase_t *tb) {
 		if ((futurebases[fbnum].extra_piece == -1)
 		    && (futurebases[fbnum].missing_non_pawn != -1)
 		    && (tb->pieces[futurebases[fbnum].missing_non_pawn].color == tb->pieces[captured_piece].color)
+		    && (tb->pieces[futurebases[fbnum].missing_non_pawn].piece_type == tb->pieces[captured_piece].piece_type)
 		    && (futurebases[fbnum].missing_pawn == -1)) futurebase_cnt ++;
 	    }
 	}
@@ -11214,22 +11215,26 @@ bool check_pruning(tablebase_t *tb) {
 
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
+	    if (futurecaptures[capturing_piece][captured_piece] == NO_FUTUREMOVE) continue;
+	    if (futurecaptures[capturing_piece][captured_piece] == RESIGN_FUTUREMOVE) continue;
+
+	    if (futurecaptures[capturing_piece][captured_piece] < 0) {
+		fatal("futurecaptures (%d) < 0 but not NO_FUTUREMOVE!\n", futurecaptures[capturing_piece][captured_piece]);
+	    }
+
 	    if (futurebase_cnt == 0) {
 
-		if (futurecaptures[capturing_piece][captured_piece] >= 0) {
-
-		    if (discarded_futuremoves[tb->pieces[capturing_piece].color]
-			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
-			futurecaptures[capturing_piece][captured_piece] = DISCARD_FUTUREMOVE;
-		    } else if (conceded_futuremoves[tb->pieces[capturing_piece].color]
-			       & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
-			futurecaptures[capturing_piece][captured_piece] = CONCEDE_FUTUREMOVE;
-		    } else {
-			fatal("No futurebase or pruning for %s move %s\n",
-			      colors.at(tb->pieces[capturing_piece].color).c_str(),
-			      movestr[tb->pieces[capturing_piece].color][futurecaptures[capturing_piece][captured_piece]]);
-			return false;
-		    }
+		if (discarded_futuremoves[tb->pieces[capturing_piece].color]
+		    & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
+		    futurecaptures[capturing_piece][captured_piece] = DISCARD_FUTUREMOVE;
+		} else if (conceded_futuremoves[tb->pieces[capturing_piece].color]
+			   & FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece])) {
+		    futurecaptures[capturing_piece][captured_piece] = CONCEDE_FUTUREMOVE;
+		} else {
+		    fatal("No futurebase or pruning for %s move %s\n",
+			  colors.at(tb->pieces[capturing_piece].color).c_str(),
+			  movestr[tb->pieces[capturing_piece].color][futurecaptures[capturing_piece][captured_piece]]);
+		    return false;
 		}
 
 	    } else {
@@ -11243,6 +11248,7 @@ bool check_pruning(tablebase_t *tb) {
 			    && (futurebases[fbnum].extra_piece == -1)
 			    && (futurebases[fbnum].missing_non_pawn != -1)
 			    && (tb->pieces[futurebases[fbnum].missing_non_pawn].color == tb->pieces[captured_piece].color)
+			    && (tb->pieces[futurebases[fbnum].missing_non_pawn].piece_type == tb->pieces[captured_piece].piece_type)
 			    && (futurebases[fbnum].missing_pawn == -1))) {
 
 
