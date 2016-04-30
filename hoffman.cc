@@ -11148,6 +11148,11 @@ bool compute_pruned_futuremoves(tablebase_t *tb)
  * If no futurebases exist for a given futuremove and it is correctly pruned, then flag it for
  * optimization, since there is no need to track its futurebase back propagation.
  *
+ * Also check to see if there are any futurebases that will always match a futuremove.  If so, we
+ * can also optimize these away.  If multiple futurebases match a futuremove and one of them will
+ * always match the futuremove, then we can also signal an error now, because we're going to get
+ * multiply handled futuremoves.
+ *
  * There is an off chance that piece restrictions will prevent a futuremove from taking place, but
  * this code will conclude nevertheless that it is possible and demand either a prune statement or a
  * futurebase.  In this rare case, introducing an extraneous prune statement or two should solve the
@@ -11302,6 +11307,12 @@ bool check_pruning(tablebase_t *tb) {
 
 			    /* We've found a mapping of pieces that meets the above criteria. */
 			    if (piece == tb->num_pieces - 1) {
+				if (futurebase_cnt > 1) {
+				    fatal("Multiple futurebases handle %s move %s\n",
+					  colors.at(tb->pieces[capturing_piece].color).c_str(),
+					  movestr[tb->pieces[capturing_piece].color][futurecaptures[capturing_piece][captured_piece]]);
+				    return false;
+				}
 				if (futurecaptures[capturing_piece][captured_piece] >= 0) {
 				    futurecaptures[capturing_piece][captured_piece] = HANDLED_FUTUREMOVE;
 				}
