@@ -533,7 +533,7 @@ typedef uint32_t futurevector_t;
 
 /* These arrays hold the bit locations in the futurevector of various posible futuremoves -
  * captures, capture-promotions, promotions, and normal movements of a piece to all 64 squares.  The
- * values are either a bit location (starting at 0), or one of four negative numbers: -1 means that
+ * values are either a bit location (starting at 0), or one of five negative numbers: -1 means that
  * the move in question isn't a futuremove in the given tablebase (for example, promotion of a
  * non-pawn, or movement of a piece to a legal square) and that any attempt to assign that
  * futuremove is therefore an error.  -2 means that no futurebase exists for the futuremove, and
@@ -541,15 +541,18 @@ typedef uint32_t futurevector_t;
  * when it is encountered during initialization.  -3 means that no futurebase exists and a 'concede'
  * pruning statement is present, so the futuremove results in an immediate win during
  * initialization.  -4 means that no futurebase exists and a 'resign' pruning statement is present
- * (useful only for suicide analysis), resulting in an immediate lose during initialization.
+ * (useful only for suicide analysis), resulting in an immediate lose during initialization.  -5
+ * means that the futuremove will be definitely handled by a futurebase and that it need not be
+ * tracked.
  *
  * XXX We don't actually have a 'resign' option on a prune statement, but RESIGN_FUTUREMOVE is used
  * implicitly if a player's last piece is captured in a suicide analysis.
  *
- * num_futuremoves[PieceColor::White] and num_futuremoves[PieceColor::Black] are the total number of futurevector bits
- * assigned for each color, NOT the total number of possible futuremoves, since futuremoves can be
- * multiply assigned to bits (if two futuremoves can't both happen from the same position, they can
- * be safely assigned to the same bit), or completely pruned with a -2, -3, or -4 (no bit position).
+ * num_futuremoves[PieceColor::White] and num_futuremoves[PieceColor::Black] are the total number of
+ * futurevector bits assigned for each color, NOT the total number of possible futuremoves, since
+ * futuremoves can be multiply assigned to bits (if two futuremoves can't both happen from the same
+ * position, they can be safely assigned to the same bit), or completely pruned with a -2, -3, -4,
+ * or -5 (no bit position).
  *
  * There is one place in the code (propagate_moves_from_promotion_futurebase) that assumes that the
  * piece ordering in the last array index of promotions and promotion_captures matches the piece
