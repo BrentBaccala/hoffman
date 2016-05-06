@@ -1043,6 +1043,13 @@ public:
     bool get_flag(index_t index);
     unsigned int get_basic(index_t index);
 
+    /* Check futurebases to see if they match our futuremoves (they handle some of our futuremoves),
+     * and to see if they completely handle our futuremoves (they handle all of our futuremoves).
+     */
+
+    bool futurebase_matches_capture(const tablebase_t& fb, const int capturing_piece, const int captured_piece) const;
+    bool futurebase_completely_handles_capture(const tablebase_t& fb, const int capturing_piece, const int captured_piece) const;
+
     /* for futurebases only */
     Glib::ustring filename;
     std::unique_ptr<io::filtering_istream> instream;
@@ -11162,6 +11169,96 @@ bool compute_pruned_futuremoves(tablebase_t *tb)
  * problem.
  */
 
+bool tablebase_t::futurebase_matches_capture(const tablebase_t& fb, const int capturing_piece, const int captured_piece) const
+{
+    /* I've made this a bit more liberal now, because if we're dealing with move restrictions,
+     * then we might have a missing piece in the futurebase line up with one of our pieces that
+     * is identical to captured_piece in the sense that it's the same color and type, but not
+     * identical in the sense of next_piece_in_semilegal_group.
+     */
+
+    if (fb.futurebase_type != FUTUREBASE_CAPTURE) return false;
+
+    if (pieces[captured_piece].piece_type == PieceType::Pawn) {
+	if ((fb.missing_pawn != -1)
+	    && (pieces[fb.missing_pawn].color == pieces[captured_piece].color)) return true;
+    } else {
+	if ((fb.missing_non_pawn != -1)
+	    && (pieces[fb.missing_non_pawn].color == pieces[captured_piece].color)
+	    && (pieces[fb.missing_non_pawn].piece_type == pieces[captured_piece].piece_type)) return true;
+    }
+
+    return false;
+}
+
+bool tablebase_t::futurebase_completely_handles_capture(const tablebase_t& fb, const int capturing_piece, const int captured_piece) const
+{
+    if (! futurebase_matches_capture(fb, capturing_piece, captured_piece)) return false;
+
+    /* If the futurebase uses pawngen, then we will only optimize it out if we also use pawngen, and
+     * if our initial pawn positions are identical.
+     */
+
+    if (fb.pawngen) {
+	if (! pawngen) return false;
+	if (pawngen->initial_white_pawns != fb.pawngen->initial_white_pawns) return false;
+	if (pawngen->initial_black_pawns != fb.pawngen->initial_black_pawns) return false;
+    }
+
+    /* Set up a mapping from the futurebase pieces to the local pieces.  We'll permute this around
+     * to consider all possible such mappings.  Remember that there's one less piece in the
+     * futurebase, and that nothing in the futurebase maps to the captured piece.
+     */
+
+    int local_piece[MAX_PIECES];
+
+    for (int piece = 0; piece < num_pieces - 1; piece ++) {
+	if (piece < captured_piece) {
+	    local_piece[piece] = piece;
+	} else {
+	    local_piece[piece] = piece+1;
+	}
+    }
+
+    /* Can we find a suitable mapping?
+     *
+     * The capturing piece will end up on the captured piece's square, so each legal square for the
+     * captured piece in the current tablebase must be legal for the capturing piece in the
+     * futurebase.
+     *
+     * For other local pieces, there must a corresponding piece in the futurebase with a superset of
+     * its location restriction.
+     */
+
+    do {
+	int piece;
+
+	for (piece = 0; piece < num_pieces - 1; piece ++) {
+	    if (fb.pieces[piece].piece_type != pieces[local_piece[piece]].piece_type) break;
+	    if (!fb.invert_colors && (fb.pieces[piece].color != pieces[local_piece[piece]].color)) break;
+	    if (fb.invert_colors && (fb.pieces[piece].color == pieces[local_piece[piece]].color)) break;
+
+	    /* If we're using pawngen, we've already checked that the pawns match right */
+	    if (fb.pawngen && fb.pieces[piece].piece_type == PieceType::Pawn) continue;
+
+	    if ((local_piece[piece] != capturing_piece)
+		&& ((fb.pieces[piece].legal_squares & pieces[local_piece[piece]].legal_squares)
+		    != pieces[local_piece[piece]].legal_squares)) break;
+	    if ((local_piece[piece] == capturing_piece)
+		&& ((fb.pieces[piece].legal_squares & pieces[captured_piece].legal_squares)
+		    != pieces[captured_piece].legal_squares)) break;
+	}
+
+	/* We've found a mapping of pieces that meets the above criteria. */
+	if (piece == num_pieces - 1) {
+	    return true;
+	}
+
+    } while (std::next_permutation(local_piece, local_piece + num_pieces - 1));
+
+    return false;
+}
+
 bool check_pruning(tablebase_t *tb) {
 
     int fbnum;
@@ -11190,30 +11287,16 @@ bool check_pruning(tablebase_t *tb) {
 
 	futurebase_cnt = 0;
 
-	/* I've made this a bit more liberal now, because if we're dealing with move restrictions,
-	 * then we might have a missing piece in the futurebase line up with one of our pieces that
-	 * is identical to captured_piece in the sense that it's the same color and type, but not
-	 * identical in the sense of next_piece_in_semilegal_group.
-	 */
-
 	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	    if (tb->pieces[captured_piece].piece_type == PieceType::Pawn) {
-		if ((futurebases[fbnum].extra_piece == -1)
-		    && (futurebases[fbnum].missing_pawn != -1)
-		    && (tb->pieces[futurebases[fbnum].missing_pawn].color == tb->pieces[captured_piece].color)
-		    && (futurebases[fbnum].missing_non_pawn == -1)) futurebase_cnt ++;
-	    } else {
-		if ((futurebases[fbnum].extra_piece == -1)
-		    && (futurebases[fbnum].missing_non_pawn != -1)
-		    && (tb->pieces[futurebases[fbnum].missing_non_pawn].color == tb->pieces[captured_piece].color)
-		    && (tb->pieces[futurebases[fbnum].missing_non_pawn].piece_type == tb->pieces[captured_piece].piece_type)
-		    && (futurebases[fbnum].missing_pawn == -1)) futurebase_cnt ++;
+	    if (tb->futurebase_matches_capture(futurebases[fbnum], capturing_piece, captured_piece)) {
+		futurebase_cnt ++;
 	    }
 	}
 
 	/* If no such futurebase exists, then for every other piece, see if the piece restrictions
 	 * would permit it to capture the original piece in question.  If so, there must be a prune
-	 * statement, or it's an error.
+	 * statement, or it's an error.  On the other hand, if a futurebase handles all of our
+	 * captures, then it must be the only matching futurebase.
 	 */
 
 	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
@@ -11242,93 +11325,18 @@ bool check_pruning(tablebase_t *tb) {
 
 	    } else {
 		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-		    if (((tb->pieces[captured_piece].piece_type == PieceType::Pawn)
-			 && (futurebases[fbnum].extra_piece == -1)
-			 && (futurebases[fbnum].missing_pawn != -1)
-			 && (tb->pieces[futurebases[fbnum].missing_pawn].color == tb->pieces[captured_piece].color)
-			 && (futurebases[fbnum].missing_non_pawn == -1))
-			|| ((tb->pieces[captured_piece].piece_type != PieceType::Pawn)
-			    && (futurebases[fbnum].extra_piece == -1)
-			    && (futurebases[fbnum].missing_non_pawn != -1)
-			    && (tb->pieces[futurebases[fbnum].missing_non_pawn].color == tb->pieces[captured_piece].color)
-			    && (tb->pieces[futurebases[fbnum].missing_non_pawn].piece_type == tb->pieces[captured_piece].piece_type)
-			    && (futurebases[fbnum].missing_pawn == -1))) {
+		    if (tb->futurebase_completely_handles_capture(futurebases[fbnum], capturing_piece, captured_piece)) {
 
-
-			/* We want to determine if this capture will always lead to this futurebase,
-			 * and thus eliminate the need for tracking this futuremove.
-			 */
-
-			tablebase_t& fb = futurebases[fbnum];
-
-			/* If the futurebase uses pawngen, then we will only optimize it out
-			 * if we also use pawngen, and if our initial pawn positions are identical.
-			 */
-
-			if (fb.pawngen) {
-			    if (! tb->pawngen) break;
-			    if (tb->pawngen->initial_white_pawns != fb.pawngen->initial_white_pawns) break;
-			    if (tb->pawngen->initial_black_pawns != fb.pawngen->initial_black_pawns) break;
+			if (futurebase_cnt > 1) {
+			    fatal("Multiple futurebases handle %s move %s\n",
+				  colors.at(tb->pieces[capturing_piece].color).c_str(),
+				  movestr[tb->pieces[capturing_piece].color][futurecaptures[capturing_piece][captured_piece]]);
+			    return false;
 			}
-
-			/* Now set up a mapping from the futurebase pieces to the local pieces.
-			 * We'll permute this around to consider all possible such mappings.
-			 * Remember that there's one less piece in the futurebase, and that nothing
-			 * in the futurebase maps to the captured piece.
-			 */
-
-			int local_piece[MAX_PIECES];
-
-			for (piece = 0; piece < tb->num_pieces - 1; piece ++) {
-			    if (piece < captured_piece) {
-				local_piece[piece] = piece;
-			    } else {
-				local_piece[piece] = piece+1;
-			    }
+			if (futurecaptures[capturing_piece][captured_piece] >= 0) {
+			    futurecaptures[capturing_piece][captured_piece] = HANDLED_FUTUREMOVE;
 			}
-
-			/* Can we find a suitable mapping?
-			 *
-			 * The capturing piece will end up on the captured piece's square, so each
-			 * legal square for the captured piece in the current tablebase must be
-			 * legal for the capturing piece in the futurebase.
-			 *
-			 * For other local pieces, there must a corresponding piece in the
-			 * futurebase with a superset of its location restriction.
-			 */
-
-			do {
-			    for (piece = 0; piece < tb->num_pieces - 1; piece ++) {
-				if (fb.pieces[piece].piece_type != tb->pieces[local_piece[piece]].piece_type) break;
-				if (!fb.invert_colors && (fb.pieces[piece].color != tb->pieces[local_piece[piece]].color)) break;
-				if (fb.invert_colors && (fb.pieces[piece].color == tb->pieces[local_piece[piece]].color)) break;
-
-				/* If we're using pawngen, we've already checked that the pawns match right */
-				if (fb.pawngen && fb.pieces[piece].piece_type == PieceType::Pawn) continue;
-
-				if ((local_piece[piece] != capturing_piece)
-				    && ((fb.pieces[piece].legal_squares & tb->pieces[local_piece[piece]].legal_squares)
-					!= tb->pieces[local_piece[piece]].legal_squares)) break;
-				if ((local_piece[piece] == capturing_piece)
-				    && ((fb.pieces[piece].legal_squares & tb->pieces[captured_piece].legal_squares)
-					!= tb->pieces[captured_piece].legal_squares)) break;
-			    }
-
-			    /* We've found a mapping of pieces that meets the above criteria. */
-			    if (piece == tb->num_pieces - 1) {
-				if (futurebase_cnt > 1) {
-				    fatal("Multiple futurebases handle %s move %s\n",
-					  colors.at(tb->pieces[capturing_piece].color).c_str(),
-					  movestr[tb->pieces[capturing_piece].color][futurecaptures[capturing_piece][captured_piece]]);
-				    return false;
-				}
-				if (futurecaptures[capturing_piece][captured_piece] >= 0) {
-				    futurecaptures[capturing_piece][captured_piece] = HANDLED_FUTUREMOVE;
-				}
-				break;
-			    }
-
-			} while (std::next_permutation(local_piece, local_piece + tb->num_pieces - 1));
+			break;
 		    }
 		}
 	    }
