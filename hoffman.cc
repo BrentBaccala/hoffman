@@ -1047,8 +1047,13 @@ public:
      * and to see if they completely handle our futuremoves (they handle all of our futuremoves).
      */
 
-    bool futurebase_matches_capture(const tablebase_t& fb, const int capturing_piece, const int captured_piece) const;
+    bool futurebase_matches_capture(const tablebase_t& fb, const int captured_piece) const;
+    bool futurebase_matches_capture_promotion(const tablebase_t& fb, const int captured_piece, const int promotion) const;
+    bool futurebase_matches_promotion(const tablebase_t& fb, const int promoting_pawn, const int promotion) const;
+
     bool futurebase_completely_handles_capture(const tablebase_t& fb, const int capturing_piece, const int captured_piece) const;
+    bool futurebase_completely_handles_capture_promotion(const tablebase_t& fb, const int capturing_piece, const int captured_piece, const int promotion) const;
+    bool futurebase_completely_handles_promotion(const tablebase_t& fb, const int promoting_pawn, const int promotion) const;
 
     /* for futurebases only */
     Glib::ustring filename;
@@ -11169,7 +11174,7 @@ bool compute_pruned_futuremoves(tablebase_t *tb)
  * problem.
  */
 
-bool tablebase_t::futurebase_matches_capture(const tablebase_t& fb, const int capturing_piece, const int captured_piece) const
+bool tablebase_t::futurebase_matches_capture(const tablebase_t& fb, const int captured_piece) const
 {
     /* I've made this a bit more liberal now, because if we're dealing with move restrictions,
      * then we might have a missing piece in the futurebase line up with one of our pieces that
@@ -11191,9 +11196,47 @@ bool tablebase_t::futurebase_matches_capture(const tablebase_t& fb, const int ca
     return false;
 }
 
+bool tablebase_t::futurebase_matches_capture_promotion(const tablebase_t& fb, const int captured_piece, const int promotion) const
+{
+    if (fb.futurebase_type != FUTUREBASE_CAPTURE_PROMOTION) return false;
+
+    if ((pieces[fb.missing_non_pawn].color == pieces[captured_piece].color)
+	&& (pieces[fb.missing_non_pawn].piece_type == pieces[captured_piece].piece_type)
+	&& (fb.promotion == promotion)) {
+	return true;
+    }
+
+    return false;
+}
+
+bool tablebase_t::futurebase_matches_promotion(const tablebase_t& fb, const int promoting_pawn, const int promotion) const
+{
+    if (fb.futurebase_type != FUTUREBASE_PROMOTION) return false;
+
+    if ((pieces[fb.missing_pawn].color == pieces[promoting_pawn].color)
+	&& (fb.promotion == promotion)) {
+	return true;
+    }
+
+    return false;
+}
+
+uint64_t flip_legal_squares(const uint64_t legal_squares)
+{
+    uint64_t output = 0LL;
+
+    for (int i=0; i<64; i++) {
+	if (legal_squares & BITVECTOR(i)) {
+	    output |= BITVECTOR(63-i);
+	}
+    }
+
+    return output;
+}
+
 bool tablebase_t::futurebase_completely_handles_capture(const tablebase_t& fb, const int capturing_piece, const int captured_piece) const
 {
-    if (! futurebase_matches_capture(fb, capturing_piece, captured_piece)) return false;
+    if (! futurebase_matches_capture(fb, captured_piece)) return false;
 
     /* If the futurebase uses pawngen, then we will only optimize it out if we also use pawngen, and
      * if our initial pawn positions are identical.
@@ -11241,11 +11284,17 @@ bool tablebase_t::futurebase_completely_handles_capture(const tablebase_t& fb, c
 	    /* If we're using pawngen, we've already checked that the pawns match right */
 	    if (fb.pawngen && fb.pieces[piece].piece_type == PieceType::Pawn) continue;
 
+	    uint64_t fb_legal_squares = fb.pieces[piece].legal_squares;
+
+	    if (fb.invert_colors) {
+		fb_legal_squares = flip_legal_squares(fb_legal_squares);
+	    }
+
 	    if ((local_piece[piece] != capturing_piece)
-		&& ((fb.pieces[piece].legal_squares & pieces[local_piece[piece]].legal_squares)
+		&& ((fb_legal_squares & pieces[local_piece[piece]].legal_squares)
 		    != pieces[local_piece[piece]].legal_squares)) break;
 	    if ((local_piece[piece] == capturing_piece)
-		&& ((fb.pieces[piece].legal_squares & pieces[captured_piece].legal_squares)
+		&& ((fb_legal_squares & pieces[captured_piece].legal_squares)
 		    != pieces[captured_piece].legal_squares)) break;
 	}
 
@@ -11259,23 +11308,214 @@ bool tablebase_t::futurebase_completely_handles_capture(const tablebase_t& fb, c
     return false;
 }
 
-bool check_pruning(tablebase_t *tb) {
+bool tablebase_t::futurebase_completely_handles_capture_promotion(const tablebase_t& fb, const int capturing_piece, const int captured_piece, const int promotion) const
+{
+    if (! futurebase_matches_capture_promotion(fb, captured_piece, promotion)) return false;
 
-    int fbnum;
-    int piece;
-    int captured_piece;
-    int capturing_piece;
-    int pawn;
-    int sq;
-    int futurebase_cnt;
-
-    /* for each possible captured_piece (i.e, everything but the two kings) check for capture
-     * futurebases
+    /* If the futurebase uses pawngen, then we will only optimize it out if we also use pawngen, and
+     * if our initial pawn positions are identical.
      */
 
-    for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+    if (fb.pawngen) {
+	if (! pawngen) return false;
+	if (pawngen->initial_white_pawns != fb.pawngen->initial_white_pawns) return false;
+	if (pawngen->initial_black_pawns != fb.pawngen->initial_black_pawns) return false;
+    }
 
-	// XXX suicide?
+    /* Set up a mapping from the futurebase pieces to the local pieces.  We'll permute this around
+     * to consider all possible such mappings.  Remember that there's one less piece in the
+     * futurebase, and that nothing in the futurebase maps to the captured piece.
+     */
+
+    int local_piece[MAX_PIECES];
+
+    for (int piece = 0; piece < num_pieces - 1; piece ++) {
+	if (piece < captured_piece) {
+	    local_piece[piece] = piece;
+	} else {
+	    local_piece[piece] = piece+1;
+	}
+    }
+
+    /* Can we find a suitable mapping?
+     *
+     * The capturing piece will end up on the captured piece's square, so each legal square for the
+     * captured piece in the current tablebase must be legal for the capturing piece in the
+     * futurebase.
+     *
+     * For other local pieces, there must a corresponding piece in the futurebase with a superset of
+     * its location restriction.
+     */
+
+    do {
+	int piece;
+
+	for (piece = 0; piece < num_pieces - 1; piece ++) {
+	    if (!fb.invert_colors && (fb.pieces[piece].color != pieces[local_piece[piece]].color)) break;
+	    if (fb.invert_colors && (fb.pieces[piece].color == pieces[local_piece[piece]].color)) break;
+
+	    if (local_piece[piece] != capturing_piece) {
+		if (fb.pieces[piece].piece_type != pieces[local_piece[piece]].piece_type) break;
+	    } else {
+		if (fb.pieces[piece].piece_type != promoted_pieces[promotion]) break;
+	    }
+
+	    /* If we're using pawngen, we've already checked that the pawns match right */
+
+	    if (fb.pawngen && fb.pieces[piece].piece_type == PieceType::Pawn) continue;
+
+	    uint64_t fb_legal_squares = fb.pieces[piece].legal_squares;
+
+	    if (fb.invert_colors) {
+		fb_legal_squares = flip_legal_squares(fb_legal_squares);
+	    }
+
+	    /* For most pieces, check that the legal squares in the futurebase are a superset
+	     * of the legal squares in the local tablebase. */
+
+	    if ((local_piece[piece] != capturing_piece)
+		&& ((fb_legal_squares & pieces[local_piece[piece]].legal_squares)
+		    != pieces[local_piece[piece]].legal_squares)) break;
+
+	    /* For the capturing and promoting pawn, find its possible promotion-capture squares,
+	     * and make sure the legal squares in the futurebase are a superset of them.
+	     *
+	     * This code ignores frozen pieces that might block a promotion, but this routine is
+	     * essentially an optimisation.  If it returns false, then we need to check every
+	     * position to see if its futuremoves are handled.  Ignoring frozen pieces just means
+	     * that we might need to check those positions by hand, slowing the program down but not
+	     * affecting its proper operation.
+	     */
+
+	    if (local_piece[piece] == capturing_piece) {
+		uint64_t promotion_squares;
+		if (pieces[capturing_piece].color == PieceColor::White) {
+		    promotion_squares = (pieces[capturing_piece].legal_squares & 0x00ff000000000000LL) << 8;
+		    promotion_squares = (promotion_squares << 1) | (promotion_squares >> 1);
+		    promotion_squares &= 0xff00000000000000LL;
+		} else {
+		    promotion_squares = (pieces[capturing_piece].legal_squares & 0x000000000000ff00LL) >> 8;
+		    promotion_squares = (promotion_squares << 1) | (promotion_squares >> 1);
+		    promotion_squares &= 0x00000000000000ffLL;
+		}
+		promotion_squares &= pieces[captured_piece].legal_squares;
+		if ((fb_legal_squares & promotion_squares) != promotion_squares) break;
+	    }
+	}
+
+	/* We've found a mapping of pieces that meets the above criteria. */
+	if (piece == num_pieces - 1) {
+	    return true;
+	}
+
+    } while (std::next_permutation(local_piece, local_piece + num_pieces - 1));
+
+    return false;
+}
+
+bool tablebase_t::futurebase_completely_handles_promotion(const tablebase_t& fb, const int promoting_pawn, const int promotion) const
+{
+    if (! futurebase_matches_promotion(fb, promoting_pawn, promotion)) return false;
+
+    /* If the futurebase uses pawngen, then we will only optimize it out if we also use pawngen, and
+     * if our initial pawn positions are identical.
+     */
+
+    if (fb.pawngen) {
+	if (! pawngen) return false;
+	if (pawngen->initial_white_pawns != fb.pawngen->initial_white_pawns) return false;
+	if (pawngen->initial_black_pawns != fb.pawngen->initial_black_pawns) return false;
+    }
+
+    /* Set up a mapping from the futurebase pieces to the local pieces.  We'll permute this around
+     * to consider all possible such mappings.
+     */
+
+    int local_piece[MAX_PIECES];
+
+    for (int piece = 0; piece < num_pieces; piece ++) {
+	local_piece[piece] = piece;
+    }
+
+    /* Can we find a suitable mapping?
+     *
+     * The capturing piece will end up on the captured piece's square, so each legal square for the
+     * captured piece in the current tablebase must be legal for the capturing piece in the
+     * futurebase.
+     *
+     * For other local pieces, there must a corresponding piece in the futurebase with a superset of
+     * its location restriction.
+     */
+
+    do {
+	int piece;
+
+	for (piece = 0; piece < num_pieces; piece ++) {
+	    if (!fb.invert_colors && (fb.pieces[piece].color != pieces[local_piece[piece]].color)) break;
+	    if (fb.invert_colors && (fb.pieces[piece].color == pieces[local_piece[piece]].color)) break;
+
+	    if (local_piece[piece] != promoting_pawn) {
+		if (fb.pieces[piece].piece_type != pieces[local_piece[piece]].piece_type) break;
+	    } else {
+		if (fb.pieces[piece].piece_type != promoted_pieces[promotion]) break;
+	    }
+
+	    /* If we're using pawngen, we've already checked that the pawns match right */
+
+	    if (fb.pawngen && fb.pieces[piece].piece_type == PieceType::Pawn) continue;
+
+	    uint64_t fb_legal_squares = fb.pieces[piece].legal_squares;
+
+	    if (fb.invert_colors) {
+		fb_legal_squares = flip_legal_squares(fb_legal_squares);
+	    }
+
+	    /* For most pieces, check that the legal squares in the futurebase are a superset
+	     * of the legal squares in the local tablebase. */
+
+	    if ((local_piece[piece] != promoting_pawn)
+		&& ((fb_legal_squares & pieces[local_piece[piece]].legal_squares)
+		    != pieces[local_piece[piece]].legal_squares)) break;
+
+	    /* For the promoting pawn, find its possible promotion squares and make sure the legal
+	     * squares in the futurebase are a superset of them.
+	     *
+	     * This code ignores frozen pieces that might block a promotion, but this routine is
+	     * essentially an optimisation.  If it returns false, then we need to check every
+	     * position to see if its futuremoves are handled.  Ignoring frozen pieces just means
+	     * that we might need to check those positions by hand, slowing the program down but not
+	     * affecting its proper operation.
+	     */
+
+	    if (local_piece[piece] == promoting_pawn) {
+		uint64_t promotion_squares;
+		if (pieces[promoting_pawn].color == PieceColor::White) {
+		    promotion_squares = (pieces[promoting_pawn].legal_squares & 0x00ff000000000000LL) << 8;
+		} else {
+		    promotion_squares = (pieces[promoting_pawn].legal_squares & 0x000000000000ff00LL) >> 8;
+		}
+		if ((fb_legal_squares & promotion_squares) != promotion_squares) break;
+	    }
+	}
+
+	/* We've found a mapping of pieces that meets the above criteria. */
+	if (piece == num_pieces) {
+	    return true;
+	}
+
+    } while (std::next_permutation(local_piece, local_piece + num_pieces));
+
+    return false;
+}
+
+bool check_pruning(tablebase_t *tb)
+{
+    /* For each possible captured_piece (i.e, everything but the two kings) check for capture
+     * futurebases.  tb->white_king and tb->black_king are -1 for suicide, so all pieces are treated
+     * the same in a suicide analysis.
+     */
+
+    for (int captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
 
 	if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
@@ -11285,10 +11525,10 @@ bool check_pruning(tablebase_t *tb) {
 
 	if ((! tb->encode_stm) && (tb->pieces[captured_piece].color == PieceColor::White)) continue;
 
-	futurebase_cnt = 0;
+	int futurebase_cnt = 0;
 
-	for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	    if (tb->futurebase_matches_capture(futurebases[fbnum], capturing_piece, captured_piece)) {
+	for (int fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	    if (tb->futurebase_matches_capture(futurebases[fbnum], captured_piece)) {
 		futurebase_cnt ++;
 	    }
 	}
@@ -11299,7 +11539,7 @@ bool check_pruning(tablebase_t *tb) {
 	 * captures, then it must be the only matching futurebase.
 	 */
 
-	for (capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
+	for (int capturing_piece = 0; capturing_piece < tb->num_pieces; capturing_piece ++) {
 
 	    if (futurecaptures[capturing_piece][captured_piece] == NO_FUTUREMOVE) continue;
 	    if (futurecaptures[capturing_piece][captured_piece] == RESIGN_FUTUREMOVE) continue;
@@ -11324,7 +11564,7 @@ bool check_pruning(tablebase_t *tb) {
 		}
 
 	    } else {
-		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+		for (int fbnum = 0; fbnum < num_futurebases; fbnum ++) {
 		    if (tb->futurebase_completely_handles_capture(futurebases[fbnum], capturing_piece, captured_piece)) {
 
 			if (futurebase_cnt > 1) {
@@ -11345,7 +11585,7 @@ bool check_pruning(tablebase_t *tb) {
 
     /* Pawns - check for both promotion and promotion capture futurebases here.  Same idea. */
 
-    for (pawn = 0; pawn < tb->num_pieces; pawn ++) {
+    for (int pawn = 0; pawn < tb->num_pieces; pawn ++) {
 
 	int promotion;
 
@@ -11355,7 +11595,7 @@ bool check_pruning(tablebase_t *tb) {
 
 	/* First, we're looking for promotion capture futurebases. */
 
-	for (captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
+	for (int captured_piece = 0; captured_piece < tb->num_pieces; captured_piece ++) {
 
 	    if ((captured_piece == tb->white_king) || (captured_piece == tb->black_king)) continue;
 
@@ -11387,24 +11627,13 @@ bool check_pruning(tablebase_t *tb) {
 
 	    for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
-		int promoted_piece_handled = 0;
+		int futurebase_cnt = 0;
 
 		if (promotion_captures[pawn][captured_piece][promotion] < 0) continue;
 
-		for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-		    if ((futurebases[fbnum].extra_piece != -1)
-			&& (futurebases[fbnum].pieces[futurebases[fbnum].extra_piece].color
-			    == (futurebases[fbnum].invert_colors ? ~ tb->pieces[pawn].color : tb->pieces[pawn].color))
-			&& (futurebases[fbnum].missing_non_pawn != -1)
-			&& (tb->pieces[futurebases[fbnum].missing_non_pawn].color
-			    == tb->pieces[captured_piece].color)
-			&& (tb->pieces[futurebases[fbnum].missing_non_pawn].piece_type
-			    == tb->pieces[captured_piece].piece_type)
-			&& (futurebases[fbnum].missing_pawn != -1)
-			&& (tb->pieces[futurebases[fbnum].missing_pawn].color == tb->pieces[pawn].color)
-			&& (futurebases[fbnum].pieces[futurebases[fbnum].extra_piece].piece_type == promoted_pieces[promotion])) {
-
-			promoted_piece_handled = 1;
+		for (int fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+		    if (tb->futurebase_matches_capture_promotion(futurebases[fbnum], captured_piece, promotion)) {
+			futurebase_cnt ++;
 		    }
 		}
 
@@ -11412,19 +11641,38 @@ bool check_pruning(tablebase_t *tb) {
 		 * error.
 		 */
 
-		if (promoted_piece_handled) continue;
+		if (futurebase_cnt == 0) {
 
-		if (discarded_futuremoves[tb->pieces[pawn].color]
-			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
-		    promotion_captures[pawn][captured_piece][promotion] = DISCARD_FUTUREMOVE;
-		} else if (conceded_futuremoves[tb->pieces[pawn].color]
-			   & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
-		    promotion_captures[pawn][captured_piece][promotion] = CONCEDE_FUTUREMOVE;
+		    if (discarded_futuremoves[tb->pieces[pawn].color]
+			& FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
+			promotion_captures[pawn][captured_piece][promotion] = DISCARD_FUTUREMOVE;
+		    } else if (conceded_futuremoves[tb->pieces[pawn].color]
+			       & FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion])) {
+			promotion_captures[pawn][captured_piece][promotion] = CONCEDE_FUTUREMOVE;
+		    } else {
+			fatal("No futurebase or pruning for %s move %s\n",
+			      colors.at(tb->pieces[pawn].color).c_str(),
+			      movestr[tb->pieces[pawn].color][promotion_captures[pawn][captured_piece][promotion]]);
+			return false;
+		    }
+
 		} else {
-		    fatal("No futurebase or pruning for %s move %s\n",
-			  colors.at(tb->pieces[pawn].color).c_str(),
-			  movestr[tb->pieces[pawn].color][promotion_captures[pawn][captured_piece][promotion]]);
-		    return false;
+
+		    for (int fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+			if (tb->futurebase_completely_handles_capture_promotion(futurebases[fbnum], pawn, captured_piece, promotion)) {
+
+			    if (futurebase_cnt > 1) {
+				fatal("Multiple futurebases handle %s move %s\n",
+				      colors.at(tb->pieces[pawn].color).c_str(),
+				      movestr[tb->pieces[pawn].color][promotion_captures[pawn][captured_piece][promotion]]);
+				return false;
+			    }
+			    if (promotion_captures[pawn][captured_piece][promotion] >= 0) {
+				promotion_captures[pawn][captured_piece][promotion] = HANDLED_FUTUREMOVE;
+			    }
+			    break;
+			}
+		    }
 		}
 
 	    }
@@ -11434,32 +11682,46 @@ bool check_pruning(tablebase_t *tb) {
 
 	for (promotion = 0; promotion < promotion_possibilities; promotion ++) {
 
-	    int promoted_piece_handled = 0;
-
 	    if (promotions[pawn][promotion] < 0) continue;
 
-	    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-		if ((futurebases[fbnum].extra_piece != -1)
-		    && (futurebases[fbnum].missing_non_pawn == -1)
-		    && (futurebases[fbnum].missing_pawn != -1)
-		    && (futurebases[fbnum].pieces[futurebases[fbnum].extra_piece].piece_type == promoted_pieces[promotion])) {
+	    int futurebase_cnt = 0;
 
-		    promoted_piece_handled = 1;
+	    for (int fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+		if (tb->futurebase_matches_promotion(futurebases[fbnum], pawn, promotion)) {
+		    futurebase_cnt ++;
 		}
 	    }
 
+	    if (futurebase_cnt == 0) {
 
-	    if (promoted_piece_handled) continue;
+		if (discarded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
+		    promotions[pawn][promotion] = DISCARD_FUTUREMOVE;
+		} else if (conceded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
+		    promotions[pawn][promotion] = CONCEDE_FUTUREMOVE;
+		} else {
+		    fatal("No futurebase or pruning for %s move %s\n",
+			  colors.at(tb->pieces[pawn].color).c_str(),
+			  movestr[tb->pieces[pawn].color][promotions[pawn][promotion]]);
+		    return false;
+		}
 
-	    if (discarded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
-		promotions[pawn][promotion] = DISCARD_FUTUREMOVE;
-	    } else if (conceded_futuremoves[tb->pieces[pawn].color] & FUTUREVECTOR(promotions[pawn][promotion])) {
-		promotions[pawn][promotion] = CONCEDE_FUTUREMOVE;
 	    } else {
-		fatal("No futurebase or pruning for %s move %s\n",
-		      colors.at(tb->pieces[pawn].color).c_str(),
-		      movestr[tb->pieces[pawn].color][promotions[pawn][promotion]]);
-		return false;
+
+		for (int fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+		    if (tb->futurebase_completely_handles_promotion(futurebases[fbnum], pawn, promotion)) {
+
+			if (futurebase_cnt > 1) {
+			    fatal("Multiple futurebases handle %s move %s\n",
+				  colors.at(tb->pieces[pawn].color).c_str(),
+				  movestr[tb->pieces[pawn].color][promotions[pawn][promotion]]);
+			    return false;
+			}
+			if (promotions[pawn][promotion] >= 0) {
+			    promotions[pawn][promotion] = HANDLED_FUTUREMOVE;
+			}
+			break;
+		    }
+		}
 	    }
 	}
     }
@@ -11468,12 +11730,12 @@ bool check_pruning(tablebase_t *tb) {
      * to restricted piece movements.
      */
 
-    futurebase_cnt = 0;
+    int futurebase_cnt = 0;
 
-    for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	if ((futurebases[fbnum].extra_piece == -1)
-	    && (futurebases[fbnum].missing_pawn == -1)
-	    && (futurebases[fbnum].missing_non_pawn == -1)) futurebase_cnt ++;
+    for (int fbnum = 0; fbnum < num_futurebases; fbnum ++) {
+	if (futurebases[fbnum].futurebase_type == FUTUREBASE_NORMAL) {
+	    futurebase_cnt ++;
+	}
     }
 
     /* I'd like to construct a mask of all allowable squares for each color and type of piece, and
@@ -11484,9 +11746,9 @@ bool check_pruning(tablebase_t *tb) {
      */
 
     if (futurebase_cnt == 0) {
-	for (piece = 0; piece < tb->num_pieces; piece ++) {
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 	    if ((! tb->encode_stm) && (tb->pieces[piece].color == PieceColor::Black)) continue;
-	    for (sq = 0; sq < 64; sq ++) {
+	    for (int sq = 0; sq < 64; sq ++) {
 		if (futuremoves[piece][sq] >= 0) {
 
 		    if (! (pruned_futuremoves[tb->pieces[piece].color] & FUTUREVECTOR(futuremoves[piece][sq]))) {
