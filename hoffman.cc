@@ -353,8 +353,8 @@ class nested_exception : public std::exception {
     std::exception * exp;
     std::string msg;
 public:
-    nested_exception(std::string msg) : msg(msg), exp(nullptr) { }
-    nested_exception(std::string msg, std::exception &ex) : msg(msg + ":  " + ex.what()), exp(&ex) { }
+    nested_exception(std::string msg) : exp(nullptr), msg(msg) { }
+    nested_exception(std::string msg, std::exception &ex) : exp(&ex), msg(msg + ":  " + ex.what()) { }
 
     const char * what() const throw() { return msg.c_str(); }
 };
@@ -950,8 +950,8 @@ std::map<Glib::ustring, int> variant_names =
 
 struct piece {
 
-    PieceType piece_type;
     PieceColor color;
+    PieceType piece_type;
 
     /* Pieces can restricted according to which squares they are allowed to move on.
      *
@@ -1460,6 +1460,7 @@ namespace Movement {
 		break;
 	    }
 	}
+	throw "BUG: fallthrough in movements()\n";
     }
 
     void init_movements()
@@ -2017,8 +2018,8 @@ void process_pawn_position(class pawn_position position)
 	    /* En passant movement */
 	    if (square < 16) {
 		if (! position2.pawn_at(square + 8) && ! position2.pawn_at(square + 16)) {
-		    if ((square != 8) && (position2.black_pawn_at(square + 16 - 1))
-			|| (square != 15) && (position2.black_pawn_at(square + 16 + 1))) {
+		    if (((square != 8) && (position2.black_pawn_at(square + 16 - 1)))
+			|| ((square != 15) && (position2.black_pawn_at(square + 16 + 1)))) {
 			position2.add_white_pawn(square + 16);
 			position2.en_passant_square = square + 8;
 			process_pawn_position(position2);
@@ -2077,8 +2078,8 @@ void process_pawn_position(class pawn_position position)
 	    }
 	    if (square >= 48) {
 		if (! position2.pawn_at(square - 8) && ! position2.pawn_at(square - 16)) {
-		    if ((square != 48) && (position2.white_pawn_at(square - 16 - 1))
-			|| (square != 55) && (position2.white_pawn_at(square - 16 + 1))) {
+		    if (((square != 48) && (position2.white_pawn_at(square - 16 - 1)))
+			|| ((square != 55) && (position2.white_pawn_at(square - 16 + 1)))) {
 			position2.add_black_pawn(square - 16);
 			position2.en_passant_square = square - 8;
 			process_pawn_position(position2);
@@ -2148,7 +2149,8 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
     uint64_t legal_white_squares = 0ULL;
     uint64_t legal_black_squares = 0ULL;
 
-    int index=0;
+    unsigned int index=0;
+
     for (auto it = valid_pawn_positions.begin(); it != valid_pawn_positions.end(); it ++) {
 
 	int white_pawn = first_white_pawn;
@@ -2525,7 +2527,7 @@ public:
     virtual index_t position_to_index(const tablebase_t *tb, local_position_t *pos) = 0;
     virtual bool index_to_position(const tablebase_t * tb, index_t index, local_position_t *pos) = 0;
 
-    virtual bool move_piece(const tablebase_t * tb, local_position_t *pos, const int piece, const int destination_square) {
+    virtual void move_piece(const tablebase_t * tb, local_position_t *pos, const int piece, const int destination_square) {
 	pos->board_vector &= ~BITVECTOR(pos->piece_position[piece]);
 	pos->piece_position[piece] = destination_square;
 	pos->board_vector |= BITVECTOR(pos->piece_position[piece]);
@@ -3863,7 +3865,7 @@ public:
 
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
-	    int piece_in_set;
+	    int piece_in_set = 1;
 
 	    if (prev_piece_in_encoding_group[piece] == -1) {
 		piece_in_set = 1;
@@ -4128,7 +4130,7 @@ index_t local_position_to_index(local_position_t &original)
 bool index_to_local_position(const tablebase_t *tb, index_t index, int reflection, local_position_t *position)
 {
     int ret;
-    int piece, piece2;
+    int piece;
 
     bool decoded = position->decoded;
 
@@ -4781,7 +4783,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     Glib::ustring format_str;
 
-    int piece, piece2, square, white_king_square, black_king_square;
+    int piece, piece2, square;
     int pass;
 
     // XXX this might throw an exception
@@ -5744,7 +5746,7 @@ public:
 
 typedef basic_gzip_decompressor<> gzip_decompressor;
 
-tablebase_t::tablebase_t(Glib::ustring filename) : offset(0), invert_colors(false), num_pieces(0), filename(filename)
+tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0), invert_colors(false), num_pieces(0)
 {
     std::ifstream * input_file = new std::ifstream;
 
@@ -6502,7 +6504,6 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
 
     for (square = 0; square < NUM_SQUARES; square ++) {
 	if ((global->board[square] != 0) && (global->board[square] != ' ')) {
-	    int color;
 
 	    for (auto color : BothColors) {
 		for (auto type : AllPieceTypes) {
@@ -8842,7 +8843,7 @@ class proptable_ptr {
 
     operator proptable_entry() {
 	int dtm = (value >> format->dtm_offset) & format->dtm_mask;
-	if (dtm > (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
+	if (dtm > (int) (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
 
 	return proptable_entry(value >> format->index_offset, dtm,
 			       ((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
@@ -12458,11 +12459,11 @@ class move {
 
 public:
 
-    bool is_capture;
-    bool is_promotion;
+    int futuremove;
 
     bool is_futuremove;
-    int futuremove;
+    bool is_capture;
+    bool is_promotion;
 
     move(PieceType piece_type, square_t origin_square, square_t destination_square)
 	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
@@ -12471,20 +12472,20 @@ public:
 
     move(PieceType piece_type, square_t origin_square, square_t destination_square, int futuremove)
 	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
-	  is_futuremove(true), is_capture(false), is_promotion(false),
-	  futuremove(futuremove)
+	  futuremove(futuremove),
+	  is_futuremove(true), is_capture(false), is_promotion(false)
     { }
 
     move(PieceType piece_type, square_t origin_square, square_t destination_square, PieceType promotion_type)
 	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
-	  is_futuremove(true), is_capture(false), is_promotion(true),
-	  promotion_type(promotion_type)
+	  promotion_type(promotion_type),
+	  is_futuremove(true), is_capture(false), is_promotion(true)
     { }
 
     move(PieceType piece_type, square_t origin_square, square_t destination_square, PieceType promotion_type, int futuremove)
 	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
-	  is_futuremove(true), is_capture(false), is_promotion(true),
-	  promotion_type(promotion_type), futuremove(futuremove)
+	  promotion_type(promotion_type), futuremove(futuremove),
+	  is_futuremove(true), is_capture(false), is_promotion(true)
     { }
 
     move(PieceType piece_type, square_t origin_square, square_t destination_square, bool is_capture)
@@ -12494,20 +12495,20 @@ public:
 
     move(PieceType piece_type, square_t origin_square, square_t destination_square, bool is_capture, int futuremove)
 	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
-	  is_futuremove(true), is_capture(is_capture), is_promotion(false),
-	  futuremove(futuremove)
+	  futuremove(futuremove),
+	  is_futuremove(true), is_capture(is_capture), is_promotion(false)
     { }
 
     move(PieceType piece_type, square_t origin_square, square_t destination_square, bool is_capture, PieceType promotion_type)
 	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
-	  is_futuremove(true), is_capture(is_capture), is_promotion(true),
-	  promotion_type(promotion_type)
+	  promotion_type(promotion_type),
+	  is_futuremove(true), is_capture(is_capture), is_promotion(true)
     { }
 
     move(PieceType piece_type, square_t origin_square, square_t destination_square, bool is_capture, PieceType promotion_type, int futuremove)
 	: piece_type(piece_type), origin_square(origin_square), destination_square(destination_square),
-	  is_futuremove(true), is_capture(is_capture), is_promotion(true),
-	  promotion_type(promotion_type), futuremove(futuremove)
+	  promotion_type(promotion_type), futuremove(futuremove),
+	  is_futuremove(true), is_capture(is_capture), is_promotion(true)
     { }
 
     operator std::string() const {
@@ -12822,7 +12823,7 @@ std::vector<std::pair<move, global_position_t>> generate_moves(const global_posi
 		     * this position is a PNTM-mated.
 		     */
 
-		    PieceColor captured_piece_color = global_pieces2.at(position.board[movement]).first;
+		    // PieceColor captured_piece_color = global_pieces2.at(position.board[movement]).first;
 		    PieceType captured_piece_type = global_pieces2.at(position.board[movement]).second;
 
 		    if (captured_piece_type == PieceType::King) {
@@ -14038,9 +14039,7 @@ search_result search_tablebases_for_global_position(tablebase_t **tbs, global_po
 int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *global_position_ptr,
 		    bool print_non_captures, bool print_captures)
 {
-    global_position_t global_position, saved_global_position;
-    int dir, square;
-    int promotion;
+    global_position_t saved_global_position;
     int moves_printed = 0;
 
     saved_global_position = *global_position_ptr;

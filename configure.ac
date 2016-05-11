@@ -9,7 +9,7 @@ fi
 AC_PROG_CXX
 
 AX_CXX_COMPILE_STDCXX_11
-
+AX_CXXFLAGS_WARN_ALL
 
 dnl Check for threading support
 
