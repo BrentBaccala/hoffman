@@ -1043,6 +1043,10 @@ public:
     bool get_flag(index_t index);
     unsigned int get_basic(index_t index);
 
+    /* Which squares can a piece possible capture onto? */
+
+    uint64_t possible_capture_squares(const int capturing_piece) const;
+
     /* Check futurebases to see if they match our futuremoves (they handle some of our futuremoves),
      * and to see if they completely handle our futuremoves (they handle all of our futuremoves).
      */
@@ -11175,6 +11179,24 @@ bool compute_pruned_futuremoves(tablebase_t *tb)
  * problem.
  */
 
+uint64_t tablebase_t::possible_capture_squares(const int capturing_piece) const
+{
+    uint64_t result = 0LL;
+
+    for (square_t from=0; from < NUM_SQUARES; from++) {
+	if (pieces[capturing_piece].legal_squares & BITVECTOR(from)) {
+	    for (auto &dir: movements(pieces[capturing_piece].piece_type, pieces[capturing_piece].color,
+				     from, Movement::Forward, Movement::Capture)) {
+		for (auto &to: dir) {
+		    result |= BITVECTOR(to);
+		}
+	    }
+	}
+    }
+
+    return result;
+}
+
 bool tablebase_t::futurebase_matches_capture(const tablebase_t& fb, const int captured_piece) const
 {
     /* I've made this a bit more liberal now, because if we're dealing with move restrictions,
@@ -11264,11 +11286,22 @@ bool tablebase_t::futurebase_completely_handles_capture(const tablebase_t& fb, c
 	}
     }
 
+    /* Compute a bitvector of squares where a capture is possible.  Slight proviso here for pawns -
+     * since capture-promotions are handled in a different subroutine, we use LEGAL_PAWN_BITVECTOR
+     * to exclude the last rank.
+     */
+
+    uint64_t capture_squares = possible_capture_squares(capturing_piece);
+
+    if (pieces[capturing_piece].piece_type == PieceType::Pawn) {
+	capture_squares &= LEGAL_PAWN_BITVECTOR;
+    }
+
     /* Can we find a suitable mapping?
      *
      * The capturing piece will end up on the captured piece's square, so each legal square for the
      * captured piece in the current tablebase must be legal for the capturing piece in the
-     * futurebase.
+     * futurebase, assuming that a capture is possible on that square.
      *
      * For other local pieces, there must a corresponding piece in the futurebase with a superset of
      * its location restriction.
@@ -11295,8 +11328,8 @@ bool tablebase_t::futurebase_completely_handles_capture(const tablebase_t& fb, c
 		&& ((fb_legal_squares & pieces[local_piece[piece]].legal_squares)
 		    != pieces[local_piece[piece]].legal_squares)) break;
 	    if ((local_piece[piece] == capturing_piece)
-		&& ((fb_legal_squares & pieces[captured_piece].legal_squares)
-		    != pieces[captured_piece].legal_squares)) break;
+		&& ((fb_legal_squares & pieces[captured_piece].legal_squares & capture_squares)
+		    != (pieces[captured_piece].legal_squares & capture_squares))) break;
 	}
 
 	/* We've found a mapping of pieces that meets the above criteria. */
@@ -11389,14 +11422,10 @@ bool tablebase_t::futurebase_completely_handles_capture_promotion(const tablebas
 	     */
 
 	    if (local_piece[piece] == capturing_piece) {
-		uint64_t promotion_squares;
+		uint64_t promotion_squares = possible_capture_squares(capturing_piece);
 		if (pieces[capturing_piece].color == PieceColor::White) {
-		    promotion_squares = (pieces[capturing_piece].legal_squares & 0x00ff000000000000LL) << 8;
-		    promotion_squares = (promotion_squares << 1) | (promotion_squares >> 1);
 		    promotion_squares &= 0xff00000000000000LL;
 		} else {
-		    promotion_squares = (pieces[capturing_piece].legal_squares & 0x000000000000ff00LL) >> 8;
-		    promotion_squares = (promotion_squares << 1) | (promotion_squares >> 1);
 		    promotion_squares &= 0x00000000000000ffLL;
 		}
 		promotion_squares &= pieces[captured_piece].legal_squares;
