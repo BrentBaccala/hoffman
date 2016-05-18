@@ -12470,15 +12470,6 @@ bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position)
  *
  */
 
-/* There are three different variants of initialize_tablebase_entry(), that differ in their third
- * argument.  The first one, that does all the work, takes a const local_position_t to protect
- * against bugs in that code, the second takes a non-const local_position_t and performs an extra
- * index_to_local_position conversion on it, and the third takes nothing and creates a
- * local_position_t on the stack.  The third is deprecated since we now like to call
- * index_to_local_position on an existing position, if possible, because it's often faster
- * than creating a new position from scratch.
- */
-
 class move {
 
     PieceType piece_type;
@@ -12931,6 +12922,15 @@ std::vector<std::pair<move, global_position_t>> generate_moves(const global_posi
 
     return result;
 }
+
+/* There are three different variants of initialize_tablebase_entry(), that differ in their third
+ * argument.  The first one, that does all the work, takes a const local_position_t to protect
+ * against bugs in that code, the second takes a non-const local_position_t and performs an extra
+ * index_to_local_position conversion on it, and the third takes nothing and creates a
+ * local_position_t on the stack.  The third is deprecated since we now like to call
+ * index_to_local_position on an existing position, if possible, because it's often faster
+ * than creating a new position from scratch.
+ */
 
 futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t index, const local_position_t &position)
 {
