@@ -1422,8 +1422,8 @@ namespace Movement {
     enum Direction { Forward, Backward };
     enum Type { AllMoves, Capture, NonCapture, NoDoublePawn };
 
-    const direction_vectors movements(PieceType type, PieceColor color, square_t square,
-				      Direction dir, Type mvmt_type)
+    const direction_vectors& movements(PieceType type, PieceColor color, square_t square,
+				       Direction dir, Type mvmt_type)
     {
 	if (type != PieceType::Pawn) {
 	    return piece_movements[std::make_pair(type, square)];
@@ -12553,10 +12553,11 @@ public:
 
 class PNTM_mated : public std::exception { };
 
-std::vector<move> generate_moves(const local_position_t &position)
+void generate_moves(const local_position_t &position, std::vector<move> &result)
 {
-    std::vector<move> result;
     const tablebase_t *tb = position.tb;
+
+    result.clear();
 
     for (int piece = 0; piece < tb->num_pieces; piece++) {
 
@@ -12748,8 +12749,6 @@ std::vector<move> generate_moves(const local_position_t &position)
 	    }
 	}
     }
-
-    return result;
 }
 
 std::vector<std::pair<move, global_position_t>> generate_moves(const global_position_t &position)
@@ -12944,6 +12943,8 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
     bool concede_prune = false;
     bool resign_prune = false;
 
+    thread_local std::vector<move> moves;
+
     /* En passant:
      *
      * We're just counting moves here.  In particular, we don't compute the indices of the resulting
@@ -12954,7 +12955,10 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
      */
 
     try {
-	for (auto &move : generate_moves(position)) {
+
+	generate_moves(position, moves);
+
+	for (auto &move : moves) {
 
 	    if (index == debug_move) {
 		info("%s ", move.c_str());
