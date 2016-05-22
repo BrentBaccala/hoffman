@@ -386,6 +386,13 @@ public:
 #define NUM_DIR 8
 #define NUM_MOVEMENTS 7
 
+/* Variants */
+
+enum class Variant { Normal, Suicide };
+
+std::map<Glib::ustring, Variant> variant_names =
+    {{"", Variant::Normal}, {"normal", Variant::Normal}, {"suicide", Variant::Suicide}};
+
 /* Colors */
 
 enum class PieceColor { White, Black };
@@ -793,7 +800,7 @@ typedef struct global_position {
     unsigned char board[64];
     PieceColor side_to_move;
     short en_passant_square;
-    short variant;
+    Variant variant;
 
     void move_piece(square_t from, square_t to)
     {
@@ -937,12 +944,6 @@ bimap3<Glib::ustring, FuturebaseType> futurebase_types =
     {{"capture", FuturebaseType::Capture}, {"promotion", FuturebaseType::Promotion},
      {"capture-promotion", FuturebaseType::CapturePromotion}, {"normal", FuturebaseType::Normal}};
 
-#define VARIANT_NORMAL 0
-#define VARIANT_SUICIDE 1
-
-std::map<Glib::ustring, int> variant_names =
-    {{"", VARIANT_NORMAL}, {"normal", VARIANT_NORMAL}, {"suicide", VARIANT_SUICIDE}};
-
 struct piece {
 
     PieceColor color;
@@ -1016,7 +1017,7 @@ public:
     std::unique_ptr<xmlpp::DomParser> parser = std::unique_ptr<xmlpp::DomParser>(new xmlpp::DomParser);
     xmlpp::Document * xml;
 
-    int variant;
+    Variant variant;
     int index_type;
     index_t num_indices;
     bool positions_with_adjacent_kings_are_illegal;
@@ -3298,7 +3299,7 @@ public:
 
     compact_index(const tablebase_t *tb)
     {
-	if (tb->variant == VARIANT_SUICIDE) {
+	if (tb->variant == Variant::Suicide) {
 	    throw nested_exception("'compact' index type not allowed with 'suicide' variable");
 	}
 
@@ -3582,7 +3583,7 @@ public:
 
 	}
 
-	if (tb->variant != VARIANT_SUICIDE) {
+	if (tb->variant != Variant::Suicide) {
 
 	    if (index >= total_legal_king_positions) {
 		fatal("index >= total legal king positions in combinadic_index::index_to_position!\n");
@@ -3737,7 +3738,7 @@ public:
 	    }
 	}
 
-	if (tb->variant != VARIANT_SUICIDE) {
+	if (tb->variant != Variant::Suicide) {
 	    total_legal_king_positions = 0;
 	    for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
 		if (! (tb->pieces[tb->white_king].legal_squares & BITVECTOR(white_king_square))) continue;
@@ -4812,11 +4813,11 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     switch (variant) {
 
-    case VARIANT_NORMAL:
+    case Variant::Normal:
 	positions_with_adjacent_kings_are_illegal = true;
 	break;
 
-    case VARIANT_SUICIDE:
+    case Variant::Suicide:
 	positions_with_adjacent_kings_are_illegal = false;
 	promotion_possibilities = 5;	/* A global var, but all futurebases have to use the same variant */
 	break;
@@ -4862,7 +4863,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
 	    struct piece new_piece(*it);
 
-	    if (variant != VARIANT_SUICIDE) {
+	    if (variant != Variant::Suicide) {
 
 		if ((new_piece.color == PieceColor::White) && (new_piece.piece_type == PieceType::King)) {
 		    if (white_king != -1) {
@@ -4900,7 +4901,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 	throw "Must have at least one white piece and one black piece!";
     }
 
-    if (variant != VARIANT_SUICIDE) {
+    if (variant != Variant::Suicide) {
 	if ((white_king == -1) || (black_king == -1)) {
 	    throw "Must have one white king and one black one!";
 	}
@@ -5217,7 +5218,7 @@ void tablebase_t::parse_XML(std::istream *instream)
      * XXX should be able to use pawngen, too, but it's untested
      */
 
-    if ((variant == VARIANT_SUICIDE) && (index_type != NAIVE_INDEX)
+    if ((variant == Variant::Suicide) && (index_type != NAIVE_INDEX)
 	&& (index_type != SIMPLE_INDEX) && (index_type != COMBINADIC3_INDEX)
 	&& (index_type != COMBINADIC4_INDEX)) {
 	throw "Only 'naive', 'simple', and 'combinadic3/4' indices are compatible with 'suicide' variant";
@@ -5320,7 +5321,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 		symmetry = 1;
 	    }
 	}
-	if (variant == VARIANT_SUICIDE) {
+	if (variant == Variant::Suicide) {
 	    symmetry = 1;
 	}
 
@@ -5337,7 +5338,7 @@ void tablebase_t::parse_XML(std::istream *instream)
      * XXX fix this and allow symmetry based on the first piece in the tablebase
      */
 
-    if ((variant == VARIANT_SUICIDE) && (symmetry != 1)) {
+    if ((variant == Variant::Suicide) && (symmetry != 1)) {
 	throw "Can't use symmetry with 'suicide' variant (yet)";
     }
 
@@ -7400,7 +7401,7 @@ class EntriesTable {
 
 	movecnt_bitmask = (1 << movecnt_bits) - 1;
 
-	if (current_tb->variant == VARIANT_NORMAL) {
+	if (current_tb->variant == Variant::Normal) {
 	    capture_possible_flag_offset = -1;
 	    movecnt_offset = 0;
 	} else {
@@ -7537,7 +7538,7 @@ class EntriesTable {
 	 * propagate.
 	 */
 
-	if (current_tb->variant == VARIANT_NORMAL) {
+	if (current_tb->variant == Variant::Normal) {
 	    initialize_entry(index, MOVECNT_PTM_WINS_PROPED, 1);
 	} else {
 	    initialize_entry(index, MOVECNT_PTM_WINS_UNPROPED, 1);
@@ -8022,7 +8023,7 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
      * non-capture move into a position where a capture was possible.
      */
 
-    if ((current_tb->variant == VARIANT_SUICIDE)
+    if ((current_tb->variant == Variant::Suicide)
 	&& !doing_capture_backprop
 	&& entriesTable[index].get_capture_possible_flag()) {
 	return;
@@ -9333,7 +9334,7 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 		if (! test_and_set_bit_field(current_tb->futurevectors, bit_offset + futuremove, 0)) {
 
 		    if ((entriesTable[index].get_raw_DTM() != 1) && entriesTable[index].is_normal_movecnt()
-			&& (current_tb->variant != VARIANT_SUICIDE)) {
+			&& (current_tb->variant != Variant::Suicide)) {
 
 			fatal("commit_update; futuremove processed; index=%" PRIindex "; dtm=%d; movecnt=%d; futuremove=%d\n",
 			      index, dtm, movecnt, futuremove);
@@ -9481,7 +9482,7 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 
 	if (dtm > 0) {
 	    /* Don't backprop DTM 1 (PNTM in check) because we don't count illegal moves (unless it's suicide) */
-	    if ((futurebase->variant == VARIANT_SUICIDE) || (dtm != 1)) {
+	    if ((futurebase->variant == Variant::Suicide) || (dtm != 1)) {
 		commit_update(current_index, -dtm, movecnt, futuremove);
 	    }
 	} else if (dtm < 0) {
@@ -10825,7 +10826,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	     * prune-enable statements, since these are the rules of the game!
 	     */
 
-	    if ((tb->variant == VARIANT_SUICIDE) && (tb->num_pieces_by_color[tb->pieces[captured_piece].color] == 1)) {
+	    if ((tb->variant == Variant::Suicide) && (tb->num_pieces_by_color[tb->pieces[captured_piece].color] == 1)) {
 
 		futurecaptures[capturing_piece][captured_piece] = RESIGN_FUTUREMOVE;
 
@@ -12281,7 +12282,7 @@ bool PTM_in_check(const tablebase_t *tb, const local_position_t *position)
 {
     /* The concept of check doesn't exist in suicide - kings are normal pieces */
 
-    if (tb->variant == VARIANT_SUICIDE) return false;
+    if (tb->variant == Variant::Suicide) return false;
 
     const int king = (position->side_to_move == PieceColor::White) ? tb->white_king : tb->black_king;
     const int king_position = position->piece_position[king];
@@ -12314,7 +12315,7 @@ bool PTM_in_check(const tablebase_t *tb, const local_position_t *position)
 
 bool global_PTM_in_check(global_position_t *position)
 {
-    if (position->variant == VARIANT_SUICIDE) return false;
+    if (position->variant == Variant::Suicide) return false;
 
     for (square_t square = 0; square < 64; square ++) {
 
@@ -12357,7 +12358,7 @@ bool global_PTM_in_check(global_position_t *position)
 
 bool global_PNTM_in_check(global_position_t *position)
 {
-    if (position->variant == VARIANT_SUICIDE) return false;
+    if (position->variant == Variant::Suicide) return false;
 
     for (square_t square = 0; square < 64; square ++) {
 
@@ -12398,7 +12399,7 @@ bool global_PNTM_in_check(global_position_t *position)
 
 bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position)
 {
-    if (tb->variant == VARIANT_SUICIDE) return false;
+    if (tb->variant == Variant::Suicide) return false;
 
     for (int piece = 0; piece < tb->num_pieces; piece++) {
 
@@ -13017,7 +13018,7 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 
     if (movecnt == 0) {
 
-	if (tb->variant == VARIANT_SUICIDE) {
+	if (tb->variant == Variant::Suicide) {
 	    entriesTable->initialize_entry_with_PNTM_mated(index);
 	} else if (PTM_in_check(tb, &position)) {
 	    entriesTable->initialize_entry_with_PTM_mated(index);
@@ -13032,7 +13033,7 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 	 * Of course, if we can capture the opponent's last piece, then we win!
 	 */
 
-	if ((tb->variant == VARIANT_SUICIDE) && (capturecnt != 0)) {
+	if ((tb->variant == Variant::Suicide) && (capturecnt != 0)) {
 	    movecnt = capturecnt;
 	    futuremovecnt = capturecnt;
 	    futurevector = capture_futurevector;
@@ -13749,7 +13750,7 @@ bool verify_tablebase_internally(void)
     unsigned int thread;
 
     /* XXX this routine doesn't work on suicide */
-    if (current_tb->variant != VARIANT_NORMAL) return false;
+    if (current_tb->variant != Variant::Normal) return false;
 
     info("Verifying internal consistency of tablebase\n");
 
@@ -14090,7 +14091,7 @@ int print_move_list(tablebase_t **tbs, tablebase_t *tb, global_position_t *globa
 
 	    if (result) {
 		result.print_score(1);
-	    } else if ((tb->variant == VARIANT_SUICIDE)
+	    } else if ((tb->variant == Variant::Suicide)
 		       && (tb->num_pieces_by_color[~ piece_color] == 1)) {
 		printf("%s WINS\n", colors.at(~ piece_color).c_str());
 	    } else {
@@ -14230,7 +14231,7 @@ void probe_tablebases(tablebase_t **tbs) {
 	    result.print_score(0);
 
 #ifdef USE_NALIMOV
-	    if ((global_position.variant == VARIANT_NORMAL) && (nalimov_num > 0)
+	    if ((global_position.variant == Variant::Normal) && (nalimov_num > 0)
 		&& EGTBProbe(global_position.side_to_move == PieceColor::White, global_position.board, -1, &score) == 1) {
 		printf("\nNalimov score: ");
 		if (score > 0) {
@@ -14245,7 +14246,7 @@ void probe_tablebases(tablebase_t **tbs) {
 
 	    /* In suicide, capture moves are forced, so if any exist they are the only moves. */
 
-	    if (global_position.variant != VARIANT_SUICIDE) {
+	    if (global_position.variant != Variant::Suicide) {
 		print_move_list(tbs, result.tb, &global_position, true, true);
 	    } else {
 		if (print_move_list(tbs, result.tb, &global_position, false, true) == 0) {
