@@ -850,33 +850,31 @@ typedef struct global_position {
  * A 'struct format' gives the layout of such a dynamic structure.
  */
 
+enum class FormatField { DTM, Flag, Basic };
+
+bimap3<Glib::ustring, FormatField> format_fields =
+    {{"dtm", FormatField::DTM}, {"flag", FormatField::Flag}, {"basic", FormatField::Basic}};
+
+enum class FormatFlag { None, WhiteWins, WhiteDraws };
+
+bimap3<Glib::ustring, FormatFlag> format_flag_types =
+    {{"white-wins", FormatFlag::WhiteWins}, {"white-draws", FormatFlag::WhiteDraws}};
+
+#define MAX_FORMAT_BYTES 16
+
 struct format {
     int bits;
     int dtm_offset;
     int dtm_bits;
     int flag_offset;
-    int flag_type;
+    FormatFlag flag_type;
     int basic_offset;
 };
 
-#define FORMAT_FIELD_DTM 0
-#define FORMAT_FIELD_FLAG 1
-#define FORMAT_FIELD_BASIC 2
-
-bimap format_fields = {{"dtm", FORMAT_FIELD_DTM}, {"flag", FORMAT_FIELD_FLAG}, {"basic", FORMAT_FIELD_BASIC}};
-
-#define FORMAT_FLAG_NONE 0
-#define FORMAT_FLAG_WHITE_WINS 1
-#define FORMAT_FLAG_WHITE_DRAWS 2
-
-bimap format_flag_types = {{"white-wins", FORMAT_FLAG_WHITE_WINS}, {"white-draws", FORMAT_FLAG_WHITE_DRAWS}};
-
-#define MAX_FORMAT_BYTES 16
-
 /* This is the "one-byte-dtm" format */
 
-struct format one_byte_dtm_format = {8, 0,8, -1,FORMAT_FLAG_NONE, -1};
-struct format dtm_format = {0, 0,0, -1,FORMAT_FLAG_NONE, -1};
+struct format one_byte_dtm_format = {8, 0,8, -1,FormatFlag::None, -1};
+struct format dtm_format = {0, 0,0, -1,FormatFlag::None, -1};
 
 
 /* tablebase_t
@@ -4647,19 +4645,19 @@ bool parse_format(xmlpp::Element * formatNode, struct format * format)
 	    int bits = eval_to_number_or_zero(child_element, "@bits");
 	    try {
 		// this might throw an exception - see below
-		int format_field = format_fields.at(child_element->get_name());
+		FormatField format_field = format_fields.at(child_element->get_name());
 
 		switch (format_field) {
-		case FORMAT_FIELD_DTM:
+		case FormatField::DTM:
 		    format->dtm_offset = 0;
 		    format->dtm_bits = bits;
 		    break;
-		case FORMAT_FIELD_FLAG:
+		case FormatField::Flag:
 		    format->flag_offset = 0;
 		    bits = 1;
 		    format->flag_type = format_flag_types.at(child_element->get_attribute_value("type"));
 		    break;
-		case FORMAT_FIELD_BASIC:
+		case FormatField::Basic:
 		    format->basic_offset = 0;
 		    bits = 2;
 		    break;
@@ -5467,7 +5465,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     /* Do we encode side-to-move? */
 
-    if ((index_type == COMBINADIC4_INDEX) && is_color_symmetric() && (format.flag_type == FORMAT_FLAG_NONE)) {
+    if ((index_type == COMBINADIC4_INDEX) && is_color_symmetric() && (format.flag_type == FormatFlag::None)) {
 	encode_stm = false;
     } else {
 	encode_stm = true;
@@ -6038,8 +6036,8 @@ bool preload_all_futurebases(tablebase_t *tb)
 	 * XXX distinguish between DTM and DTC tablebases
 	 */
 
-	if (futurebases[fbnum].format.flag_type != FORMAT_FLAG_NONE) {
-	    if (tb->format.flag_type == FORMAT_FLAG_NONE) {
+	if (futurebases[fbnum].format.flag_type != FormatFlag::None) {
+	    if (tb->format.flag_type == FormatFlag::None) {
 		fatal("'%s': bitbase unusable as futurebase for a non-bitbase format\n", filename.c_str());
 	    } else if ((tb->format.flag_type != futurebases[fbnum].format.flag_type) && ! futurebases[fbnum].invert_colors) {
 		fatal("'%s': bitbase unusable as futurebase due to flag type\n", filename.c_str());
@@ -6210,7 +6208,7 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
      * white-wins-or-draws-positions.
      */
 
-    if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1) || (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS)) {
+    if ((tb->format.dtm_bits > 0) || (tb->format.basic_offset != -1) || (tb->format.flag_type == FormatFlag::WhiteWins)) {
 	node->add_child_text("\n      ");
 	node->add_child("white-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[PieceColor::White]));
     }
@@ -6218,7 +6216,7 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
 	node->add_child_text("\n      ");
 	node->add_child("black-wins-positions")->set_child_text(boost::lexical_cast<std::string>(player_wins[PieceColor::Black]));
     }
-    if (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) {
+    if (tb->format.flag_type == FormatFlag::WhiteDraws) {
 	node->add_child_text("\n      ");
 	node->add_child("white-wins-or-draws-positions")->set_child_text(boost::lexical_cast<std::string>(total_legal_positions - player_wins[PieceColor::Black]));
     }
@@ -13360,17 +13358,19 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 	}
 
 	switch (tb->format.flag_type) {
-	case FORMAT_FLAG_WHITE_WINS:
+	case FormatFlag::WhiteWins:
 	    set_bit_field(entrybuf,
 			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
 			  (index_to_side_to_move(tb, index) == PieceColor::White)
 			  ? entriesTable[index].does_PTM_win() : entriesTable[index].does_PNTM_win());
 	    break;
-	case FORMAT_FLAG_WHITE_DRAWS:
+	case FormatFlag::WhiteDraws:
 	    set_bit_field(entrybuf,
 			  tb->format.flag_offset + ((index % 8) * tb->format.bits),
 			  (index_to_side_to_move(tb, index) == PieceColor::White)
 			  ? ! entriesTable[index].does_PNTM_win() : ! entriesTable[index].does_PTM_win());
+	    break;
+	case FormatFlag::None:
 	    break;
 	}
 
@@ -13907,7 +13907,7 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		}
 
-		if (tb->format.flag_type != FORMAT_FLAG_NONE) {
+		if (tb->format.flag_type != FormatFlag::None) {
 
 		    bool flag = tb->get_flag(index);
 
@@ -13916,13 +13916,13 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 		    if (flag && (score < 0)) {
 			fatal("%s (%" PRIindex "): Nalimov says black wins, but we say white wins or draws\n",
 			      global_position_to_FEN(&global), index);
-		    } else if (flag && (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) && (score == 0)) {
+		    } else if (flag && (tb->format.flag_type == FormatFlag::WhiteWins) && (score == 0)) {
 			fatal("%s (%" PRIindex "): Nalimov says draw, but we say white wins\n",
 			      global_position_to_FEN(&global), index);
 		    } else if ((!flag) && (score > 0)) {
 			fatal("%s (%" PRIindex "): Nalimov says white wins, but we say black wins or draws\n",
 			      global_position_to_FEN(&global), index);
-		    } else if ((!flag) && (tb->format.flag_type == FORMAT_FLAG_WHITE_DRAWS) && (score == 0)) {
+		    } else if ((!flag) && (tb->format.flag_type == FormatFlag::WhiteDraws) && (score == 0)) {
 			fatal("%s (%" PRIindex "): Nalimov says draw, but we say black wins\n",
 			      global_position_to_FEN(&global), index);
 		    }
@@ -14029,11 +14029,11 @@ public:
 		printf("Draw\n");
 	    }
 
-	} else if (tb->format.flag_type != FORMAT_FLAG_NONE) {
+	} else if (tb->format.flag_type != FormatFlag::None) {
 
 	    bool flag = tb->get_flag(index);
 
-	    if (tb->format.flag_type == FORMAT_FLAG_WHITE_WINS) {
+	    if (tb->format.flag_type == FormatFlag::WhiteWins) {
 		if (flag) printf("%s wins\n", white);
 		else printf("%s wins or draws\n", black);
 	    } else {
