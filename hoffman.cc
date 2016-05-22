@@ -233,76 +233,13 @@ struct dereference<std::shared_ptr<T>> {
 template <class T>
 class synchronized : public T, public std::mutex { };
 
-/* From Guru of The Week #29 [http://www.gotw.ca/gotw/029.htm]
- *
- * The key here is to understand what a "string" actually is in standard C++. If you look in your
- * trusty string header, you'll see something like this:
- *
- *  typedef basic_string<char> string;
- *
- * So string isn't really a class... it's a typedef of a template...
- *
- * basic_string supplies useful comparison functions that let you compare whether a string is equal
- * to another, less than another, and so on...
- *
- * If we want these to behave differently, all we have to do is provide a different char_traits
- * template!
- *
- */
-
-/* Hmmm... modifying char_traits sounds interesting, but I'm using Glib::ustring because that's what
- * glib++ uses to get UTF-8 strings, and Glib::ustring doesn't use char_traits.  What it's got
- * instead is a casefold() method that "returns a caseless representation of the UTF-8 string.  The
- * resulting string doesn't correspond to any particular case, therefore the result is only useful
- * to compare strings and should never be displayed to the user."
- */
-
 /* Class 'bimap' is used for converting from strings in the XML to integer flags, but sometimes we
  * need to convert a flag back to a string.  The crazy "using" statement is a C++11-ism to inherit
  * the constructor.
  */
 
-/* XXX use templates for this! */
-
-struct casefold_compare {
-    bool operator() (const Glib::ustring a, const Glib::ustring b) const {
-	return a.casefold() < b.casefold();
-    }
-};
-
-class bimap : public std::map<Glib::ustring, int, casefold_compare> {
-public:
-    using std::map<Glib::ustring, int, casefold_compare>::map;
-    Glib::ustring operator[] (int value)
-    {
-	for (auto it = begin(); it != end(); it++) {
-	    if (it->second == value) return it->first;
-	}
-	// XXX this isn't consistent with std::map usage
-	return nullptr;
-    }
-};
-
-struct casefold_compare2 {
-    bool operator() (const std::string a, const std::string b) const {
-	return boost::ilexicographical_compare(a, b);
-    }
-};
-
-class bimap2 : public std::map<std::string, int, casefold_compare2> {
-public:
-    using std::map<std::string, int, casefold_compare2>::map;
-    const char * operator[] (int value)
-    {
-	for (auto it = begin(); it != end(); it++) {
-	    if (it->second == value) return it->first.c_str();
-	}
-	return nullptr;
-    }
-};
-
 template<typename A, typename B, typename C = std::less<A>>
-class bimap3 : public std::map<A, B, C> {
+class bimap : public std::map<A, B, C> {
 public:
     using std::map<A, B, C>::map;
     using std::map<A, B, C>::begin;
@@ -324,6 +261,40 @@ public:
 	return nullptr;
     }
 #endif
+};
+
+/* From Guru of The Week #29 [http://www.gotw.ca/gotw/029.htm]
+ *
+ * The key here is to understand what a "string" actually is in standard C++. If you look in your
+ * trusty string header, you'll see something like this:
+ *
+ *  typedef basic_string<char> string;
+ *
+ * So string isn't really a class... it's a typedef of a template...
+ *
+ * basic_string supplies useful comparison functions that let you compare whether a string is equal
+ * to another, less than another, and so on...
+ *
+ * If we want these to behave differently, all we have to do is provide a different char_traits
+ * template!
+ *
+ * [END QUOTE]
+ *
+ * Hmmm... modifying char_traits sounds interesting, but I'm using Glib::ustring because that's what
+ * glib++ uses to get UTF-8 strings, and Glib::ustring doesn't use char_traits.  What it's got
+ * instead is a casefold() method that "returns a caseless representation of the UTF-8 string.  The
+ * resulting string doesn't correspond to any particular case, therefore the result is only useful
+ * to compare strings and should never be displayed to the user."
+ */
+
+struct casefold_compare {
+    bool operator() (const Glib::ustring a, const Glib::ustring b) const {
+	return a.casefold() < b.casefold();
+    }
+
+    bool operator() (const std::string a, const std::string b) const {
+	return boost::ilexicographical_compare(a, b);
+    }
 };
 
 /* Sometimes we want to catch and rethrow an exception after adding some information to it.
@@ -399,7 +370,7 @@ enum class PieceColor { White, Black };
 
 const std::vector<PieceColor> BothColors = { PieceColor::White, PieceColor::Black };
 
-bimap3<Glib::ustring, PieceColor, casefold_compare> colors = {{"WHITE", PieceColor::White}, {"BLACK", PieceColor::Black}};
+bimap<Glib::ustring, PieceColor, casefold_compare> colors = {{"WHITE", PieceColor::White}, {"BLACK", PieceColor::Black}};
 
 PieceColor operator~ (const PieceColor &x) {
     return (x == PieceColor::White) ? PieceColor::Black : PieceColor::White;
@@ -411,7 +382,7 @@ enum class PieceType { King, Queen, Rook, Bishop, Knight, Pawn };
 
 const std::vector<PieceType> AllPieceTypes = {PieceType::King, PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight, PieceType::Pawn};
 
-bimap3<std::string, PieceType, casefold_compare2> piece_name =
+bimap<std::string, PieceType, casefold_compare> piece_name =
     {{"KING", PieceType::King}, {"QUEEN", PieceType::Queen}, {"ROOK", PieceType::Rook},
      {"BISHOP", PieceType::Bishop}, {"KNIGHT", PieceType::Knight}, {"PAWN", PieceType::Pawn}};
 
@@ -426,7 +397,7 @@ std::map<PieceType, char> piece_char =
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
 
-bimap3<std::pair<PieceColor, PieceType>, char> global_pieces2 = 
+bimap<std::pair<PieceColor, PieceType>, char> global_pieces2 =
     {{{PieceColor::White, PieceType::King}, 'K'},
      {{PieceColor::White, PieceType::Queen}, 'Q'},
      {{PieceColor::White, PieceType::Rook}, 'R'},
@@ -859,12 +830,12 @@ typedef struct global_position {
 
 enum class FormatField { DTM, Flag, Basic };
 
-bimap3<Glib::ustring, FormatField> format_fields =
+bimap<Glib::ustring, FormatField, casefold_compare> format_fields =
     {{"dtm", FormatField::DTM}, {"flag", FormatField::Flag}, {"basic", FormatField::Basic}};
 
 enum class FormatFlag { None, WhiteWins, WhiteDraws };
 
-bimap3<Glib::ustring, FormatFlag> format_flag_types =
+bimap<Glib::ustring, FormatFlag, casefold_compare> format_flag_types =
     {{"white-wins", FormatFlag::WhiteWins}, {"white-draws", FormatFlag::WhiteDraws}};
 
 #define MAX_FORMAT_BYTES 16
@@ -915,18 +886,20 @@ struct format dtm_format = {0, 0,0, -1,FormatFlag::None, -1};
 #define RESTRICTION_DISCARD 1
 #define RESTRICTION_CONCEDE 2
 
-bimap restriction_types = {{"NONE", RESTRICTION_NONE}, {"DISCARD", RESTRICTION_DISCARD}, {"CONCEDE", RESTRICTION_CONCEDE}};
+bimap<Glib::ustring, int, casefold_compare> restriction_types =
+    {{"NONE", RESTRICTION_NONE}, {"DISCARD", RESTRICTION_DISCARD}, {"CONCEDE", RESTRICTION_CONCEDE}};
 
 #define FORMAT_FOURBYTE 0
 #define FORMAT_ONE_BYTE_DTM 1
 
-bimap formats = {{"fourbyte", FORMAT_FOURBYTE}, {"one-byte-dtm", FORMAT_ONE_BYTE_DTM}};
+bimap<Glib::ustring, int, casefold_compare> formats =
+    {{"fourbyte", FORMAT_FOURBYTE}, {"one-byte-dtm", FORMAT_ONE_BYTE_DTM}};
 
 enum class Index { Naive, Naive2, Simple, Compact, NoEnPassant, Combinadic3, Combinadic4, Pawngen };
 
 #define DEFAULT_INDEX Index::Combinadic4
 
-bimap3<Glib::ustring, Index> index_types =
+bimap<Glib::ustring, Index, casefold_compare> index_types =
     {{"naive", Index::Naive}, {"naive2", Index::Naive2}, {"simple", Index::Simple},
      {"compact", Index::Compact}, {"no-en-passant", Index::NoEnPassant},
      {"combinadic3", Index::Combinadic3}, {"combinadic4", Index::Combinadic4},
@@ -934,7 +907,7 @@ bimap3<Glib::ustring, Index> index_types =
 
 enum class FuturebaseType { Capture, Promotion, CapturePromotion, Normal };
 
-bimap3<Glib::ustring, FuturebaseType> futurebase_types = 
+bimap<Glib::ustring, FuturebaseType, casefold_compare> futurebase_types =
     {{"capture", FuturebaseType::Capture}, {"promotion", FuturebaseType::Promotion},
      {"capture-promotion", FuturebaseType::CapturePromotion}, {"normal", FuturebaseType::Normal}};
 
