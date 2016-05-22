@@ -922,21 +922,15 @@ bimap restriction_types = {{"NONE", RESTRICTION_NONE}, {"DISCARD", RESTRICTION_D
 
 bimap formats = {{"fourbyte", FORMAT_FOURBYTE}, {"one-byte-dtm", FORMAT_ONE_BYTE_DTM}};
 
-#define NAIVE_INDEX 0
-#define NAIVE2_INDEX 1
-#define SIMPLE_INDEX 2
-#define COMPACT_INDEX 3
-#define NO_EN_PASSANT_INDEX 4
-#define COMBINADIC3_INDEX 5
-#define COMBINADIC4_INDEX 6
-#define PAWNGEN_INDEX 7
+enum class Index { Naive, Naive2, Simple, Compact, NoEnPassant, Combinadic3, Combinadic4, Pawngen };
 
-#define DEFAULT_INDEX COMBINADIC4_INDEX
+#define DEFAULT_INDEX Index::Combinadic4
 
-bimap index_types = {{"naive", NAIVE_INDEX}, {"naive2", NAIVE2_INDEX}, {"simple", SIMPLE_INDEX},
-		     {"compact", COMPACT_INDEX}, {"no-en-passant", NO_EN_PASSANT_INDEX},
-		     {"combinadic3", COMBINADIC3_INDEX}, {"combinadic4", COMBINADIC4_INDEX},
-		     {"pawngen", PAWNGEN_INDEX}};
+bimap3<Glib::ustring, Index> index_types =
+    {{"naive", Index::Naive}, {"naive2", Index::Naive2}, {"simple", Index::Simple},
+     {"compact", Index::Compact}, {"no-en-passant", Index::NoEnPassant},
+     {"combinadic3", Index::Combinadic3}, {"combinadic4", Index::Combinadic4},
+     {"pawngen", Index::Pawngen}};
 
 enum class FuturebaseType { Capture, Promotion, CapturePromotion, Normal };
 
@@ -1018,7 +1012,7 @@ public:
     xmlpp::Document * xml;
 
     Variant variant;
-    int index_type;
+    Index index_type;
     index_t num_indices;
     bool positions_with_adjacent_kings_are_illegal;
     int symmetry;
@@ -3775,7 +3769,7 @@ public:
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
-	    /* We don't really need to assign this for pawns in a PAWNGEN_INDEX, but we do it
+	    /* We don't really need to assign this for pawns in a Index::Pawngen, but we do it
 	     * anyway to avoid bogus values in these arrays when we compute last_overlapping_group.
 	     */
 
@@ -3964,7 +3958,7 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 	&& ! check_king_legality(position->piece_position[tb->white_king], position->piece_position[tb->black_king]))
 	return INVALID_INDEX;
 
-    if ((tb->index_type == NO_EN_PASSANT_INDEX) && (position->en_passant_square != ILLEGAL_POSITION))
+    if ((tb->index_type == Index::NoEnPassant) && (position->en_passant_square != ILLEGAL_POSITION))
 	return INVALID_INDEX;
 
     /* Recompute board_vector, and check for legality of piece positions */
@@ -5186,7 +5180,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     if (index == "") {
 	if (pawngen) {
-	    index_type = PAWNGEN_INDEX;
+	    index_type = Index::Pawngen;
 	} else {
 	    index_type = DEFAULT_INDEX;
 	}
@@ -5195,7 +5189,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 	index_node = tablebase->add_child("index");
 	tablebase->add_child_text("\n");
 
-	index_node->set_attribute("type", index_types[index_type]);
+	index_node->set_attribute("type", index_types.at(index_type));
     } else {
 	index_type = index_types.at(index);
     }
@@ -5205,9 +5199,9 @@ void tablebase_t::parse_XML(std::istream *instream)
 	    throw nested_exception("Can't have normal pawn pieces with pawngen");
 	}
 
-	if ((index_type != PAWNGEN_INDEX)
-	    && (index_type != COMBINADIC3_INDEX) && (index_type != COMBINADIC4_INDEX)
-	    && (index_type != NAIVE_INDEX) && (index_type != NAIVE2_INDEX)) {
+	if ((index_type != Index::Pawngen)
+	    && (index_type != Index::Combinadic3) && (index_type != Index::Combinadic4)
+	    && (index_type != Index::Naive) && (index_type != Index::Naive2)) {
 	    throw nested_exception("Illegal index type with pawngen");
 	}
     }
@@ -5218,9 +5212,9 @@ void tablebase_t::parse_XML(std::istream *instream)
      * XXX should be able to use pawngen, too, but it's untested
      */
 
-    if ((variant == Variant::Suicide) && (index_type != NAIVE_INDEX)
-	&& (index_type != SIMPLE_INDEX) && (index_type != COMBINADIC3_INDEX)
-	&& (index_type != COMBINADIC4_INDEX)) {
+    if ((variant == Variant::Suicide) && (index_type != Index::Naive)
+	&& (index_type != Index::Simple) && (index_type != Index::Combinadic3)
+	&& (index_type != Index::Combinadic4)) {
 	throw "Only 'naive', 'simple', and 'combinadic3/4' indices are compatible with 'suicide' variant";
     }
 
@@ -5309,7 +5303,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 	/* If symmetry was not explicitly specified, compute it automatically */
 
 	symmetry = 8;
-	if ((index_type == NAIVE_INDEX) || (index_type == NAIVE2_INDEX)) {
+	if ((index_type == Index::Naive) || (index_type == Index::Naive2)) {
 	    symmetry = 4;
 	}
 	for (piece = 0; piece < num_pieces; piece ++) {
@@ -5349,7 +5343,7 @@ void tablebase_t::parse_XML(std::istream *instream)
      */
 
 
-    if ((symmetry == 8) && ((index_type == NAIVE_INDEX) || (index_type == NAIVE2_INDEX))) {
+    if ((symmetry == 8) && ((index_type == Index::Naive) || (index_type == Index::Naive2))) {
 	throw "8-way symmetry incompatible with naive/naive2 index types";
     }
 
@@ -5426,7 +5420,7 @@ void tablebase_t::parse_XML(std::istream *instream)
      * if the semilegal and legal ranges of a piece differ.
      */
 
-    if (index_type <= SIMPLE_INDEX) {
+    if ((index_type == Index::Naive) || (index_type == Index::Naive2) || (index_type == Index::Simple)) {
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    if (pieces[piece].legal_squares != pieces[piece].semilegal_squares) {
 		throw "Non-identical overlapping piece restrictions not allowed with this index type";
@@ -5434,7 +5428,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 	}
     }
 
-    if (index_type == NO_EN_PASSANT_INDEX) {
+    if (index_type == Index::NoEnPassant) {
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    int col;
 	    int row1 = (pieces[piece].color == PieceColor::White) ? 1 : 6;
@@ -5463,7 +5457,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     /* Do we encode side-to-move? */
 
-    if ((index_type == COMBINADIC4_INDEX) && is_color_symmetric() && (format.flag_type == FormatFlag::None)) {
+    if ((index_type == Index::Combinadic4) && is_color_symmetric() && (format.flag_type == FormatFlag::None)) {
 	encode_stm = false;
     } else {
 	encode_stm = true;
@@ -5474,29 +5468,29 @@ void tablebase_t::parse_XML(std::istream *instream)
      */
 
     switch (index_type) {
-    case NAIVE_INDEX:
+    case Index::Naive:
 	encoding.reset(new naive_index(this));
 	break;
 
-    case NAIVE2_INDEX:
+    case Index::Naive2:
 	encoding.reset(new naive2_index(this));
 	break;
 
-    case SIMPLE_INDEX:
+    case Index::Simple:
 	encoding.reset(new simple_index(this));
 	break;
 
-    case COMPACT_INDEX:
+    case Index::Compact:
 	encoding.reset(new compact_index(this));
 	break;
 
-    case COMBINADIC3_INDEX:
-    case COMBINADIC4_INDEX:
-    case PAWNGEN_INDEX:
+    case Index::Combinadic3:
+    case Index::Combinadic4:
+    case Index::Pawngen:
 	encoding.reset(new combinadic_index(this));
 	break;
 
-    case NO_EN_PASSANT_INDEX:
+    case Index::NoEnPassant:
 	fatal("no-en-passant index type deprecated\n");
 	break;
 
