@@ -931,14 +931,11 @@ bimap index_types = {{"naive", NAIVE_INDEX}, {"naive2", NAIVE2_INDEX}, {"simple"
 		     {"combinadic3", COMBINADIC3_INDEX}, {"combinadic4", COMBINADIC4_INDEX},
 		     {"pawngen", PAWNGEN_INDEX}};
 
-#define FUTUREBASE_CAPTURE 0
-#define FUTUREBASE_PROMOTION 1
-#define FUTUREBASE_CAPTURE_PROMOTION 2
-#define FUTUREBASE_NORMAL 3
+enum class FuturebaseType { Capture, Promotion, CapturePromotion, Normal };
 
-bimap futurebase_types = 
-    {{"capture", FUTUREBASE_CAPTURE}, {"promotion", FUTUREBASE_PROMOTION},
-     {"capture-promotion", FUTUREBASE_CAPTURE_PROMOTION}, {"normal", FUTUREBASE_NORMAL}};
+bimap3<Glib::ustring, FuturebaseType> futurebase_types = 
+    {{"capture", FuturebaseType::Capture}, {"promotion", FuturebaseType::Promotion},
+     {"capture-promotion", FuturebaseType::CapturePromotion}, {"normal", FuturebaseType::Normal}};
 
 #define VARIANT_NORMAL 0
 #define VARIANT_SUICIDE 1
@@ -1061,7 +1058,7 @@ public:
     Glib::ustring filename;
     std::unique_ptr<io::filtering_istream> instream;
 
-    int futurebase_type;
+    FuturebaseType futurebase_type;
     index_t next_read_index;
     off_t offset;
     int max_dtm;
@@ -5934,23 +5931,23 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t &futurebase)
     }
 }
 
-int autodetect_futurebase_type(tablebase_t & futurebase)
+FuturebaseType autodetect_futurebase_type(tablebase_t & futurebase)
 {
     if (futurebase.extra_piece == -1) {
 	if ((futurebase.missing_pawn == -1) && (futurebase.missing_non_pawn == -1)) {
-	    return FUTUREBASE_NORMAL;
+	    return FuturebaseType::Normal;
 	} else if ((futurebase.missing_pawn != -1) && (futurebase.missing_non_pawn != -1)) {
-	    return -1;
+	    throw "unknown futurebase type";
 	} else {
-	    return FUTUREBASE_CAPTURE;
+	    return FuturebaseType::Capture;
 	}
     } else {
 	if (futurebase.missing_pawn == -1) {
-	    return -1;
+	    throw "unknown futurebase type";
 	} else if (futurebase.missing_non_pawn == -1) {
-	    return FUTUREBASE_PROMOTION;
+	    return FuturebaseType::Promotion;
 	} else {
-	    return FUTUREBASE_CAPTURE_PROMOTION;
+	    return FuturebaseType::CapturePromotion;
 	}
     }
 }
@@ -6056,9 +6053,9 @@ bool preload_all_futurebases(tablebase_t *tb)
 	 * for correctness if the XML (optionally now) specified the type.
 	 */
 
-	futurebases[fbnum].futurebase_type = autodetect_futurebase_type(futurebases[fbnum]);
-
-	if (futurebases[fbnum].futurebase_type == -1) {
+	try {
+	    futurebases[fbnum].futurebase_type = autodetect_futurebase_type(futurebases[fbnum]);
+	} catch (std::string ex) {
 	    fatal("'%s': Can't autodetect futurebase type\n", filename.c_str());
 	}
 
@@ -6066,7 +6063,7 @@ bool preload_all_futurebases(tablebase_t *tb)
 	if (type != "") {
 	    if (futurebases[fbnum].futurebase_type != futurebase_types.at(type)) {
 		fatal("'%s': Specified futurebase type '%s' doesn't match autodetected type '%s'\n",
-		      filename.c_str(), type.c_str(), futurebase_types[futurebases[fbnum].futurebase_type].c_str());
+		      filename.c_str(), type.c_str(), futurebase_types.at(futurebases[fbnum].futurebase_type).c_str());
 	    }
 	}
 
@@ -10447,7 +10444,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	switch (futurebase->futurebase_type) {
 
-	case FUTUREBASE_CAPTURE:
+	case FuturebaseType::Capture:
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
@@ -10457,7 +10454,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    break;
 
-	case FUTUREBASE_PROMOTION:
+	case FuturebaseType::Promotion:
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
@@ -10473,7 +10470,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    break;
 
-	case FUTUREBASE_CAPTURE_PROMOTION:
+	case FuturebaseType::CapturePromotion:
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
@@ -10489,7 +10486,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 
 	    break;
 
-	case FUTUREBASE_NORMAL:
+	case FuturebaseType::Normal:
 
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
@@ -10997,7 +10994,7 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
     futurebase_cnt = 0;
 
     for (fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	if (futurebases[fbnum].futurebase_type == FUTUREBASE_NORMAL) futurebase_cnt ++;
+	if (futurebases[fbnum].futurebase_type == FuturebaseType::Normal) futurebase_cnt ++;
     }
 
     for (piece = 0; piece < tb->num_pieces; piece ++) {
@@ -11203,7 +11200,7 @@ bool tablebase_t::futurebase_matches_capture(const tablebase_t& fb, const int ca
      * identical in the sense of next_piece_in_semilegal_group.
      */
 
-    if (fb.futurebase_type != FUTUREBASE_CAPTURE) return false;
+    if (fb.futurebase_type != FuturebaseType::Capture) return false;
 
     if (pieces[captured_piece].piece_type == PieceType::Pawn) {
 	if ((fb.missing_pawn != -1)
@@ -11219,7 +11216,7 @@ bool tablebase_t::futurebase_matches_capture(const tablebase_t& fb, const int ca
 
 bool tablebase_t::futurebase_matches_capture_promotion(const tablebase_t& fb, const int captured_piece, const int promotion) const
 {
-    if (fb.futurebase_type != FUTUREBASE_CAPTURE_PROMOTION) return false;
+    if (fb.futurebase_type != FuturebaseType::CapturePromotion) return false;
 
     if ((pieces[fb.missing_non_pawn].color == pieces[captured_piece].color)
 	&& (pieces[fb.missing_non_pawn].piece_type == pieces[captured_piece].piece_type)
@@ -11232,7 +11229,7 @@ bool tablebase_t::futurebase_matches_capture_promotion(const tablebase_t& fb, co
 
 bool tablebase_t::futurebase_matches_promotion(const tablebase_t& fb, const int promoting_pawn, const int promotion) const
 {
-    if (fb.futurebase_type != FUTUREBASE_PROMOTION) return false;
+    if (fb.futurebase_type != FuturebaseType::Promotion) return false;
 
     if ((pieces[fb.missing_pawn].color == pieces[promoting_pawn].color)
 	&& (fb.promotion == promotion)) {
@@ -11761,7 +11758,7 @@ bool check_pruning(tablebase_t *tb)
     int futurebase_cnt = 0;
 
     for (int fbnum = 0; fbnum < num_futurebases; fbnum ++) {
-	if (futurebases[fbnum].futurebase_type == FUTUREBASE_NORMAL) {
+	if (futurebases[fbnum].futurebase_type == FuturebaseType::Normal) {
 	    futurebase_cnt ++;
 	}
     }
