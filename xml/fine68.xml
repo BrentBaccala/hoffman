@@ -1,6 +1,7 @@
 <?xml version="1.0"?>
 <!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
 <!-- Diagram 68 from Rubin Fine's "Basic Chess Endings" -->
+<!-- a variant on this (from Ivan Konobeev) is to restrict the white king to the e-h files -->
 
 <tablebase>
    <prune-enable color="white" type="concede"/>
