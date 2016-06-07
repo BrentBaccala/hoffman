@@ -382,7 +382,7 @@ enum class PieceType { King, Queen, Rook, Bishop, Knight, Pawn };
 
 const std::vector<PieceType> AllPieceTypes = {PieceType::King, PieceType::Queen, PieceType::Rook, PieceType::Bishop, PieceType::Knight, PieceType::Pawn};
 
-bimap<std::string, PieceType, casefold_compare> piece_name =
+bimap<Glib::ustring, PieceType, casefold_compare> piece_name =
     {{"KING", PieceType::King}, {"QUEEN", PieceType::Queen}, {"ROOK", PieceType::Rook},
      {"BISHOP", PieceType::Bishop}, {"KNIGHT", PieceType::Knight}, {"PAWN", PieceType::Pawn}};
 
