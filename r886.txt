@@ -1,0 +1,79 @@
+The bug is triggered by futurebases with disparate max-dtm and min-dtm.
+
+We want a position that is PNTM wins, but the best line for PTM (a
+large negative DTM) comes from a futurebase position with a large
+positive DTM, larger than the smallest negative DTM in all futurebases
+(min_tracked_dtm).
+
+How about 8/8/8/3k4/4R3/8/5KP1/8 b?
+
+Index, FEN or move? 8/8/8/3k4/4R3/8/5KP1/8 b
+Index 2110157 (krpk.htb)
+White wins in 23
+   Kd5c5    (2110158) White wins in 10
+   Kd5d6    (2110172) White wins in 10
+   Kd5c6    (2110174) White wins in 10
+   Kd5xe4   NO DATA
+8 | . . . . . . . .
+7 | . . . . . . . .
+6 | . . . . . . . .
+5 | . . . k . . . .
+4 | . . . . R . . .
+3 | . . . . . . . .
+2 | . . . . . K P .
+1 | . . . . . . . .
+  +----------------
+    a b c d e f g h
+
+This is a large negative DTM, not a large positive DTM, and flipping
+colors does not change the sign of DTM.
+
+We'll only get such a DTM from a position where PTM can force a long
+win, but only with a futuremove, since we need a DTM longer than
+min_tracked_dtm.
+
+Among standard four pieces tablebases, our best bet seems to be kbkp,
+with max-dtm 30 and min-dtm -20.
+
+Index 10392469 (kbkp.htb)
+Black wins in 23
+   Kc5c6    (10392484) Draw
+   Kc5xc4   (81579) Black wins in 23
+   Kc5b6    (10392482) Draw
+   Kc5d6    (10392486) Draw
+   Kc5b4    (10388838) Draw
+   Kc5d4    (10392454) Draw
+   Pg6g5    (8600916) Draw
+8 | . . . . . . . .
+7 | . . . . . . . .
+6 | . . . . . . p .
+5 | . . k . . . . .
+4 | . . B . . . . .
+3 | . . . . . . . .
+2 | . . K . . . . .
+1 | . . . . . . . .
+  +----------------
+    a b c d e f g h
+FEN 8/8/6p1/2k5/2B5/8/2K5/8 b - -
+
+So kqpkb is a possibility:
+
+Index 418950323 (kqpkb.htb)
+Black wins in 23
+   Kb2xc2   (10392469) Black wins in 23
+   Kb2a3    (418950304) Black wins in 4
+   Kb2a1    (418953948) Black wins in 4
+8 | . . . . . . . .
+7 | . . . . . . . .
+6 | . . . . . . p .
+5 | . . k . . . . .
+4 | . . B . . . . .
+3 | . . . . . . . .
+2 | . K q . . . . .
+1 | . . . . . . . .
+  +----------------
+    a b c d e f g h
+FEN 8/8/6p1/2k5/2B5/8/1Kq5/8 w - -
+
+However, the standard kqpkb has futurebases like kqrkb with -30 min-dtm,
+so that won't trigger the bug.

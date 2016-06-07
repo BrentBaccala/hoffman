@@ -1,0 +1,15 @@
+
+This code hasn't been maintained since 2006 and is of significantly
+poorer quality than the rest of Hoffman.  Use at your risk.
+
+The idea is to load pointers to a bunch of XML files into a SQL
+database.  This is done with loaddb, which expects to be fed a
+dependencies list in Makefile-like format.
+
+Then you put the XML files on an FTP server somewhere.  They have to
+all point to the FTP server for their futurebases and output files;
+this isn't done by the scripts.  Point several copies of Hoffman on
+different machines at hoffman.cgi and they should fetch and run the
+next XML files in the right order.
+
+verifydb is there to fix the SQL database when it gets screwed up.

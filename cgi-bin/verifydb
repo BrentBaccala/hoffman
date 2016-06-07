@@ -1,0 +1,74 @@
+#!/usr/bin/perl -- -*-perl-*-
+
+use DBI;
+
+my $dbh = DBI->connect("DBI:mysql:baccala", "baccala", "", {RaiseError => 1});
+
+my $analysis = "analysis4";
+
+my $fix = 1;
+
+opendir(DIR, "/home/ftp/Hoffman/$analysis");
+readdir DIR;  # ditch .
+readdir DIR;  # ditch ..
+my @done = readdir DIR;
+closedir DIR;
+
+#print @done, "\n";
+
+my $count = 0;
+
+my $sth = $dbh->prepare("SELECT DISTINCT file FROM depends WHERE analysis = ?");
+my $sth2 = $dbh->prepare("SELECT num FROM required WHERE analysis = ? AND file = ?");
+my $sth3 = $dbh->prepare("SELECT dependson FROM depends WHERE analysis = ? AND file = ?");
+my $sth4 = $dbh->prepare("UPDATE required SET num=? WHERE analysis = ? AND file = ?");
+
+$sth->execute($analysis);
+
+while ( @row = $sth->fetchrow_array ) {
+    my $filename = $row[0];
+    my $required;
+    my $total = 0;
+
+    $sth2->execute($analysis, $filename);
+    @row2 = $sth2->fetchrow_array;
+    if (@row2) {
+	$required = $row2[0];
+    
+	$sth3->execute($analysis, $filename);
+	while ( @row3 = $sth3->fetchrow_array ) {
+	    $total ++ unless (grep /^$row3[0](.htb)?$/, @done);
+	}
+
+	$total = -2 if (($total == 0) and (grep /^$filename(.htb)?$/, @done));
+
+	if ($total != $required) {
+	    print "$filename is $required should be $total\n";
+
+	    if ($fix) {
+		$sth4->execute($total, $analysis, $filename);
+	    }
+	}
+    }
+
+    $count ++;
+}
+
+$sth2->execute($analysis, "kk.htb");
+@row2 = $sth2->fetchrow_array;
+if (@row2) {
+    $required = $row2[0];
+
+    $total = 0;
+    $total = -2 if (grep /^kk.htb$/, @done);
+
+    if ($total != $required) {
+	print "kk.htb is $required should be $total\n";
+
+	if ($fix) {
+	    $sth4->execute($total, $analysis, "kk.htb");
+	}
+    }
+}
+
+#print "$count\n";

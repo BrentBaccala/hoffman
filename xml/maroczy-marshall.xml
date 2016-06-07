@@ -1,0 +1,25 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- from Maroczy-Marshall Monaco 1903 -->
+<!-- this is a drawing analysis for white -->
+
+<tablebase>
+   <prune-enable color="white" type="discard"/>
+   <prune-enable color="black" type="concede"/>
+   <dtm/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="pawn" location="a2+"/>
+   <piece color="white" type="pawn" location="b3+"/>
+   <piece color="white" type="pawn" location="g3+"/>
+   <piece color="white" type="pawn" location="h2+"/>
+   <piece color="black" type="pawn" location="c6+"/>
+   <piece color="black" type="pawn" location="d5+"/>
+   <piece color="black" type="pawn" location="f7+"/>
+   <piece color="black" type="pawn" location="g7+"/>
+   <piece color="white" type="knight"/>
+   <piece color="black" type="knight"/>
+   <futurebase filename="kpkp.htb"/>
+   <prune color="white" type="discard" move="P*=?"/>
+   <prune color="black" type="concede" move="P*=?"/>
+</tablebase>

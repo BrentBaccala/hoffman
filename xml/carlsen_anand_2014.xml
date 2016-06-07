@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Carlsen-Anand 2014 World Championship Match Game 7 -->
+<!-- Problem position 3k4/ppp5/8/2p1R3/6r1/6N1/1PP2K2/8 b - - 0 33 -->
+
+<tablebase>
+   <prune-enable color="white" type="concede"/>
+   <prune-enable color="black" type="concede"/>
+
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="rook"/>
+   <piece color="white" type="knight"/>
+   <piece color="black" type="rook"/>
+   <!-- <piece color="white" type="pawn" location="b2+"/> -->
+   <!-- <piece color="white" type="pawn" location="c2+"/> -->
+   <!-- <piece color="black" type="pawn" location="a7+"/> -->
+   <!-- <piece color="black" type="pawn" location="b7+"/> -->
+   <!-- <piece color="black" type="pawn" location="c7+"/> -->
+   <!-- <piece color="black" type="pawn" location="c5+"/> -->
+
+   <piece color="black" type="pawn" location="a5+"/>
+   <piece color="black" type="pawn" location="c6+"/>
+
+   <prune color="white" move="P*=*" type="concede"/>
+   <prune color="black" move="P*=*" type="concede"/>
+
+   <futurebase filename="krnkr.htb"/>
+   <futurebase filename="krnkp.htb"/>
+   <futurebase filename="krkr.htb"/>
+   <futurebase filename="krkp.htb"/>
+   <futurebase filename="krkn.htb" colors="invert"/>
+   <futurebase filename="knkp.htb"/>
+   <futurebase filename="krpk.htb" colors="invert"/>
+   <futurebase filename="kppk.htb" colors="invert"/>
+
+   <!-- <output filename="carlsen_anand_2014.htb"/> -->
+</tablebase>

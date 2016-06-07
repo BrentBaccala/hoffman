@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Problem position 8/6k1/6p1/8/q7/4R3/5PK1/8 w -->
+
+<tablebase>
+   <prune-enable color="white" type="discard"/>
+   <prune-enable color="black" type="concede"/>
+
+   <dtm/>
+   <piece color="white" type="king" location="e1 f1 g1 h1 e2 f2 g2 h2 e3 f3 g3 h3"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="rook" location="e3 g3"/>
+   <piece color="black" type="queen"/>
+   <piece color="white" type="pawn" location="f2"/>
+   <piece color="black" type="pawn" location="g6 g5 g4 g3"/>
+
+   <futurebase filename="kqkrp.htb"/>
+   <futurebase filename="krpkp.htb" colors="invert"/>
+   <futurebase filename="kqpkr.htb"/>
+   <futurebase filename="kqpkp.htb"/>
+
+   <prune color="black" move="P*" type="concede"/>
+
+   <prune color="white" move="P*" type="discard"/>
+   <prune color="white" move="R*" type="discard"/>
+   <prune color="white" move="K*" type="discard"/>
+
+   <output filename="fortress.htb"/>
+</tablebase>

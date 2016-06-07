@@ -1,0 +1,93 @@
+
+PROMOTION
+
+We can easily identify what we're promoting into, since there's a
+single type and color of piece in the futurebase of which there are
+one more than in the current tablebase.  Assume, without loss of
+generality, that it's a queen.  There are also pawns in the current
+tablebase.  To a first approximation, we have to consider all pairs of
+local pawns and foreign queens.
+
+Actually, we can limit things further.  Let's just consider each
+foreign queen in turn.  The only possible local pawn that could
+promote into it is located one square directly behind it.  So in a
+given futurebase position, we only need to consider all foreign
+queens, as at most a single local pawn can promote into that queen.
+
+Furthermore, in a given position, each foreign piece will map into a
+local semilegal group.  One of those local semilegal groups will have
+one more piece (the extra piece) map into it; all of the others have
+to have the same number of pieces map into it as it contains.  Once a
+position has been setup for back propagation, that semilegal group
+will be fully populated and will contain the promotion square.  We
+just cycle the promotion square among all of the pieces in this group.
+None of pieces that map into other semilegal groups could be the
+promotion piece, because that would create an imbalance among the
+semilegal groups - one would have one piece too many, another would
+have one piece too few.
+
+
+old code (1.778)
+
+if the futurebase has multiple pieces identical to the extra piece
+(same semilegal group in futurebase), swap them, get a new promotion
+square, and try again.  run through entire futurebase semilegal group
+this way
+
+new code (1.779)
+
+find the local semilegal group that the extra piece mapped to (if any),
+and loop through all the local pieces in that group
+
+
+pawn promotion into queen
+
+extra piece is a queen
+missing piece is a pawn
+
+
+Q+Q backproping into Q+P
+
+
+  Q Q     Q x    x Q
+            P    P  
+
+
+Q+P backproping into P+P
+
+  Q      x  
+    P    P P
+
+
+TEST CASE 1
+-----------
+
+Futurebase has a semilegal group that spans multiple local semilegal groups.
+
+Q+P backproping into P+P
+
+  Q      x  
+    P    P P
+
+
+TEST CASE 2
+-----------
+
+Futurebase has multiple semilegal groups that span a local semilegal group.
+
+Q+Q backproping into Q+P
+
+
+  Q Q     Q x    x Q
+            P    P  
+
+futurebases have two semilegal groups: files a-d and e-h
+three futurebases: one with one queen in each group, two with both queens in one group
+
+old code (pre 1.779) breaks on this test case
+
+backproping from a "Q Q" position produces a single "Q P/x" position
+that doesn't get permuted into a "P/x Q" position because the two
+queens are in different futurebase semilegal groups
+
+

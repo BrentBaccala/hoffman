@@ -1,0 +1,46 @@
+#!/usr/bin/perl -- -*-perl-*-
+
+use DBI;
+
+my $dbh = DBI->connect("DBI:mysql:baccala", "baccala", "", {RaiseError => 1});
+
+my $analysis = "analysis4";
+
+eval {
+    my $sth = $dbh->prepare("SELECT file FROM depends WHERE file='a'");
+    $sth->execute();
+};
+if ($@) {
+    $dbh->do("CREATE TABLE depends(analysis varchar(64), file varchar(64), dependson varchar(64))");
+    $dbh->do("CREATE TABLE required(analysis varchar(64), file varchar(64) primary key, num int)");
+    $dbh->do("CREATE TABLE running(analysis varchar(64), file varchar(64), host varchar(64), time varchar(64))");
+    $dbh->do("CREATE TABLE complete(analysis varchar(64), file varchar(64), host varchar(64), start_time varchar(64), end_time varchar(64))");
+    $dbh->do("CREATE TABLE errors(analysis varchar(64), file varchar(64), host varchar(64), start_time varchar(64), end_time varchar(64), error varchar(64))");
+    $dbh->do("CREATE INDEX depends_i1 on depends (dependson)");
+    $dbh->do("CREATE INDEX depends_i2 on depends (file)");
+    $dbh->do("CREATE INDEX required_i1 on required (num)");
+}
+
+$dbh->do("DELETE FROM depends");
+$dbh->do("DELETE FROM required");
+
+my $sth = $dbh->prepare_cached("INSERT INTO depends(analysis,file,dependson) VALUES (?,?,?)");
+my $sth2 = $dbh->prepare_cached("INSERT INTO required(analysis,file,num) VALUES (?,?,?)");
+
+while (<>) {
+    ($name, $depends) = split /:/;
+
+    chomp $depends;
+
+    $depends =~ s/^ *//;
+    $depends =~ s/ *$//;
+
+    @depends = split / /, $depends;
+
+    for my $dep (@depends) {
+	$sth->execute($analysis, $name, $dep);
+	$sth->finish;
+    }
+
+    $sth2->execute($analysis, $name, 1 + $#depends);
+}

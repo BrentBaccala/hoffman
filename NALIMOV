@@ -1,0 +1,38 @@
+Nalimov encoding scheme
+
+rgsHalfKings[blackKing][whiteKing] : 0 - 1805
+   white king restricted to left half of board
+
+rgsTriKings[blackKing][whiteKing] : 0 - 461
+   white king restricted to a1-d1-d4 triangle, if on a1-d1 diagonal,
+   then black king restricted to a1-h1-h8 triangle
+
+rgprgsqPiece[PieceType][blackKing][whitePiece]
+   this table enumerates all possible positions of the black king and the white piece,
+   excluding overlaps and capture positions where the white piece can assuredly
+   (i.e, adjacent squares) capture the black king
+
+   numbering restarts at 0 for each king position
+   piece squares (0-63 or 8-55), excluding cases above, in that order
+   if whitePiece is none (blackPawn), then only exclude overlaps
+
+rgcLegal[PieceType][blackKing]
+   how many legal entries are there in rgprgsqPiece for this piece type and king position
+
+rgprgulSinglePawnPresent[PieceType][encoding]  (encoding 0-1805)
+rgprgulSinglePawnless[PieceType][encoding]  (encoding 0-461)
+   maps encoded king position to base single-piece index
+   each index increments by rgcLegal[PieceType][blackKing],
+      minus one if the white king can legally be on the white piece's square
+
+
+21-piece encoding - white to move
+  reflection (modified if TB is inverted)
+  ind from rgprgsqPiece, based on PieceType and position of black king
+  subtract one from ind if white king could be on piece's square, and piece's square > white king's square
+  add rgprgulSingle...[] to essentially space out king encoding to make room for piece numbering in LSB
+
+21-piece encoding - black to move
+  if no pawn
+    reflection
+    king encoding * 62, plus piece location, EXCLUDE2 to subtract out white and black king squares

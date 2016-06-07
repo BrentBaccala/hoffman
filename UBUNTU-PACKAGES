@@ -1,0 +1,7 @@
+libboost-all-dev
+zlib1g-dev
+libxml++2.6-dev
+libreadline-dev
+g++
+libxml2-utils (for xmllint)
+libxml-libxml-perl (for genctlfile.pl)
