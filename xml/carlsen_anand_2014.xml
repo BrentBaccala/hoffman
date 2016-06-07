@@ -12,15 +12,7 @@
    <piece color="white" type="rook"/>
    <piece color="white" type="knight"/>
    <piece color="black" type="rook"/>
-   <!-- <piece color="white" type="pawn" location="b2+"/> -->
-   <!-- <piece color="white" type="pawn" location="c2+"/> -->
-   <!-- <piece color="black" type="pawn" location="a7+"/> -->
-   <!-- <piece color="black" type="pawn" location="b7+"/> -->
-   <!-- <piece color="black" type="pawn" location="c7+"/> -->
-   <!-- <piece color="black" type="pawn" location="c5+"/> -->
-
-   <piece color="black" type="pawn" location="a5+"/>
-   <piece color="black" type="pawn" location="c6+"/>
+   <!-- <pawngen white-pawn-locations="b2 c2" black-pawn-locations="a7 b7 c7 c5" white-pawns-required="2" black-pawns-required="4"/> -->
 
    <prune color="white" move="P*=*" type="concede"/>
    <prune color="black" move="P*=*" type="concede"/>
