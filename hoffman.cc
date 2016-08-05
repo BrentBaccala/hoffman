@@ -153,7 +153,6 @@ namespace io = boost::iostreams;
 #include <unistd.h>		/* for write(), lseek(), gethostname() */
 #include <time.h>		/* for putting timestamps on the output tablebases */
 #include <fcntl.h>		/* for O_RDONLY */
-#include <netdb.h>		/* for gethostbyname() */
 #include <getopt.h>		/* for GNU getopt_long() */
 
 #include <fnmatch.h>		/* for glob matching of pruning statements */
@@ -5534,8 +5533,6 @@ tablebase_t * parse_XML_control_file(char *filename)
     xmlpp::NodeSet result;
     tablebase_t *tb;
 
-    char hostname[256];		/* XXX hardwired max */
-    struct hostent *he;
     char strbuf[256];
 
     /* load the control file from the specified filename or URL */
@@ -5561,10 +5558,10 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     generation_statistics->add_child_text("\n   ");
 
+    char hostname[HOST_NAME_MAX + 1];
     gethostname(hostname, sizeof(hostname));
-    he = gethostbyname(hostname);
+    create_GenStats_node("host")->add_child_text(hostname);
 
-    create_GenStats_node("host")->add_child_text(he->h_name);
     create_GenStats_node("program")->add_child_text("Hoffman Version " + boost::lexical_cast<std::string>(Hoffman_program_version) + (Hoffman_program_modified ? " (modified)" : ""));
     create_GenStats_node("args")->add_child_text(options_string);
     strftime(strbuf, sizeof(strbuf), "%c %Z", localtime(&program_start_time.tv_sec));
