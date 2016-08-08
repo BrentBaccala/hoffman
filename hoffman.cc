@@ -5558,7 +5558,7 @@ tablebase_t * parse_XML_control_file(char *filename)
 
     generation_statistics->add_child_text("\n   ");
 
-    char hostname[HOST_NAME_MAX + 1];
+    char hostname[sysconf(_SC_HOST_NAME_MAX) + 1];
     gethostname(hostname, sizeof(hostname));
     create_GenStats_node("host")->add_child_text(hostname);
 
