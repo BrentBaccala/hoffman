@@ -119,6 +119,8 @@
 
 #include <boost/algorithm/string.hpp>
 
+#include <boost/filesystem.hpp>
+
 #include <boost/iostreams/detail/ios.hpp>  // for failure exception
 
 #include <boost/iostreams/device/file.hpp>
@@ -172,6 +174,18 @@ namespace io = boost::iostreams;
 #include "zlib.h"
 
 #include "bitlib.h"
+
+#ifdef USE_NALIMOV
+
+extern "C" {
+    int EGTBProbe(int wtm, unsigned char board[64], int sqEnP, int *score);
+
+    int IInitializeTb(char *pszPath);
+
+    int FTbSetCacheSize(void    *pv, unsigned long   cbSize );
+}
+
+#endif
 
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
@@ -244,6 +258,8 @@ public:
     using std::map<A, B, C>::begin;
     using std::map<A, B, C>::end;
     using std::map<A, B, C>::at;
+    using std::map<A, B, C>::operator[];
+
     A at(B value)
     {
 	for (auto it = begin(); it != end(); it++) {
@@ -251,15 +267,15 @@ public:
 	}
 	throw new std::out_of_range("bimap");
     }
-#if 0
+
     A operator[] (B value)
     {
 	for (auto it = begin(); it != end(); it++) {
-	    if (it->second == value) return it->first.c_str();
+	    if (it->second == value) return it->first;
 	}
-	return nullptr;
+	throw new std::out_of_range("bimap");
+	//return nullptr;
     }
-#endif
 };
 
 /* From Guru of The Week #29 [http://www.gotw.ca/gotw/029.htm]
@@ -293,6 +309,10 @@ struct casefold_compare {
 
     bool operator() (const std::string a, const std::string b) const {
 	return boost::ilexicographical_compare(a, b);
+    }
+
+    bool operator() (const char a, const char b) const {
+	return toupper(a) < toupper(b);
     }
 };
 
@@ -385,13 +405,13 @@ bimap<Glib::ustring, PieceType, casefold_compare> piece_name =
     {{"KING", PieceType::King}, {"QUEEN", PieceType::Queen}, {"ROOK", PieceType::Rook},
      {"BISHOP", PieceType::Bishop}, {"KNIGHT", PieceType::Knight}, {"PAWN", PieceType::Pawn}};
 
-std::map<PieceType, char> piece_char =
-    {{PieceType::King, 'K'},
-     {PieceType::Queen, 'Q'},
-     {PieceType::Rook, 'R'},
-     {PieceType::Bishop, 'B'},
-     {PieceType::Knight, 'N'},
-     {PieceType::Pawn, 'P'}};
+bimap<char, PieceType, casefold_compare> piece_char =
+    {{'K', PieceType::King},
+     {'Q', PieceType::Queen},
+     {'R', PieceType::Rook},
+     {'B', PieceType::Bishop},
+     {'N', PieceType::Knight},
+     {'P', PieceType::Pawn}};
 
 unsigned char global_pieces[2][NUM_PIECES] = {{'K', 'Q', 'R', 'B', 'N', 'P'},
 					      {'k', 'q', 'r', 'b', 'n', 'p'}};
@@ -853,6 +873,12 @@ struct format {
 struct format one_byte_dtm_format = {8, 0,8, -1,FormatFlag::None, -1};
 struct format dtm_format = {0, 0,0, -1,FormatFlag::None, -1};
 
+/* XXX use a weird 'bits' value to distinguish pseudo-Nalimov format.  (we can't really parse
+ * Nalimov format; use Nalimov's routines to do that)
+ */
+
+struct format nalimov_format = {-1, 0,8, -1,FormatFlag::None, -1};
+
 
 /* tablebase_t
  *
@@ -1064,6 +1090,7 @@ public:
 private:
     void parse_pawngen_element(xmlpp::Node *);
     void parse_XML(std::istream *);
+    void finalize_initialization(void);
 
 };
 
@@ -4749,8 +4776,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     Glib::ustring format_str;
 
-    int piece, piece2, square;
-    int pass;
+    int piece, piece2;
 
     // XXX this might throw an exception
 
@@ -4776,19 +4802,6 @@ void tablebase_t::parse_XML(std::istream *instream)
     /* Figure out which version of chess we're playing... */
 
     variant = variant_names.at(tablebase->eval_to_string("//variant/@name"));
-
-    switch (variant) {
-
-    case Variant::Normal:
-	positions_with_adjacent_kings_are_illegal = true;
-	break;
-
-    case Variant::Suicide:
-	positions_with_adjacent_kings_are_illegal = false;
-	promotion_possibilities = 5;	/* A global var, but all futurebases have to use the same variant */
-	break;
-
-    }
 
     if (! tablebase->find("//@pawngen-condition").empty()) {
 	fatal("'pawngen-condition' attribute disallowed by Hoffman; preprocess with pawngen first\n");
@@ -4877,260 +4890,6 @@ void tablebase_t::parse_XML(std::istream *instream)
 	throw "Too many pieces (" + boost::lexical_cast<std::string>(MAX_PIECES) + "compiled-in maximum)!";
     }
 
-    /* We quietly skipped over any plus signs after pawn locations, which mean that the pawn should
-     * be advanced as far as possible along its file.  For example, if there is a white pawn at
-     * "h2+" and a black pawn at "h7+", we want the white pawn's legal squares expanded all the way
-     * to h6, and the black pawn's legal squares expanded all the way to h3.  We couldn't process
-     * them immediately because without having parsed all the pieces we didn't know if anything was
-     * blocking the file.
-     *
-     * Having now parsed all of the pieces, go back and expand the legal squares of any "plus pawns"
-     * by first running through the pieces and looking for any blocking the plus pawn.  Then expand
-     * the plus-pawn's restrictions up its file until it hits the blocking piece.
-     *
-     * To handle doubled pawns, we do this twice, figuring that we'll expand the leading pawn first,
-     * then pick up the trailing pawn on the second pass.  To handle tripled pawns, we need three
-     * passes.  To handled quadrupled (!) pawns, we need four.  Simplest is to just run the loop
-     * once for however many pieces we've got.
-     *
-     * What if we specified a black pawn as "a7+ b4+" and a white pawn as "b2+"?  Then the black
-     * pawn would be blocked by at b3 by the white pawn, even though the white pawn could move on
-     * past (it wouldn't be blocked by the multiple-file black pawn).  I handle this complex case by
-     * not allowing plus pawns to start on more than one square.
-     *
-     * Perhaps this seems like an absurd amount of complexity to introduce for a special case.  In
-     * fact, pawns blocking each other are a not-so-special case and I don't see how they can be
-     * handled as efficiently as we'd like without all of this.  In particular, we needn't regard
-     * pawn moves onto blocked squares as futuremoves, and by pairing opposing pawns in indices we
-     * can cut tablebase sizes by a factor of two for each pair.
-     */
-
-    /* First, compute which piece, if any, is blocking each plus-pawn.  We do this by stripping out
-     * from the blocking piece's legal squares all possible positions of the plus-pawn as we move it
-     * forward.  This ensures that a white pawn restricted to "g2 g3", say, will block a black
-     * plus-pawn "g7+".  This is OK for non-pawns, too, since knights are the only pieces that can
-     * jump and a knight could never be frozen purely along a single file.  Plus-pawns themselves,
-     * since their legal_squares haven't been expanded yet, block other pawn-pawns at their origin
-     * square.
-     */
-
-    for (piece = 0; piece < num_pieces; piece ++) {
-
-	pieces[piece].blocking_piece = -1;
-
-	if (pieces[piece].piece_type == PieceType::Pawn) {
-
-	    uint64_t pawn_positions = 0xffffffffffffffffLL;
-
-	    if ((pieces[piece].location != "") && (pieces[piece].location[2] == '+')) {
-
-		int square = rowcol2square(pieces[piece].location[1] - '1', pieces[piece].location[0] - 'a');
-		int dir = (pieces[piece].color == PieceColor::White) ? 8 : -8;
-
-		pawn_positions &= ~BITVECTOR(square);
-		square += dir;
-
-		while ((square < 56) && (square > 7) && (pieces[piece].blocking_piece == -1)) {
-		    for (piece2 = 0; piece2 < num_pieces; piece2 ++) {
-			if ((pawn_positions & pieces[piece2].legal_squares) == BITVECTOR(square)) {
-			    pieces[piece].blocking_piece = piece2;
-			}
-		    }
-		    pawn_positions &= ~BITVECTOR(square);
-		    square += dir;
-		}
-
-		/* This next batch of code is here because we (currently) sort 'identical' pieces
-		 * into increasing order when we normalize a position.  Since doubled pawns are
-		 * 'identical', the easiest way to handle them is to insure that they always appear
-		 * in the correct order in the piece list.
-		 */
-
-		if ((pieces[piece].blocking_piece != -1) && (pieces[pieces[piece].blocking_piece].piece_type == PieceType::Pawn)
-		    && (pieces[pieces[piece].blocking_piece].color == pieces[piece].color)) {
-		    if ((pieces[piece].color == PieceColor::White) && (pieces[piece].blocking_piece < piece)) {
-			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
-		    }
-		    if ((pieces[piece].color == PieceColor::Black) && (pieces[piece].blocking_piece > piece)) {
-			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
-		    }
-		}
-
-	    } else {
-		/* XXX This is a pawn, but it isn't a plus-pawn.  It can be blocked if it is frozen.
-		 * This matters because if a pawn is blocked, then we shouldn't complain if there is
-		 * no futurebase or pruning statement for its forward move, but it isn't a big deal,
-		 * since we can always just add an extra pruning statement for the non-move.
-		 */
-	    }
-	}
-    }
-
-    /* Now advance plus-pawns as far as they can go without hitting the blocking piece. */
-
-    for (pass = 0; pass < num_pieces; pass ++) {
-
-	for (piece = 0; piece < num_pieces; piece ++) {
-
-	    if (pieces[piece].piece_type == PieceType::Pawn) {
-
-		if ((pieces[piece].location != "") && (pieces[piece].location[2] == '+')) {
-
-		    int square = rowcol2square(pieces[piece].location[1] - '1', pieces[piece].location[0] - 'a');
-		    int dir = (pieces[piece].color == PieceColor::White) ? 8 : -8;
-
-		    square += dir;
-		    while ((square < 56) && (square > 7)) {
-			if ((pieces[piece].blocking_piece != -1)
-			    && (BITVECTOR(square) & pieces[pieces[piece].blocking_piece].legal_squares)
-			    && !(BITVECTOR(square + dir) & pieces[pieces[piece].blocking_piece].legal_squares))
-			    break;
-			pieces[piece].legal_squares |= BITVECTOR(square);
-			square += dir;
-		    }
-		}
-	    }
-	}
-    }
-
-    /* Now we need to figure out if there are any other pieces identical to this one, because if so,
-     * exchanging the two pieces would not change the position, and that has to be taken into
-     * account in several places.  Move restrictions on the pieces complicate this, unless they are
-     * completely non-overlapping, in which case we don't treat the pieces as identical because they
-     * are then distinguishable (kinda like electrons).  The whole point of this code is to group
-     * together identical pieces with overlapping move restrictions, and to compute for each group
-     * the logical union of their move restrictions, which become the "semilegal" squares for all
-     * the pieces in that group.  See the earlier discussion on semilegal squares.
-     */
-
-    for (piece = 0; piece < num_pieces; piece ++) {
-
-	pieces[piece].prev_piece_in_semilegal_group = -1;
-	pieces[piece].next_piece_in_semilegal_group = -1;
-
-	pieces[piece].semilegal_squares = pieces[piece].legal_squares;
-
-	for (piece2 = 0; piece2 < piece; piece2 ++) {
-	    if ((pieces[piece2].color == pieces[piece].color)
-		&& (pieces[piece2].piece_type == pieces[piece].piece_type)) {
-
-		if (pieces[piece].semilegal_squares & pieces[piece2].semilegal_squares) {
-		    pieces[piece].prev_piece_in_semilegal_group = piece2;
-		    pieces[piece2].semilegal_squares |= pieces[piece].semilegal_squares;
-		    pieces[piece].semilegal_squares |= pieces[piece2].semilegal_squares;
-		}
-	    }
-	}
-
-	if (pieces[piece].prev_piece_in_semilegal_group != -1) {
-	    pieces[pieces[piece].prev_piece_in_semilegal_group].next_piece_in_semilegal_group = piece;
-	}
-    }
-
-    /* Later, if we're trying to process a position with identical pieces that aren't on legal
-     * squares, we permute them and see if we can get them onto legal squares that way.  Now,
-     * construct the full set of possible permutations, using an algorithm that generates a series
-     * of transpositions that walks the entire set of permutations, and store this as a list
-     * attached to the first piece in the set.
-     *
-     * XXX probably don't need to do this during normalization at all if the semilegal and legal
-     * squares are the same, because permuting wouldn't do anything for us then.
-     */
-
-    for (piece = 0; piece < num_pieces; piece ++) {
-
-	pieces[piece].permutations = nullptr;
-
-	if (pieces[piece].prev_piece_in_semilegal_group == -1 && pieces[piece].next_piece_in_semilegal_group != -1) {
-
-	    int identical_pieces = 0;
-	    int piece2;
-
-	    int position[MAX_PIECES];
-	    int directions[MAX_PIECES];
-	    int i;
-	    int j;
-
-	    for (piece2 = piece; piece2 != -1; piece2 = pieces[piece2].next_piece_in_semilegal_group) {
-		position[identical_pieces] = piece2;
-		directions[identical_pieces] = -1;
-		identical_pieces ++;
-	    }
-	    directions[0] = 0;
-
-	    pieces[piece].permutations = (int *) calloc(factorial(identical_pieces), sizeof(int));
-	    j = 0;
-
-	    /* Use Johnson–Trotter algorithm to generate all permutations as a series of
-	     * transpositions.
-	     *
-	     * XXX looking at how these permutations get used, maybe we should add a final
-	     * transposition to bring us back to the original configuration
-	     */
-
-	    while (1) {
-		int largest_i_with_nonzero_direction;
-		int direction;
-		int saved_position;
-
-		largest_i_with_nonzero_direction = -1;
-
-		for (i=0; i<identical_pieces; i++) {
-		    if ((directions[i] != 0)
-			&& ((largest_i_with_nonzero_direction == -1) 
-			    || position[i] > position[largest_i_with_nonzero_direction])) {
-			largest_i_with_nonzero_direction = i;
-		    }
-		}
-
-		if (largest_i_with_nonzero_direction == -1) break;
-
-		pieces[piece].permutations[j++] = (position[largest_i_with_nonzero_direction] << 8)
-		    | position[largest_i_with_nonzero_direction + directions[largest_i_with_nonzero_direction]];
-
-		direction = directions[largest_i_with_nonzero_direction];
-
-		saved_position = position[largest_i_with_nonzero_direction];
-		position[largest_i_with_nonzero_direction] = position[largest_i_with_nonzero_direction + direction];
-		position[largest_i_with_nonzero_direction + direction] = saved_position;
-
-		directions[largest_i_with_nonzero_direction] = directions[largest_i_with_nonzero_direction + direction];
-		directions[largest_i_with_nonzero_direction + direction] = direction;
-
-		largest_i_with_nonzero_direction += direction;
-
-		if ((largest_i_with_nonzero_direction == 0)
-		    || (largest_i_with_nonzero_direction == identical_pieces-1)
-		    || (position[largest_i_with_nonzero_direction + directions[largest_i_with_nonzero_direction]] > 
-			position[largest_i_with_nonzero_direction])) {
-		    directions[largest_i_with_nonzero_direction] = 0;
-		}
-
-		for (i=0; i<largest_i_with_nonzero_direction; i++) {
-		    if (position[i] > position[largest_i_with_nonzero_direction]) directions[i] = +1;
-		}
-		for (i=largest_i_with_nonzero_direction; i<identical_pieces; i++) {
-		    if (position[i] > position[largest_i_with_nonzero_direction]) directions[i] = -1;
-		}
-	    }
-
-	    if (j != factorial(identical_pieces)-1) {
-		fatal("BUG: did not generate factorial(identical_pieces) permutations\n");
-	    }
-
-	}
-    }
-
-
-#if DEBUG
-    for (piece = 0; piece < num_pieces; piece ++) {
-	info("Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
-	     piece, piece_name[pieces[piece].piece_type], colors.at(pieces[piece].color).c_str(),
-	     pieces[piece].legal_squares, pieces[piece].semilegal_squares);
-    }
-#endif
-
-
     /* Fetch the index type.  First, for backwards compatibility, we check for an index property on
      * the tablebase element itself.  Next, check for the preferred syntax of an index element.
      * Finally, if there is no index element, add one with the default index type, to avoid having
@@ -5188,49 +4947,6 @@ void tablebase_t::parse_XML(std::istream *instream)
 	&& (index_type != Index::Simple) && (index_type != Index::Combinadic3)
 	&& (index_type != Index::Combinadic4)) {
 	throw "Only 'naive', 'simple', and 'combinadic3/4' indices are compatible with 'suicide' variant";
-    }
-
-    /* Now, compute a bitvector for all the pieces that are frozen on single squares.  This
-     * 'frozen_pieces_vector' differs from 'blocked_squares' because a square can be blocked by a
-     * pawn that is at least partially mobile on a single file.  Frozen pieces, on the other hand,
-     * are completely immobile on a single square.
-     *
-     * Now, I had this idea that I could completely discard those positions where the king was in
-     * check from a frozen piece.  After all, how could a king ever move into check from a frozen
-     * piece?  Well, the answer is that if we use this as a futurebase in a later analysis, the king
-     * could possibly be in check as we transition between tablebases.  So first I put an option in
-     * to turn off this feature.  I'm now convinced that it was such a bad idea that I've removed it
-     * from the code (1.854).
-     */
-
-    frozen_pieces_vector = 0;
-
-    for (piece = 0; piece < num_pieces; piece ++) {
-	for (square = 0; square < 64; square ++) {
-	    if (BITVECTOR(square) == pieces[piece].semilegal_squares) {
-		if (frozen_pieces_vector & BITVECTOR(square)) {
-		    throw "More than one piece frozen on " + ('a' + COL(square)) + ('1' + ROW(square));
-		}
-		frozen_pieces_vector |= BITVECTOR(square);
-
-		break;
-	    }
-	}
-    }
-
-    /* Strip the locations of frozen pieces off the legal squares bitvectors of all the other
-     * pieces.  Like stripping the capture squares off the enemy king's legal bitvector, this is a
-     * convenience, so we don't have to list all the free squares for pieces that are not frozen.
-     * But we do have to careful about changing this code around, because some index types (like
-     * 'simple' and 'compact') implicitly use a piece's legal squares to encode its position, so
-     * changing this code can change index encoding.
-     */
-
-    for (piece = 0; piece < num_pieces; piece ++) {
-	if ((pieces[piece].semilegal_squares & frozen_pieces_vector) != pieces[piece].semilegal_squares) {
-	    pieces[piece].legal_squares &= ~ frozen_pieces_vector;
-	    pieces[piece].semilegal_squares &= ~ frozen_pieces_vector;
-	}
     }
 
     /* Get the format.  Older method is to specify it as a property on the tablebase element.  Next
@@ -5340,52 +5056,6 @@ void tablebase_t::parse_XML(std::istream *instream)
 	}
     }
 
-    /* Compute reflections array
-     *
-     * 2-way symmetry: white king always on left side of board
-     *
-     * 4-way symmetry: white king always in lower left quarter of board
-     *
-     * 8-way symmetry: white king always in a1-a4-d4 triangle, and if white king is on a1-d4
-     * diagonal, then black king is on or below a1-h8 diagonal
-     */
-
-    for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
-	for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
-
-	    reflections[white_king_square][black_king_square] = 0;
-
-	    int reflected_white_king_square = white_king_square;
-	    int reflected_black_king_square = black_king_square;
-
-	    if (symmetry >= 2) {
-		if (COL(reflected_white_king_square) >= 4) {
-		    reflections[white_king_square][black_king_square] |= REFLECTION_HORIZONTAL;
-		    reflected_white_king_square = horizontal_reflection(reflected_white_king_square);
-		    reflected_black_king_square = horizontal_reflection(reflected_black_king_square);
-		}
-	    }
-
-	    if (symmetry >= 4) {
-		if (ROW(reflected_white_king_square) >= 4) {
-		    reflections[white_king_square][black_king_square] |= REFLECTION_VERTICAL;
-		    reflected_white_king_square = vertical_reflection(reflected_white_king_square);
-		    reflected_black_king_square = vertical_reflection(reflected_black_king_square);
-		}
-	    }
-
-	    if (symmetry == 8) {
-		if (ROW(reflected_white_king_square) > COL(reflected_white_king_square)) {
-		    reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
-		}
-		if (ROW(reflected_white_king_square) == COL(reflected_white_king_square)) {
-		    if (ROW(reflected_black_king_square) > COL(reflected_black_king_square)) {
-			reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
-		    }
-		}
-	    }
-	}
-    }
 
     /* The naive, naive2 and simple index-to-position decoding routines make no attempt to permute
      * semilegal groups to get the pieces onto legal squares.  Therefore, we can't use them
@@ -5434,6 +5104,391 @@ void tablebase_t::parse_XML(std::istream *instream)
     } else {
 	encode_stm = true;
     }
+
+    /* Fetch any prune enable elements */
+
+    prune_enable[PieceColor::Black] = 0;
+    prune_enable[PieceColor::White] = 0;
+    result = tablebase->find("//prune-enable | //move-restriction");
+    if (! result.empty()) {
+	for (auto i=0U; i < result.size(); i++) {
+	    auto color_str = ((xmlpp::Element *) result[i])->get_attribute_value("color");
+	    auto type_str = ((xmlpp::Element *) result[i])->get_attribute_value("type");
+
+	    PieceColor color = colors.at(color_str);
+	    int type = restriction_types.at(type_str);
+
+	    if (type == -1) {
+		fatal("Illegal prune-enable\n");
+	    } else {
+		prune_enable[color] |= type;
+	    }
+	}
+    }
+
+    //return (fatal_errors == starting_fatal_errors) ? tb : nullptr;
+}
+
+void tablebase_t::finalize_initialization(void)
+{
+
+    switch (variant) {
+
+    case Variant::Normal:
+	positions_with_adjacent_kings_are_illegal = true;
+	break;
+
+    case Variant::Suicide:
+	positions_with_adjacent_kings_are_illegal = false;
+	promotion_possibilities = 5;	/* A global var, but all futurebases have to use the same variant */
+	break;
+
+    }
+
+    /* We quietly skipped over any plus signs after pawn locations, which mean that the pawn should
+     * be advanced as far as possible along its file.  For example, if there is a white pawn at
+     * "h2+" and a black pawn at "h7+", we want the white pawn's legal squares expanded all the way
+     * to h6, and the black pawn's legal squares expanded all the way to h3.  We couldn't process
+     * them immediately because without having parsed all the pieces we didn't know if anything was
+     * blocking the file.
+     *
+     * Having now parsed all of the pieces, go back and expand the legal squares of any "plus pawns"
+     * by first running through the pieces and looking for any blocking the plus pawn.  Then expand
+     * the plus-pawn's restrictions up its file until it hits the blocking piece.
+     *
+     * To handle doubled pawns, we do this twice, figuring that we'll expand the leading pawn first,
+     * then pick up the trailing pawn on the second pass.  To handle tripled pawns, we need three
+     * passes.  To handled quadrupled (!) pawns, we need four.  Simplest is to just run the loop
+     * once for however many pieces we've got.
+     *
+     * What if we specified a black pawn as "a7+ b4+" and a white pawn as "b2+"?  Then the black
+     * pawn would be blocked by at b3 by the white pawn, even though the white pawn could move on
+     * past (it wouldn't be blocked by the multiple-file black pawn).  I handle this complex case by
+     * not allowing plus pawns to start on more than one square.
+     *
+     * Perhaps this seems like an absurd amount of complexity to introduce for a special case.  In
+     * fact, pawns blocking each other are a not-so-special case and I don't see how they can be
+     * handled as efficiently as we'd like without all of this.  In particular, we needn't regard
+     * pawn moves onto blocked squares as futuremoves, and by pairing opposing pawns in indices we
+     * can cut tablebase sizes by a factor of two for each pair.
+     */
+
+    /* First, compute which piece, if any, is blocking each plus-pawn.  We do this by stripping out
+     * from the blocking piece's legal squares all possible positions of the plus-pawn as we move it
+     * forward.  This ensures that a white pawn restricted to "g2 g3", say, will block a black
+     * plus-pawn "g7+".  This is OK for non-pawns, too, since knights are the only pieces that can
+     * jump and a knight could never be frozen purely along a single file.  Plus-pawns themselves,
+     * since their legal_squares haven't been expanded yet, block other pawn-pawns at their origin
+     * square.
+     */
+
+    for (int piece = 0; piece < num_pieces; piece ++) {
+
+	pieces[piece].blocking_piece = -1;
+
+	if (pieces[piece].piece_type == PieceType::Pawn) {
+
+	    uint64_t pawn_positions = 0xffffffffffffffffLL;
+
+	    if ((pieces[piece].location != "") && (pieces[piece].location[2] == '+')) {
+
+		int square = rowcol2square(pieces[piece].location[1] - '1', pieces[piece].location[0] - 'a');
+		int dir = (pieces[piece].color == PieceColor::White) ? 8 : -8;
+
+		pawn_positions &= ~BITVECTOR(square);
+		square += dir;
+
+		while ((square < 56) && (square > 7) && (pieces[piece].blocking_piece == -1)) {
+		    for (int piece2 = 0; piece2 < num_pieces; piece2 ++) {
+			if ((pawn_positions & pieces[piece2].legal_squares) == BITVECTOR(square)) {
+			    pieces[piece].blocking_piece = piece2;
+			}
+		    }
+		    pawn_positions &= ~BITVECTOR(square);
+		    square += dir;
+		}
+
+		/* This next batch of code is here because we (currently) sort 'identical' pieces
+		 * into increasing order when we normalize a position.  Since doubled pawns are
+		 * 'identical', the easiest way to handle them is to insure that they always appear
+		 * in the correct order in the piece list.
+		 */
+
+		if ((pieces[piece].blocking_piece != -1) && (pieces[pieces[piece].blocking_piece].piece_type == PieceType::Pawn)
+		    && (pieces[pieces[piece].blocking_piece].color == pieces[piece].color)) {
+		    if ((pieces[piece].color == PieceColor::White) && (pieces[piece].blocking_piece < piece)) {
+			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
+		    }
+		    if ((pieces[piece].color == PieceColor::Black) && (pieces[piece].blocking_piece > piece)) {
+			fatal("Doubled pawns must (currently) appear in board order in piece list\n");
+		    }
+		}
+
+	    } else {
+		/* XXX This is a pawn, but it isn't a plus-pawn.  It can be blocked if it is frozen.
+		 * This matters because if a pawn is blocked, then we shouldn't complain if there is
+		 * no futurebase or pruning statement for its forward move, but it isn't a big deal,
+		 * since we can always just add an extra pruning statement for the non-move.
+		 */
+	    }
+	}
+    }
+
+    /* Now advance plus-pawns as far as they can go without hitting the blocking piece. */
+
+    for (int pass = 0; pass < num_pieces; pass ++) {
+
+	for (int piece = 0; piece < num_pieces; piece ++) {
+
+	    if (pieces[piece].piece_type == PieceType::Pawn) {
+
+		if ((pieces[piece].location != "") && (pieces[piece].location[2] == '+')) {
+
+		    int square = rowcol2square(pieces[piece].location[1] - '1', pieces[piece].location[0] - 'a');
+		    int dir = (pieces[piece].color == PieceColor::White) ? 8 : -8;
+
+		    square += dir;
+		    while ((square < 56) && (square > 7)) {
+			if ((pieces[piece].blocking_piece != -1)
+			    && (BITVECTOR(square) & pieces[pieces[piece].blocking_piece].legal_squares)
+			    && !(BITVECTOR(square + dir) & pieces[pieces[piece].blocking_piece].legal_squares))
+			    break;
+			pieces[piece].legal_squares |= BITVECTOR(square);
+			square += dir;
+		    }
+		}
+	    }
+	}
+    }
+
+    /* Now we need to figure out if there are any other pieces identical to this one, because if so,
+     * exchanging the two pieces would not change the position, and that has to be taken into
+     * account in several places.  Move restrictions on the pieces complicate this, unless they are
+     * completely non-overlapping, in which case we don't treat the pieces as identical because they
+     * are then distinguishable (kinda like electrons).  The whole point of this code is to group
+     * together identical pieces with overlapping move restrictions, and to compute for each group
+     * the logical union of their move restrictions, which become the "semilegal" squares for all
+     * the pieces in that group.  See the earlier discussion on semilegal squares.
+     */
+
+    for (int piece = 0; piece < num_pieces; piece ++) {
+
+	pieces[piece].prev_piece_in_semilegal_group = -1;
+	pieces[piece].next_piece_in_semilegal_group = -1;
+
+	pieces[piece].semilegal_squares = pieces[piece].legal_squares;
+
+	for (int piece2 = 0; piece2 < piece; piece2 ++) {
+	    if ((pieces[piece2].color == pieces[piece].color)
+		&& (pieces[piece2].piece_type == pieces[piece].piece_type)) {
+
+		if (pieces[piece].semilegal_squares & pieces[piece2].semilegal_squares) {
+		    pieces[piece].prev_piece_in_semilegal_group = piece2;
+		    pieces[piece2].semilegal_squares |= pieces[piece].semilegal_squares;
+		    pieces[piece].semilegal_squares |= pieces[piece2].semilegal_squares;
+		}
+	    }
+	}
+
+	if (pieces[piece].prev_piece_in_semilegal_group != -1) {
+	    pieces[pieces[piece].prev_piece_in_semilegal_group].next_piece_in_semilegal_group = piece;
+	}
+    }
+
+    /* Later, if we're trying to process a position with identical pieces that aren't on legal
+     * squares, we permute them and see if we can get them onto legal squares that way.  Now,
+     * construct the full set of possible permutations, using an algorithm that generates a series
+     * of transpositions that walks the entire set of permutations, and store this as a list
+     * attached to the first piece in the set.
+     *
+     * XXX probably don't need to do this during normalization at all if the semilegal and legal
+     * squares are the same, because permuting wouldn't do anything for us then.
+     */
+
+    for (int piece = 0; piece < num_pieces; piece ++) {
+
+	pieces[piece].permutations = nullptr;
+
+	if (pieces[piece].prev_piece_in_semilegal_group == -1 && pieces[piece].next_piece_in_semilegal_group != -1) {
+
+	    int identical_pieces = 0;
+	    int piece2;
+
+	    int position[MAX_PIECES];
+	    int directions[MAX_PIECES];
+	    int i;
+	    int j;
+
+	    for (piece2 = piece; piece2 != -1; piece2 = pieces[piece2].next_piece_in_semilegal_group) {
+		position[identical_pieces] = piece2;
+		directions[identical_pieces] = -1;
+		identical_pieces ++;
+	    }
+	    directions[0] = 0;
+
+	    pieces[piece].permutations = (int *) calloc(factorial(identical_pieces), sizeof(int));
+	    j = 0;
+
+	    /* Use Johnson–Trotter algorithm to generate all permutations as a series of
+	     * transpositions.
+	     *
+	     * XXX looking at how these permutations get used, maybe we should add a final
+	     * transposition to bring us back to the original configuration
+	     */
+
+	    while (1) {
+		int largest_i_with_nonzero_direction;
+		int direction;
+		int saved_position;
+
+		largest_i_with_nonzero_direction = -1;
+
+		for (i=0; i<identical_pieces; i++) {
+		    if ((directions[i] != 0)
+			&& ((largest_i_with_nonzero_direction == -1) 
+			    || position[i] > position[largest_i_with_nonzero_direction])) {
+			largest_i_with_nonzero_direction = i;
+		    }
+		}
+
+		if (largest_i_with_nonzero_direction == -1) break;
+
+		pieces[piece].permutations[j++] = (position[largest_i_with_nonzero_direction] << 8)
+		    | position[largest_i_with_nonzero_direction + directions[largest_i_with_nonzero_direction]];
+
+		direction = directions[largest_i_with_nonzero_direction];
+
+		saved_position = position[largest_i_with_nonzero_direction];
+		position[largest_i_with_nonzero_direction] = position[largest_i_with_nonzero_direction + direction];
+		position[largest_i_with_nonzero_direction + direction] = saved_position;
+
+		directions[largest_i_with_nonzero_direction] = directions[largest_i_with_nonzero_direction + direction];
+		directions[largest_i_with_nonzero_direction + direction] = direction;
+
+		largest_i_with_nonzero_direction += direction;
+
+		if ((largest_i_with_nonzero_direction == 0)
+		    || (largest_i_with_nonzero_direction == identical_pieces-1)
+		    || (position[largest_i_with_nonzero_direction + directions[largest_i_with_nonzero_direction]] > 
+			position[largest_i_with_nonzero_direction])) {
+		    directions[largest_i_with_nonzero_direction] = 0;
+		}
+
+		for (i=0; i<largest_i_with_nonzero_direction; i++) {
+		    if (position[i] > position[largest_i_with_nonzero_direction]) directions[i] = +1;
+		}
+		for (i=largest_i_with_nonzero_direction; i<identical_pieces; i++) {
+		    if (position[i] > position[largest_i_with_nonzero_direction]) directions[i] = -1;
+		}
+	    }
+
+	    if (j != factorial(identical_pieces)-1) {
+		fatal("BUG: did not generate factorial(identical_pieces) permutations\n");
+	    }
+
+	}
+    }
+
+
+#if DEBUG
+    for (int piece = 0; piece < num_pieces; piece ++) {
+	info("Piece %d: type %s color %s legal_squares %0" PRIx64 " semilegal_squares %0" PRIx64 "\n",
+	     piece, piece_name[pieces[piece].piece_type], colors.at(pieces[piece].color).c_str(),
+	     pieces[piece].legal_squares, pieces[piece].semilegal_squares);
+    }
+#endif
+
+    /* Now, compute a bitvector for all the pieces that are frozen on single squares.  This
+     * 'frozen_pieces_vector' differs from 'blocked_squares' because a square can be blocked by a
+     * pawn that is at least partially mobile on a single file.  Frozen pieces, on the other hand,
+     * are completely immobile on a single square.
+     *
+     * Now, I had this idea that I could completely discard those positions where the king was in
+     * check from a frozen piece.  After all, how could a king ever move into check from a frozen
+     * piece?  Well, the answer is that if we use this as a futurebase in a later analysis, the king
+     * could possibly be in check as we transition between tablebases.  So first I put an option in
+     * to turn off this feature.  I'm now convinced that it was such a bad idea that I've removed it
+     * from the code (1.854).
+     */
+
+    frozen_pieces_vector = 0;
+
+    for (int piece = 0; piece < num_pieces; piece ++) {
+	for (int square = 0; square < 64; square ++) {
+	    if (BITVECTOR(square) == pieces[piece].semilegal_squares) {
+		if (frozen_pieces_vector & BITVECTOR(square)) {
+		    throw "More than one piece frozen on " + ('a' + COL(square)) + ('1' + ROW(square));
+		}
+		frozen_pieces_vector |= BITVECTOR(square);
+
+		break;
+	    }
+	}
+    }
+
+    /* Strip the locations of frozen pieces off the legal squares bitvectors of all the other
+     * pieces.  Like stripping the capture squares off the enemy king's legal bitvector, this is a
+     * convenience, so we don't have to list all the free squares for pieces that are not frozen.
+     * But we do have to careful about changing this code around, because some index types (like
+     * 'simple' and 'compact') implicitly use a piece's legal squares to encode its position, so
+     * changing this code can change index encoding.
+     */
+
+    for (int piece = 0; piece < num_pieces; piece ++) {
+	if ((pieces[piece].semilegal_squares & frozen_pieces_vector) != pieces[piece].semilegal_squares) {
+	    pieces[piece].legal_squares &= ~ frozen_pieces_vector;
+	    pieces[piece].semilegal_squares &= ~ frozen_pieces_vector;
+	}
+    }
+
+    /* Compute reflections array
+     *
+     * 2-way symmetry: white king always on left side of board
+     *
+     * 4-way symmetry: white king always in lower left quarter of board
+     *
+     * 8-way symmetry: white king always in a1-a4-d4 triangle, and if white king is on a1-d4
+     * diagonal, then black king is on or below a1-h8 diagonal
+     */
+
+    for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
+	for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
+
+	    reflections[white_king_square][black_king_square] = 0;
+
+	    int reflected_white_king_square = white_king_square;
+	    int reflected_black_king_square = black_king_square;
+
+	    if (symmetry >= 2) {
+		if (COL(reflected_white_king_square) >= 4) {
+		    reflections[white_king_square][black_king_square] |= REFLECTION_HORIZONTAL;
+		    reflected_white_king_square = horizontal_reflection(reflected_white_king_square);
+		    reflected_black_king_square = horizontal_reflection(reflected_black_king_square);
+		}
+	    }
+
+	    if (symmetry >= 4) {
+		if (ROW(reflected_white_king_square) >= 4) {
+		    reflections[white_king_square][black_king_square] |= REFLECTION_VERTICAL;
+		    reflected_white_king_square = vertical_reflection(reflected_white_king_square);
+		    reflected_black_king_square = vertical_reflection(reflected_black_king_square);
+		}
+	    }
+
+	    if (symmetry == 8) {
+		if (ROW(reflected_white_king_square) > COL(reflected_white_king_square)) {
+		    reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
+		}
+		if (ROW(reflected_white_king_square) == COL(reflected_white_king_square)) {
+		    if (ROW(reflected_black_king_square) > COL(reflected_black_king_square)) {
+			reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
+		    }
+		}
+	    }
+	}
+    }
+
+    /* Initialize the indexing functions */
 
     /* The constructor for the index encoding is expected to compute and assign num_indices in the
      * tablebase structure (but see next section of code where it might be modified).
@@ -5487,33 +5542,12 @@ void tablebase_t::parse_XML(std::istream *instream)
 	num_indices *= pawngen->pawn_positions_by_index.size();
     }
 
-    /* Fetch any prune enable elements */
-
-    prune_enable[PieceColor::Black] = 0;
-    prune_enable[PieceColor::White] = 0;
-    result = tablebase->find("//prune-enable | //move-restriction");
-    if (! result.empty()) {
-	for (auto i=0U; i < result.size(); i++) {
-	    auto color_str = ((xmlpp::Element *) result[i])->get_attribute_value("color");
-	    auto type_str = ((xmlpp::Element *) result[i])->get_attribute_value("type");
-
-	    PieceColor color = colors.at(color_str);
-	    int type = restriction_types.at(type_str);
-
-	    if (type == -1) {
-		fatal("Illegal prune-enable\n");
-	    } else {
-		prune_enable[color] |= type;
-	    }
-	}
-    }
-
-    //return (fatal_errors == starting_fatal_errors) ? tb : nullptr;
 }
 
 tablebase_t::tablebase_t(std::istream *instream)
 {
     parse_XML(instream);
+    finalize_initialization();
 }
 
 xmlpp::Element * create_GenStats_node(std::string name)
@@ -5710,8 +5744,573 @@ public:
 
 typedef basic_gzip_decompressor<> gzip_decompressor;
 
+/* Nalimov tablebases don't store DTM statistics, but we need to know the maximum and minimum DTMs
+ * when doing back-propagation from a Nalimov tablebase.
+ *
+ * I got this information from the tablebase statistics files hosted at:
+ *
+ * http://kirill-kryukov.com/chess/tablebases-online/
+ *
+ * wget -r -nd -np -A tbs.zip http://kirill-kryukov.com/chess/tablebases-online/
+ *
+ * for i in *.tbs; do
+ *    min=$(grep 'Lost in' $i | tail -1 | awk '{print int($4)+1}')
+ *    max=$(grep 'Mate in' $i | head -1 | awk '{print int($4)+1}')
+ *    echo \{ \"$(basename $i .tbs)\", \{ -$min, $max \}\},
+ * done > dtms
+ */
+
+struct dtms {
+    int min_dtm;
+    int max_dtm;
+};
+
+static std::map<std::string, struct dtms> dtms =
+    {{ "kbbbkb", { -27, 27 }},
+     { "kbbbkn", { -79, 79 }},
+     { "kbbbkp", { -78, 75 }},
+     { "kbbbkq", { -24, 25 }},
+     { "kbbbkr", { -75, 76 }},
+     { "kbbbk", { -20, 17 }},
+     { "kbbkbb", { -23, 24 }},
+     { "kbbkbn", { -90, 91 }},
+     { "kbbkbp", { -75, 76 }},
+     { "kbbkb", { -23, 23 }},
+     { "kbbknn", { -107, 107 }},
+     { "kbbknp", { -132, 132 }},
+     { "kbbkn", { -79, 79 }},
+     { "kbbkpp", { -105, 105 }},
+     { "kbbkp", { -74, 75 }},
+     { "kbbkq", { -21, 22 }},
+     { "kbbkr", { -23, 24 }},
+     { "kbbk", { -20, 20 }},
+     { "kbbnkb", { -54, 54 }},
+     { "kbbnkn", { -108, 109 }},
+     { "kbbnkp", { -105, 104 }},
+     { "kbbnkq", { -39, 40 }},
+     { "kbbnkr", { -86, 86 }},
+     { "kbbnk", { -34, 34 }},
+     { "kbbpkb", { -54, 55 }},
+     { "kbbpkn", { -106, 106 }},
+     { "kbbpkp", { -98, 98 }},
+     { "kbbpkq", { -98, 99 }},
+     { "kbbpkr", { -180, 181 }},
+     { "kbbpk", { -32, 31 }},
+     { "kbkb", { -1, 2 }},
+     { "kbkn", { -1, 2 }},
+     { "kbkp", { -1, 2 }},
+     { "kbk", { 0, 0}},
+     { "kbnkbn", { -106, 108 }},
+     { "kbnkbp", { -105, 106 }},
+     { "kbnkb", { -40, 40 }},
+     { "kbnknn", { -107, 108 }},
+     { "kbnknp", { -129, 129 }},
+     { "kbnkn", { -107, 108 }},
+     { "kbnkpp", { -124, 125 }},
+     { "kbnkp", { -105, 105 }},
+     { "kbnkq", { -36, 37 }},
+     { "kbnkr", { -36, 37 }},
+     { "kbnk", { -34, 34 }},
+     { "kbnnkb", { -54, 54 }},
+     { "kbnnkn", { -109, 110 }},
+     { "kbnnkp", { -116, 109 }},
+     { "kbnnkq", { -39, 40 }},
+     { "kbnnkr", { -56, 57 }},
+     { "kbnnk", { -35, 35 }},
+     { "kbnpkb", { -70, 71 }},
+     { "kbnpkn", { -112, 112 }},
+     { "kbnpkp", { -105, 104 }},
+     { "kbnpkq", { -113, 114 }},
+     { "kbnpkr", { -142, 142 }},
+     { "kbnpk", { -34, 34 }},
+     { "kbpkbp", { -71, 71 }},
+     { "kbpkb", { -51, 52 }},
+     { "kbpknn", { -141, 222 }},
+     { "kbpknp", { -117, 161 }},
+     { "kbpkn", { -97, 101 }},
+     { "kbpkpp", { -82, 82 }},
+     { "kbpkp", { -68, 68 }},
+     { "kbpkq", { -35, 36 }},
+     { "kbpkr", { -45, 46 }},
+     { "kbpk", { -32, 32 }},
+     { "kbppkb", { -82, 83 }},
+     { "kbppkn", { -106, 106 }},
+     { "kbppkp", { -155, 152 }},
+     { "kbppkq", { -138, 159 }},
+     { "kbppkr", { -150, 150 }},
+     { "kbppk", { -33, 26 }},
+     { "knkn", { -1, 2 }},
+     { "knkp", { -7, 8 }},
+     { "knk", { 0, 0}},
+     { "knnkb", { -4, 5 }},
+     { "knnknn", { -9, 10 }},
+     { "knnknp", { -138, 139 }},
+     { "knnkn", { -7, 8 }},
+     { "knnkpp", { -130, 131 }},
+     { "knnkp", { -115, 116 }},
+     { "knnkq", { -1, 2 }},
+     { "knnkr", { -3, 4 }},
+     { "knnk", { -1, 2 }},
+     { "knnnkb", { -96, 97 }},
+     { "knnnkn", { -91, 91 }},
+     { "knnnkp", { -116, 110 }},
+     { "knnnkq", { -24, 25 }},
+     { "knnnkr", { -25, 26 }},
+     { "knnnk", { -22, 22 }},
+     { "knnpkb", { -81, 81 }},
+     { "knnpkn", { -98, 93 }},
+     { "knnpkp", { -116, 115 }},
+     { "knnpkq", { -61, 76 }},
+     { "knnpkr", { -66, 67 }},
+     { "knnpk", { -29, 29 }},
+     { "knpkb", { -43, 44 }},
+     { "knpknp", { -98, 105 }},
+     { "knpkn", { -98, 98 }},
+     { "knpkpp", { -108, 109 }},
+     { "knpkp", { -58, 58 }},
+     { "knpkq", { -34, 42 }},
+     { "knpkr", { -44, 45 }},
+     { "knpk", { -29, 28 }},
+     { "knppkb", { -89, 89 }},
+     { "knppkn", { -98, 94 }},
+     { "knppkp", { -132, 132 }},
+     { "knppkq", { -125, 131 }},
+     { "knppkr", { -91, 98 }},
+     { "knppk", { -33, 33 }},
+     { "kpkp", { -34, 34 }},
+     { "kpk", { -29, 29 }},
+     { "kppkb", { -44, 44 }},
+     { "kppkn", { -51, 51 }},
+     { "kppkpp", { -142, 142 }},
+     { "kppkp", { -128, 128 }},
+     { "kppkq", { -101, 125 }},
+     { "kppkr", { -54, 55 }},
+     { "kppk", { -33, 33 }},
+     { "kpppkb", { -58, 79 }},
+     { "kpppkn", { -87, 88 }},
+     { "kpppkp", { -172, 172 }},
+     { "kpppkq", { -144, 179 }},
+     { "kpppkr", { -69, 71 }},
+     { "kpppk", { -34, 34 }},
+     { "kqbbkb", { -24, 24 }},
+     { "kqbbkn", { -79, 77 }},
+     { "kqbbkp", { -96, 80 }},
+     { "kqbbkq", { -97, 97 }},
+     { "kqbbkr", { -41, 41 }},
+     { "kqbbk", { -20, 7 }},
+     { "kqbkbb", { -82, 82 }},
+     { "kqbkbn", { -54, 54 }},
+     { "kqbkbp", { -59, 59 }},
+     { "kqbkb", { -18, 18 }},
+     { "kqbknn", { -73, 70 }},
+     { "kqbknp", { -64, 64 }},
+     { "kqbkn", { -22, 22 }},
+     { "kqbkpp", { -58, 47 }},
+     { "kqbkp", { -34, 33 }},
+     { "kqbkqb", { -58, 59 }},
+     { "kqbkqn", { -42, 43 }},
+     { "kqbkqp", { -64, 64 }},
+     { "kqbkq", { -34, 34 }},
+     { "kqbkrb", { -73, 73 }},
+     { "kqbkrn", { -70, 70 }},
+     { "kqbkrp", { -106, 106 }},
+     { "kqbkrr", { -107, 108 }},
+     { "kqbkr", { -41, 41 }},
+     { "kqbk", { -11, 9 }},
+     { "kqbnkb", { -40, 40 }},
+     { "kqbnkn", { -108, 108 }},
+     { "kqbnkp", { -108, 74 }},
+     { "kqbnkq", { -85, 85 }},
+     { "kqbnkr", { -45, 45 }},
+     { "kqbnk", { -34, 8 }},
+     { "kqbpkb", { -52, 52 }},
+     { "kqbpkn", { -101, 92 }},
+     { "kqbpkp", { -156, 113 }},
+     { "kqbpkq", { -159, 159 }},
+     { "kqbpkr", { -46, 44 }},
+     { "kqbpk", { -32, 10 }},
+     { "kqkb", { -18, 18 }},
+     { "kqkn", { -22, 22 }},
+     { "kqkp", { -29, 29 }},
+     { "kqkq", { -13, 14 }},
+     { "kqkr", { -36, 36 }},
+     { "kqk", { -11, 11 }},
+     { "kqnkbb", { -83, 83 }},
+     { "kqnkbn", { -54, 54 }},
+     { "kqnkbp", { -52, 52 }},
+     { "kqnkb", { -18, 18 }},
+     { "kqnknn", { -73, 69 }},
+     { "kqnknp", { -66, 67 }},
+     { "kqnkn", { -22, 22 }},
+     { "kqnkpp", { -66, 64 }},
+     { "kqnkp", { -42, 31 }},
+     { "kqnkqn", { -44, 44 }},
+     { "kqnkqp", { -65, 66 }},
+     { "kqnkq", { -42, 42 }},
+     { "kqnkrb", { -72, 72 }},
+     { "kqnkrn", { -70, 70 }},
+     { "kqnkrp", { -105, 104 }},
+     { "kqnkrr", { -175, 175 }},
+     { "kqnkr", { -39, 39 }},
+     { "kqnk", { -11, 10 }},
+     { "kqnnkb", { -18, 18 }},
+     { "kqnnkn", { -22, 14 }},
+     { "kqnnkp", { -116, 93 }},
+     { "kqnnkq", { -75, 75 }},
+     { "kqnnkr", { -40, 40 }},
+     { "kqnnk", { -10, 9 }},
+     { "kqnpkb", { -44, 43 }},
+     { "kqnpkn", { -98, 62 }},
+     { "kqnpkp", { -130, 116 }},
+     { "kqnpkq", { -133, 134 }},
+     { "kqnpkr", { -46, 46 }},
+     { "kqnpk", { -28, 10 }},
+     { "kqpkbb", { -85, 85 }},
+     { "kqpkbn", { -57, 57 }},
+     { "kqpkbp", { -127, 127 }},
+     { "kqpkb", { -30, 29 }},
+     { "kqpknn", { -81, 81 }},
+     { "kqpknp", { -127, 126 }},
+     { "kqpkn", { -31, 31 }},
+     { "kqpkpp", { -146, 142 }},
+     { "kqpkp", { -123, 106 }},
+     { "kqpkqp", { -151, 152 }},
+     { "kqpkq", { -124, 125 }},
+     { "kqpkrb", { -156, 156 }},
+     { "kqpkrn", { -111, 111 }},
+     { "kqpkrp", { -127, 127 }},
+     { "kqpkrr", { -166, 166 }},
+     { "kqpkr", { -44, 38 }},
+     { "kqpk", { -29, 11 }},
+     { "kqppkb", { -44, 35 }},
+     { "kqppkn", { -51, 45 }},
+     { "kqppkp", { -174, 124 }},
+     { "kqppkq", { -182, 183 }},
+     { "kqppkr", { -55, 55 }},
+     { "kqppk", { -33, 10 }},
+     { "kqqbkb", { -18, 15 }},
+     { "kqqbkn", { -22, 17 }},
+     { "kqqbkp", { -41, 31 }},
+     { "kqqbkq", { -41, 41 }},
+     { "kqqbkr", { -43, 43 }},
+     { "kqqbk", { -9, 5 }},
+     { "kqqkbb", { -82, 82 }},
+     { "kqqkbn", { -54, 49 }},
+     { "kqqkbp", { -70, 52 }},
+     { "kqqkb", { -18, 16 }},
+     { "kqqknn", { -73, 70 }},
+     { "kqqknp", { -68, 61 }},
+     { "kqqkn", { -22, 20 }},
+     { "kqqkpp", { -60, 41 }},
+     { "kqqkp", { -31, 23 }},
+     { "kqqkqb", { -72, 72 }},
+     { "kqqkqn", { -61, 61 }},
+     { "kqqkqp", { -60, 61 }},
+     { "kqqkqq", { -51, 51 }},
+     { "kqqkqr", { -70, 70 }},
+     { "kqqkq", { -31, 31 }},
+     { "kqqkrb", { -71, 71 }},
+     { "kqqkrn", { -70, 67 }},
+     { "kqqkrp", { -105, 98 }},
+     { "kqqkrr", { -50, 49 }},
+     { "kqqkr", { -36, 36 }},
+     { "kqqk", { -11, 5 }},
+     { "kqqnkb", { -18, 15 }},
+     { "kqqnkn", { -22, 14 }},
+     { "kqqnkp", { -46, 38 }},
+     { "kqqnkq", { -46, 46 }},
+     { "kqqnkr", { -47, 47 }},
+     { "kqqnk", { -10, 5 }},
+     { "kqqpkb", { -29, 17 }},
+     { "kqqpkn", { -31, 25 }},
+     { "kqqpkp", { -123, 110 }},
+     { "kqqpkq", { -125, 123 }},
+     { "kqqpkr", { -47, 47 }},
+     { "kqqpk", { -11, 5 }},
+     { "kqqqkb", { -16, 6 }},
+     { "kqqqkn", { -20, 9 }},
+     { "kqqqkp", { -31, 27 }},
+     { "kqqqkq", { -32, 32 }},
+     { "kqqqkr", { -38, 38 }},
+     { "kqqqk", { -5, 4 }},
+     { "kqqrkb", { -30, 15 }},
+     { "kqqrkn", { -41, 33 }},
+     { "kqqrkp", { -69, 38 }},
+     { "kqqrkq", { -69, 69 }},
+     { "kqqrkr", { -38, 38 }},
+     { "kqqrk", { -7, 5 }},
+     { "kqrbkb", { -31, 28 }},
+     { "kqrbkn", { -41, 35 }},
+     { "kqrbkp", { -68, 57 }},
+     { "kqrbkq", { -68, 68 }},
+     { "kqrbkr", { -69, 69 }},
+     { "kqrbk", { -17, 6 }},
+     { "kqrkbb", { -82, 82 }},
+     { "kqrkbn", { -54, 54 }},
+     { "kqrkbp", { -86, 82 }},
+     { "kqrkb", { -30, 30 }},
+     { "kqrknn", { -73, 70 }},
+     { "kqrknp", { -80, 70 }},
+     { "kqrkn", { -41, 41 }},
+     { "kqrkpp", { -103, 98 }},
+     { "kqrkp", { -68, 41 }},
+     { "kqrkqb", { -90, 90 }},
+     { "kqrkqn", { -84, 84 }},
+     { "kqrkqp", { -104, 104 }},
+     { "kqrkqr", { -118, 118 }},
+     { "kqrkq", { -68, 68 }},
+     { "kqrkrb", { -72, 72 }},
+     { "kqrkrn", { -70, 68 }},
+     { "kqrkrp", { -118, 114 }},
+     { "kqrkrr", { -57, 58 }},
+     { "kqrkr", { -36, 35 }},
+     { "kqrk", { -17, 7 }},
+     { "kqrnkb", { -32, 28 }},
+     { "kqrnkn", { -41, 34 }},
+     { "kqrnkp", { -75, 50 }},
+     { "kqrnkq", { -78, 78 }},
+     { "kqrnkr", { -45, 45 }},
+     { "kqrnk", { -17, 6 }},
+     { "kqrpkb", { -74, 68 }},
+     { "kqrpkn", { -55, 52 }},
+     { "kqrpkp", { -125, 125 }},
+     { "kqrpkq", { -128, 128 }},
+     { "kqrpkr", { -76, 76 }},
+     { "kqrpk", { -17, 8 }},
+     { "kqrrkb", { -30, 19 }},
+     { "kqrrkn", { -41, 33 }},
+     { "kqrrkp", { -68, 46 }},
+     { "kqrrkq", { -68, 68 }},
+     { "kqrrkr", { -42, 42 }},
+     { "kqrrk", { -8, 5 }},
+     { "krbbkb", { -31, 30 }},
+     { "krbbkn", { -79, 79 }},
+     { "krbbkp", { -78, 77 }},
+     { "krbbkq", { -53, 54 }},
+     { "krbbkr", { -71, 71 }},
+     { "krbbk", { -20, 13 }},
+     { "krbkbb", { -92, 93 }},
+     { "krbkbn", { -113, 113 }},
+     { "krbkbp", { -102, 102 }},
+     { "krbkb", { -31, 31 }},
+     { "krbknn", { -238, 239 }},
+     { "krbknp", { -232, 230 }},
+     { "krbkn", { -41, 41 }},
+     { "krbkpp", { -217, 209 }},
+     { "krbkp", { -37, 29 }},
+     { "krbkq", { -21, 22 }},
+     { "krbkrb", { -65, 66 }},
+     { "krbkrn", { -68, 69 }},
+     { "krbkrp", { -77, 78 }},
+     { "krbkr", { -65, 66 }},
+     { "krbk", { -17, 17 }},
+     { "krbnkb", { -40, 40 }},
+     { "krbnkn", { -108, 108 }},
+     { "krbnkp", { -123, 123 }},
+     { "krbnkq", { -121, 122 }},
+     { "krbnkr", { -69, 69 }},
+     { "krbnk", { -34, 30 }},
+     { "krbpkb", { -74, 72 }},
+     { "krbpkn", { -101, 92 }},
+     { "krbpkp", { -128, 121 }},
+     { "krbpkq", { -127, 128 }},
+     { "krbpkr", { -77, 77 }},
+     { "krbpk", { -32, 17 }},
+     { "krkb", { -30, 30 }},
+     { "krkn", { -41, 41 }},
+     { "krkp", { -33, 27 }},
+     { "krkr", { -20, 20 }},
+     { "krk", { -17, 17 }},
+     { "krnkbb", { -153, 153 }},
+     { "krnkbn", { -209, 210 }},
+     { "krnkbp", { -196, 195 }},
+     { "krnkb", { -32, 32 }},
+     { "krnknn", { -262, 263 }},
+     { "krnknp", { -252, 253 }},
+     { "krnkn", { -41, 38 }},
+     { "krnkpp", { -188, 189 }},
+     { "krnkp", { -30, 30 }},
+     { "krnkq", { -20, 21 }},
+     { "krnkrn", { -52, 53 }},
+     { "krnkrp", { -52, 53 }},
+     { "krnkr", { -37, 38 }},
+     { "krnk", { -17, 17 }},
+     { "krnnkb", { -32, 31 }},
+     { "krnnkn", { -38, 35 }},
+     { "krnnkp", { -116, 108 }},
+     { "krnnkq", { -33, 34 }},
+     { "krnnkr", { -43, 43 }},
+     { "krnnk", { -17, 16 }},
+     { "krnpkb", { -74, 72 }},
+     { "krnpkn", { -98, 89 }},
+     { "krnpkp", { -124, 122 }},
+     { "krnpkq", { -123, 124 }},
+     { "krnpkr", { -86, 86 }},
+     { "krnpk", { -28, 18 }},
+     { "krpkbb", { -136, 137 }},
+     { "krpkbn", { -205, 205 }},
+     { "krpkbp", { -154, 167 }},
+     { "krpkb", { -74, 74 }},
+     { "krpknn", { -252, 254 }},
+     { "krpknp", { -189, 199 }},
+     { "krpkn", { -55, 55 }},
+     { "krpkpp", { -104, 104 }},
+     { "krpkp", { -69, 57 }},
+     { "krpkq", { -60, 69 }},
+     { "krpkrp", { -116, 117 }},
+     { "krpkr", { -75, 75 }},
+     { "krpk", { -29, 17 }},
+     { "krppkb", { -74, 71 }},
+     { "krppkn", { -55, 55 }},
+     { "krppkp", { -217, 212 }},
+     { "krppkq", { -212, 217 }},
+     { "krppkr", { -96, 96 }},
+     { "krppk", { -33, 16 }},
+     { "krrbkb", { -31, 29 }},
+     { "krrbkn", { -41, 35 }},
+     { "krrbkp", { -91, 74 }},
+     { "krrbkq", { -91, 91 }},
+     { "krrbkr", { -70, 70 }},
+     { "krrbk", { -17, 11 }},
+     { "krrkbb", { -46, 46 }},
+     { "krrkbn", { -44, 45 }},
+     { "krrkbp", { -44, 44 }},
+     { "krrkb", { -30, 30 }},
+     { "krrknn", { -44, 44 }},
+     { "krrknp", { -68, 67 }},
+     { "krrkn", { -41, 41 }},
+     { "krrkpp", { -58, 49 }},
+     { "krrkp", { -41, 34 }},
+     { "krrkq", { -29, 30 }},
+     { "krrkrb", { -67, 68 }},
+     { "krrkrn", { -90, 90 }},
+     { "krrkrp", { -81, 81 }},
+     { "krrkrr", { -40, 41 }},
+     { "krrkr", { -32, 32 }},
+     { "krrk", { -17, 8 }},
+     { "krrnkb", { -32, 29 }},
+     { "krrnkn", { -41, 34 }},
+     { "krrnkp", { -109, 90 }},
+     { "krrnkq", { -109, 109 }},
+     { "krrnkr", { -46, 46 }},
+     { "krrnk", { -17, 11 }},
+     { "krrpkb", { -74, 71 }},
+     { "krrpkn", { -55, 55 }},
+     { "krrpkp", { -254, 219 }},
+     { "krrpkq", { -254, 254 }},
+     { "krrpkr", { -76, 76 }},
+     { "krrpk", { -17, 15 }},
+     { "krrrkb", { -30, 19 }},
+     { "krrrkn", { -41, 33 }},
+     { "krrrkp", { -70, 47 }},
+     { "krrrkq", { -70, 70 }},
+     { "krrrkr", { -34, 34 }},
+     { "krrrk", { -8, 6 }}};
+
+/* Construct a tablebase instance from a filename.
+ *
+ * For a Hoffman tablebase, we want to read the XML header at the beginning of the file, parse it
+ * into our various tablebase structures, and leave 'instream' pointing at the remaining portion of
+ * the file that contains the actual data.  We use Boost's filtering_stream's to handle compression
+ * by pushing a gzip compressor onto our filter chain.
+ *
+ * For a Nalimov tablebase, we create a tablebase instance without using any XML, and currently
+ * don't read the file at all, instead punting (in get_DTM) to use Nalimov's query routines instead
+ * of trying to parse a Nalimov tablebase ourselves.
+ */
+
 tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0), invert_colors(false), num_pieces(0)
 {
+    if (filename.substr(filename.length() - 4) == ".emd"
+	|| filename.substr(filename.length() - 4) == ".nbw"
+	|| filename.substr(filename.length() - 4) == ".nbb") {
+
+	/* Nalimov tablebase.
+	 *
+	 * We don't actually read the file at all; the Nalimov query routines will do that.
+	 */
+
+	variant = Variant::Normal;
+
+
+	/* We use the name of the file to determine the piece configuration.
+	 *
+	 * Nalimov keeps white-to-move and black-to-move positions in separate files, but if we see
+	 * one of them here, we assume that both are present, since Hoffman currently doesn't
+	 * have any way to indicate a tablebase only contains one color to move.
+	 *
+	 * A side effect of this is that if you specify both the .nbw and .nbb files in separate
+	 * futurebase elements, Hoffman complains that multiple futurebases handle the same moves.
+	 *
+	 * XXX add a <side-to-move> element to the DTD that either indicates that the tablebase only
+	 * contains one color to move, i.e, <side-to-move color="white"/>, or indicates where in the
+	 * index ordering the side-to-move flag goes (currently it's always LSB).
+	 */
+
+	boost::filesystem::path p{filename};
+	std::string fn = p.filename().string();
+
+	try {
+	    std::string fn_base = fn.substr(0, fn.find('.'));
+	    auto dtm = dtms.at(fn_base);
+	    max_dtm = dtm.max_dtm;
+	    min_dtm = dtm.min_dtm;
+	} catch (std::out_of_range ex) {
+	    fatal("Illegally named Nalimov tablebase: %s\n", filename.c_str());
+	    return;
+	}
+
+	int i=1;
+
+	while (fn[i] != 'k') {
+	    struct piece new_piece(PieceColor::White, piece_char[fn[i]]);
+	    pieces.push_back(new_piece);
+	    i ++;
+	}
+
+	num_pieces_by_color[PieceColor::White] = i + 1;
+
+	i ++;
+
+	while (fn[i] != '.') {
+	    struct piece new_piece(PieceColor::Black, piece_char[fn[i]]);
+	    pieces.push_back(new_piece);
+	    i ++;
+	}
+
+	num_pieces = i;
+	num_pieces_by_color[PieceColor::Black] = num_pieces - num_pieces_by_color[PieceColor::White];
+
+	pieces.emplace_back(PieceColor::White, PieceType::King);
+	pieces.emplace_back(PieceColor::Black, PieceType::King);
+
+	white_king = i-2;
+	black_king = i-1;
+
+	index_type = Index::Combinadic4;
+
+	format = nalimov_format;
+
+	symmetry = 8;
+
+	for (int piece = 0; piece < num_pieces; piece ++) {
+	    if (pieces[piece].piece_type == PieceType::Pawn) {
+		symmetry = 2;
+	    }
+	}
+
+	stalemate_prune_type = RESTRICTION_NONE;
+
+	prune_enable[PieceColor::Black] = 0;
+	prune_enable[PieceColor::White] = 0;
+
+	next_read_index = 0;
+
+	finalize_initialization();
+
+	return;
+    }
+
     std::ifstream * input_file = new std::ifstream;
 
     input_file->open(filename, std::ifstream::in | std::ifstream::binary);
@@ -5733,6 +6332,7 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
     instream->push(*input_file);
 
     parse_XML(instream.get());
+    finalize_initialization();
 
     offset = eval_to_number_or_zero(xml->get_root_node(), "/tablebase/@offset");
 
@@ -6978,6 +7578,25 @@ thread_local index_t cached_index;
 
 index_t tablebase_t::fetch_entry(index_t index = INVALID_INDEX)
 {
+    /* Nalimov tablebase?  Just return the index for the next block, in a thread-safe manner.
+     *
+     * XXX move this counting code to back_propagate_futurebase_thread(), and just implement
+     * a caching scheme (maybe LRU like Nalimov) here.
+     *
+     * XXX eventually read the Nalimov format directly
+     */
+
+    if (format.bits == -1) {
+	static std::mutex lock;
+	std::lock_guard<std::mutex> _(lock);
+
+	index_t index = next_read_index;
+
+	next_read_index += futurebase_stride;
+
+	return index;
+    }
+
     /* If we're switching tablebases, discard old cache.  No locking required since we're working on
      * thread_local variables.
      */
@@ -7064,8 +7683,59 @@ index_t tablebase_t::fetch_entry(index_t index = INVALID_INDEX)
  * cached_entries.
  */
 
+bool global_PNTM_in_check(global_position_t *position);
+
 int tablebase_t::get_DTM(index_t index)
 {
+    if (format.bits == -1) {
+	/* Nalimov's code is thread-safe for queries, if compiled with -DSMP */
+	/* throw std::runtime_error("NYI: Nalimov format"); */
+
+	global_position_t global;
+	int score;
+
+	if (index_to_global_position(this, index, &global)) {
+	    if (global_PNTM_in_check(&global)) {
+
+		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
+		return 1;
+
+	    } else if ((global.en_passant_square != ILLEGAL_POSITION)
+		       && ((global.board[global.en_passant_square - 9] != 'P')
+			   || (global.en_passant_square == 40)
+			   || (global.side_to_move == PieceColor::Black))
+		       && ((global.board[global.en_passant_square - 7] != 'P')
+			   || (global.en_passant_square == 47)
+			   || (global.side_to_move == PieceColor::Black))
+		       && ((global.board[global.en_passant_square + 7] != 'p')
+			   || (global.en_passant_square == 16)
+			   || (global.side_to_move == PieceColor::White))
+		       && ((global.board[global.en_passant_square + 9] != 'p')
+			   || (global.en_passant_square == 23)
+			   || (global.side_to_move == PieceColor::White))) {
+
+		/* Nor does Nalimov like it if the en passant pawn can't actually be captured by
+		 * another pawn.
+		 */
+
+		return 0;
+
+	    } else if (EGTBProbe(global.side_to_move == PieceColor::White, global.board,
+				 global.en_passant_square == ILLEGAL_POSITION ? -1 : global.en_passant_square, &score) == 1) {
+		if (score > 0) {
+		    return ((65536-4)/2)-score+2;
+		} else if (score < 0) {
+		    return -(((65536-4)/2)+score)-1;
+		} else {
+		    return 0;
+		}
+	    } else {
+		/* Nalimov says illegal */
+		throw std::runtime_error("Nalimov says illegal");
+	    }
+	}
+    }
+
     index -= fetch_entry(index);
 
     /* Normally, we encode signed DTM fields, but single bit DTM fields are an exception, as we
@@ -13742,14 +14412,6 @@ bool verify_tablebase_internally(void)
 
 #ifdef USE_NALIMOV
 
-extern "C" {
-    int EGTBProbe(int wtm, unsigned char board[64], int sqEnP, int *score);
-
-    int IInitializeTb(char *pszPath);
-
-    int FTbSetCacheSize(void    *pv, unsigned long   cbSize );
-}
-
 #define EGTB_CACHE_DEFAULT (1024*1024)
 
 void *EGTB_cache;
@@ -13786,6 +14448,8 @@ char * nalimov_to_english(int score)
 
     return buffer;
 }
+
+extern unsigned long long ind;
 
 void verify_tablebase_against_nalimov(tablebase_t *tb)
 {
@@ -13889,6 +14553,9 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 			      global_position_to_FEN(&global), index);
 		    }
 		}
+
+		/* info("index %" PRIindex " agrees with Nalimov %llu\n", index, ind); */
+
 	    } else {
 		fatal("%s (%" PRIindex "): Nalimov says illegal, but we don't\n",
 		      global_position_to_FEN(&global), index);
@@ -14422,6 +15089,10 @@ int main(int argc, char *argv[])
 	terminate();
     }
 
+#ifdef USE_NALIMOV
+    init_nalimov_code();
+#endif
+
     /* Generating.
      *
      * We want to make sure we destroy any intermediate files instead of leaving them lying around
@@ -14452,10 +15123,6 @@ int main(int argc, char *argv[])
     }
 
     /* Probing / Verifying */
-
-#ifdef USE_NALIMOV
-    init_nalimov_code();
-#endif
 
     i = 0;
     /* calloc (unlike malloc) zeros memory */

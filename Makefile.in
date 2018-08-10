@@ -1,7 +1,9 @@
 
 HOFFMAN ?= ./hoffman
 
-CXXFLAGS= @CXXFLAGS@ @READLINE_CPPFLAGS@ @libxml_CFLAGS@ @BOOST_CPPFLAGS@
+# -DSMP is here to make Nalimov's egtb.cpp compile thread-safe
+
+CXXFLAGS= @CXXFLAGS@ @READLINE_CPPFLAGS@ @libxml_CFLAGS@ @BOOST_CPPFLAGS@ -DSMP
 
 hoffman_OBJS = hoffman.o @NALIMOVOBJS@
 
@@ -17,7 +19,7 @@ hoffman_XMLS = xml/*.xml
 hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPTS) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS) $(hoffman_TESTS)
 
 hoffman: $(hoffman_OBJS)
-	@LINKER@ $(CXXFLAGS) @BOOST_LDFLAGS@ -o hoffman $^ -lboost_iostreams @LIBS@ @libxml_LIBS@
+	@LINKER@ $(CXXFLAGS) @BOOST_LDFLAGS@ -o hoffman $^ -lboost_iostreams -lboost_filesystem -lboost_system @LIBS@ @libxml_LIBS@
 	echo set pagination 0 > .gdbinit
 	grep -Hn BREAKPOINT *.cc | cut -d : -f 1-2 | sed 's/^/break /' >> .gdbinit
 

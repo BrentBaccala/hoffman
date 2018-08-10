@@ -1,11 +1,25 @@
 Nalimov encoding scheme
 
+White-to-play and black-to-play are encoded in separate files.
+
+Kings are encoded the most significant bits.
+
+
+
+These arrays are hand-coded in egtb.cpp:
+
 rgsHalfKings[blackKing][whiteKing] : 0 - 1805
-   white king restricted to left half of board
+   all valid positions with white king restricted to left half of board
+   invalid positions return INF
+   positions with adjacent kings are INF
+   (used in two-way symmetric positions)
 
 rgsTriKings[blackKing][whiteKing] : 0 - 461
    white king restricted to a1-d1-d4 triangle, if on a1-d1 diagonal,
    then black king restricted to a1-h1-h8 triangle
+   (used in eight-way symmetric positions)
+
+Tables created at run time in VInitEnumerations():
 
 rgprgsqPiece[PieceType][blackKing][whitePiece]
    this table enumerates all possible positions of the black king and the white piece,
@@ -26,13 +40,41 @@ rgprgulSinglePawnless[PieceType][encoding]  (encoding 0-461)
       minus one if the white king can legally be on the white piece's square
 
 
+class T21<int piw1>   (piece type)
+  IndCalcW / IndCalcB   map into PfnIndCalc(iTb, side) where "side" is side-to-move
+
+hoffman doesn't do tablebase inversion in the indexing code (it's handled separately,
+in the futurebase code and in the probe code), so can we ignore inversion
+
 21-piece encoding - white to move
-  reflection (modified if TB is inverted)
+  # reflect board vertically if TB is inverted and piece is pawn
+  reflection to put kings into triangle (non-pawn) or white king into left side of board (pawn)
+  # reflect board vertically (again) if TB is inverted and piece is pawn
+
+  (use TEnumerate1)
   ind from rgprgsqPiece, based on PieceType and position of black king
-  subtract one from ind if white king could be on piece's square, and piece's square > white king's square
+  ulKings from rgsHalfKings or rgsTriKings, based on positions of both kings
+  if piece isn't a pawn or a knight,
+    or if it is a pawn or knight and the white king is on a square that would be legal for the pawn or knight,
+      subtract one from ind if the piece's square > white king's square
   add rgprgulSingle...[] to essentially space out king encoding to make room for piece numbering in LSB
 
+  INVERSE ENCODING
+
+  binary search in rgprgulSingle...[] to split apart ind and ulKings
+  use an inverse table to convert ulKings to the two king positions
+  use an inverse table to convert ind (and black king position) to white piece position
+  if white king could be on piece's square, and white piece position >= white king position,
+    increment ind and repeat last step
+
+  handle reflection
+
 21-piece encoding - black to move
+  reflection
   if no pawn
-    reflection
     king encoding * 62, plus piece location, EXCLUDE2 to subtract out white and black king squares
+  if pawn, use TEnumerate1 with white and black kings swapped
+    ind from rgprgsqPiece, based on PieceType=none and position of white king
+    ulKings from rgsHalfKings or rgsTriKings, based on positions of both kings (swapped)
+    subtract one from ind if black king could be on piece's square, and piece's square > black king's square
+    add rgprgulSingle...[] to essentially space out king encoding to make room for piece numbering in LSB
