@@ -187,6 +187,10 @@ extern "C" {
 
 #endif
 
+/* Syzygy tablebase probe code */
+
+#include "Fathom/src/tbprobe.h"
+
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
  */
@@ -874,10 +878,11 @@ struct format one_byte_dtm_format = {8, 0,8, -1,FormatFlag::None, -1};
 struct format dtm_format = {0, 0,0, -1,FormatFlag::None, -1};
 
 /* XXX use a weird 'bits' value to distinguish pseudo-Nalimov format.  (we can't really parse
- * Nalimov format; use Nalimov's routines to do that)
+ * Nalimov format; use Nalimov's routines to do that); ditto for Syzygy tablebases.
  */
 
 struct format nalimov_format = {-1, 0,8, -1,FormatFlag::None, -1};
+struct format syzygy_format = {-2, 0,0, -1,FormatFlag::None, 2};
 
 
 /* tablebase_t
@@ -6311,6 +6316,94 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	return;
     }
 
+    if (filename.substr(filename.length() - 5) == ".rtbz") {
+	fatal("Syzygy rtbz tablebases unsupported (use rtbw instead)\n");
+	return;
+    }
+
+    if (filename.substr(filename.length() - 5) == ".rtbw") {
+
+	/* Syzygy tablebase.
+	 *
+	 * We don't actually read the file at all; the Syzygy query routines will do that.
+	 *
+	 * rtbw is a win/draw/loss bitbase
+	 * rtbz is a distance-to-zero (distance to conversion) tablebase, and therefore
+	 *   unusable by Hoffman
+	 */
+
+	variant = Variant::Normal;
+
+	/* We use the name of the file to determine the piece configuration. */
+
+	boost::filesystem::path p{filename};
+	std::string fn = p.filename().string();
+
+	boost::algorithm::to_lower(fn);
+	boost::algorithm::erase_all(fn, "v");
+
+	try {
+	    /* XXX Just parse the names.  Don't need min/max dtms for bitbases. */
+	    std::string fn_base = fn.substr(0, fn.find('.'));
+	    auto dtm = dtms.at(fn_base);
+	    max_dtm = dtm.max_dtm;
+	    min_dtm = dtm.min_dtm;
+	} catch (std::out_of_range ex) {
+	    fatal("Illegally named Syzygy tablebase: %s\n", filename.c_str());
+	    return;
+	}
+
+	int i=1;
+
+	while (fn[i] != 'k') {
+	    struct piece new_piece(PieceColor::White, piece_char[fn[i]]);
+	    pieces.push_back(new_piece);
+	    i ++;
+	}
+
+	num_pieces_by_color[PieceColor::White] = i + 1;
+
+	i ++;
+
+	while (fn[i] != '.') {
+	    struct piece new_piece(PieceColor::Black, piece_char[fn[i]]);
+	    pieces.push_back(new_piece);
+	    i ++;
+	}
+
+	num_pieces = i;
+	num_pieces_by_color[PieceColor::Black] = num_pieces - num_pieces_by_color[PieceColor::White];
+
+	pieces.emplace_back(PieceColor::White, PieceType::King);
+	pieces.emplace_back(PieceColor::Black, PieceType::King);
+
+	white_king = i-2;
+	black_king = i-1;
+
+	index_type = Index::Combinadic4;
+
+	format = syzygy_format;
+
+	symmetry = 8;
+
+	for (int piece = 0; piece < num_pieces; piece ++) {
+	    if (pieces[piece].piece_type == PieceType::Pawn) {
+		symmetry = 2;
+	    }
+	}
+
+	stalemate_prune_type = RESTRICTION_NONE;
+
+	prune_enable[PieceColor::Black] = 0;
+	prune_enable[PieceColor::White] = 0;
+
+	next_read_index = 0;
+
+	finalize_initialization();
+
+	return;
+    }
+
     std::ifstream * input_file = new std::ifstream;
 
     input_file->open(filename, std::ifstream::in | std::ifstream::binary);
@@ -7578,7 +7671,7 @@ thread_local index_t cached_index;
 
 index_t tablebase_t::fetch_entry(index_t index = INVALID_INDEX)
 {
-    /* Nalimov tablebase?  Just return the index for the next block, in a thread-safe manner.
+    /* Nalimov or Syzygy tablebase?  Just return the index for the next block, in a thread-safe manner.
      *
      * XXX move this counting code to back_propagate_futurebase_thread(), and just implement
      * a caching scheme (maybe LRU like Nalimov) here.
@@ -7586,7 +7679,7 @@ index_t tablebase_t::fetch_entry(index_t index = INVALID_INDEX)
      * XXX eventually read the Nalimov format directly
      */
 
-    if (format.bits == -1) {
+    if ((format.bits == -1) || (format.bits == -2)) {
 	static std::mutex lock;
 	std::lock_guard<std::mutex> _(lock);
 
@@ -7756,8 +7849,96 @@ bool tablebase_t::get_flag(index_t index)
     return get_bit_field(cached_entries, format.flag_offset + index * format.bits);
 }
 
+bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position);
+
 unsigned int tablebase_t::get_basic(index_t index)
 {
+    if (format.bits == -2) {
+	/* Syzygy query code is thread-safe */
+
+	local_position_t pos(this);
+
+	if (! index_to_local_position(this, index, 0, &pos)) {
+	    throw std::runtime_error("index_to_local_position failed in Syzygy base lookup");
+	}
+
+	if (PNTM_in_check(this, &pos)) {
+
+	    /* I've learned the hard way not to probe a Nalimov tablebase for an illegal
+	     * position.  I'm not sure about Syzygy tablebases, but treat them the same way.
+	     */
+
+	    throw std::runtime_error("PNTM in check in Syzygy base lookup");
+	}
+
+	uint64_t white = 0;
+	uint64_t black = 0;
+
+	uint64_t kings = 0;
+	uint64_t queens = 0;
+	uint64_t rooks = 0;
+	uint64_t bishops = 0;
+	uint64_t knights = 0;
+	uint64_t pawns = 0;
+
+	for (int piece = 0; piece < num_pieces; piece ++) {
+
+	    switch (pieces[piece].piece_type) {
+	    case PieceType::King:
+		kings |= BITVECTOR(pos.piece_position[piece]);
+		break;
+	    case PieceType::Queen:
+		queens |= BITVECTOR(pos.piece_position[piece]);
+		break;
+	    case PieceType::Rook:
+		rooks |= BITVECTOR(pos.piece_position[piece]);
+		break;
+	    case PieceType::Bishop:
+		bishops |= BITVECTOR(pos.piece_position[piece]);
+		break;
+	    case PieceType::Knight:
+		knights |= BITVECTOR(pos.piece_position[piece]);
+		break;
+	    case PieceType::Pawn:
+		pawns |= BITVECTOR(pos.piece_position[piece]);
+		break;
+	    }
+
+	    if (pieces[piece].color == PieceColor::White) {
+		white |= BITVECTOR(pos.piece_position[piece]);
+	    } else {
+		black |= BITVECTOR(pos.piece_position[piece]);
+	    }
+	}
+
+	/* Nor does Nalimov like it if the en passant pawn can't actually be captured by
+	 * another pawn.  Again, treat Syzygy the same way. XXX not implemented XXX
+	 */
+
+	/* pos.en_passant_square; */
+
+	unsigned result = tb_probe_wdl(white, black,
+				       kings, queens, rooks, bishops, knights, pawns,
+				       0, 0, (pos.en_passant_square == ILLEGAL_POSITION) ? 0 : pos.en_passant_square,
+				       (pos.side_to_move == PieceColor::White));
+
+	switch (result) {
+	case TB_LOSS:
+	    return 2;
+	case TB_BLESSED_LOSS:
+	case TB_CURSED_WIN:
+	case TB_DRAW:
+	    return 0;
+	case TB_WIN:
+	    return 1;
+	case TB_RESULT_FAILED:
+	    throw std::runtime_error("Syzygy base says TB_RESULT_FAILED");
+	default:
+	    throw std::runtime_error("Syzygy base returns unknown result code");
+	}
+
+    }
+
     index -= fetch_entry(index);
     return get_unsigned_int_field(cached_entries, format.basic_offset + index * format.bits, 2);
 }
@@ -15092,6 +15273,9 @@ int main(int argc, char *argv[])
 #ifdef USE_NALIMOV
     init_nalimov_code();
 #endif
+
+    /* syzygy init code */
+    tb_init(".");
 
     /* Generating.
      *

@@ -3,9 +3,12 @@ HOFFMAN ?= ./hoffman
 
 # -DSMP is here to make Nalimov's egtb.cpp compile thread-safe
 
+syzygy_CPPFLAGS = -I Fathom/src
+CPPFLAGS= @CPPFLAGS@ $(syzygy_CPPFLAGS) -g
 CXXFLAGS= @CXXFLAGS@ @READLINE_CPPFLAGS@ @libxml_CFLAGS@ @BOOST_CPPFLAGS@ -DSMP
 
-hoffman_OBJS = hoffman.o @NALIMOVOBJS@
+syzygy_OBJS = Fathom/src/tbprobe.o
+hoffman_OBJS = hoffman.o @NALIMOVOBJS@ $(syzygy_OBJS)
 
 configure_SRCS = configure configure.ac Makefile.in config.h.in config.guess config.sub install-sh
 hoffman_SRCS = hoffman.cc probe.c egtb.cpp lock.h tbdecode.h bitlib.h
