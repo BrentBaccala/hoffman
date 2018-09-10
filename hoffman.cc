@@ -861,6 +861,11 @@ enum class FormatFlag { None, WhiteWins, WhiteDraws };
 bimap<Glib::ustring, FormatFlag, casefold_compare> format_flag_types =
     {{"white-wins", FormatFlag::WhiteWins}, {"white-draws", FormatFlag::WhiteDraws}};
 
+enum class Basic { Draw=0, PTMwins = 1, PNTMwins = 2, Illegal = 3};
+
+std::map<Basic, const char *> basic_meaning =
+    {{Basic::Draw, "draw"}, {Basic::PTMwins, "PTM wins"}, {Basic::PNTMwins, "PNTM wins"}, {Basic::Illegal, "illegal"}};
+
 #define MAX_FORMAT_BYTES 16
 
 struct format {
@@ -1034,7 +1039,7 @@ public:
     index_t fetch_entry(index_t index);
     int get_DTM(index_t index);
     bool get_flag(index_t index);
-    unsigned int get_basic(index_t index);
+    Basic get_basic(index_t index);
 
     /* Which squares can a piece possible capture onto? */
 
@@ -7851,7 +7856,7 @@ bool tablebase_t::get_flag(index_t index)
 
 bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position);
 
-unsigned int tablebase_t::get_basic(index_t index)
+Basic tablebase_t::get_basic(index_t index)
 {
     if (format.bits == -2) {
 	/* Syzygy query code is thread-safe */
@@ -7924,13 +7929,13 @@ unsigned int tablebase_t::get_basic(index_t index)
 
 	switch (result) {
 	case TB_LOSS:
-	    return 2;
+	    return Basic::PNTMwins;
 	case TB_BLESSED_LOSS:
 	case TB_CURSED_WIN:
 	case TB_DRAW:
-	    return 0;
+	    return Basic::Draw;
 	case TB_WIN:
-	    return 1;
+	    return Basic::PTMwins;
 	case TB_RESULT_FAILED:
 	    throw std::runtime_error("Syzygy base says TB_RESULT_FAILED");
 	default:
@@ -7940,7 +7945,7 @@ unsigned int tablebase_t::get_basic(index_t index)
     }
 
     index -= fetch_entry(index);
-    return get_unsigned_int_field(cached_entries, format.basic_offset + index * format.bits, 2);
+    return static_cast<Basic>(get_unsigned_int_field(cached_entries, format.basic_offset + index * format.bits, 2));
 }
 
 
@@ -10312,13 +10317,13 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 
     } else if (futurebase->format.basic_offset != -1) {
 
-	int basic = futurebase->get_basic(future_index);
+	Basic basic = futurebase->get_basic(future_index);
 
-	if (basic == 0) {
+	if (basic == Basic::Draw) {
 	    commit_update(current_index, 0, 0, futuremove);
-	} else if (basic == 1) {
+	} else if (basic == Basic::PTMwins) {
 	    commit_update(current_index, -2, movecnt, futuremove);
-	} else if (basic == 2) {
+	} else if (basic == Basic::PNTMwins) {
 	    commit_update(current_index, 2, movecnt, futuremove);
 	} else {
 	    /* basic == 3: illegal position, PNTM in check, no backprop */
@@ -14140,7 +14145,7 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 	}
 
 	if (tb->format.basic_offset != -1) {
-	    int basic;
+	    Basic basic;
 
 	    /* 2-bit BASIC format
 	     *
@@ -14157,17 +14162,17 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 	     */
 
 	    if (entriesTable[index].get_DTM() == 1) {
-		basic = 3;
+		basic = Basic::Illegal;
 	    } else if (entriesTable[index].does_PTM_win()) {
-		basic = 1;
+		basic = Basic::PTMwins;
 	    } else if (entriesTable[index].does_PNTM_win()) {
-		basic = 2;
+		basic = Basic::PNTMwins;
 	    } else {
-		basic = 0;
+		basic = Basic::Draw;
 	    }
 	    set_unsigned_int_field(entrybuf,
 				   tb->format.basic_offset + ((index % 8) * tb->format.bits), 2,
-				   basic);
+				   static_cast<int>(basic));
 	}
 
 	switch (tb->format.flag_type) {
@@ -14698,16 +14703,15 @@ void verify_tablebase_against_nalimov(tablebase_t *tb)
 
 		if (tb->format.basic_offset != -1) {
 
-		    int basic = tb->get_basic(index);
-		    static const char * basic_meaning[3] = {"draw", "PTM wins", "PNTM wins"};
+		    Basic basic = tb->get_basic(index);
 
-		    if ((basic != 2) && (score < 0)) {
+		    if ((basic != Basic::PNTMwins) && (score < 0)) {
 			fatal("%s (%" PRIindex "): Nalimov says PNTM wins, but we say %s\n",
 			      global_position_to_FEN(&global), index, basic_meaning[basic]);
-		    } else if ((basic != 1) && (score > 0)) {
+		    } else if ((basic != Basic::PTMwins) && (score > 0)) {
 			fatal("%s (%" PRIindex "): Nalimov says PTM wins, but we say %s\n",
 			      global_position_to_FEN(&global), index, basic_meaning[basic]);
-		    } else if ((basic != 0) && (score == 0)) {
+		    } else if ((basic != Basic::Draw) && (score == 0)) {
 			fatal("%s (%" PRIindex "): Nalimov says draw, but we say %s\n",
 			      global_position_to_FEN(&global), index, basic_meaning[basic]);
 		    }
@@ -14829,11 +14833,11 @@ public:
 
 	} else if (tb->format.basic_offset != -1) {
 
-	    int basic = tb->get_basic(index);
+	    Basic basic = tb->get_basic(index);
 
-	    if (basic == 1) {
+	    if (basic == Basic::PTMwins) {
 		printf("%s wins\n", ptm);
-	    } else if (basic == 2) {
+	    } else if (basic == Basic::PNTMwins) {
 		printf("%s wins\n", pntm);
 	    } else {
 		printf("Draw\n");
