@@ -5,7 +5,7 @@
  * by Brent Baccala
  *
  * begun coding    August 2006
- * last modified   September 2014
+ * last modified   September 2018
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
@@ -87,6 +87,14 @@
  *              hoffman -p <tablebase> ...                              (probe mode)
  */
 
+#ifndef _LARGEFILE64_SOURCE
+#define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
+#endif
+
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE		/* to get strsignal() and FNM_CASEFOLD */
+#endif
+
 #include "config.h"	/* GNU configure script figures out our build options and writes them here */
 
 #include "version.h"	/* Automatically generated Hoffman_program_version and Hoffman_program_modified */
@@ -139,14 +147,6 @@ namespace io = boost::iostreams;
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 #include <libxml++/libxml++.h>
 #pragma GCC diagnostic pop
-
-#ifndef _LARGEFILE64_SOURCE
-#define _LARGEFILE64_SOURCE	/* because some of our files will require 64-bit offsets */
-#endif
-
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE		/* to get strsignal() and FNM_CASEFOLD */
-#endif
 
 #include <stdio.h>
 #include <stdlib.h>
