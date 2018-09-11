@@ -1466,7 +1466,7 @@ namespace Movement {
 		break;
 	    }
 	}
-	throw "BUG: fallthrough in movements()\n";
+	throw std::runtime_error("BUG: fallthrough in movements()");
     }
 
     void init_movements()
@@ -2888,7 +2888,7 @@ public:
 
 	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
 		&& (tb->pieces[piece].next_piece_in_semilegal_group != -1)) {
-		throw "Can't have more than two identical pieces with 'naive2' index";
+		throw std::runtime_error("Can't have more than two identical pieces with 'naive2' index");
 	    }
 
 	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
@@ -3344,7 +3344,7 @@ public:
 
 	    if ((tb->pieces[piece].prev_piece_in_semilegal_group != -1)
 		&& (tb->pieces[piece].next_piece_in_semilegal_group != -1)) {
-		throw "Can't have more than two identical pieces with 'compact' index";
+		throw std::runtime_error("Can't have more than two identical pieces with 'compact' index");
 	    }
 
 	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
@@ -3804,13 +3804,13 @@ public:
 		int piece2;
 
 		if ((tb->pieces[piece].blocking_piece > piece) && (tb->pieces[piece].color != PieceColor::White)) {
-		    throw "Mutually blocking pawns must currently be specified white pawn first";
+		    throw std::runtime_error("Mutually blocking pawns must currently be specified white pawn first");
 		}
 
 		if (tb->pieces[piece].blocking_piece > piece) {
 		    if (tb->pieces[piece].next_piece_in_semilegal_group != -1) {
 			/* should never happen, we should be blocked by a pawn of opposite color */
-			throw "BUG: not blocked right";
+			throw std::runtime_error("BUG: not blocked right");
 		    } else {
 			next_piece_in_encoding_group[piece] = tb->pieces[piece].blocking_piece;
 			for (piece2 = piece; piece2 != -1; piece2 = prev_piece_in_encoding_group[piece2]) {
@@ -3821,7 +3821,7 @@ public:
 		} else {
 		    if (tb->pieces[piece].prev_piece_in_semilegal_group != -1) {
 			/* should never happen, we should be blocked by a pawn of opposite color */
-			throw "BUG: not blocked right";
+			throw std::runtime_error("BUG: not blocked right");
 		    } else {
 			prev_piece_in_encoding_group[piece] = tb->pieces[piece].blocking_piece;
 			for (piece2 = piece; piece2 != -1; piece2 = next_piece_in_encoding_group[piece2]) {
@@ -4895,17 +4895,17 @@ void tablebase_t::parse_XML(std::istream *instream)
     }
 
     if ((num_pieces_by_color[PieceColor::White] == 0) || (num_pieces_by_color[PieceColor::Black] == 0)) {
-	throw "Must have at least one white piece and one black piece!";
+	throw std::runtime_error("Must have at least one white piece and one black piece!");
     }
 
     if (variant != Variant::Suicide) {
 	if ((white_king == -1) || (black_king == -1)) {
-	    throw "Must have one white king and one black one!";
+	    throw std::runtime_error("Must have one white king and one black one!");
 	}
     }
 
     if (num_pieces > MAX_PIECES) {
-	throw "Too many pieces (" + boost::lexical_cast<std::string>(MAX_PIECES) + "compiled-in maximum)!";
+	throw std::runtime_error("Too many pieces (" + boost::lexical_cast<std::string>(MAX_PIECES) + "compiled-in maximum)!");
     }
 
     /* Fetch the index type.  First, for backwards compatibility, we check for an index property on
@@ -4964,7 +4964,7 @@ void tablebase_t::parse_XML(std::istream *instream)
     if ((variant == Variant::Suicide) && (index_type != Index::Naive)
 	&& (index_type != Index::Simple) && (index_type != Index::Combinadic3)
 	&& (index_type != Index::Combinadic4)) {
-	throw "Only 'naive', 'simple', and 'combinadic3/4' indices are compatible with 'suicide' variant";
+	throw std::runtime_error("Only 'naive', 'simple', and 'combinadic3/4' indices are compatible with 'suicide' variant");
     }
 
     /* Get the format.  Older method is to specify it as a property on the tablebase element.  Next
@@ -4981,13 +4981,13 @@ void tablebase_t::parse_XML(std::istream *instream)
 	    format = one_byte_dtm_format;
 	    break;
 	default:
-	    throw "Unknown tablebase format " + format_str;
+	    throw std::runtime_error("Unknown tablebase format " + format_str);
 	}
     } else {
 	result = tablebase->find("//format");
 	if (! result.empty()) {
 	    // XXX should parse_format throw the exception?
-	    if (! parse_format((xmlpp::Element *) result[0], &format)) throw "Can't parse format";
+	    if (! parse_format((xmlpp::Element *) result[0], &format)) throw std::runtime_error("Can't parse format");
 	} else {
 	    if (! parse_format(tablebase, &format)) {
 		format = dtm_format;
@@ -5039,7 +5039,7 @@ void tablebase_t::parse_XML(std::istream *instream)
      */
 
     if ((variant == Variant::Suicide) && (symmetry != 1)) {
-	throw "Can't use symmetry with 'suicide' variant (yet)";
+	throw std::runtime_error("Can't use symmetry with 'suicide' variant (yet)");
     }
 
     /* Check piece specification to make sure it matches symmetry
@@ -5050,13 +5050,13 @@ void tablebase_t::parse_XML(std::istream *instream)
 
 
     if ((symmetry == 8) && ((index_type == Index::Naive) || (index_type == Index::Naive2))) {
-	throw "8-way symmetry incompatible with naive/naive2 index types";
+	throw std::runtime_error("8-way symmetry incompatible with naive/naive2 index types");
     }
 
     if (symmetry >= 4) {
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    if (pieces[piece].piece_type == PieceType::Pawn) {
-		throw "Pawns not allowed with 4/8-way symmetric indices";
+		throw std::runtime_error("Pawns not allowed with 4/8-way symmetric indices");
 	    }
 	}
     }
@@ -5064,12 +5064,12 @@ void tablebase_t::parse_XML(std::istream *instream)
     if (symmetry > 1) {
 	if (pawngen) {
 	    /* See SYMMETRY AND PAWNGEN above. */
-	    throw "Pawngen not allowed with symmetric indices (yet)";
+	    throw std::runtime_error("Pawngen not allowed with symmetric indices (yet)");
 	}
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    if (((pieces[piece].piece_type != PieceType::Pawn) && (pieces[piece].legal_squares != ALL_ONES_BITVECTOR))
 		|| ((pieces[piece].piece_type == PieceType::Pawn) && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))) {
-		throw "Piece restrictions not allowed with symmetric indices (yet)";
+		throw std::runtime_error("Piece restrictions not allowed with symmetric indices (yet)");
 	    }
 	}
     }
@@ -5083,7 +5083,7 @@ void tablebase_t::parse_XML(std::istream *instream)
     if ((index_type == Index::Naive) || (index_type == Index::Naive2) || (index_type == Index::Simple)) {
 	for (piece = 0; piece < num_pieces; piece ++) {
 	    if (pieces[piece].legal_squares != pieces[piece].semilegal_squares) {
-		throw "Non-identical overlapping piece restrictions not allowed with this index type";
+		throw std::runtime_error("Non-identical overlapping piece restrictions not allowed with this index type");
 	    }
 	}
     }
@@ -5103,11 +5103,11 @@ void tablebase_t::parse_XML(std::istream *instream)
 			if (pieces[piece2].color == pieces[piece].color) continue;
 			if ((col > 0)
 			    && (pieces[piece2].legal_squares & BITVECTOR(rowcol2square(row4, col-1)))) {
-			    throw "Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible";
+			    throw std::runtime_error("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible");
 			}
 			if ((col < 7)
 			    && (pieces[piece2].legal_squares & BITVECTOR(rowcol2square(row4, col+1)))) {
-			    throw "Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible";
+			    throw std::runtime_error("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible");
 			}
 		    }
 		}
@@ -5427,7 +5427,7 @@ void tablebase_t::finalize_initialization(void)
 	for (int square = 0; square < 64; square ++) {
 	    if (BITVECTOR(square) == pieces[piece].semilegal_squares) {
 		if (frozen_pieces_vector & BITVECTOR(square)) {
-		    throw "More than one piece frozen on " + ('a' + COL(square)) + ('1' + ROW(square));
+		    throw std::runtime_error("More than one piece frozen on " + ('a' + COL(square)) + ('1' + ROW(square)));
 		}
 		frozen_pieces_vector |= BITVECTOR(square);
 
@@ -6426,7 +6426,7 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 
     if (!input_file->good()) {
 	// XXX better way to do this?
-	throw "Can't open file";
+	throw std::runtime_error("Can't open file");
     }
 
     input_file->exceptions(std::ifstream::failbit | std::ifstream::badbit);
@@ -6514,7 +6514,6 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
  */
 
 void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t &futurebase)
-    throw (const char *)
 {
     int piece;
     int future_piece;
@@ -6568,7 +6567,7 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t &futurebase)
 	    if ((futurebase.extra_piece == -1) && (futurebase.pieces[future_piece].piece_type != PieceType::Pawn)) {
 		futurebase.extra_piece = future_piece;
 	    } else {
-		throw "Couldn't find future piece in local tablebase";
+		throw std::runtime_error("Couldn't find future piece in local tablebase");
 	    }
 	}
     }
@@ -6579,13 +6578,13 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t &futurebase)
 		if (futurebase.missing_pawn == -1) {
 		    futurebase.missing_pawn = piece;
 		} else {
-		    throw "Too many missing pieces in futurebase";
+		    throw std::runtime_error("Too many missing pieces in futurebase");
 		}
 	    } else {
 		if (futurebase.missing_non_pawn == -1) {
 		    futurebase.missing_non_pawn = piece;
 		} else {
-		    throw "Too many missing pieces in futurebase";
+		    throw std::runtime_error("Too many missing pieces in futurebase");
 		}
 	    }
 	}
@@ -6598,7 +6597,7 @@ void compute_extra_and_missing_pieces(tablebase_t *tb, tablebase_t &futurebase)
 	}
 
 	if (promotion == promotion_possibilities) {
-	    throw "Couldn't find futurebase's extra piece in promoted_pieces list";
+	    throw std::runtime_error("Couldn't find futurebase's extra piece in promoted_pieces list");
 	}
 
 	futurebase.promotion = promotion;
@@ -6611,13 +6610,13 @@ FuturebaseType autodetect_futurebase_type(tablebase_t & futurebase)
 	if ((futurebase.missing_pawn == -1) && (futurebase.missing_non_pawn == -1)) {
 	    return FuturebaseType::Normal;
 	} else if ((futurebase.missing_pawn != -1) && (futurebase.missing_non_pawn != -1)) {
-	    throw "unknown futurebase type";
+	    throw std::runtime_error("unknown futurebase type");
 	} else {
 	    return FuturebaseType::Capture;
 	}
     } else {
 	if (futurebase.missing_pawn == -1) {
-	    throw "unknown futurebase type";
+	    throw std::runtime_error("unknown futurebase type");
 	} else if (futurebase.missing_non_pawn == -1) {
 	    return FuturebaseType::Promotion;
 	} else {
@@ -7202,7 +7201,7 @@ translation_result global_position_to_local_position(tablebase_t *tb, global_pos
 
     try {
 	compute_extra_and_missing_pieces(tb, fake_tb);
-    } catch (const char * reason) {
+    } catch (std::runtime_error & ex) {
 	return invalid_translation;
     }
 
@@ -9194,7 +9193,7 @@ struct disk_que {
 
     value_type pop_front(void) {
 	value_type val;
-	if (empty()) throw "read past end of disk_que";
+	if (empty()) throw std::runtime_error("read past end of disk_que");
 	is->read(reinterpret_cast<char *>(&val), sizeof(value_type));
 
 	/* Back out delta encoding introduced above */
@@ -9471,7 +9470,7 @@ public:
 
 	std::unique_lock<std::mutex> self_lock(*this);
 
-	if (in_memory_queue == nullptr) throw "priority_queue: push attempted after retrieval started";
+	if (in_memory_queue == nullptr) throw std::runtime_error("priority_queue: push attempted after retrieval started");
 
 	*(tail ++) = x;
 	remaining_space --;
@@ -9645,7 +9644,7 @@ public:
     typed_proptable(proptable_format format, size_t size_in_bytes):
 	priority_queue<T>(size_in_bytes / sizeof(T)), format(format)
     {
-	if (format.bits > 8 * (int) sizeof(T)) throw "proptable format too large";
+	if (format.bits > 8 * (int) sizeof(T)) throw std::runtime_error("proptable format too large");
     }
 
     proptable_entry front() {
@@ -9745,7 +9744,7 @@ class proptable_ptr {
     /* This is here to allow disk_que's constructor to cast us to a (char *) and write us to disk */
 
     operator char *() {
-	if (i % 8 != 0) throw "can't convert bit-aligned proptable_ptr to char *";
+	if (i % 8 != 0) throw std::runtime_error("can't convert bit-aligned proptable_ptr to char *");
 	return (char *)base + i * format->bits / 8;
     }
 
@@ -9849,7 +9848,7 @@ class memory_proptable {
     format(format), size_in_entries(size_in_bytes / format.bits * 8), data(new char[size_in_bytes])
 	{
 	    /* We use a uint64_t to swap proptable entries */
-	    if (format.bits > 64) throw "proptable format too large";
+	    if (format.bits > 64) throw std::runtime_error("proptable format too large");
 	}
 
     ~memory_proptable() {
@@ -9913,7 +9912,7 @@ struct disk_que<memory_proptable> {
     }
 
     proptable_entry pop_front(void) {
-	if (empty()) throw "read past end of disk_que";
+	if (empty()) throw std::runtime_error("read past end of disk_que");
 	if (next % queue_size == 0) {
 	    is->read(buffer, queue_size * format.bits / 8);
 	}
