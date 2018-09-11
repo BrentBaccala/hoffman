@@ -4794,8 +4794,6 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     Glib::ustring format_str;
 
-    int piece, piece2;
-
     // XXX this might throw an exception
 
     parser->parse_stream(*instream);
@@ -5012,7 +5010,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 	if ((index_type == Index::Naive) || (index_type == Index::Naive2)) {
 	    symmetry = 4;
 	}
-	for (piece = 0; piece < num_pieces; piece ++) {
+	for (int piece = 0; piece < num_pieces; piece ++) {
 	    if (pieces[piece].piece_type == PieceType::Pawn) {
 		symmetry = 2;
 	    }
@@ -5054,7 +5052,7 @@ void tablebase_t::parse_XML(std::istream *instream)
     }
 
     if (symmetry >= 4) {
-	for (piece = 0; piece < num_pieces; piece ++) {
+	for (int piece = 0; piece < num_pieces; piece ++) {
 	    if (pieces[piece].piece_type == PieceType::Pawn) {
 		throw std::runtime_error("Pawns not allowed with 4/8-way symmetric indices");
 	    }
@@ -5066,7 +5064,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 	    /* See SYMMETRY AND PAWNGEN above. */
 	    throw std::runtime_error("Pawngen not allowed with symmetric indices (yet)");
 	}
-	for (piece = 0; piece < num_pieces; piece ++) {
+	for (int piece = 0; piece < num_pieces; piece ++) {
 	    if (((pieces[piece].piece_type != PieceType::Pawn) && (pieces[piece].legal_squares != ALL_ONES_BITVECTOR))
 		|| ((pieces[piece].piece_type == PieceType::Pawn) && (pieces[piece].legal_squares != LEGAL_PAWN_BITVECTOR))) {
 		throw std::runtime_error("Piece restrictions not allowed with symmetric indices (yet)");
@@ -5074,46 +5072,6 @@ void tablebase_t::parse_XML(std::istream *instream)
 	}
     }
 
-
-    /* The naive, naive2 and simple index-to-position decoding routines make no attempt to permute
-     * semilegal groups to get the pieces onto legal squares.  Therefore, we can't use them
-     * if the semilegal and legal ranges of a piece differ.
-     */
-
-    if ((index_type == Index::Naive) || (index_type == Index::Naive2) || (index_type == Index::Simple)) {
-	for (piece = 0; piece < num_pieces; piece ++) {
-	    if (pieces[piece].legal_squares != pieces[piece].semilegal_squares) {
-		throw std::runtime_error("Non-identical overlapping piece restrictions not allowed with this index type");
-	    }
-	}
-    }
-
-    if (index_type == Index::NoEnPassant) {
-	for (piece = 0; piece < num_pieces; piece ++) {
-	    int col;
-	    int row1 = (pieces[piece].color == PieceColor::White) ? 1 : 6;
-	    int row3 = (pieces[piece].color == PieceColor::White) ? 3 : 4;
-	    int row4 = (pieces[piece].color == PieceColor::White) ? 4 : 3;
-	    if (pieces[piece].piece_type != PieceType::Pawn) continue;
-	    for (col = 0; col < 8; col ++) {
-		if (pieces[piece].legal_squares
-		    & (BITVECTOR(rowcol2square(row1, col)) | BITVECTOR(rowcol2square(row3, col)))) {
-		    for (piece2 = 0; piece2 < num_pieces; piece2 ++) {
-			if (pieces[piece2].piece_type != PieceType::Pawn) continue;
-			if (pieces[piece2].color == pieces[piece].color) continue;
-			if ((col > 0)
-			    && (pieces[piece2].legal_squares & BITVECTOR(rowcol2square(row4, col-1)))) {
-			    throw std::runtime_error("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible");
-			}
-			if ((col < 7)
-			    && (pieces[piece2].legal_squares & BITVECTOR(rowcol2square(row4, col+1)))) {
-			    throw std::runtime_error("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible");
-			}
-		    }
-		}
-	    }
-	}
-    }
 
     /* Fetch any prune enable elements */
 
@@ -5492,6 +5450,46 @@ void tablebase_t::finalize_initialization(void)
 		if (ROW(reflected_white_king_square) == COL(reflected_white_king_square)) {
 		    if (ROW(reflected_black_king_square) > COL(reflected_black_king_square)) {
 			reflections[white_king_square][black_king_square] |= REFLECTION_DIAGONAL;
+		    }
+		}
+	    }
+	}
+    }
+
+    /* The naive, naive2 and simple index-to-position decoding routines make no attempt to permute
+     * semilegal groups to get the pieces onto legal squares.  Therefore, we can't use them
+     * if the semilegal and legal ranges of a piece differ.
+     */
+
+    if ((index_type == Index::Naive) || (index_type == Index::Naive2) || (index_type == Index::Simple)) {
+	for (int piece = 0; piece < num_pieces; piece ++) {
+	    if (pieces[piece].legal_squares != pieces[piece].semilegal_squares) {
+		throw std::runtime_error("Non-identical overlapping piece restrictions not allowed with this index type");
+	    }
+	}
+    }
+
+    if (index_type == Index::NoEnPassant) {
+	for (int piece = 0; piece < num_pieces; piece ++) {
+	    int col;
+	    int row1 = (pieces[piece].color == PieceColor::White) ? 1 : 6;
+	    int row3 = (pieces[piece].color == PieceColor::White) ? 3 : 4;
+	    int row4 = (pieces[piece].color == PieceColor::White) ? 4 : 3;
+	    if (pieces[piece].piece_type != PieceType::Pawn) continue;
+	    for (col = 0; col < 8; col ++) {
+		if (pieces[piece].legal_squares
+		    & (BITVECTOR(rowcol2square(row1, col)) | BITVECTOR(rowcol2square(row3, col)))) {
+		    for (int piece2 = 0; piece2 < num_pieces; piece2 ++) {
+			if (pieces[piece2].piece_type != PieceType::Pawn) continue;
+			if (pieces[piece2].color == pieces[piece].color) continue;
+			if ((col > 0)
+			    && (pieces[piece2].legal_squares & BITVECTOR(rowcol2square(row4, col-1)))) {
+			    throw std::runtime_error("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible");
+			}
+			if ((col < 7)
+			    && (pieces[piece2].legal_squares & BITVECTOR(rowcol2square(row4, col+1)))) {
+			    throw std::runtime_error("Can't use 'no-en-passant' index for a tablebase where en-passant captures are possible");
+			}
 		    }
 		}
 	    }
