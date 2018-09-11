@@ -39,54 +39,6 @@ write an XML file that specifies the analysis you want done, then feed
 it to the program.  As output, it produces a modified version of the
 XML input that includes binary tablebase data appended at the end.
 
-\section{Hoffman and Pawngen}
-
-A single Hoffman tablebase contains a fixed number and type of pieces,
-which can be placed onto different squares of the chessboard.  For
-example, a ``kqkp'' tablebase typically contains all possible chess
-positions that can be formed using a white king and queen as well as a
-black king and pawn.  It does {\it not} contain any positions that
-contain just a black king without a black pawn.  Captures, promotions,
-and movements outside of a piece's allowed squares are handled by
-consulting other tablebases, called {\it futurebases}, which must
-already exist.  It is also possible to handle such moves without
-futurebases by {\it pruning} them.
-
-Creating and managing an interlinked set of tablebase control files
-can be quite daunting.  Hoffman includes an auxiliary program called
-``pawngen'' to aid in this process.  Pawngen takes an Hoffman-format
-XML control file as input, considers all possible tablebases that can
-result, and outputs a directory full of correctly interlinked XML
-control files, ready for Hoffman, along with a UNIX standard makefile
-to construct them in the proper order.  Pawngen currently accepts only
-a subset of Hoffman's XML syntax --- no {\tt location} attributes are
-allowed on any non-pawns, and pawns must have {\tt location}
-attributes specifying a specific starting square followed by a plus
-sign.  Pawngen does understand {\tt futurebase} and {\tt prune}
-elements, and will use them to truncate its analysis and thus limit
-the number of generated control files.  Also, pawgen understands the
-{\tt pawngen-condition} attribute on {\tt prune} elements, which can
-be used to prune more selectively than otherwise possible.
-
-Put simply, pawngen considers individual pawn formations and pawn
-moves (including captures and promotions), while allowing the other
-pieces to move freely around the board.  Hoffman, on the other hand,
-can only consider one set of pieces at a time, requiring futurebases
-to handle captures and promotions.  Furthermore, for Hoffman to
-compute the complicated changes in pawn formation that can result from
-various captures would require fairly unrestricted pawn locations that
-would produce prohibitively large tablebases.
-
-\vfil\eject
-
-Unlike Hoffman, which is written in C, pawngen is a Perl script, so
-you must have Perl installed (along with its {\tt XML::LibXML} module)
-in order to use it.  Calling Hoffman in the correct order on a
-directory containing hundreds of control files is a job for ``make''.
-Both Perl and make are fairly standard on Linux and other UNIX
-variants.  On Microsoft systems, I've used the cygwin distribution
-(which includes both programs) successfully.
-
 \section{Parallel Processing with Hoffman}
 
 A Hoffman analysis can be quite compute-intensive.  The program can be
@@ -249,6 +201,14 @@ moving side is checkmated, and 1 is used for positions where the
 moving side can capture the opposing king, so an eight bit dtm field
 can record mate-in distances up to 126.  If a field size is not
 specified, it is selected automatically.
+
+{\tt <dtc bits={\it integer}/>} specifies a {\it distance to
+  conversion} metric, which is the number of moves required before
+reaching a different tablebase.  Zero is used for draws, -1 is used
+for positions where the moving side is checkmated, and 1 is used for
+positions where the moving side can capture the opposing king, so an
+eight bit dtm field can record distances up to 126.  If a field size
+is not specified, it is selected automatically.
 
 {\tt <basic/>} specifies a {\it bitbase} where two bits are used for
 each position, and no distance information is stored --- only an
@@ -496,15 +456,9 @@ the error message includes the FEN of the offending position.
 
 \subsection{pawngen doesn't support output elements in generation-controls}
 
-Pawngen automatically generates all of its filenames.  Remove the
-output element.  After generation, all of the resulting {\tt htb}
-files can be loaded together into Hoffman's probe mode.
-
-\subsection{pawngen doesn't support any pawn restrictions other than plus pawns yet}
-
-Pawn locations should be specified to pawngen using a single algebraic
-board location, followed by a plus sign to indicate that the pawn can
-move.
+The {\tt pawngen} script automatically generates all of its filenames.
+Remove the output element.  After generation, all of the resulting
+{\tt htb} files can be loaded together into Hoffman's probe mode.
 
 
 \end{document}
