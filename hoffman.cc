@@ -851,10 +851,10 @@ typedef struct global_position {
  * A 'struct format' gives the layout of such a dynamic structure.
  */
 
-enum class FormatField { DTM, Flag, Basic };
+enum class FormatField { DTM, DTC, Flag, Basic };
 
 bimap<Glib::ustring, FormatField, casefold_compare> format_fields =
-    {{"dtm", FormatField::DTM}, {"flag", FormatField::Flag}, {"basic", FormatField::Basic}};
+    {{"dtm", FormatField::DTM}, {"dtc", FormatField::DTC}, {"flag", FormatField::Flag}, {"basic", FormatField::Basic}};
 
 enum class FormatFlag { None, WhiteWins, WhiteDraws };
 
@@ -872,6 +872,8 @@ struct format {
     int bits;
     int dtm_offset;
     int dtm_bits;
+    int dtc_offset;
+    int dtc_bits;
     int flag_offset;
     FormatFlag flag_type;
     int basic_offset;
@@ -879,15 +881,15 @@ struct format {
 
 /* This is the "one-byte-dtm" format */
 
-struct format one_byte_dtm_format = {8, 0,8, -1,FormatFlag::None, -1};
-struct format dtm_format = {0, 0,0, -1,FormatFlag::None, -1};
+struct format one_byte_dtm_format = {8, 0,8, -1,0, -1,FormatFlag::None, -1};
+struct format dtm_format = {0, 0,0, -1,0, -1,FormatFlag::None, -1};
 
-/* XXX use a weird 'bits' value to distinguish pseudo-Nalimov format.  (we can't really parse
- * Nalimov format; use Nalimov's routines to do that); ditto for Syzygy tablebases.
+/* XXX use a weird 'bits' value to distinguish Nalimov and Syzygy formats, since we can't really
+ * parse these formats and use external routines to do that.
  */
 
-struct format nalimov_format = {-1, 0,8, -1,FormatFlag::None, -1};
-struct format syzygy_format = {-2, 0,0, -1,FormatFlag::None, 2};
+struct format nalimov_format = {-1, 0,8, -1,0, -1,FormatFlag::None, -1};
+struct format syzygy_format = {-2, -1,0, -1,0, -1,FormatFlag::None, 0};
 
 
 /* tablebase_t
@@ -1038,6 +1040,7 @@ public:
 
     index_t fetch_entry(index_t index);
     int get_DTM(index_t index);
+    int get_DTC(index_t index);
     bool get_flag(index_t index);
     Basic get_basic(index_t index);
 
@@ -4637,6 +4640,7 @@ bool parse_format(xmlpp::Element * formatNode, struct format * format)
     memset(format, 0, sizeof(struct format));
 
     format->dtm_offset = -1;
+    format->dtc_offset = -1;
     format->flag_offset = -1;
     format->basic_offset = -1;
 
@@ -4652,6 +4656,10 @@ bool parse_format(xmlpp::Element * formatNode, struct format * format)
 		case FormatField::DTM:
 		    format->dtm_offset = 0;
 		    format->dtm_bits = bits;
+		    break;
+		case FormatField::DTC:
+		    format->dtc_offset = 0;
+		    format->dtc_bits = bits;
 		    break;
 		case FormatField::Flag:
 		    format->flag_offset = 0;
@@ -4674,7 +4682,7 @@ bool parse_format(xmlpp::Element * formatNode, struct format * format)
 	}
     }
 
-    return (format->dtm_offset != -1) || (format->bits != 0);
+    return (format->dtm_offset != -1) || (format->dtc_offset != -1) || (format->bits != 0);
 }
 
 int factorial(int n) {
@@ -5107,14 +5115,6 @@ void tablebase_t::parse_XML(std::istream *instream)
 	}
     }
 
-    /* Do we encode side-to-move? */
-
-    if ((index_type == Index::Combinadic4) && is_color_symmetric() && (format.flag_type == FormatFlag::None)) {
-	encode_stm = false;
-    } else {
-	encode_stm = true;
-    }
-
     /* Fetch any prune enable elements */
 
     prune_enable[PieceColor::Black] = 0;
@@ -5496,6 +5496,17 @@ void tablebase_t::finalize_initialization(void)
 		}
 	    }
 	}
+    }
+
+    /* Do we encode side-to-move?
+     *
+     * is_color_symmetric() also computes color_symmetric_transpose in the piece array
+     */
+
+    if ((index_type == Index::Combinadic4) && is_color_symmetric() && (format.flag_type == FormatFlag::None)) {
+	encode_stm = false;
+    } else {
+	encode_stm = true;
     }
 
     /* Initialize the indexing functions */
@@ -6686,15 +6697,18 @@ bool preload_all_futurebases(tablebase_t *tb)
 	 *
 	 * 'dtm' futurebases can backprop into anything
 	 *
-	 * 'basic' futurebases can backprop into anything, even though the metric resulting from a
-	 * basic-to-dtm backprop won't be DTM but rather DTC (distance to conversion)
+	 * 'dtc' and 'basic' futurebases can backprop into anything but 'dtm'
 	 *
 	 * 'flag' futurebases can only backprop into a compatible 'flag' (compatible means either
 	 * the same type of flag with no color inversion, or the opposite type of flag with color
 	 * inversion)
-	 *
-	 * XXX distinguish between DTM and DTC tablebases
 	 */
+
+	if (tb->format.dtm_offset != -1) {
+	    if (futurebases[fbnum].format.dtm_offset == -1) {
+		fatal("'%s': non-DTM tablebase unusable as futurebase for DTM format\n", filename.c_str());
+	    }
+	}
 
 	if (futurebases[fbnum].format.flag_type != FormatFlag::None) {
 	    if (tb->format.flag_type == FormatFlag::None) {
@@ -6830,12 +6844,18 @@ xmlpp::Document * finalize_XML_header(tablebase_t *tb)
 
     tablebase->set_attribute("offset", "0x1000");
 
-    /* If no size field was specified for a DTM format, set it now */
+    /* If no size field was specified for DTM or DTC format, set it now */
 
     result = tablebase->find("//dtm");
 
     if (! result.empty()) {
 	exception_cast<xmlpp::Element *>(result[0])->set_attribute("bits", boost::lexical_cast<std::string>(tb->format.dtm_bits));
+    }
+
+    result = tablebase->find("//dtc");
+
+    if (! result.empty()) {
+	exception_cast<xmlpp::Element *>(result[0])->set_attribute("bits", boost::lexical_cast<std::string>(tb->format.dtc_bits));
     }
 
     /* Add a set of tablebase-statistics.  We prefer to add this before the generation-statistics,
@@ -7848,6 +7868,24 @@ int tablebase_t::get_DTM(index_t index)
     }
 }
 
+int tablebase_t::get_DTC(index_t index)
+{
+    /* XXX add some code here to probe Syzygy rtbz tablebases */
+
+    index -= fetch_entry(index);
+
+    /* Normally, we encode signed DTC fields, but single bit DTC fields are an exception, as we
+     * always wish to encode 1 (PNTM in check) since these positions should not be backproped.  So
+     * single bit fields encode unsigned as 0 and 1, instead of 0 and -1.
+     */
+
+    if (format.dtc_bits == 1) {
+	return get_unsigned_int_field(cached_entries, format.dtc_offset + index * format.bits, format.dtc_bits);
+    } else {
+	return get_int_field(cached_entries, format.dtc_offset + index * format.bits, format.dtc_bits);
+    }
+}
+
 bool tablebase_t::get_flag(index_t index)
 {
     index -= fetch_entry(index);
@@ -7926,6 +7964,10 @@ Basic tablebase_t::get_basic(index_t index)
 				       kings, queens, rooks, bishops, knights, pawns,
 				       0, 0, (pos.en_passant_square == ILLEGAL_POSITION) ? 0 : pos.en_passant_square,
 				       (pos.side_to_move == PieceColor::White));
+
+	/* XXX add a Hoffman XML option to respect the 50 move rule, then we can handle BLESSED_LOSS
+	 * and CURSED_WIN properly.
+	 */
 
 	switch (result) {
 	case TB_LOSS:
@@ -14079,6 +14121,16 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 	}
     }
 
+    if ((tb->format.dtc_offset != -1) && (tb->format.dtc_bits == 0)) {
+	tb->format.dtc_bits = dtm_bits;
+	tb->format.bits += dtm_bits;
+    } else if (tb->format.dtc_bits > 0) {
+	if (tb->format.dtc_bits < dtm_bits) {
+	    fatal("Requested DTC field size too small\n");
+	    terminate();
+	}
+    }
+
     doc = finalize_XML_header(tb);
 
     /* We want at least one zero byte after the XML header, because that's how we figure out where
@@ -14133,14 +14185,21 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 		 entriesTable[index].get_DTM(), entriesTable[index].get_movecnt());
 	}
 
-	/* Right now, there's only three possible fields in the tablebase format itself (as opposed
-	 * to the intermediate entries and proptable formats) - dtm, basic, and flag.
+	/* Right now, there's four possible fields in the tablebase format itself (as opposed to the
+	 * intermediate entries and proptable formats) - dtm, dtc, basic, and flag.
 	 */
 
 	if (tb->format.dtm_bits > 0) {
 	    set_int_field(entrybuf,
 			  tb->format.dtm_offset + ((index % 8) * tb->format.bits),
 			  tb->format.dtm_bits,
+			  entriesTable[index].get_DTM());
+	}
+
+	if (tb->format.dtc_bits > 0) {
+	    set_int_field(entrybuf,
+			  tb->format.dtc_offset + ((index % 8) * tb->format.bits),
+			  tb->format.dtc_bits,
 			  entriesTable[index].get_DTM());
 	}
 
@@ -14829,6 +14888,20 @@ public:
 		printf("%s wins in %d\n", ptm, dtm-1);
 	    } else if (dtm < 0) {
 		printf("%s wins in %d\n", pntm, pntm_offset-dtm-1);
+	    }
+
+	} else if (tb->format.dtc_bits > 0) {
+
+	    int dtm = tb->get_DTC(index);
+
+	    if (dtm == 0) {
+		printf("Draw\n");
+	    } else if (dtm == 1) {
+		printf("Illegal position (%s mated)\n", pntm);
+	    } else if (dtm > 1) {
+		printf("%s converts in %d\n", ptm, dtm-1);
+	    } else if (dtm < 0) {
+		printf("%s converts in %d\n", pntm, pntm_offset-dtm-1);
 	    }
 
 	} else if (tb->format.basic_offset != -1) {
