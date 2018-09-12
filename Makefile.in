@@ -48,7 +48,7 @@ check-%:
 	make -C test $@
 
 tarball: docs
-	tar -czh -f hoffman.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST)
+	tar -czh -f hoffman-@PACKAGE_VERSION@.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST)
 
 docs: $(hoffman_DOCS) ChangeLog
 
