@@ -191,6 +191,9 @@ extern "C" {
 
 #include "Fathom/src/tbprobe.h"
 
+std::list<boost::filesystem::path> syzygy_search_path = {"."};
+bool syzygy_library_initialized = false;
+
 /* Our DTD.  We compile it into the program because we want to validate our input against the
  * version of the DTD that the program was compiled with, not some newer version from the network.
  */
@@ -6348,9 +6351,19 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 
 	variant = Variant::Normal;
 
-	/* We use the name of the file to determine the piece configuration. */
+	/* The Syzygy query routines need a search path to find the tablebase files (you don't pass
+	 * them the filenames directly).  If there's a directory prefix to the supplied filename,
+	 * add it to the search path.
+	 */
 
 	boost::filesystem::path p{filename};
+
+	if (! p.parent_path().empty()) {
+	    syzygy_search_path.push_back(p.parent_path());
+	}
+
+	/* We use the name of the file to determine the piece configuration. */
+
 	std::string fn = p.filename().string();
 
 	int i = 0;
@@ -7880,6 +7893,41 @@ bool PNTM_in_check(const tablebase_t *tb, const local_position_t *position);
 Basic tablebase_t::get_basic(index_t index)
 {
     if (format.bits == -2) {
+
+	static std::mutex initialization_guard;
+
+	/* Initialize the Syzygy library, if needed.  We wait until this
+	 * point in the code to ensure that all of the filenames have been
+	 * parsed into the syzygy_search_path.
+	 *
+	 * XXX could move this code elsewhere and avoid the need for the mutex.
+	 */
+
+	{
+	    std::lock_guard<std::mutex> _(initialization_guard);
+
+	    if (! syzygy_library_initialized) {
+		int len = 2;
+		for (auto &path: syzygy_search_path) {
+		    len += strlen(path.c_str()) + 1;
+		}
+		char * syzygy_path = (char *) malloc(len);
+		syzygy_path[0] = '\0';
+		for (auto &path: syzygy_search_path) {
+		    strcat(syzygy_path, path.c_str());
+#ifndef _WIN32
+		    strcat(syzygy_path, ":");
+#else
+		    strcat(syzygy_path, ";");
+#endif
+		}
+
+		tb_init(syzygy_path);
+
+		syzygy_library_initialized = true;
+	    }
+	}
+
 	/* Syzygy query code is thread-safe */
 
 	local_position_t pos(this);
@@ -15333,9 +15381,6 @@ int main(int argc, char *argv[])
 #ifdef USE_NALIMOV
     init_nalimov_code();
 #endif
-
-    /* syzygy init code */
-    tb_init(".");
 
     /* Generating.
      *
