@@ -6,7 +6,15 @@ combinadic3 encoding.
 
 Allow kings and side-to-move-flag to be positioned within index. Right
 now, side to move flag is always the low bit, and kings always come
-next.
+next.  Nalimov (and probably Syzygy) put kings in high bits and
+side-to-move in separate files.  Putting kings in high bits allows
+further index compression - for each king position, you can generate
+custom tables for each piece, removing those squares where a piece to
+move could capture the adjacent enemy king (Nalimov does this).
+
+The ability to complete mimic Nalimov and Syzygy indexing would speed
+up back propagation from those tablebases, allowing sequential instead
+of random access.
 
 Allow an 'offset' field to adjust the range of the fields, i.e, allow
 DTM field to range from -10 to 5 and still fit into 4 bits.
@@ -241,28 +249,12 @@ proptables get shuffled around between the compute nodes before the
 next pass.
 
 
-- fix libcurl handling of FTP put transactions and use it exclusively
-
-I had a lot of problems using libcurl for FTP writes, so much so that
-I switched to ftplib for FTP URLs.  Since libcurl advertises FTP
-support, somebody could profitably investigate the problems and fix
-them.
-
-
-- add 'dtc' and 'dtr' formats
+- add 'dtr' format
 
 The distance to mate (dtm) metric that we use is the simplest but
 maybe not the best.  Distance to conversion (dtc) tracks (basically)
 how far until the next futurebase, and distance to rule (dtr)
-incorporates the 50-move rule into the calculation, but is tricky to
-implement - Guy Haworth has written some papers about this.
-
-Also, we shouldn't allow 'dtm' metrics to be created from 'flag' or
-'basic' futurebases... because they're not really distance-to-mates!
-Instead, let's go ahead and add a 'dtc' (distance-to-conversion)
-metric or maybe 'dtf' (distance-to-futurebase) would be a better name,
-to handle back propagation with distances from futurebases that have
-none.
+incorporates the 50-move rule into the calculation.
 
 
 - be more consistent about current tablebase being a global var
@@ -296,19 +288,6 @@ was turned off (unless there were no stalemates, like kk.htb).  In any
 event, I've got the code to group all three promotions together in
 RCS, but I've ripped it out of the main line since this extra logic
 has never been implemented.
-
-
-- ability to back prop from a Nalimov tablebase
-
-Nalimov tablebases have been precomputed for 6-piece endgames;
-currently, we've only got 5-piece endgames for Hoffman, so to leverage
-the work that's already been done and to make Hoffman fully as
-powerful as Freezer, we'd like to back prop directly from a Nalimov
-tablebase.  With a good description of the Nalimov file format (which
-I don't have), this shouldn't been difficult.  Also consider that
-Hoffman tablebases are (currently) much bigger than Nalimov
-tablebases, and fully 1TB of storage is required for a full set of
-6-piece Nalimovs.
 
 
 - more sophisticated futurebase handling
@@ -387,37 +366,6 @@ then be automatic depending on how much RAM is available.  It should
 be possible to change these settings while the program is running.
 Once the analysis proper starts, you should be able to halt or pause
 it, as well as iconize it while it continues to run.
-
-
-- improve pawn handling
-
-Finalgen does a far better job of handling pawns than hoffman.
-Simplest way is to generate a B-tree with all possible pawn structures
-starting from a given pawn structure (need 12 bytes to store two
-56-bit masks, one for white pawns, one for black), sort it according
-to how many pawns are on each rank, number it, and use it as part of
-an indexing scheme.  We have to keep the tree in memory to use during
-position/index calculations.  Various parts of the tablebase can be
-processed independently of the others (i.e, all positions with one
-pawn, then all positions with two pawns, etc).
-
-Could reduce the size of such pawn structures with an option to limit
-how many pieces the pawns are allowed to capture.  For example,
-consider generating a tablebase with a black rook and knight.  First
-we gen a futurebase with no black pieces, and two piece captures
-allowed.  Then gen two tablebases, one rook, one knight, with one
-piece capture allowed.  Finally gen the target tablebase with both
-rook and knight and no piece captures allowed.
-
-Pawngen needs to be more sophisticated.  Needs to handle restricted
-pieces; this would let us do the fortress example with a single
-control file.  Needs to apply pruning statements selectively in
-different situations (there's already some code in it to do this using
-Perl expressions).
-
-Pawngen should check for conflicting prune statements, so we don't
-have to wait until we get into a hoffman run before we find out about
-them.
 
 
 - 'freeze' pruning type
