@@ -1,0 +1,14 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Created by genctlfile.pl -->
+<!-- Modified by hand to use Syzygy instead of Hoffman futurebase -->
+
+<tablebase>
+   <dtc/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="queen"/>
+   <piece color="black" type="queen"/>
+   <futurebase filename="../KQvK.rtbw"/>
+   <output filename="kqkq_syzygy.htb"/>
+</tablebase>
