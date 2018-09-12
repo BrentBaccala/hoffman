@@ -18,8 +18,9 @@ hoffman_SCRIPTS = pawngen genctlfile.pl hoffman.nsi md5htb cgi-bin/*
 hoffman_DOCS = README COPYING ChangeLog TODO tutorial.pdf reference.pdf
 hoffman_DOCSRC = tutorial.tex reference.tex
 hoffman_XMLS = xml/*.xml
+Fathom_SRCS = Fathom/LICENSE Fathom/README.md Fathom/src/*.[ch]
 
-hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPTS) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS) $(hoffman_TESTS)
+hoffman_DIST = $(configure_SRCS) $(hoffman_SRCS) $(hoffman_DTD) $(hoffman_SCRIPTS) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS) $(hoffman_TESTS) $(Fathom_SRCS)
 
 hoffman: $(hoffman_OBJS)
 	@LINKER@ $(CXXFLAGS) @BOOST_LDFLAGS@ -o hoffman $^ -lboost_iostreams -lboost_filesystem -lboost_system @LIBS@ @libxml_LIBS@
