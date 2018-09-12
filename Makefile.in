@@ -11,7 +11,7 @@ syzygy_OBJS = Fathom/src/tbprobe.o
 hoffman_OBJS = hoffman.o @NALIMOVOBJS@ $(syzygy_OBJS)
 
 configure_SRCS = configure configure.ac Makefile.in config.h.in config.guess config.sub install-sh
-hoffman_SRCS = hoffman.cc probe.c egtb.cpp lock.h tbdecode.h bitlib.h
+hoffman_SRCS = hoffman.cc probe.c egtb.cpp lock.h tbdecode.h bitlib.h version.h
 hoffman_DTD = tablebase.dtd
 hoffman_TESTS = test/Makefile.in PROBES-FAST PROBES-SLOW
 hoffman_SCRIPTS = pawngen genctlfile.pl hoffman.nsi md5htb cgi-bin/*
