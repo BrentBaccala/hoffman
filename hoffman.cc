@@ -6353,29 +6353,15 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	boost::filesystem::path p{filename};
 	std::string fn = p.filename().string();
 
-	boost::algorithm::to_lower(fn);
-	boost::algorithm::erase_all(fn, "v");
+	int i = 0;
 
-	try {
-	    /* XXX Just parse the names.  Don't need min/max dtms for bitbases. */
-	    std::string fn_base = fn.substr(0, fn.find('.'));
-	    auto dtm = dtms.at(fn_base);
-	    max_dtm = dtm.max_dtm;
-	    min_dtm = dtm.min_dtm;
-	} catch (std::out_of_range ex) {
-	    fatal("Illegally named Syzygy tablebase: %s\n", filename.c_str());
-	    return;
-	}
-
-	int i=1;
-
-	while (fn[i] != 'k') {
+	while (fn[i] != 'v') {
 	    struct piece new_piece(PieceColor::White, piece_char[fn[i]]);
 	    pieces.push_back(new_piece);
 	    i ++;
 	}
 
-	num_pieces_by_color[PieceColor::White] = i + 1;
+	num_pieces_by_color[PieceColor::White] = i;
 
 	i ++;
 
@@ -6385,14 +6371,14 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	    i ++;
 	}
 
-	num_pieces = i;
+	num_pieces = i - 1;
 	num_pieces_by_color[PieceColor::Black] = num_pieces - num_pieces_by_color[PieceColor::White];
 
 	pieces.emplace_back(PieceColor::White, PieceType::King);
 	pieces.emplace_back(PieceColor::Black, PieceType::King);
 
-	white_king = i-2;
-	black_king = i-1;
+	white_king = 0;
+	black_king = num_pieces_by_color[PieceColor::White];
 
 	index_type = Index::Combinadic4;
 
