@@ -864,10 +864,11 @@ enum class FormatFlag { None, WhiteWins, WhiteDraws };
 bimap<Glib::ustring, FormatFlag, casefold_compare> format_flag_types =
     {{"white-wins", FormatFlag::WhiteWins}, {"white-draws", FormatFlag::WhiteDraws}};
 
-enum class Basic { Draw=0, PTMwins = 1, PNTMwins = 2, Illegal = 3};
+enum class Basic { Draw=0, PTMwins = 1, PNTMwins = 2, Illegal = 3, Unknown = 4};
 
 std::map<Basic, const char *> basic_meaning =
-    {{Basic::Draw, "draw"}, {Basic::PTMwins, "PTM wins"}, {Basic::PNTMwins, "PNTM wins"}, {Basic::Illegal, "illegal"}};
+    {{Basic::Draw, "draw"}, {Basic::PTMwins, "PTM wins"}, {Basic::PNTMwins, "PNTM wins"},
+     {Basic::Illegal, "illegal"}, {Basic::Unknown, "unknown"}};
 
 #define MAX_FORMAT_BYTES 16
 
@@ -2505,6 +2506,10 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
  * futuremove, then it'd better lead to a legal position, because we'll never backprop from an
  * illegal one, and that would imbalance the forward and reverse move counting.  For speed purposes,
  * the move counting code currently does not actually check positions to see if they are illegal.
+ *
+ * This differs from the standard chess concept of an illegal position.  For one thing, the
+ * index_to_local_position() routines don't check for the king being in check, so a position
+ * where the king can be immediately captured is not reported as illegal.
  *
  * En passant.  This is another case where subtle concepts of "legality" show up.  When we back
  * propagate a local position from either a futurebase or intratable, we generate en passant
@@ -8010,7 +8015,7 @@ Basic tablebase_t::get_basic(index_t index)
 	case TB_WIN:
 	    return Basic::PTMwins;
 	case TB_RESULT_FAILED:
-	    throw std::runtime_error("Syzygy base says TB_RESULT_FAILED");
+	    return Basic::Unknown;
 	default:
 	    throw std::runtime_error("Syzygy base returns unknown result code");
 	}
@@ -10398,8 +10403,10 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 	    commit_update(current_index, -2, movecnt, futuremove);
 	} else if (basic == Basic::PNTMwins) {
 	    commit_update(current_index, 2, movecnt, futuremove);
-	} else {
+	} else if (basic == Basic::Illegal) {
 	    /* basic == 3: illegal position, PNTM in check, no backprop */
+	} else {
+	    throw std::runtime_error("Basic::Unknown in backprop");
 	}
 
     } else {
@@ -14943,8 +14950,12 @@ public:
 		printf("%s wins\n", ptm);
 	    } else if (basic == Basic::PNTMwins) {
 		printf("%s wins\n", pntm);
-	    } else {
+	    } else if (basic == Basic::Draw) {
 		printf("Draw\n");
+	    } else if (basic == Basic::Illegal) {
+		printf("Illegal\n");
+	    } else {
+		printf("NO SCORE AVAILABLE\n");
 	    }
 
 	} else if (tb->format.flag_type != FormatFlag::None) {
