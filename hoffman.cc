@@ -15205,6 +15205,11 @@ void usage(char *program_name)
     fprintf(stderr, "   -q                    quiet mode; suppress informational messages\n");
     fprintf(stderr, "   --compress-files      compress intermediate files in proptable mode\n");
     fprintf(stderr, "\n");
+    fprintf(stderr, "Additional GENERATING-OPTIONS for debugging are:\n");
+    fprintf(stderr, "   -d INDEX              trace calculation of specified tablebase index\n");
+    fprintf(stderr, "                         if INDEX is negative; trace this index in futurebases\n");
+    fprintf(stderr, "   -v                    verify internal consistency of tablebase when finished\n");
+    fprintf(stderr, "\n");
     fprintf(stderr, "Other options:\n");
 #ifdef USE_NALIMOV
     fprintf(stderr, "   -n NALIMOV-PATH       sets path to find Nalimov tablebases\n");
