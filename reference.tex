@@ -266,8 +266,12 @@ interlinked control files with the required attributes added.
 
 One or more futurebases may be specified with this element.  A {\tt
   filename} must be specified to locate a futurebase, which must be
-another Hoffman tablebase.  It must be related to the current
-tablebase in one of the following ways:
+another tablebase, in either Hoffman, Nalimov, or Syzygy format.  The
+path to a Nalimov tablebase is ignored; it must be in the directory
+specified on the command line using the {\tt -N} option.
+
+The futurebase must be related to the current tablebase in one of the
+following ways:
 
 \begin{description}
 \item It has exactly the same piece configuration as the
