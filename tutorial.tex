@@ -573,12 +573,193 @@ Here's another example, also from the Freezer website:
 \fenboard{8/6k1/6p1/8/q7/4R3/5PK1/8 w - - 0 1}
 \showboard
 
-It's a fortress.  We're White, and we're out to show that we can draw
-this position.  My Hoffman analysis is in the ``{\tt fortress*.xml}''
-files in the {\tt xml} directory.  You need to have several of
-the four-piece tablebases built in order to process them.  I'm not
-going to copy them all into this document; I'll just ask you to study
-them on your own while I point out some salient features.
+It's a fortress.  We're playing White, and we're out to show that we
+can draw this position.  There are several ways to approach this
+problem.  First, it's a six piece ending, and all six piece endings
+have been completely analyzed, so we can simply download a
+pre-computed tablebase and input this position.
+
+Let's use a Syzygy tablebase that gives win-draw-loss information
+without any distance metrics (sometimes called a {\it bitbase}).  I
+downloaded {\tt KQPvKRP.rtbw} (440 MB)\footnote{from
+  \tt{http://tablebase.sesse.net/}}, loaded it into Hoffman, and
+probed the problem FEN:
+
+\begin{verbatim}
+baccala@ideapad-S510p:~/src/hoffman$ ./hoffman -p ./KQPvKRP.rtbw
+Hoffman Version 1030
+Loading './KQPvKRP.rtbw'
+Index or FEN? 8/6k1/6p1/8/q7/4R3/5PK1/8 w
+Index 38660992097 (./KQPvKRP.rtbw)
+Draw
+   Pf2f3    (33581942176) Black wins
+   Pf2f4    (27656383936) NO SCORE AVAILABLE
+   Kg2h2    (38660992094) Draw
+   Kg2g3    (38646883608) Draw
+   Kg2g1    (39507500432) Draw
+   Kg2f3    (38646883610) Black wins
+   Kg2h3    (38646883606) Draw
+   Kg2f1    (39507500434) Draw
+   Kg2h1    (39507500430) Draw
+   Re3f3    (38646883624) Black wins
+   Re3g3    (38632775152) Draw
+   Re3h3    (38618666680) Draw
+   Re3d3    (38675100568) Black wins
+   Re3c3    (38689209040) Black wins
+   Re3b3    (38703317512) NO SCORE AVAILABLE
+   Re3a3    (38717425984) NO SCORE AVAILABLE
+   Re3e4    (38562232792) NO SCORE AVAILABLE
+   Re3e5    (38449365016) Black wins
+   Re3e6    (38336497240) Black wins
+   Re3e7    (38237737936) Draw
+   Re3e8    (38138978632) NO SCORE AVAILABLE
+   Re3e2    (39606259720) Black wins
+   Re3e1    (39719127496) Draw
+8 | . . . . . . . .
+7 | . . . . . . k .
+6 | . . . . . . p .
+5 | . . . . . . . .
+4 | q . . . . . . .
+3 | . . . . R . . .
+2 | . . . . . P K .
+1 | . . . . . . . .
+  +----------------
+    a b c d e f g h
+FEN 8/6k1/6p1/8/q7/4R3/5PK1/8 w - -
+Index, FEN or move?
+\end{verbatim}
+
+The Syzygy tablebase confirms that this position is a draw, but notice
+that some of the moves are labeled ``NO SCORE AVAILABLE''.  This is a
+peculiar feature of Syzygy tablebases, which achieve a high
+compression rate by discarding information.  You need to download
+the {\tt KQPvKR.rtbw} (2.0 MB) and {\tt KQPvKP.rtbw} (2.4 MB)
+tablebases to get a complete result.  Load all three tablebases
+into Hoffman to see the complete result:
+
+\begin{verbatim}
+baccala@ideapad-S510p:~/src/hoffman$ ./hoffman -p ./KQPvKRP.rtbw ./KQPvKR.rtbw ./KQPvKP.rtbw
+Hoffman Version 1030
+Loading './KQPvKRP.rtbw'
+Loading './KQPvKR.rtbw'
+Loading './KQPvKP.rtbw'
+Index or FEN? 8/6k1/6p1/8/q7/4R3/5PK1/8 w
+Index 38660992097 (./KQPvKRP.rtbw)
+Draw
+   Pf2f3    (33581942176) Black wins
+   Pf2f4    (27656383936) Black wins
+   Kg2h2    (38660992094) Draw
+   Kg2g3    (38646883608) Draw
+   Kg2g1    (39507500432) Draw
+   Kg2f3    (38646883610) Black wins
+   Kg2h3    (38646883606) Draw
+   Kg2f1    (39507500434) Draw
+   Kg2h1    (39507500430) Draw
+   Re3f3    (38646883624) Black wins
+   Re3g3    (38632775152) Draw
+   Re3h3    (38618666680) Draw
+   Re3d3    (38675100568) Black wins
+   Re3c3    (38689209040) Black wins
+   Re3b3    (38703317512) Black wins
+   Re3a3    (38717425984) Black wins
+   Re3e4    (38562232792) Black wins
+   Re3e5    (38449365016) Black wins
+   Re3e6    (38336497240) Black wins
+   Re3e7    (38237737936) Draw
+   Re3e8    (38138978632) Black wins
+   Re3e2    (39606259720) Black wins
+   Re3e1    (39719127496) Draw
+8 | . . . . . . . .
+7 | . . . . . . k .
+6 | . . . . . . p .
+5 | . . . . . . . .
+4 | q . . . . . . .
+3 | . . . . R . . .
+2 | . . . . . P K .
+1 | . . . . . . . .
+  +----------------
+    a b c d e f g h
+FEN 8/6k1/6p1/8/q7/4R3/5PK1/8 w - -
+Index, FEN or move?
+\end{verbatim}
+
+Another possibility to use Nalimov tablebases.  They are much larger
+(all of the {\tt kqpkrp} files total 8.9 GB), but will give
+distance-to-mate information.  Loading them into Hoffman, we obtain
+the same overall result (that the position is a draw), but with
+more detailed information about the possible losing moves:
+
+\begin{verbatim}
+baccala@ideapad-S510p:~/src/hoffman$ ./hoffman -p kqpkrp.0.nbb.emd
+Hoffman Version 1030
+6 piece Nalimov tablebases found
+Loading 'kqpkrp.0.nbb.emd'
+Index or FEN? 8/6k1/6p1/8/q7/4R3/5PK1/8 w
+Index 43039462109 (kqpkrp.0.nbb.emd)
+Draw
+
+Nalimov score: DRAW
+   Pf2f3    (36718866652) Black wins in 27
+   Pf2f4    (30398271196) Black wins in 19
+   Kg2h2    (43039462106) Draw
+   Kg2g3    (43039462092) Draw
+   Kg2g1    (43039462124) Draw
+   Kg2f3    (43039462094) Black wins in 30
+   Kg2h3    (43039462090) Draw
+   Kg2f1    (43039462126) Draw
+   Kg2h1    (43039462122) Draw
+   Re3f3    (43024898524) Black wins in 30
+   Re3g3    (43010334940) Draw
+   Re3h3    (42995771356) Draw
+   Re3d3    (43054025692) Black wins in 28
+   Re3c3    (43068589276) Black wins in 30
+   Re3b3    (43083152860) Black wins in 8
+   Re3a3    (43097716444) Black wins in 9
+   Re3e4    (42937517020) Black wins in 7
+   Re3e5    (42821008348) Black wins in 30
+   Re3e6    (42704499676) Black wins in 9
+   Re3e7    (42602554588) Draw
+   Re3e8    (42486045916) Black wins in 8
+   Re3e2    (44058912988) Black wins in 29
+   Re3e1    (44175421660) Draw
+8 | . . . . . . . .
+7 | . . . . . . k .
+6 | . . . . . . p .
+5 | . . . . . . . .
+4 | q . . . . . . .
+3 | . . . . R . . .
+2 | . . . . . P K .
+1 | . . . . . . . .
+  +----------------
+    a b c d e f g h
+FEN 8/6k1/6p1/8/q7/4R3/5PK1/8 w - -
+Index, FEN or move?
+\end{verbatim}
+
+Hoffman can build six piece tablebases, just like Nalimov or Syzygy
+tablebases, but with several major caveats.  First, Hoffman is
+significantly slower than its competitors.  I ran a timed analysis to
+generate a full set of five piece tablebases.  Roland de Man's Syzygy
+program took two hours and eighteen minutes, while Hoffman required
+over two and a half {\it days}.  Also, Nalimov and especially Syzygy
+tablebases are far more compact than their Hoffman counterparts.
+Finally, Nalimov (up to six piece) and Syzygy (up to seven piece)
+tablebases have been precomputed and available for download.  Thus,
+for problems with seven pieces or fewer, there's really no reason to
+compute your own tablebases -- just download what you need from the
+Internet.
+
+It's also possible to analyze this position by building a restricted
+tablebase that curtails the movements of the black pieces and thus
+reduces the complexity of the problem.  For a six piece problem,
+there's really no reason to do this except as an illustration of how
+the technique can be used for more complex problems.
+
+My restricted Hoffman analysis is in the ``{\tt
+  fortress*.xml}'' files in the {\tt xml} directory.  You need to have
+several of the four-piece tablebases built in order to process them.
+I'm not going to copy them all into this document; I'll just ask you
+to study them on your own while I point out some salient features.
 
 Notice how {\tt futurebase} and {\tt prune} elements can be used
 together in a single configuration file (in case you were wondering).
@@ -591,8 +772,8 @@ The {\tt pawngen} element provides a different way of handling pawns
 arise from a given start.
 
 The next example is position 67 from Reuben Fine's book ``Basic Chess
-Endings''.  There are too many pieces in play for Nalimov (eight), and
-the pawn captures are too complicated for Freezer.
+ndings''.  There are too many pieces in play (eight) for Nalimov or
+Syzygy, and the pawn captures are too complicated for Freezer.
 
 \fenboard{8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8 w - - 0 1}
 \showboard
@@ -636,7 +817,7 @@ directly produces an error message:
 C> ./hoffman -o fine67.htb -g fine67.xml
 Hoffman $Revision: 1.15 $ $Locker: baccala $
 terminate called after throwing an instance of 'xmlpp::validity_error'
-  what():  
+  what():
 Validity error:
 Element pawngen does not carry attribute black-pawns-required
 Element pawngen does not carry attribute white-pawns-required
@@ -687,7 +868,7 @@ White wins in 27
    Kf5g6    (1081627) Black wins in 22
    Kf5g4    (1079831) Black wins in 24
 FEN 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8 w - -
-Index, FEN or move? 
+Index, FEN or move?
 \end{verbatim}
 
 This analysis confirms Fine's analysis that b4 is White's only winning
