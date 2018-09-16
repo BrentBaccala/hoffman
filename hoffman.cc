@@ -2196,6 +2196,20 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 	index ++;
     }
 
+#if DEBUG
+    fprintf(stderr, "%" PRIx64 " %" PRIx64 "\n", legal_white_squares, legal_black_squares);
+#endif
+
+    for (int i=0; i < white_pawns_required; i++) {
+	pieces.push_back(piece(PieceColor::White, PieceType::Pawn, legal_white_squares));
+	num_pieces ++;
+    }
+
+    for (int i=0; i < black_pawns_required; i++) {
+	pieces.push_back(piece(PieceColor::Black, PieceType::Pawn, legal_black_squares));
+	num_pieces ++;
+    }
+
     /* Figure which pawn positions arise from moving each pawn one step backwards, and save the
      * corresponding change in index in delta_pawngen_index.
      */
@@ -2226,20 +2240,6 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
     }
 
     std::sort(pawngen->pawn_positions_by_position.begin(), pawngen->pawn_positions_by_position.end(), pawn_position_fast_compare);
-
-#if DEBUG
-    fprintf(stderr, "%" PRIx64 " %" PRIx64 "\n", legal_white_squares, legal_black_squares);
-#endif
-
-    for (int i=0; i < white_pawns_required; i++) {
-	pieces.push_back(piece(PieceColor::White, PieceType::Pawn, legal_white_squares));
-	num_pieces ++;
-    }
-
-    for (int i=0; i < black_pawns_required; i++) {
-	pieces.push_back(piece(PieceColor::Black, PieceType::Pawn, legal_black_squares));
-	num_pieces ++;
-    }
 
     valid_pawn_positions.clear();
     invalid_pawn_positions.clear();
