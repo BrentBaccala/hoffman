@@ -6410,6 +6410,9 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	    }
 	}
 
+	max_dtm = 0;
+	min_dtm = 0;
+
 	stalemate_prune_type = RESTRICTION_NONE;
 
 	prune_enable[PieceColor::Black] = 0;
