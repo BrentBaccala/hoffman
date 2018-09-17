@@ -191,7 +191,7 @@ extern "C" {
 
 #include "Fathom/src/tbprobe.h"
 
-std::list<boost::filesystem::path> syzygy_search_path = {"."};
+std::set<std::string> syzygy_search_path;
 bool syzygy_library_initialized = false;
 
 /* Our DTD.  We compile it into the program because we want to validate our input against the
@@ -6364,7 +6364,7 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	boost::filesystem::path p{filename};
 
 	if (! p.parent_path().empty()) {
-	    syzygy_search_path.push_back(p.parent_path());
+	    syzygy_search_path.insert(p.parent_path().string());
 	}
 
 	/* We use the name of the file to determine the piece configuration. */
@@ -7915,22 +7915,13 @@ Basic tablebase_t::get_basic(index_t index)
 	    std::lock_guard<std::mutex> _(initialization_guard);
 
 	    if (! syzygy_library_initialized) {
-		int len = 2;
-		for (auto &path: syzygy_search_path) {
-		    len += strlen(path.c_str()) + 1;
-		}
-		char * syzygy_path = (char *) malloc(len);
-		syzygy_path[0] = '\0';
-		for (auto &path: syzygy_search_path) {
-		    strcat(syzygy_path, path.c_str());
 #ifndef _WIN32
-		    strcat(syzygy_path, ":");
+		std::string syzygy_path = boost::algorithm::join(syzygy_search_path, ":");
 #else
-		    strcat(syzygy_path, ";");
+		std::string syzygy_path = boost::algorithm::join(syzygy_search_path, ";");
 #endif
-		}
 
-		tb_init(syzygy_path);
+		tb_init(syzygy_path.c_str());
 
 		syzygy_library_initialized = true;
 	    }
