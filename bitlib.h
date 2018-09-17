@@ -57,7 +57,7 @@ typedef uint64_t bitoffset;
 
 #define CREATE_UNSIGNED_FIELD_FUNCTIONS(TYPE, TYPE_WITH_UNDERSCORES)					\
 													\
-inline TYPE get_ ## TYPE_WITH_UNDERSCORES ## _field(const void * ptr, bitoffset offset, int size)	\
+inline TYPE get_ ## TYPE_WITH_UNDERSCORES ## _field(const void * ptr, bitoffset offset, uint size)	\
 {													\
     TYPE * iptr;											\
     TYPE val;												\
@@ -82,7 +82,9 @@ inline TYPE get_ ## TYPE_WITH_UNDERSCORES ## _field(const void * ptr, bitoffset 
     val = (*iptr >> offset);										\
     /* 	| (*(iptr+1) << (8*sizeof(unsigned int) - offset)); */						\
 													\
-    if (offset != 0) val |= (*(iptr+1) << (8*sizeof(TYPE) - offset));					\
+    if ((offset != 0) && (8*sizeof(TYPE) - offset < size)) {						\
+        val |= (*(iptr+1) << (8*sizeof(TYPE) - offset));						\
+    }													\
 													\
     /* XXX maybe this would be faster if we made it unconditional */					\
     /*													\
@@ -96,7 +98,7 @@ inline TYPE get_ ## TYPE_WITH_UNDERSCORES ## _field(const void * ptr, bitoffset 
     else return val & (((TYPE)1 << size)-1);								\
 }													\
 													\
-inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset, int size, TYPE val)	\
+inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset, uint size, TYPE val)	\
 {													\
     TYPE * iptr;											\
 													\
@@ -141,7 +143,7 @@ inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset,
 
 #define CREATE_SIGNED_FIELD_FUNCTIONS(TYPE, TYPE_WITH_UNDERSCORES)					\
 													\
-inline TYPE get_ ## TYPE ## _field(void * ptr, bitoffset offset, int size)				\
+inline TYPE get_ ## TYPE ## _field(void * ptr, bitoffset offset, uint size)				\
 {													\
     unsigned TYPE val = get_unsigned_ ## TYPE_WITH_UNDERSCORES ## _field(ptr, offset, size);		\
     unsigned TYPE mask = (size == 8*sizeof(TYPE)) ? (TYPE)(-1) : (((TYPE)1 << size)-1); 		\
@@ -152,7 +154,7 @@ inline TYPE get_ ## TYPE ## _field(void * ptr, bitoffset offset, int size)				\
     return (TYPE) val;											\
 }													\
 													\
-inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset, int size, TYPE val)	\
+inline void set_ ## TYPE_WITH_UNDERSCORES ## _field(void *ptr, bitoffset offset, uint size, TYPE val)	\
 {													\
     set_unsigned_ ## TYPE_WITH_UNDERSCORES ## _field(ptr, offset, size, (unsigned TYPE) val);		\
 }
