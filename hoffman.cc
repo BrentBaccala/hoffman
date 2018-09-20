@@ -8040,6 +8040,8 @@ int movecnt_offset;
 uint8_t movecnt_bits;
 uint movecnt_bitmask;
 
+uint unused_bits;
+
 int capture_possible_flag_offset;
 const uint capture_possible_flag_bitmask = 1;
 
@@ -8240,23 +8242,12 @@ class EntriesTable {
 
     void ComputeBitfields(void) {
 
-	/* We've already preloaded our futurebases, so min_tracked_dtm and max_tracked_dtm tell us
-	 * the minumum and maximum DTMs we'll need during futurebase backprop.  Make sure we've got
-	 * enough room in our DTM field to handle anything from our futurebases, then we'll expand
-	 * the field later if we need more space.
-	 */
+	bits = 8 * sizeof(entry_t);
 
-	if (tracking_dtm) {
-	    for (dtm_bits = 1; (max_tracked_dtm > (1 << (dtm_bits - 1)) - 1)
-		     || (min_tracked_dtm < -(1 << (dtm_bits - 1))); dtm_bits ++);
-	} else {
-	    dtm_bits = 0;
-	}
+	/* Compute the moves available to each side and use this to size the movecnt field */
 
 	unsigned int max_white_moves = 0;
 	unsigned int max_black_moves = 0;
-
-	/* Compute the moves available to each side and use this to size the movecnt field */
 
 	for (int piece = 0; piece < current_tb->num_pieces; piece ++) {
 	    unsigned int *max_moves = (current_tb->pieces[piece].color == PieceColor::White) ? &max_white_moves : &max_black_moves;
@@ -8301,20 +8292,43 @@ class EntriesTable {
 	    movecnt_offset = 1;
 	}
 
-	/* The DTM field is deliberately last */
+	/* The DTM field is deliberately last, as it uses the remaining bits in entry_t
+	 *
+	 * We've already preloaded our futurebases, so min_tracked_dtm and max_tracked_dtm tell us
+	 * the minumum and maximum DTMs we'll need during futurebase backprop.  Make sure we've got
+	 * enough room in our DTM field to handle anything from our futurebases.
+	 */
 
-	dtm_offset = movecnt_offset + movecnt_bits;
+	if (tracking_dtm) {
+	    for (dtm_bits = 1; (max_tracked_dtm > (1 << (dtm_bits - 1)) - 1)
+		     || (min_tracked_dtm < -(1 << (dtm_bits - 1))); dtm_bits ++);
 
-	bits = 8 * sizeof(entry_t);
-	dtm_bits = bits - dtm_offset;
+	    if (dtm_bits > bits - dtm_offset) {
+		fatal("DTM field size inadequate for DTMs from futurebase\n");
+		terminate();
+	    }
 
-	dtm_bitmask = (1 << dtm_bits) - 1;
+	    dtm_offset = movecnt_offset + movecnt_bits;
+
+	    dtm_bits = bits - dtm_offset;
+
+	    dtm_bitmask = (1 << dtm_bits) - 1;
+
+	    unused_bits = 0;
+	} else {
+	    dtm_offset = -1;
+	    dtm_bits = 0;
+	    dtm_bitmask = 0;
+	    unused_bits = bits - (movecnt_offset + movecnt_bits);
+	}
+
     }
 
     void print_current_format(void) {
 	info("%d bits movecnt", movecnt_bits);
 	if (dtm_bits > 0) info("; %d bits dtm", dtm_bits);
 	if (capture_possible_flag_offset != -1) info("; capture possible flag");
+	if (unused_bits > 0) info("; %d bits unused", unused_bits);
 	info("\n");
     }
 
@@ -8356,6 +8370,10 @@ class EntriesTable {
 
     /* This function is virtual so that subclasses can do a better job of handling a DTM overflow.
      * We only use it at the beginning of a pass.
+     *
+     * XXX It's virtual, but right now is not overloaded.  We could expand entry_t if we need more
+     * space, but right now we just use a fixed size entry_t and give a fatal error if the field
+     * size is exceeded.
      */
 
     virtual void verify_DTM_field_size(int dtm) {
