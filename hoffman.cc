@@ -496,7 +496,7 @@ std::vector<uint64_t> backproped_moves;
  * wins are equivalent.
  */
 
-bool tracking_dtm = true;   // XXX should clear this variable if we're generating a bitbase
+bool tracking_dtm = true;
 int min_tracked_dtm = -2;
 int max_tracked_dtm = 2;
 bool * positive_passes_needed = nullptr;
@@ -8961,7 +8961,7 @@ void back_propagate_index(index_t index, int target_dtm)
     nonatomic_entry expected = entriesTable[index];
 
     if (((! tracking_dtm) && expected.is_unpropagated())
-	|| (expected.get_DTM() == target_dtm)) {
+	|| (tracking_dtm && (expected.get_DTM() == target_dtm))) {
 
 	/* What could another processor change?  Well, it's not going to flip the propagated flag,
 	 * because next_backprop_index (below) is atomic, so it's not going to attempt a back prop.
@@ -14318,6 +14318,10 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
     /* Need this no matter what.  I want to replace it with a global static tablebase for everything. */
     current_tb = tb;
     info("Total indices: %" PRIindex "\n", tb->num_indices);
+
+    if ((tb->format.dtm_offset == -1) && (tb->format.dtc_offset == -1)) {
+	tracking_dtm = false;
+    }
 
     /* Figure out where we want to write the finished product. */
 
