@@ -8064,6 +8064,15 @@ const uint capture_possible_flag_bitmask = 1;
 
 template <typename T, bool isAtomic> class entry;
 
+/* entry_t completely dominates the memory footprint of a large tablebase calculation, so we'd like
+ * it to be as small as possible.  The choices are basically uint8_t (most bitbase calculations,
+ * since we don't need to track distances) or uint16_t (most non-bitbase calculations).
+ *
+ * I sometimes change this type to uint8_t and recompile hoffman for large bitbase calculations.
+ *
+ * XXX automatically select uint8_t or uint16_t, probably using templates
+ */
+
 typedef uint16_t entry_t;
 
 typedef entry<std::atomic<entry_t>, true> atomic_entry;
