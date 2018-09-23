@@ -8043,7 +8043,7 @@ uint movecnt_bitmask;
 uint unused_bits;
 
 int capture_possible_flag_offset;
-const uint capture_possible_flag_bitmask = 1;
+uint capture_possible_flag_bitmask;
 
 #define MOVECNT_MASK ((1U << movecnt_bits) - 1)
 
@@ -8071,6 +8071,8 @@ template <typename T, bool isAtomic> class entry;
  * I sometimes change this type to uint8_t and recompile hoffman for large bitbase calculations.
  *
  * XXX automatically select uint8_t or uint16_t, probably using templates
+ *
+ * XXX allow packed bitfields to minimize memory footprint
  */
 
 typedef uint16_t entry_t;
@@ -8091,9 +8093,12 @@ public:
     entry(entry_t e = 0): e(e) {
     }
 
-    entry(unsigned int movecnt, int dtm): entry(0) {
+    entry(unsigned int movecnt, int dtm, bool capture_possible = false): entry(0) {
 	set_movecnt(movecnt);
 	set_raw_DTM(dtm);
+	if (capture_possible) {
+	    e |= capture_possible_flag_bitmask;
+	}
     }
 
     /* atomic_entry can be implicitly converted to nonatomic_entry (when we read the array), and a
@@ -8102,7 +8107,7 @@ public:
      */
 
     template <bool A=isAtomic, typename = typename std::enable_if<A>::type>
-    operator nonatomic_entry () { return nonatomic_entry(e); }
+    operator nonatomic_entry () const { return nonatomic_entry(e); }
 
     template <bool A=isAtomic, typename = typename std::enable_if<A>::type>
     atomic_entry & operator=(const nonatomic_entry &val) {
@@ -8117,7 +8122,7 @@ public:
 
     /* Bitfields can be accessed for both types.  Atomic access requires a bit more work, though. */
 
-    unsigned int get_unsigned_bitfield(int offset, int bitmask) {
+    unsigned int get_unsigned_bitfield(int offset, int bitmask) const {
 	return (e >> offset) & bitmask;
     }
 
@@ -8141,7 +8146,7 @@ public:
 
     /* Signed bitfields need to be sign-extended when we read from them. */
 
-    int get_signed_bitfield(int offset, int bitmask) {
+    int get_signed_bitfield(int offset, int bitmask) const {
 	int val = (e >> offset) & bitmask;
 	if (val > (bitmask >> 1)) val |= (~ (bitmask >> 1));
 	return val;
@@ -8157,7 +8162,7 @@ public:
 	set_signed_bitfield(dtm_offset, dtm_bitmask, dtm);
     }
 
-    int get_raw_DTM(void) {
+    int get_raw_DTM(void) const {
 	return get_signed_bitfield(dtm_offset, dtm_bitmask);
     }
 
@@ -8165,35 +8170,30 @@ public:
 	set_unsigned_bitfield(movecnt_offset, movecnt_bitmask, movecnt);
     }
 
-    unsigned int get_movecnt(void) {
+    unsigned int get_movecnt(void) const {
 	return get_unsigned_bitfield(movecnt_offset, movecnt_bitmask);
     }
 
-    bool get_capture_possible_flag(void) {
+    bool is_capture_possible(void) const {
 	if (capture_possible_flag_offset == -1) return false;
 	return get_unsigned_bitfield(capture_possible_flag_offset, 1);
     }
 
-    void set_capture_possible_flag(bool flag) {
-	if (capture_possible_flag_offset == -1) return;
-	set_unsigned_bitfield(capture_possible_flag_offset, 1, flag);
-    }
-
     /* More complicated combinations of the movecnt field */
 
-    bool does_PTM_win(void) {
+    bool does_PTM_win(void) const {
 	return (get_movecnt() == MOVECNT_PTM_WINS_PROPED) || (get_movecnt() == MOVECNT_PTM_WINS_UNPROPED);
     }
 
-    bool does_PNTM_win(void) {
+    bool does_PNTM_win(void) const {
 	return (get_movecnt() == MOVECNT_PNTM_WINS_PROPED) || (get_movecnt() == MOVECNT_PNTM_WINS_UNPROPED);
     }
 
-    bool is_unpropagated(void) {
+    bool is_unpropagated(void) const {
 	return (get_movecnt() == MOVECNT_PTM_WINS_UNPROPED) || (get_movecnt() == MOVECNT_PNTM_WINS_UNPROPED);
     }
 
-    bool is_normal_movecnt(void) {
+    bool is_normal_movecnt(void) const {
 	return (get_movecnt() > MOVECNT_PNTM_WINS_UNPROPED) && (get_movecnt() <= MOVECNT_MAX);
     }
 
@@ -8225,7 +8225,7 @@ public:
      * computed tablebase, while this function works on the tablebase under construction.
      */
 
-    int get_DTM(void) {
+    int get_DTM(void) const {
 	return (does_PTM_win() || does_PNTM_win()) ? get_raw_DTM() : 0;
     }
 };
@@ -8295,9 +8295,11 @@ class EntriesTable {
 
 	if (current_tb->variant == Variant::Normal) {
 	    capture_possible_flag_offset = -1;
+	    capture_possible_flag_bitmask = 0;
 	    movecnt_offset = 0;
 	} else {
 	    capture_possible_flag_offset = 0;
+	    capture_possible_flag_bitmask = 1;
 	    movecnt_offset = 1;
 	}
 
@@ -8336,7 +8338,7 @@ class EntriesTable {
     void print_current_format(void) {
 	info("%d bits movecnt", movecnt_bits);
 	if (dtm_bits > 0) info("; %d bits dtm", dtm_bits);
-	if (capture_possible_flag_offset != -1) info("; capture possible flag");
+	if (capture_possible_flag_offset != -1) info("; 1 bit capture possible flag");
 	if (unused_bits > 0) info("; %d bits unused", unused_bits);
 	info("\n");
     }
@@ -8362,6 +8364,10 @@ class EntriesTable {
 
     virtual atomic_entry & operator[](index_t index) {
 	return zero;
+    }
+
+    bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) {
+	return (*this)[index].compare_exchange_weak(expected, desired);
     }
 
     /* Sets the number of threads accessing the table.
@@ -8404,7 +8410,7 @@ class EntriesTable {
      *  - any other position, with 'movecnt' possible moves out the position
      */
 
-    void initialize_entry(index_t index, int movecnt, int dtm) {
+    void initialize_entry(index_t index, int movecnt, int dtm, bool capture_possible = false) {
 
 	if (index == debug_move) {
 	    info("initialize index %" PRIindex " %s movecnt %d; dtm %d\n",
@@ -8417,7 +8423,7 @@ class EntriesTable {
 	if (dtm > 0) positive_passes_needed[dtm] = true;
 	if (dtm < 0) negative_passes_needed[-dtm] = true;
 
-	(*this)[index] = nonatomic_entry(movecnt, dtm);
+	(*this)[index] = nonatomic_entry(movecnt, dtm, capture_possible);
     }
 
     void initialize_entry_as_illegal(index_t index) {
@@ -8507,13 +8513,13 @@ class EntriesTable {
 	total_legal_positions ++;
     }
 
-    void initialize_entry_with_movecnt(index_t index, unsigned int movecnt) {
+    void initialize_entry_with_movecnt(index_t index, unsigned int movecnt, bool capture_possible) {
 
 	if (movecnt > MOVECNT_MAX) {
 	    fatal("Attempting to initialize position with a movecnt (%d) that won't fit in field!\n", movecnt);
 	}
 
-	initialize_entry(index, movecnt, 0);
+	initialize_entry(index, movecnt, 0, capture_possible);
 
 	total_legal_positions ++;
     }
@@ -8532,17 +8538,23 @@ public:
 	return *this;
     }
 
-    atomic_entry & operator[](index_t index) {
+    const atomic_entry & operator[](index_t index) const {
 	return (*entriesTable)[index];
     }
 
-    EntriesTable * operator->() {
+    EntriesTable * operator->() const {
 	return entriesTable;
     }
 
-    operator EntriesTable * () {
+    operator EntriesTable * () const {
 	return entriesTable;
     }
+
+#if 0
+    bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) const {
+	return (*entriesTable)[index].compare_exchange_weak(expected, desired);
+    }
+#endif
 };
 
 /* MemoryEntriesTable - an EntriesTable held completely in memory */
@@ -8869,7 +8881,7 @@ inline void PTM_wins(index_t index, int dtm)
 	    desired.set_raw_DTM(dtm);
 	    if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
 	}
-    } while (!entriesTable[index].compare_exchange_weak(expected, desired));
+    } while (!entriesTable->compare_exchange_weak(index, expected, desired));
 }
 
 inline void add_one_to_PNTM_wins(index_t index, int dtm)
@@ -8915,7 +8927,7 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 		if (dtm >= min_tracked_dtm) negative_passes_needed[-dtm] = true;
 	    }
 	}
-    } while (!entriesTable[index].compare_exchange_weak(expected, desired));
+    } while (!entriesTable->compare_exchange_weak(index, expected, desired));
 }
 
 /* For suicide analysis, we want to know if the current pass is backproping
@@ -8944,7 +8956,7 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 
     if ((current_tb->variant == Variant::Suicide)
 	&& !doing_capture_backprop
-	&& entriesTable[index].get_capture_possible_flag()) {
+	&& entriesTable[index].is_capture_possible()) {
 	return;
     }
 
@@ -8964,7 +8976,7 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 	    do {
 		desired = expected;
 		desired.set_movecnt(desired.get_movecnt() - movecnt);
-	    } while (!entriesTable[index].compare_exchange_weak(expected, desired));
+	    } while (!entriesTable->compare_exchange_weak(index, expected, desired));
 	}
     }
 
@@ -9001,7 +9013,7 @@ void back_propagate_index(index_t index, int target_dtm)
 	do {
 	    desired = expected;
 	    desired.flag_as_propagated();
-	} while (!entriesTable[index].compare_exchange_weak(expected, desired));
+	} while (!entriesTable->compare_exchange_weak(index, expected, desired));
 
 	/* Symmetry.
 	 *
@@ -11996,17 +12008,6 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	num_futuremoves[PieceColor::Black] = 0;
     }
 
-    if (num_futuremoves[PieceColor::White] > sizeof(futurevector_t)*8) {
-	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-	      num_futuremoves[PieceColor::White], sizeof(futurevector_t)*8);
-	terminate();
-    }
-    if (num_futuremoves[PieceColor::Black] > sizeof(futurevector_t)*8) {
-	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-	      num_futuremoves[PieceColor::Black], sizeof(futurevector_t)*8);
-	terminate();
-    }
-
 }
 
 void print_futuremoves(void)
@@ -12021,6 +12022,17 @@ void print_futuremoves(void)
     }
     for (i=0; i < num_futuremoves[PieceColor::Black]; i ++) {
 	if (current_tb->encode_stm) info("BLACK Futuremove %i: %s\n", i, movestr[PieceColor::Black][i]);
+    }
+
+    if (num_futuremoves[PieceColor::White] > sizeof(futurevector_t)*8) {
+	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
+	      num_futuremoves[PieceColor::White], sizeof(futurevector_t)*8);
+	terminate();
+    }
+    if (num_futuremoves[PieceColor::Black] > sizeof(futurevector_t)*8) {
+	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
+	      num_futuremoves[PieceColor::Black], sizeof(futurevector_t)*8);
+	terminate();
     }
 }
 
@@ -13974,9 +13986,7 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 	 * off the diagonal (multiplicity 2).
 	 */
 
-	entriesTable->initialize_entry_with_movecnt(index, movecnt * position.multiplicity);
-
-	entriesTable[index].set_capture_possible_flag((capturecnt != 0));
+	entriesTable->initialize_entry_with_movecnt(index, movecnt * position.multiplicity, (capturecnt != 0));
 
 	if (index == debug_move) {
 	    /* other fields were printed by debug_move statement in initialize_entry() */
