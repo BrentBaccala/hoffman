@@ -8115,6 +8115,9 @@ public:
 	return *this;
     }
 
+    template <bool A=isAtomic, typename = typename std::enable_if<!A>::type>
+    void operator=(const nonatomic_entry &val) = delete;
+
     template <bool A=isAtomic, typename = typename std::enable_if<A>::type>
     bool compare_exchange_weak(nonatomic_entry & expected, nonatomic_entry desired) {
 	return e.compare_exchange_weak(expected.e, desired.e);
@@ -8358,16 +8361,17 @@ class EntriesTable {
 
     virtual ~EntriesTable() { }
 
-    /* The main thing we want to do with an EntriesTable is to access the entries!  This function is
-     * virtual because DiskEntriesTable may need to access the disk in order to produce an entry.
+    /* The main thing we want to do with an EntriesTable is to access the entries!  These functions
+     * read and modify the entries (initialization is handled below).  They are virtual because
+     * DiskEntriesTable may need to access the disk in order to produce an entry.
      */
 
     virtual atomic_entry & operator[](index_t index) {
 	return zero;
     }
 
-    bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) {
-	return (*this)[index].compare_exchange_weak(expected, desired);
+    virtual bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) {
+	return true;
     }
 
     /* Sets the number of threads accessing the table.
@@ -8550,11 +8554,6 @@ public:
 	return entriesTable;
     }
 
-#if 0
-    bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) const {
-	return (*entriesTable)[index].compare_exchange_weak(expected, desired);
-    }
-#endif
 };
 
 /* MemoryEntriesTable - an EntriesTable held completely in memory */
@@ -8581,6 +8580,10 @@ class MemoryEntriesTable: public EntriesTable {
 
     atomic_entry & operator[](index_t index) {
 	return entries[index];
+    }
+
+    bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) {
+	return entries[index].compare_exchange_weak(expected, desired);
     }
 };
 
@@ -8816,6 +8819,12 @@ class DiskEntriesTable: public EntriesTable {
 	advance_entry_buffer_to_index(index);
 
 	return entries[index - entry_buffer_start];
+    }
+
+    bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) {
+	advance_entry_buffer_to_index(index);
+
+	return entries[index].compare_exchange_weak(expected, desired);
     }
 };
 
