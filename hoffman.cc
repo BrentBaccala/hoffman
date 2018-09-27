@@ -8119,7 +8119,7 @@ public:
     void operator=(const nonatomic_entry &val) = delete;
 
     template <bool A=isAtomic, typename = typename std::enable_if<A>::type>
-    bool compare_exchange_weak(nonatomic_entry & expected, nonatomic_entry desired) {
+    bool compare_exchange_weak(nonatomic_entry & expected, const nonatomic_entry & desired) {
 	return e.compare_exchange_weak(expected.e, desired.e);
     }
 
@@ -8362,17 +8362,17 @@ class EntriesTable {
     virtual ~EntriesTable() { }
 
     /* The main thing we want to do with an EntriesTable is to access the entries!  These functions
-     * read and modify the entries (initialization is handled below).  They are virtual because
-     * DiskEntriesTable may need to access the disk in order to produce an entry.
+     * read entries (operator[]), set entries non-synchronously (used during initialization when
+     * only one thread will access each entry) and modify the entries synchronously (used during
+     * propagation passes when multiple threads may access an entry simultaneously).  They are
+     * virtual because DiskEntriesTable may need to access the disk in order to produce an entry.
      */
 
-    virtual atomic_entry & operator[](index_t index) {
-	return zero;
-    }
+    virtual const nonatomic_entry operator[](const index_t index) = 0;
 
-    virtual bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) {
-	return true;
-    }
+    virtual void set(const index_t index, const nonatomic_entry & value) = 0;
+
+    virtual bool compare_exchange_weak(const index_t index, nonatomic_entry & expected, const nonatomic_entry & desired) = 0;
 
     /* Sets the number of threads accessing the table.
      *
@@ -8427,7 +8427,7 @@ class EntriesTable {
 	if (dtm > 0) positive_passes_needed[dtm] = true;
 	if (dtm < 0) negative_passes_needed[-dtm] = true;
 
-	(*this)[index] = nonatomic_entry(movecnt, dtm, capture_possible);
+	set(index, nonatomic_entry(movecnt, dtm, capture_possible));
     }
 
     void initialize_entry_as_illegal(index_t index) {
@@ -8542,7 +8542,7 @@ public:
 	return *this;
     }
 
-    const atomic_entry & operator[](index_t index) const {
+    const nonatomic_entry operator[](index_t index) const {
 	return (*entriesTable)[index];
     }
 
@@ -8578,11 +8578,15 @@ class MemoryEntriesTable: public EntriesTable {
 	}
     }
 
-    atomic_entry & operator[](index_t index) {
+    const nonatomic_entry operator[](index_t index) {
 	return entries[index];
     }
 
-    bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) {
+    virtual void set(const index_t index, const nonatomic_entry & value) {
+	entries[index] = value;
+    }
+
+    bool compare_exchange_weak(const index_t index, nonatomic_entry & expected, const nonatomic_entry & desired) {
 	return entries[index].compare_exchange_weak(expected, desired);
     }
 };
@@ -8815,16 +8819,22 @@ class DiskEntriesTable: public EntriesTable {
 	if (entries_write_device != nullptr) delete entries_write_device;
     }
 
-    atomic_entry & operator[](index_t index) {
+    const nonatomic_entry operator[](const index_t index) {
 	advance_entry_buffer_to_index(index);
 
 	return entries[index - entry_buffer_start];
     }
 
-    bool compare_exchange_weak(index_t index, nonatomic_entry & expected, nonatomic_entry desired) {
+    void set(const index_t index, const nonatomic_entry & value) {
 	advance_entry_buffer_to_index(index);
 
-	return entries[index].compare_exchange_weak(expected, desired);
+	entries[index - entry_buffer_start] = value;
+    }
+
+    bool compare_exchange_weak(const index_t index, nonatomic_entry & expected, const nonatomic_entry & desired) {
+	advance_entry_buffer_to_index(index);
+
+	return entries[index - entry_buffer_start].compare_exchange_weak(expected, desired);
     }
 };
 
