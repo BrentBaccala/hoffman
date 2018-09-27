@@ -8082,7 +8082,8 @@ typedef entry<entry_t, false> nonatomic_entry;
 
 template <typename T, bool isAtomic> class entry {
 
-private:
+//private:
+public:
     T e;
 
     /* nonatomic_entry needs to expose 'e' to atomic_entry */
@@ -8339,7 +8340,7 @@ class EntriesTable {
     }
 
     void print_current_format(void) {
-	info("%d bits movecnt", movecnt_bits);
+	info("Entries format: %d bits movecnt", movecnt_bits);
 	if (dtm_bits > 0) info("; %d bits dtm", dtm_bits);
 	if (capture_possible_flag_offset != -1) info("; 1 bit capture possible flag");
 	if (unused_bits > 0) info("; %d bits unused", unused_bits);
@@ -8350,9 +8351,6 @@ class EntriesTable {
     EntriesTable(void) {
 
 	ComputeBitfields();
-
-	info("Entries format: ");
-	print_current_format();
 
 	threads = 1;
     }
@@ -8576,6 +8574,8 @@ class MemoryEntriesTable: public EntriesTable {
 	} catch (std::bad_alloc ex) {
 	    fatal("Can't malloc %zdMB for tablebase entries: %s\n", bytes/(1024*1024), ex.what());
 	}
+
+	print_current_format();
     }
 
     const nonatomic_entry operator[](index_t index) {
@@ -8588,6 +8588,84 @@ class MemoryEntriesTable: public EntriesTable {
 
     bool compare_exchange_weak(const index_t index, nonatomic_entry & expected, const nonatomic_entry & desired) {
 	return entries[index].compare_exchange_weak(expected, desired);
+    }
+};
+
+/* CompactMemoryEntriesTable - an EntriesTable held completely in memory, using bit-aligned fields.
+ * Intended for bitbases where we only need to store a movecnt and need less than 8 bits per entry
+ * to do it.
+ *
+ * Assumes that we're running on an architecture (like Intel) that can do unaligned atomic operations.
+ * I would expect other architectures to produce bus errors running this code.
+ */
+
+class CompactMemoryEntriesTable: public EntriesTable {
+
+ private:
+    uint8_t * entries;
+    uint16_t mask;
+    uint used_bits;
+
+ public:
+    CompactMemoryEntriesTable(void) {
+	used_bits = bits - unused_bits;
+	unused_bits = 0;
+	mask = (1U << used_bits) - 1;
+
+	size_t bits = current_tb->num_indices * used_bits;
+	size_t bytes = (bits + 7) / 8 + 1;
+
+	try {
+	    entries = new uint8_t [bytes];
+	    if (bytes < 1024*1024) {
+		info("Malloced %zdKB for tablebase entries\n", bytes/1024);
+	    } else {
+		info("Malloced %zdMB for tablebase entries\n", bytes/(1024*1024));
+	    }
+	} catch (std::bad_alloc ex) {
+	    fatal("Can't malloc %zdMB for tablebase entries: %s\n", bytes/(1024*1024), ex.what());
+	}
+
+	print_current_format();
+    }
+
+    const nonatomic_entry operator[](index_t index) {
+	size_t bits = index * used_bits;
+	return nonatomic_entry((*(uint16_t *)(entries + bits/8) >> bits%8) & mask);
+    }
+
+    virtual void set(const index_t index, const nonatomic_entry & value) {
+	size_t bits = index * used_bits;
+	std::atomic<uint16_t> * addr = reinterpret_cast<std::atomic<uint16_t> *>(entries + bits/8);
+
+	uint16_t expected16 = *addr;
+	uint16_t desired16;
+
+	do {
+	    desired16 = expected16;
+	    desired16 &= ~(mask << bits%8);
+	    desired16 |= value.e << bits%8;
+	} while (! addr->compare_exchange_weak(expected16, desired16));
+    }
+
+    bool compare_exchange_weak(const index_t index, nonatomic_entry & expected, const nonatomic_entry & desired) {
+	size_t bits = index * used_bits;
+	std::atomic<uint16_t> * addr = reinterpret_cast<std::atomic<uint16_t> *>(entries + bits/8);
+
+	uint16_t expected16 = *addr;
+	uint16_t desired16;
+
+	do {
+	    if (((expected16 >> bits%8) & mask) != expected.e) {
+		return false;
+	    }
+
+	    desired16 = expected16;
+	    desired16 &= ~(mask << bits%8);
+	    desired16 |= desired.e << bits%8;
+	} while (! addr->compare_exchange_weak(expected16, desired16));
+
+	return true;
     }
 };
 
@@ -8812,6 +8890,8 @@ class DiskEntriesTable: public EntriesTable {
 
 	entries_read_device = nullptr;
 	open_new_entries_write_file();
+
+	print_current_format();
     }
 
     ~DiskEntriesTable(void) {
@@ -14450,12 +14530,17 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 
     if (!using_proptables) {
 
-	/* No proptables.  Allocate a futurevectors array, initialize the tablebase, back propagate
-	 * the futurebases (noting which futuremoves have been handled in the futurevectors array),
-	 * and run through the futurevectors array checking for unhandled futuremoves.
+	/* No proptables.  Allocate an in-memory tablebase (byte-aligned if we're tracking DTMs;
+	 * bit-aligned if not), a futurevectors array, initialize the tablebase, back propagate the
+	 * futurebases (noting which futuremoves have been handled in the futurevectors array), and
+	 * run through the futurevectors array checking for unhandled futuremoves.
 	 */
 
-	entriesTable = new MemoryEntriesTable;
+	if (tracking_dtm) {
+	    entriesTable = new MemoryEntriesTable;
+	} else {
+	    entriesTable = new CompactMemoryEntriesTable;
+	}
 
 	/* tb->futurevectors = (futurevector_t *) calloc(tb->num_indices + 1, sizeof(futurevector_t)); */
         if (num_futuremoves[PieceColor::White] > num_futuremoves[PieceColor::Black])
