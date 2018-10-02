@@ -523,10 +523,10 @@ bool * negative_passes_needed = nullptr;
 
 const bool ignore_futurevectors = false;
 
-typedef uint32_t futurevector_t;
-#define get_futurevector_t_field get_uint32_t_field
-#define set_futurevector_t_field set_uint32_t_field
-#define FUTUREVECTOR_HEX_FORMAT "0x%" PRIx32
+typedef uint64_t futurevector_t;
+#define get_futurevector_t_field get_uint64_t_field
+#define set_futurevector_t_field set_uint64_t_field
+#define FUTUREVECTOR_HEX_FORMAT "0x%" PRIx64
 #define FUTUREVECTOR(move) (1ULL << (move))
 #define FUTUREVECTORS(move, n) (((1ULL << (n)) - 1) << (move))
 #define NO_FUTUREMOVE -1
