@@ -8657,6 +8657,7 @@ class CompactMemoryEntriesTable: public EntriesTable {
 
 	do {
 	    if (((expected16 >> bits%8) & mask) != expected.e) {
+		expected.e = ((expected16 >> bits%8) & mask);
 		return false;
 	    }
 
