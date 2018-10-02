@@ -12107,6 +12107,16 @@ void assign_numbers_to_futuremoves(tablebase_t *tb) {
 	num_futuremoves[PieceColor::Black] = 0;
     }
 
+    if (num_futuremoves[PieceColor::White] > sizeof(futurevector_t)*8) {
+	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
+	      num_futuremoves[PieceColor::White], sizeof(futurevector_t)*8);
+	terminate();
+    }
+    if (num_futuremoves[PieceColor::Black] > sizeof(futurevector_t)*8) {
+	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
+	      num_futuremoves[PieceColor::Black], sizeof(futurevector_t)*8);
+	terminate();
+    }
 }
 
 void print_futuremoves(void)
@@ -12121,17 +12131,6 @@ void print_futuremoves(void)
     }
     for (i=0; i < num_futuremoves[PieceColor::Black]; i ++) {
 	if (current_tb->encode_stm) info("BLACK Futuremove %i: %s\n", i, movestr[PieceColor::Black][i]);
-    }
-
-    if (num_futuremoves[PieceColor::White] > sizeof(futurevector_t)*8) {
-	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-	      num_futuremoves[PieceColor::White], sizeof(futurevector_t)*8);
-	terminate();
-    }
-    if (num_futuremoves[PieceColor::Black] > sizeof(futurevector_t)*8) {
-	fatal("Too many futuremoves - %d!  (only %d bits futurevector_t)\n",
-	      num_futuremoves[PieceColor::Black], sizeof(futurevector_t)*8);
-	terminate();
     }
 }
 
