@@ -477,8 +477,8 @@ int max_passes = 0;
 const char ** pass_type = nullptr;
 int * pass_target_dtms = nullptr;
 
-std::atomic<int> positions_finalized_this_pass;
-std::vector<int> positions_finalized;
+std::atomic<uint64_t> positions_finalized_this_pass;
+std::vector<uint64_t> positions_finalized;
 
 std::atomic<uint64_t> backproped_moves_this_pass;
 std::vector<uint64_t> backproped_moves;
@@ -10390,7 +10390,7 @@ void commit_update(index_t index, short dtm, short movecnt, int futuremove)
 
 /* target_dtm 0 is the initialization / futurebase back prop pass */
 
-int propagation_pass(int target_dtm)
+uint64_t propagation_pass(int target_dtm)
 {
     positions_finalized_this_pass = 0;
     backproped_moves_this_pass = 0;
@@ -10424,7 +10424,7 @@ int propagation_pass(int target_dtm)
 
     finalize_pass_statistics();
     if (target_dtm != 0) {
-	info("Pass %3d complete; %d positions finalized\n", target_dtm, (int) positions_finalized_this_pass);
+	info("Pass %3d complete; %lu positions finalized\n", target_dtm, positions_finalized_this_pass.load());
     }
 
     total_passes ++;
@@ -14193,7 +14193,7 @@ void initialize_tablebase(void)
 void propagate_all_moves_within_tablebase(tablebase_t *tb)
 {
     int dtm = 1;
-    int positions_finalized_on_last_pass = 0;
+    uint64_t positions_finalized_on_last_pass = 0;
 
     doing_capture_backprop = false;
 
