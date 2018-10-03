@@ -424,3 +424,18 @@ the corresponding slow encryption.
 - when probing, don't print prunes as "NO DATA"
 
 - replace BITVECTOR with vector<bool> (or something like that)
+
+- error during generation:
+
+../hoffman -t 4 -g carlsen_anand_2014_krk-0-0.xml
+Hoffman Version 1033
+terminate called after throwing an instance of 'std::runtime_error'
+  what():  Pawngen not allowed with symmetric indices (yet)
+
+- detect when we've only got a few indices left to compute on each pass
+
+keep a list of finalized indices, and when it fills up, switch to making a pass through the entire tablebase
+
+With a 64 bit index, we could allocate 8 MB for the list and keep a million indices
+
+- control size of DTM field in entries table by setting size of DTM field in XML format

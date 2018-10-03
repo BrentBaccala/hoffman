@@ -1,0 +1,27 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Generate a tablebase with three overlapping pieces -->
+<!-- The severe piece restrictions produce some confusing probe results -->
+
+<tablebase>
+   <prune-enable color="white" type="concede"/>
+   <prune-enable color="black" type="concede"/>
+   <prune-enable color="white" type="discard"/>
+   <prune-enable color="black" type="discard"/>
+
+   <format><dtm/></format>
+
+   <piece color="white" type="king" location="e1"/>
+   <piece color="black" type="king" location="e8 e7"/>
+
+   <piece color="white" type="queen" location="a1 a8 b8 c8 d8 f8 g8 h8"/>
+   <piece color="white" type="queen" location="a1 a8 b8 c8 d8 f8 g8 h8"/>
+   <piece color="white" type="queen" location="a1 a8 b8 c8 d8 f8 g8 h8"/>
+
+   <prune color="white" move="*x*" type="concede"/>
+   <prune color="black" move="*x*" type="concede"/>
+   <prune color="white" move="[KQ][^x]*" type="discard"/>
+   <prune color="black" move="K[^x]*" type="discard"/>
+
+   <output filename="r1045a.htb"/>
+</tablebase>

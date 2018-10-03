@@ -3841,6 +3841,8 @@ public:
 	    }
 	}
 
+	int piece_in_set = 1;
+
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 
 	    /* If our semilegal range completely contains the semilegal range of a earlier piece,
@@ -3878,8 +3880,6 @@ public:
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
-
-	    int piece_in_set = 1;
 
 	    if (prev_piece_in_encoding_group[piece] == -1) {
 		piece_in_set = 1;
