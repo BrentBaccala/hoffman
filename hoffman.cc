@@ -8925,6 +8925,85 @@ class DiskEntriesTable: public EntriesTable {
 
 EntriesTablePtr entriesTable;
 
+/* Unpropagated index tracker.
+ *
+ * If this is a bitbase calculation, then on each pass through the table, we process the indices
+ * that were flagged unpropagated on the last pass.  A non-bitbase, distance calculation might have
+ * additional entries that need to processed, entries that were injected from a futurebase at a
+ * particular distance.  In the bitbase case, we can optimize by keeping a list of unpropagated
+ * indices, adding to it every time we flag one, and on the next pass only process the indices on
+ * the list.  Otherwise, we have to sweep through the entire tablebase to find the unpropagated
+ * indices.  Also, if there's lot of unpropagated indices, then this table would become huge.
+ * So we fix its size at compile time, and if it overflows, then we fall back on sweeping
+ * through the entire tablebase.  Plus, we're running multithreaded, so it all has to be
+ * done with locks.
+ */
+
+struct unpropagated_index_table {
+    static const int size = 1024*1024;
+    index_t unpropagated_indices[size];
+    int count = 0;
+    int last_pass_count = 0;
+    int next_pop = 0;
+    bool tracking = false;
+    bool last_pass_optimized = false;
+    bool direction = false;
+    std::mutex lock;
+
+    void start_new_pass(void)
+    {
+	last_pass_optimized = tracking;
+	tracking = true;
+
+	last_pass_count = count;
+	count = 0;
+
+	next_pop = 0;
+
+	direction = ! direction;
+    }
+
+    void track(const index_t index)
+    {
+	if (tracking) {
+	    std::unique_lock<std::mutex> _(lock);
+
+	    if (count + last_pass_count < size) {
+		if (direction) {
+		    unpropagated_indices[count] = index;
+		} else {
+		    unpropagated_indices[size - count - 1] = index;
+		}
+		count ++;
+	    } else {
+		tracking = false;
+		count = 0;
+	    }
+	}
+    }
+
+    bool indices_available(void)
+    {
+	// XXX not thread safe
+	return (next_pop < last_pass_count);
+    }
+
+    index_t next_index(void)
+    {
+	// XXX not thread safe
+	index_t retval;
+	if (direction) {
+	    retval = unpropagated_indices[size - next_pop - 1];
+	} else {
+	    retval = unpropagated_indices[next_pop];
+	}
+	next_pop ++;
+	return retval;
+    }
+
+
+} unpropagated_index_table;
+
 /* finalize_update()
  *
  * starting with PTM_wins() and add_one_to_PNTM_wins()
@@ -8982,6 +9061,10 @@ inline void PTM_wins(index_t index, int dtm)
 	    if (dtm <= max_tracked_dtm) positive_passes_needed[dtm] = true;
 	}
     } while (!entriesTable->compare_exchange_weak(index, expected, desired));
+
+    if ((! tracking_dtm) && expected.is_normal_movecnt() && desired.is_unpropagated()) {
+	unpropagated_index_table.track(index);
+    }
 }
 
 inline void add_one_to_PNTM_wins(index_t index, int dtm)
@@ -9028,6 +9111,10 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
 	    }
 	}
     } while (!entriesTable->compare_exchange_weak(index, expected, desired));
+
+    if ((! tracking_dtm) && expected.is_normal_movecnt() && desired.is_unpropagated()) {
+	unpropagated_index_table.track(index);
+    }
 }
 
 /* For suicide analysis, we want to know if the current pass is backproping
@@ -9179,6 +9266,19 @@ void back_propagate_section(index_t start_index, index_t end_index, int target_d
 
 void non_proptable_pass(int target_dtm)
 {
+    if (! tracking_dtm) {
+
+	unpropagated_index_table.start_new_pass();
+
+	if (unpropagated_index_table.last_pass_optimized) {
+	    while (unpropagated_index_table.indices_available()) {
+		back_propagate_index(unpropagated_index_table.next_index(), target_dtm);
+	    }
+
+	    return;
+	}
+    }
+
     std::thread t[num_threads];
     unsigned int thread;
     index_t block_size = current_tb->num_indices / num_threads;
