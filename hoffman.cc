@@ -8984,13 +8984,13 @@ struct unpropagated_index_table {
 
     bool indices_available(void)
     {
-	// XXX not thread safe
+	// XXX not thread safe (but not currently used in threaded code)
 	return (next_pop < last_pass_count);
     }
 
     index_t next_index(void)
     {
-	// XXX not thread safe
+	// XXX not thread safe (but not currently used in threaded code)
 	index_t retval;
 	if (direction) {
 	    retval = unpropagated_indices[size - next_pop - 1];
