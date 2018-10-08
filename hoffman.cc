@@ -8430,16 +8430,24 @@ class EntriesTable {
 
     void initialize_entry_as_illegal(index_t index) {
 
-	/* An "illegal" position is something like one with two pieces both on the same square.  An
-	 * illegal position in the chess sense, of PNTM being in check, is handled below.  So this
-	 * function needs to flag the position in such a way that nothing will ever get done with
-	 * it; in particular, no attempt will ever be made to back propagate it.  Setting everything
-	 * to zero does the trick.  The zero movecnt doesn't matter, since we'll never back
-	 * propagate into this position, and the zero DTM ensures that it will always be treated
-	 * like a draw during a back prop pass - i.e, no attempt will ever be made to finalize it.
+	/* An "illegal" position is something like one with two pieces both on the same square, or
+	 * more precisely anything for which index_to_local_position() returns false.  An illegal
+	 * position in the chess sense, of PNTM being in check, is handled below.  So this function
+	 * needs to flag the position in such a way that nothing will ever get done with it; in
+	 * particular, no attempt will ever be made to back propagate it, although this is an
+	 * optimization in the sense that back_propagate_index_within_table() tests the index for
+	 * legality and does nothing within illegal indices.
+	 *
+	 * Bitbases (tracking_dtm == false) back propagate when is_unpropagated() == true,
+	 * so setting movecnt to one does the trick.  We'll never back propagate into this
+	 * position, so movecnt will never decrement to zero.
+	 *
+	 * Distance bases (tracking_dtm == true) back propagate when the entry's DTM matches
+	 * target_dtm, so setting DTM to zero ensures that it will always be treated like a draw
+	 * during a back prop pass - i.e, no attempt will ever be made to back prop it.
 	 */
 
-	initialize_entry(index, 0, 0);
+	initialize_entry(index, 1, 0);
     }
 
     void initialize_entry_with_PTM_mated(index_t index) {
