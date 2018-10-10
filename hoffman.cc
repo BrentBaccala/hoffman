@@ -3530,6 +3530,7 @@ class combinadic_index : public index_encoding
     uint8_t black_king_position[64*64];
     index_t king_index[64][64];
     uint total_legal_king_positions;
+    index_t king_multiplier;
 
     int total_legal_positions[MAX_PIECES] = {};
     int total_legal_piece_values[MAX_PIECES];
@@ -3643,8 +3644,11 @@ public:
     bool index_to_position(const tablebase_t * tb, index_t index, local_position_t *p)
     {
 	int piece;
+
+	/* If there's an en passant pawn, it must be the opposite color of PTM */
+	const PieceColor en_passant_color = ~ p->side_to_move;
 	int en_passant_pawn = -1;
-	PieceColor en_passant_color;
+
 	uint8_t vals[MAX_PIECES];
 	uint64_t overlapping_pieces[MAX_PIECES] = {0};
 
@@ -3656,7 +3660,17 @@ public:
 
 	for (piece = tb->num_pieces - 1; piece >= 0; piece --) {
 
-	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	    if (piece == tb->white_king) {
+		index_t king_index = index / king_multiplier;
+		index %= king_multiplier;
+
+		p->piece_position[tb->white_king] = white_king_position[king_index];
+		p->piece_position[tb->black_king] = black_king_position[king_index];
+
+		continue;
+	    }
+
+	    if (piece == tb->black_king) continue;
 
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
@@ -3671,9 +3685,6 @@ public:
 		if (en_passant_pawn != -1) return false; /* can't have two en passant pawns */
 
 		en_passant_pawn = piece;
-
-		/* If there's an en passant pawn, it must be the opposite color of PTM */
-		en_passant_color = ~ p->side_to_move;
 
 		/* En passant pawns are encoded on the first row and never have their values reduced */
 		p->piece_position[en_passant_pawn] = piece_position[en_passant_pawn][vals[en_passant_pawn]];
@@ -3690,24 +3701,11 @@ public:
 
 	}
 
-	if (tb->variant != Variant::Suicide) {
-
-	    if (index >= total_legal_king_positions) {
-		fatal("index >= total legal king positions in combinadic_index::index_to_position!\n");
-		return false;
-	    }
-
-	    p->piece_position[tb->white_king] = white_king_position[index];
-	    p->piece_position[tb->black_king] = black_king_position[index];
-
-	} else {
-
-	    if (index != 0) {
-		fatal("index > 0 in combinadic_index::index_to_position!\n");
-		return false;
-	    }
-
+	if (index != 0) {
+	    fatal("index > 0 in combinadic_index::index_to_position!\n");
+	    return false;
 	}
+
 
 	/* "You've got to be kidding me"
 	 *
@@ -3845,40 +3843,14 @@ public:
 	    }
 	}
 
-	if (tb->variant != Variant::Suicide) {
-	    total_legal_king_positions = 0;
-	    for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
-		if (! (tb->pieces[tb->white_king].legal_squares & BITVECTOR(white_king_square))) continue;
-		for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
-		    if (! (tb->pieces[tb->black_king].legal_squares & BITVECTOR(black_king_square))) continue;
-		    if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
-		    if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
-		    if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
-		    if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
-			&& (ROW(black_king_square) > COL(black_king_square))) continue;
-
-		    if (tb->positions_with_adjacent_kings_are_illegal
-			&& ! check_king_legality(white_king_square, black_king_square)) continue;
-
-		    white_king_position[total_legal_king_positions] = white_king_square;
-		    black_king_position[total_legal_king_positions] = black_king_square;
-		    king_index[white_king_square][black_king_square] = total_legal_king_positions;
-		    total_legal_king_positions ++;
-		}
-	    }
-	    size = total_legal_king_positions;
-
-	    prev_piece_in_encoding_group[tb->white_king] = -1;
-	    next_piece_in_encoding_group[tb->white_king] = -1;
-	    prev_piece_in_encoding_group[tb->black_king] = -1;
-	    next_piece_in_encoding_group[tb->black_king] = -1;
-	} else {
-	    size = 1;
-	}
+	size = 1;
 
 	/* Assign encoding groups, usually groups of identical pieces. */
 
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+
+	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
+	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
 
@@ -3887,9 +3859,6 @@ public:
 	     */
 
 	    /* XXX revisit this when pawngen is refactored */
-
-	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
-	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
@@ -3970,7 +3939,36 @@ public:
 
 	    last_overlapping_group[piece] = last_overlapping_piece[piece2];
 
-	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
+	    if (piece == tb->white_king) {
+		int king_position = 0;
+		for (int white_king_square = 0; white_king_square < 64; white_king_square ++) {
+		    if (! (tb->pieces[tb->white_king].legal_squares & BITVECTOR(white_king_square))) continue;
+		    for (int black_king_square = 0; black_king_square < 64; black_king_square ++) {
+			if (! (tb->pieces[tb->black_king].legal_squares & BITVECTOR(black_king_square))) continue;
+			if ((tb->symmetry >= 2) && (COL(white_king_square) >= 4)) continue;
+			if ((tb->symmetry >= 4) && (ROW(white_king_square) >= 4)) continue;
+			if ((tb->symmetry == 8) && (ROW(white_king_square) > COL(white_king_square))) continue;
+			if ((tb->symmetry == 8) && (ROW(white_king_square) == COL(white_king_square))
+			    && (ROW(black_king_square) > COL(black_king_square))) continue;
+
+			if (tb->positions_with_adjacent_kings_are_illegal
+			    && ! check_king_legality(white_king_square, black_king_square)) continue;
+
+			white_king_position[king_position] = white_king_square;
+			black_king_position[king_position] = black_king_square;
+			king_index[white_king_square][black_king_square] = size * king_position;
+			king_position ++;
+		    }
+		}
+
+		total_legal_king_positions = king_position;
+		king_multiplier = size;
+		size *= king_position;
+
+		continue;
+	    }
+
+	    if (piece == tb->black_king) continue;
 
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
