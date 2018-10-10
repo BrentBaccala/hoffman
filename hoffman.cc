@@ -10783,7 +10783,7 @@ void propagate_minilocal_position_from_futurebase(local_position_t &current_posi
 	} else if (basic == Basic::Illegal) {
 	    /* basic == 3: illegal position, PNTM in check, no backprop */
 	} else {
-	    throw std::runtime_error("Basic::Unknown in backprop");
+	    throw std::runtime_error("Basic::Unknown in backprop " + std::string(foreign_position.FEN()));
 	}
 
     } else {
