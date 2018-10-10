@@ -95,6 +95,9 @@
 	index-ordering (reverse)			#IMPLIED>
 
 <!ATTLIST pawngen
+	  offset CDATA #IMPLIED
+	  legal-white-squares CDATA #IMPLIED
+	  legal-black-squares CDATA #IMPLIED
 	  white-pawn-locations	CDATA	#REQUIRED
 	  black-pawn-locations	CDATA	#REQUIRED
 	  white-pawns-required	CDATA	#REQUIRED

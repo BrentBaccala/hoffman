@@ -1003,6 +1003,7 @@ struct piece {
 };
 
 int eval_to_number_or_zero(xmlpp::Node *node, std::string xpath);
+unsigned long eval_to_uint64(xmlpp::Node *node, std::string xpath);
 
 class index_encoding;
 struct pawngen;
@@ -1106,6 +1107,7 @@ public:
 
 private:
     void parse_pawngen_element(xmlpp::Node *);
+    void finalize_pawngen_initialization(void);
     void parse_XML(std::istream *);
     void finalize_initialization(void);
 
@@ -1773,13 +1775,25 @@ public:
     uint64_t white_pawns = 0;
     uint64_t black_pawns = 0;
 
+    int32_t en_passant_square = ILLEGAL_POSITION;
+
+    static constexpr int binary_size = sizeof(white_pawns) + sizeof(black_pawns) + sizeof(en_passant_square);
+
+    /* The initial position has these variables set to the values from the XML.  Each time
+     * a pawn captures a piece, they are decremented.  Only positions with these values
+     * positive or zero are considered valid.
+     */
+
     int white_pawn_captures_black_piece_allowed = 0;
     int black_pawn_captures_white_piece_allowed = 0;
 
+    /* The initial position has these variables set to the values from the XML.  Each time a pawn
+     * promotes, these numbers are decremented.  Only positions with both of these values zero are
+     * considered valid.
+     */
+
     int white_queens_required = 0;
     int black_queens_required = 0;
-
-    int en_passant_square = ILLEGAL_POSITION;
 
     /* These next variables are computed from prior information to speed access. */
 
@@ -1833,6 +1847,58 @@ public:
     bool pawn_at(int square) const
     {
 	return white_pawn_at(square) || black_pawn_at(square);
+    }
+
+    void operator>> (std::ostream& os) {
+	os.write(reinterpret_cast<const char *>(& white_pawns), sizeof(white_pawns));
+	os.write(reinterpret_cast<const char *>(& black_pawns), sizeof(black_pawns));
+	os.write(reinterpret_cast<const char *>(& en_passant_square), sizeof(en_passant_square));
+    }
+
+    // should be operator<<, but no inner class support in C++
+    void read(std::istream& is, const tablebase_t * tb) {
+	is.read(reinterpret_cast<char *>(& white_pawns), sizeof(white_pawns));
+	is.read(reinterpret_cast<char *>(& black_pawns), sizeof(black_pawns));
+	is.read(reinterpret_cast<char *>(& en_passant_square), sizeof(en_passant_square));
+
+	int white_pawn = 0;
+	int black_pawn = 0;
+
+	/* First first pawns to start with */
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn)
+		&& (tb->pieces[piece].color == PieceColor::White)) {
+		white_pawn = piece;
+		break;
+	    }
+	}
+
+	for (int piece = 0; piece < tb->num_pieces; piece ++) {
+	    if ((tb->pieces[piece].piece_type == PieceType::Pawn)
+		&& (tb->pieces[piece].color == PieceColor::Black)) {
+		black_pawn = piece;
+		break;
+	    }
+	}
+
+	for (int square = 0; square < 64; square ++) {
+	    if (white_pawn_at(square)) {
+		position[white_pawn] = square;
+		if (en_passant_square == square - 8) {
+		    en_passant_pawn = white_pawn;
+		}
+		white_pawn ++;
+	    }
+	    if (black_pawn_at(square)) {
+		position[black_pawn] = square;
+		if (en_passant_square == square + 8) {
+		    en_passant_pawn = black_pawn;
+		}
+		black_pawn ++;
+	    }
+	}
+
     }
 
 };
@@ -1950,6 +2016,8 @@ struct pawngen {
     uint64_t initial_black_pawns;
     std::vector<pawn_position> pawn_positions_by_position;
     std::vector<pawn_position> pawn_positions_by_index;
+
+    off_t offset;  /* Offset in file for pre-computed tables */
 };
 
 void process_pawn_position(class pawn_position position)
@@ -2102,6 +2170,7 @@ void process_pawn_position(class pawn_position position)
 
 void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 {
+    xmlpp::Element * xml_element = dynamic_cast<xmlpp::Element *>(xml);
     pawn_position initial_position;
 
     for (auto color : BothColors) {
@@ -2134,66 +2203,82 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 	}
     }
 
-    white_pawns_required = eval_to_number_or_zero(xml, "@white-pawns-required");
-    black_pawns_required = eval_to_number_or_zero(xml, "@black-pawns-required");
-
-    initial_position.white_queens_required = eval_to_number_or_zero(xml, "@white-queens-required");
-    initial_position.black_queens_required = eval_to_number_or_zero(xml, "@black-queens-required");
-
-    initial_position.white_pawn_captures_black_piece_allowed = eval_to_number_or_zero(xml, "@white-captures-allowed");
-    initial_position.black_pawn_captures_white_piece_allowed = eval_to_number_or_zero(xml, "@black-captures-allowed");
-
-    process_pawn_position(initial_position);
-
     pawngen.reset(new struct pawngen);
 
     pawngen->initial_white_pawns = initial_position.white_pawns;
     pawngen->initial_black_pawns = initial_position.black_pawns;
 
-    pawngen->pawn_positions_by_position.resize(valid_pawn_positions.size());
-    pawngen->pawn_positions_by_index.resize(valid_pawn_positions.size());
+    pawngen->offset = eval_to_number_or_zero(xml, "@offset");
 
-    int first_white_pawn = num_pieces;
-    int first_black_pawn = num_pieces + white_pawns_required;
+    white_pawns_required = eval_to_number_or_zero(xml, "@white-pawns-required");
+    black_pawns_required = eval_to_number_or_zero(xml, "@black-pawns-required");
 
     uint64_t legal_white_squares = 0ULL;
     uint64_t legal_black_squares = 0ULL;
 
-    unsigned int index=0;
+    if (pawngen->offset == 0) {
 
-    for (auto it = valid_pawn_positions.begin(); it != valid_pawn_positions.end(); it ++) {
+	initial_position.white_queens_required = eval_to_number_or_zero(xml, "@white-queens-required");
+	initial_position.black_queens_required = eval_to_number_or_zero(xml, "@black-queens-required");
 
-	int white_pawn = first_white_pawn;
-	int black_pawn = first_black_pawn;
+	initial_position.white_pawn_captures_black_piece_allowed = eval_to_number_or_zero(xml, "@white-captures-allowed");
+	initial_position.black_pawn_captures_white_piece_allowed = eval_to_number_or_zero(xml, "@black-captures-allowed");
 
-	/* std::set doesn't allow its objects to be modified once inserted */
+	process_pawn_position(initial_position);
 
-	pawn_position pp = *it;
+	pawngen->pawn_positions_by_index.resize(valid_pawn_positions.size());
 
-	for (int square = 0; square < 64; square ++) {
-	    if (pp.white_pawn_at(square)) {
-		pp.position[white_pawn] = square;
-		if (pp.en_passant_square == square - 8) {
-		    pp.en_passant_pawn = white_pawn;
+	unsigned int index=0;
+
+	int first_white_pawn = num_pieces;
+	int first_black_pawn = num_pieces + white_pawns_required;
+
+	for (auto it = valid_pawn_positions.begin(); it != valid_pawn_positions.end(); it ++) {
+
+	    int white_pawn = first_white_pawn;
+	    int black_pawn = first_black_pawn;
+
+	    /* std::set doesn't allow its objects to be modified once inserted */
+
+	    pawn_position pp = *it;
+
+	    for (int square = 0; square < 64; square ++) {
+		if (pp.white_pawn_at(square)) {
+		    pp.position[white_pawn] = square;
+		    if (pp.en_passant_square == square - 8) {
+			pp.en_passant_pawn = white_pawn;
+		    }
+		    legal_white_squares |= BITVECTOR(square);
+		    white_pawn ++;
 		}
-		legal_white_squares |= BITVECTOR(square);
-		white_pawn ++;
-	    }
-	    if (pp.black_pawn_at(square)) {
-		pp.position[black_pawn] = square;
-		if (pp.en_passant_square == square + 8) {
-		    pp.en_passant_pawn = black_pawn;
+		if (pp.black_pawn_at(square)) {
+		    pp.position[black_pawn] = square;
+		    if (pp.en_passant_square == square + 8) {
+			pp.en_passant_pawn = black_pawn;
+		    }
+		    legal_black_squares |= BITVECTOR(square);
+		    black_pawn ++;
 		}
-		legal_black_squares |= BITVECTOR(square);
-		black_pawn ++;
 	    }
+
+	    pp.index = index;
+	    pawngen->pawn_positions_by_index[index] = pp;
+	    // pawngen->pawn_positions_by_position[index] = pp;
+
+	    index ++;
 	}
 
-	pp.index = index;
-	pawngen->pawn_positions_by_index[index] = pp;
-	pawngen->pawn_positions_by_position[index] = pp;
+	xml_element->set_attribute("legal-white-squares", boost::lexical_cast<std::string>(legal_white_squares));
+	xml_element->set_attribute("legal-black-squares", boost::lexical_cast<std::string>(legal_black_squares));
 
-	index ++;
+	valid_pawn_positions.clear();
+	invalid_pawn_positions.clear();
+
+    } else {
+
+	legal_white_squares = eval_to_uint64(xml, "@legal-white-squares");
+	legal_black_squares = eval_to_uint64(xml, "@legal-black-squares");
+
     }
 
 #if DEBUG
@@ -2209,12 +2294,22 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 	pieces.push_back(piece(PieceColor::Black, PieceType::Pawn, legal_black_squares));
 	num_pieces ++;
     }
+}
+
+/* The pawngen pawn positions take a while to compute, so we save them as part of the stored
+ * tablebase.  If we're loaded a precomputed tablebase, we need to wait until we've parsed the XML
+ * before loading the pawn positions.  Then we finish processing pawngen.
+ */
+
+void tablebase_t::finalize_pawngen_initialization(void)
+{
+    pawngen->pawn_positions_by_position.resize(pawngen->pawn_positions_by_index.size());
 
     /* Figure which pawn positions arise from moving each pawn one step backwards, and save the
      * corresponding change in index in delta_pawngen_index.
      */
 
-    for (index = 0; index < pawngen->pawn_positions_by_index.size(); index ++) {
+    for (unsigned int index = 0; index < pawngen->pawn_positions_by_index.size(); index ++) {
 	for (int piece = 0; piece < num_pieces; piece ++) {
 	    pawngen->pawn_positions_by_index[index].prev_position[piece] = ILLEGAL_POSITION;
 	    if (pieces[piece].piece_type == PieceType::Pawn) {
@@ -2239,10 +2334,8 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 	pawngen->pawn_positions_by_position[index] = pawngen->pawn_positions_by_index[index];
     }
 
-    std::sort(pawngen->pawn_positions_by_position.begin(), pawngen->pawn_positions_by_position.end(), pawn_position_fast_compare);
-
-    valid_pawn_positions.clear();
-    invalid_pawn_positions.clear();
+    std::sort(pawngen->pawn_positions_by_position.begin(), pawngen->pawn_positions_by_position.end(),
+	      pawn_position_fast_compare);
 }
 
 
@@ -4626,6 +4719,12 @@ int eval_to_number_or_zero(xmlpp::Node *node, std::string xpath)
     return (str != "") ? std::stoi(str, 0, 0) : 0;
 }
 
+unsigned long eval_to_uint64(xmlpp::Node *node, std::string xpath)
+{
+    Glib::ustring str = node->eval_to_string(xpath);
+    return (str != "") ? std::stoull(str, 0, 0) : 0;
+}
+
 /* parse_format()
  *
  * Parse an XML format specification (for a dynamic structure) into a format structure.  A simple
@@ -5107,6 +5206,9 @@ void tablebase_t::parse_XML(std::istream *instream)
 
 void tablebase_t::finalize_initialization(void)
 {
+    if (pawngen) {
+	finalize_pawngen_initialization();
+    }
 
     switch (variant) {
 
@@ -5571,9 +5673,12 @@ void tablebase_t::finalize_initialization(void)
 
 }
 
+/* This function is used when parsing a control file for generation */
+
 tablebase_t::tablebase_t(std::istream *instream)
 {
     parse_XML(instream);
+    // OK to finalize; pawngen tables were computed, not loaded
     finalize_initialization();
 }
 
@@ -6446,7 +6551,6 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
     instream->push(*input_file);
 
     parse_XML(instream.get());
-    finalize_initialization();
 
     offset = eval_to_number_or_zero(xml->get_root_node(), "/tablebase/@offset");
 
@@ -6461,6 +6565,38 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
     input_file->seekg(0);
 
     // XXX test cases for exceptions
+
+    if (pawngen && (pawngen->offset != 0)) {
+
+	if (input_file->peek() == '\037') {
+	    // XXX delete instream2 when we're done with it
+	    io::filtering_stream<io::input_seekable> * instream2 = new io::filtering_stream<io::input_seekable>;
+
+	    instream2->push(gzip_decompressor());
+	    instream2->push(*input_file);
+
+	    instream->push(io::restrict(*instream2, pawngen->offset));
+	} else {
+	    instream->push(io::restrict(*input_file, pawngen->offset));
+	}
+
+	instream->exceptions(std::ifstream::failbit | std::ifstream::badbit);
+
+	// read pawngen data
+
+	pawngen->pawn_positions_by_index.resize((offset - pawngen->offset) / pawn_position::binary_size);
+
+	size_t index = 0;
+	for (auto & pp : pawngen->pawn_positions_by_index) {
+	    pp.read(*instream, this);
+	    pp.index = index;
+	    index ++;
+	}
+
+	// reset instream again
+	while (! instream->empty()) instream->pop();
+	input_file->seekg(0);
+    }
 
 #if 0
 
@@ -6497,6 +6633,8 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 #endif
 
     next_read_index = 0;
+
+    finalize_initialization();
 }
 
 /* compute_extra_and_missing_pieces()
@@ -14383,6 +14521,7 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
     int dtm_bits;
     int size;
     int padded_size;
+    int offset;
     char entrybuf[MAX_FORMAT_BYTES];
 
     for (dtm_bits = 1; (1 << (dtm_bits - 1) <= max_dtm) || (1 << (dtm_bits - 1) < -min_dtm); dtm_bits ++);
@@ -14418,22 +14557,21 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
 
     size = doc->write_to_string().length();
 
-    padded_size = (size+5)&(~3);
+    do {
 
-    doc->get_root_node()->set_attribute("offset", boost::lexical_cast<std::string>(padded_size));
+	padded_size = (size+5)&(~3);
 
-    size = doc->write_to_string().length();
+	offset = padded_size;
+	if (tb->pawngen) {
+	    dynamic_cast<xmlpp::Element *>(doc->get_root_node()->find("//pawngen")[0])->set_attribute("offset", boost::lexical_cast<std::string>(offset));
+	    offset += pawn_position::binary_size * tb->pawngen->pawn_positions_by_index.size();
+	}
 
-    padded_size = (size+5)&(~3);
+	doc->get_root_node()->set_attribute("offset", boost::lexical_cast<std::string>(offset));
 
-    doc->get_root_node()->set_attribute("offset", boost::lexical_cast<std::string>(padded_size));
+	size = doc->write_to_string().length();
 
-    size = doc->write_to_string().length();
-
-    if (padded_size != ((size+5)&(~3))) {
-	fatal("sizes don't match in write_tablebase_to_file\n");
-	terminate();
-    }
+    } while (padded_size != ((size+5)&(~3)));
 
     info("Writing '%s'\n", filename.c_str());
 
@@ -14451,6 +14589,14 @@ void write_tablebase_to_file(tablebase_t *tb, Glib::ustring filename)
     doc->write_to_stream(outstream);
 
     for (; size < padded_size; size ++) outstream << '\0';
+
+    /* Then we write any pawngen data */
+
+    if (tb->pawngen) {
+	for (auto & pp : tb->pawngen->pawn_positions_by_index) {
+	    pp >> outstream;
+	}
+    }
 
     /* Then we write the tablebase data */
 
