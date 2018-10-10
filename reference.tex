@@ -199,8 +199,19 @@ At most one of them can be specified.
 metric.  Zero is used for draws, -1 is used for positions where the
 moving side is checkmated, and 1 is used for positions where the
 moving side can capture the opposing king, so an eight bit dtm field
-can record mate-in distances up to 126.  If a field size is not
-specified, it is selected automatically.
+can record mate-in distances up to 126.
+
+If a field size is not specified, it is selected automatically,
+according to the following algorithm.  Sixteen bits per entry are
+allocated for the in-memory tablebase.  From these sixteen bits, bits
+are assigned to count the number of moves possible from each position
+(the ``movecnt''), and, for suicide analysis only, a single bit is
+assigned to track whether a capture is possible.  The remaining bits
+of the sixteen are assigned to the distance field.  If, at the end of
+the calculation, fewer bits are required to encode the distance, the
+field is shrunk to that size before writing the output.  If more bits
+are required, then the program aborts with an error; no mechanism is
+provided to dynamically increase the field size if it overflows.
 
 {\tt <dtc bits={\it integer}/>} specifies a {\it distance to
   conversion} metric, which is the number of moves required before
@@ -208,7 +219,8 @@ reaching a different tablebase.  Zero is used for draws, -1 is used
 for positions where the moving side is checkmated, and 1 is used for
 positions where the moving side can capture the opposing king, so an
 eight bit dtm field can record distances up to 126.  If a field size
-is not specified, it is selected automatically.
+is not specified, it is selected automatically, according to the same
+algorithm described above.
 
 {\tt <basic/>} specifies a {\it bitbase} where two bits are used for
 each position, and no distance information is stored --- only an
