@@ -5,7 +5,7 @@
  * by Brent Baccala
  *
  * begun coding    August 2006
- * last modified   September 2018
+ * last modified   October 2018
  *
  * no rights reserved; you may freely copy, modify, or distribute HOFFMAN
  *
@@ -3529,7 +3529,6 @@ class combinadic_index : public index_encoding
     uint8_t white_king_position[64*64];
     uint8_t black_king_position[64*64];
     index_t king_index[64][64];
-    uint total_legal_king_positions;
     index_t king_multiplier;
 
     int total_legal_positions[MAX_PIECES] = {};
@@ -3862,6 +3861,10 @@ public:
 
 	    if (tb->pawngen && (tb->pieces[piece].piece_type == PieceType::Pawn)) continue;
 
+	    /* XXX I think that with the advent of pawngen, we can drop plus-pawn support
+	     * and simplify the program, starting with dropping the next block of code.
+	     */
+
 	    /* An important special case - handle two opposing plus-pawns by combining their
 	     * encoding groups, reducing tablebase size.  This also requires extending the semilegal
 	     * range of each group.  Note that we only set blocking_piece for plus-pawns, so if two
@@ -3961,7 +3964,6 @@ public:
 		    }
 		}
 
-		total_legal_king_positions = king_position;
 		king_multiplier = size;
 		size *= king_position;
 
