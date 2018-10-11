@@ -435,3 +435,5 @@ terminate called after throwing an instance of 'std::runtime_error'
 - control size of DTM field in entries table by setting size of DTM field in XML format
 
 - look at r1045a.xml and figure how to print its results better
+
+- pawngen generation can take a while.  Multi-thread it?
