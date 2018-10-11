@@ -6477,8 +6477,10 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	int i = 0;
 
 	while (fn[i] != 'v') {
-	    struct piece new_piece(PieceColor::White, piece_char[fn[i]]);
-	    pieces.push_back(new_piece);
+	    if (fn[i] != 'K') {
+		struct piece new_piece(PieceColor::White, piece_char[fn[i]]);
+		pieces.push_back(new_piece);
+	    }
 	    i ++;
 	}
 
@@ -6487,8 +6489,10 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	i ++;
 
 	while (fn[i] != '.') {
-	    struct piece new_piece(PieceColor::Black, piece_char[fn[i]]);
-	    pieces.push_back(new_piece);
+	    if (fn[i] != 'K') {
+		struct piece new_piece(PieceColor::Black, piece_char[fn[i]]);
+		pieces.push_back(new_piece);
+	    }
 	    i ++;
 	}
 
@@ -6498,8 +6502,8 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	pieces.emplace_back(PieceColor::White, PieceType::King);
 	pieces.emplace_back(PieceColor::Black, PieceType::King);
 
-	white_king = 0;
-	black_king = num_pieces_by_color[PieceColor::White];
+	white_king = num_pieces - 2;
+	black_king = num_pieces - 1;
 
 	index_type = Index::Combinadic4;
 
