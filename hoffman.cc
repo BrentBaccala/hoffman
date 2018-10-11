@@ -6468,6 +6468,8 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 
 	if (! p.parent_path().empty()) {
 	    syzygy_search_path.insert(p.parent_path().string());
+	} else {
+	    syzygy_search_path.insert(".");
 	}
 
 	/* We use the name of the file to determine the piece configuration. */
