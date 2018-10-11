@@ -936,15 +936,15 @@ bimap<Glib::ustring, int, casefold_compare> restriction_types =
 bimap<Glib::ustring, int, casefold_compare> formats =
     {{"fourbyte", FORMAT_FOURBYTE}, {"one-byte-dtm", FORMAT_ONE_BYTE_DTM}};
 
-enum class Index { Naive, Naive2, Simple, Compact, NoEnPassant, Combinadic3, Combinadic4, Pawngen };
+enum class Index { Naive, Naive2, Simple, Compact, NoEnPassant, Combinadic3, Combinadic4, Combinadic5 };
 
-#define DEFAULT_INDEX Index::Combinadic4
+#define DEFAULT_INDEX Index::Combinadic5
 
 bimap<Glib::ustring, Index, casefold_compare> index_types =
     {{"naive", Index::Naive}, {"naive2", Index::Naive2}, {"simple", Index::Simple},
      {"compact", Index::Compact}, {"no-en-passant", Index::NoEnPassant},
      {"combinadic3", Index::Combinadic3}, {"combinadic4", Index::Combinadic4},
-     {"pawngen", Index::Pawngen}};
+     {"pawngen", Index::Combinadic4}, {"combinadic5", Index::Combinadic5}};
 
 enum class FuturebaseType { Capture, Promotion, CapturePromotion, Normal };
 
@@ -2456,10 +2456,11 @@ void normalize_position(const tablebase_t *tb, local_position_t *position)
 
     if (position->decoded) return;
 
-    /* The 'combinadic4' index might not encode side-to-move at all.  In this case, if black is to
-     * move, then we have to invert the entire board.  We've precomputed how to exchange the pieces;
-     * that information is in the color_symmetric_transpose array.  We do this transformation first
-     * because it will change the king positions that are used next to compute reflections.
+    /* 'combinadic4' and 'combinadic5' indices might not encode side-to-move at all.  In this case,
+     * if black is to move, then we have to invert the entire board.  We've precomputed how to
+     * exchange the pieces; that information is in the color_symmetric_transpose array.  We do this
+     * transformation first because it will change the king positions that are used next to compute
+     * reflections.
      */
 
     if ((! tb->encode_stm) && (position->side_to_move == PieceColor::Black)) {
@@ -3488,7 +3489,7 @@ public:
     }
 };
 
-/* "combinadic3/4" index
+/* "combinadic3/4/5" index
  *
  * The encoding of restricted pieces used in "simple", paired encoding of the kings so they can
  * never be adjacent, a combinatorial-based encoding of identical pieces, and later pieces wholly
@@ -3505,6 +3506,10 @@ public:
  *
  * 'combinadic4' differs from 'combinadic3' in that it omits side-to-move if the position
  * can be inverted.
+ *
+ * 'combinadic5' differs from 'combinadic4' in that it positions the king table according to the
+ * location of the white king in the piece list, as opposed to always putting the king table in the
+ * least significant bits (after the side-to-move bit in the LSB).
  */
 
 int choose(int n, int k) {
@@ -3848,14 +3853,14 @@ public:
 
 	for (int piece = 0; piece < tb->num_pieces; piece ++) {
 
+	    /* We don't really need to assign this for pawngen pawns, but we do it anyway to avoid
+	     * bogus values in these arrays when we compute last_overlapping_group.
+	     */
+
 	    prev_piece_in_encoding_group[piece] = tb->pieces[piece].prev_piece_in_semilegal_group;
 	    next_piece_in_encoding_group[piece] = tb->pieces[piece].next_piece_in_semilegal_group;
 
 	    if ((piece == tb->white_king) || (piece == tb->black_king)) continue;
-
-	    /* We don't really need to assign this for pawns in a Index::Pawngen, but we do it
-	     * anyway to avoid bogus values in these arrays when we compute last_overlapping_group.
-	     */
 
 	    /* XXX revisit this when pawngen is refactored */
 
@@ -3979,7 +3984,7 @@ public:
 	    } else if (prev_piece_in_encoding_group[piece] == piece-1) {
 		piece_in_set ++;
 	    } else {
-		fatal("Combinadic3/4 index requires encoding groups to be adjacent in index\n");
+		fatal("Combinadic3/4/5 index requires encoding groups to be adjacent in index\n");
 	    }
 
 	    /* Now number the squares in the piece's semilegal range, and construct tables to
@@ -5030,14 +5035,9 @@ void tablebase_t::parse_XML(std::istream *instream)
 	}
     }
 
-    // XXX DEFAULT_INDEX should be able to handle pawngen
-
     if (index == "") {
-	if (pawngen) {
-	    index_type = Index::Pawngen;
-	} else {
-	    index_type = DEFAULT_INDEX;
-	}
+
+	index_type = DEFAULT_INDEX;
 
 	tablebase->add_child_text("   ");
 	index_node = tablebase->add_child("index");
@@ -5053,8 +5053,7 @@ void tablebase_t::parse_XML(std::istream *instream)
 	    throw nested_exception("Can't have normal pawn pieces with pawngen");
 	}
 
-	if ((index_type != Index::Pawngen)
-	    && (index_type != Index::Combinadic3) && (index_type != Index::Combinadic4)
+	if ((index_type != Index::Combinadic3) && (index_type != Index::Combinadic4) && (index_type != Index::Combinadic5)
 	    && (index_type != Index::Naive) && (index_type != Index::Naive2)) {
 	    throw nested_exception("Illegal index type with pawngen");
 	}
@@ -5068,8 +5067,21 @@ void tablebase_t::parse_XML(std::istream *instream)
 
     if ((variant == Variant::Suicide) && (index_type != Index::Naive)
 	&& (index_type != Index::Simple) && (index_type != Index::Combinadic3)
-	&& (index_type != Index::Combinadic4)) {
-	throw std::runtime_error("Only 'naive', 'simple', and 'combinadic3/4' indices are compatible with 'suicide' variant");
+	&& (index_type != Index::Combinadic4) && (index_type != Index::Combinadic5)) {
+	throw std::runtime_error("Only 'naive', 'simple', and 'combinadic3/4/5' indices are compatible with 'suicide' variant");
+    }
+
+    /* The combinadic routines use the location of the white king in the piece list to position the
+     * king index.  The older combinadic3 and combinadic4 schemes ignored the king's position in
+     * the piece list.  To mimic their behavior with the new code, we move the white king to
+     * the beginning of the piece list.
+     */
+
+    if ((index_type == Index::Combinadic3) || (index_type == Index::Combinadic4)) {
+	if (white_king != 0) {
+	    std::swap(pieces[white_king], pieces[0]);
+	    white_king = 0;
+	}
     }
 
     /* Get the format.  Older method is to specify it as a property on the tablebase element.  Next
@@ -5611,7 +5623,8 @@ void tablebase_t::finalize_initialization(void)
      * is_color_symmetric() also computes color_symmetric_transpose in the piece array
      */
 
-    if ((index_type == Index::Combinadic4) && is_color_symmetric() && (format.flag_type == FormatFlag::None)) {
+    if (((index_type == Index::Combinadic4) || (index_type == Index::Combinadic5))
+	&& is_color_symmetric() && (format.flag_type == FormatFlag::None)) {
 	encode_stm = false;
     } else {
 	encode_stm = true;
@@ -5642,7 +5655,7 @@ void tablebase_t::finalize_initialization(void)
 
     case Index::Combinadic3:
     case Index::Combinadic4:
-    case Index::Pawngen:
+    case Index::Combinadic5:
 	encoding.reset(new combinadic_index(this));
 	break;
 
@@ -6419,7 +6432,7 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	white_king = i-2;
 	black_king = i-1;
 
-	index_type = Index::Combinadic4;
+	index_type = Index::Combinadic5;
 
 	format = nalimov_format;
 
@@ -6509,7 +6522,7 @@ tablebase_t::tablebase_t(Glib::ustring filename) : filename(filename), offset(0)
 	white_king = num_pieces - 2;
 	black_king = num_pieces - 1;
 
-	index_type = Index::Combinadic4;
+	index_type = Index::Combinadic5;
 
 	format = syzygy_format;
 

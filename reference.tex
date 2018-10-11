@@ -110,7 +110,7 @@ of the rules of chess apply to this tablebase.
 {\bf Default:} {\tt normal}
 
 
-\subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant|combinadic \hfil\break\hbox{\qquad\qquad\qquad\qquad} |combinadic2|combinadic3|combinadic4|pawngen" \hfil\break\hbox{\qquad} symmetry="1|2|4|8"/>}
+\subsection{\tt <index type="naive|naive2|simple|compact|no-en-passant|combinadic \hfil\break\hbox{\qquad\qquad\qquad\qquad} |combinadic2|combinadic3|combinadic4|pawngen|combinadic5" \hfil\break\hbox{\qquad} symmetry="1|2|4|8"/>}
 
 The {\tt <index>} element specifies the algorithm that will be used to
 compute the index numbers in the tablebase; i.e, the algorithm that
@@ -166,9 +166,14 @@ this and can not be handled with this scheme.
   tablebase size in half.  (ex: {\tt kqkq} is color symmetric,
   but {\tt kqkr} is not)
 
-\item {\tt pawngen} Like {\tt combinadic4}, but pawns are handled
-  separately by building a table of all possible pawn positions that
-  can result from a given initial pawn configuration.
+\item {\tt pawngen} An older name for {\tt combinadic4}, deprecated
+  now that the {\tt pawngen} element works with multiple index types.
+
+\item {\tt combinadic5} Like {\tt combinadic4}, but the king index
+  is positioned according the location of the white king in the
+  piece list, unlike older encoding schemes which always places the
+  king index in the least significant bits, irregardless of the
+  position of the kings in the piece list.
 
 \end{description}
 
@@ -186,9 +191,7 @@ Not all symmetries are compatible will all index types; for example,
 8-way symmetry can not be used with {\tt naive} or {\tt naive2}
 index types.
 
-{\bf Default:} {\tt combinadic4} with automatically selected symmetry,
-unless a {\tt pawngen} element is present in the XML, which triggers
-{\tt pawngen}
+{\bf Default:} {\tt combinadic5} with automatically selected symmetry
 
 \subsection{Tablebase format}
 
