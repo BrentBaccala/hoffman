@@ -123,6 +123,26 @@ sub assign_futurebase {
 
 	$futurebase->setAttribute('filename', $filename);
 
+	if ($filename =~ m/.rtbw$/) {
+	    # Syzygy win-draw-loss bitbase
+	    $filename =~ s/.rtbw$//;
+	    $filename =~ s|.*/||;
+	    my ($whitename, $blackname) = split(/v/, $filename);
+	    my $whitepawns = ($whitename =~ tr/P//d);
+	    my $blackpawns = ($blackname =~ tr/P//d);
+
+	    my $key;
+	    if (not $invert_colors) {
+		$key = uc($whitename) . $whitepawns . uc($blackname) . $blackpawns;
+	    } else {
+		$key = uc($blackname) . $blackpawns . uc($whitename) . $whitepawns;
+	    }
+
+	    $futurebases{$key} = $futurebase->cloneNode(1);
+	    print "$key -> $filename\n";
+	    next;
+	}
+
 	tie *ZFILE, 'IO::Zlib', $filename, "rb" or die "Can't open futurebase $filename\n";
 	tie *FILE, 'XML_prefix_only', *ZFILE;
 
