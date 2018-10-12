@@ -89,10 +89,6 @@ typedef int piece;
 
 // SMP stuff
 
-#if defined (CPUS) && !defined (SMP) && (CPUS > 1)
-#  error Cannot use CPUS > 1 without SMP defined
-#endif
-
 static	lock_t	lockLRU;
 
 // Declarations
@@ -4485,16 +4481,13 @@ public:
 
 #include "tbdecode.h"
 
-#if !defined (CPUS)
-#  define   CPUS    1
-#endif
-
 #if defined (SMP)
   static    lock_t  lockDecode;
 #endif
 extern "C" int TB_CRC_CHECK = 0;
 static int cCompressed = 0;
-static decode_block *rgpdbDecodeBlocks[CPUS];
+static int rgpdbDecodeBlocksCnt = 0;
+static decode_block **rgpdbDecodeBlocks = NULL;
 
 // Information about tablebases
 
@@ -6014,13 +6007,33 @@ static int TB_FASTCALL TbtProbeTable
 #if defined (SMP)
         // Find free decode block
         decode_block    **pBlock;
+	int             i;
 
         Lock (lockDecode);
-        pBlock = rgpdbDecodeBlocks;
-        while (NULL == *pBlock)
-            pBlock ++;
-        block = *pBlock;
-        *pBlock = NULL;
+	for (i = 0, pBlock = rgpdbDecodeBlocks; i < rgpdbDecodeBlocksCnt; i ++, pBlock ++) {
+	  if (*pBlock != NULL) {
+	    break;
+	  }
+	}
+	if (i == rgpdbDecodeBlocksCnt) {
+	  rgpdbDecodeBlocksCnt ++;
+	  rgpdbDecodeBlocks = (decode_block **) realloc(rgpdbDecodeBlocks, sizeof(decode_block *) * rgpdbDecodeBlocksCnt);
+	  if (rgpdbDecodeBlocks == NULL)
+	    {
+	      printf ("*** Cannot reallocate decode block array\n");
+	      exit (1);
+	    }
+
+	  int iResult = comp_alloc_block (&rgpdbDecodeBlocks[i], TB_CB_CACHE_CHUNK);
+	  if (0 != iResult)
+	    {
+	      printf ("*** Cannot allocate decode block: error code %d\n", iResult);
+	      exit (1);
+	    }
+	  pBlock = rgpdbDecodeBlocks + i;
+	}
+	block = *pBlock;
+	*pBlock = NULL;
         Unlock (lockDecode);
 #else
         block = rgpdbDecodeBlocks[0];
@@ -6656,14 +6669,20 @@ extern "C" int IInitializeTb
             }
         }
     // Free compressed blocks
-    for (i = 0; i < CPUS; i ++)
-        {
-        if (NULL != rgpdbDecodeBlocks[i])
-            {
-            free (rgpdbDecodeBlocks[i]);
-            rgpdbDecodeBlocks[i] = NULL;
-            }
-        }
+    if (rgpdbDecodeBlocks != NULL)
+      {
+	for (i = 0; i < rgpdbDecodeBlocksCnt; i ++)
+	  {
+	    if (NULL != rgpdbDecodeBlocks[i])
+	      {
+		free (rgpdbDecodeBlocks[i]);
+		rgpdbDecodeBlocks[i] = NULL;
+	      }
+	  }
+	free(rgpdbDecodeBlocks);
+	rgpdbDecodeBlocksCnt = 0;	
+	rgpdbDecodeBlocks = NULL;	
+      }
 
     if(pszPath == NULL)
         return 0;
@@ -6700,6 +6719,7 @@ extern "C" int IInitializeTb
         pszPath ++;
         }
     
+#if 0
     // If there were compressed files, have to allocate buffer(s)
     if (0 != cCompressed)
         {
@@ -6719,6 +6739,26 @@ extern "C" int IInitializeTb
             printf ("Allocated %dKb for decompression tables, indices, and buffers.\n",
                     (cbEGTBCompBytes+1023)/1024);
         }
+#endif
+
+#if !defined(SMP)
+    if (NULL == rgpdbDecodeBlocks)
+      {
+	rgpdbDecodeBlocksCnt = 1;
+	rgpdbDecodeBlocks = malloc(sizeof(decode_block *));
+	rgpdbDecodeBlocks[0] = NULL;
+      }
+    if (NULL == rgpdbDecodeBlocks[0])
+      {
+	int iResult = comp_alloc_block (&rgpdbDecodeBlocks[0], TB_CB_CACHE_CHUNK);
+	if (0 != iResult)
+	  {
+	    printf ("*** Cannot allocate decode block: error code %d\n", iResult);
+	    exit (1);
+	  }
+      }
+    }
+#endif
 
     if (fVerbose)
         printf ("Tried to open %d files. Opened %d files.\n",
