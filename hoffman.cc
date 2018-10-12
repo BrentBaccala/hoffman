@@ -721,7 +721,7 @@ public:
     std::array<ReadOnly<uint8_t>, MAX_PIECES> permuted_piece;
     ReadOnly<PieceColor> side_to_move;
     ReadOnly<uint8_t> unreflected_en_passant_square;
-    ReadOnly<uint8_t> en_passant_square;
+    uint8_t en_passant_square;
     ReadOnly<uint8_t> multiplicity;
 
     local_position_t(const tablebase_t *tb) : tb(tb) { }
@@ -8146,10 +8146,25 @@ Basic tablebase_t::get_basic(index_t index)
 	}
 
 	/* Nor does Nalimov like it if the en passant pawn can't actually be captured by
-	 * another pawn.  Again, treat Syzygy the same way. XXX not implemented XXX
+	 * another pawn.  Again, treat Syzygy the same way.
 	 */
 
-	/* pos.en_passant_square; */
+	if ((pos.en_passant_square != ILLEGAL_POSITION)
+	    && (((pawns & white & BITVECTOR(pos.en_passant_square - 9)) == 0)
+		|| (pos.en_passant_square == 40)
+		|| (pos.side_to_move == PieceColor::Black))
+	    && (((pawns & white & BITVECTOR(pos.en_passant_square - 7)) == 0)
+		|| (pos.en_passant_square == 47)
+		|| (pos.side_to_move == PieceColor::Black))
+	    && (((pawns & black & BITVECTOR(pos.en_passant_square + 7)) == 0)
+		|| (pos.en_passant_square == 16)
+		|| (pos.side_to_move == PieceColor::White))
+	    && (((pawns & black & BITVECTOR(pos.en_passant_square + 9)) == 0)
+		|| (pos.en_passant_square == 23)
+		|| (pos.side_to_move == PieceColor::White))) {
+	    
+	    pos.en_passant_square = ILLEGAL_POSITION;
+	}
 
 	unsigned result = tb_probe_wdl(white, black,
 				       kings, queens, rooks, bishops, knights, pawns,
