@@ -143,6 +143,28 @@ sub assign_futurebase {
 	    next;
 	}
 
+	if ($filename =~ m/.nbw$/ || $filename =~ m/.nbb$/ || $filename =~ m/.emd$/) {
+	    # Nalimov tablebase
+	    $filename =~ s/.emd$//;
+	    $filename =~ s/.nbw$//;
+	    $filename =~ s/.nbb$//;
+	    $filename =~ s|.*/||;
+	    my ($empty, $whitename, $blackname) = split(/k/, $filename);
+	    my $whitepawns = ($whitename =~ tr/p//d);
+	    my $blackpawns = ($blackname =~ tr/p//d);
+
+	    my $key;
+	    if (not $invert_colors) {
+		$key = 'K' . uc($whitename) . $whitepawns . 'K' . uc($blackname) . $blackpawns;
+	    } else {
+		$key = 'K' . uc($blackname) . $blackpawns . 'K' . uc($whitename) . $whitepawns;
+	    }
+
+	    $futurebases{$key} = $futurebase->cloneNode(1);
+	    print "$key -> $filename\n";
+	    next;
+	}
+
 	tie *ZFILE, 'IO::Zlib', $filename, "rb" or die "Can't open futurebase $filename\n";
 	tie *FILE, 'XML_prefix_only', *ZFILE;
 
