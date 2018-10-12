@@ -7979,38 +7979,42 @@ int tablebase_t::get_DTM(index_t index)
 		/* I've learned the hard way not to probe a Nalimov tablebase for an illegal position... */
 		return 1;
 
-	    } else if ((global.en_passant_square != ILLEGAL_POSITION)
-		       && ((global.board[global.en_passant_square - 9] != 'P')
-			   || (global.en_passant_square == 40)
-			   || (global.side_to_move == PieceColor::Black))
-		       && ((global.board[global.en_passant_square - 7] != 'P')
-			   || (global.en_passant_square == 47)
-			   || (global.side_to_move == PieceColor::Black))
-		       && ((global.board[global.en_passant_square + 7] != 'p')
-			   || (global.en_passant_square == 16)
-			   || (global.side_to_move == PieceColor::White))
-		       && ((global.board[global.en_passant_square + 9] != 'p')
-			   || (global.en_passant_square == 23)
-			   || (global.side_to_move == PieceColor::White))) {
+	    } else {
 
 		/* Nor does Nalimov like it if the en passant pawn can't actually be captured by
 		 * another pawn.
 		 */
 
-		return 0;
+		if ((global.en_passant_square != ILLEGAL_POSITION)
+		    && ((global.board[global.en_passant_square - 9] != 'P')
+			|| (global.en_passant_square == 40)
+			|| (global.side_to_move == PieceColor::Black))
+		    && ((global.board[global.en_passant_square - 7] != 'P')
+			|| (global.en_passant_square == 47)
+			|| (global.side_to_move == PieceColor::Black))
+		    && ((global.board[global.en_passant_square + 7] != 'p')
+			|| (global.en_passant_square == 16)
+			|| (global.side_to_move == PieceColor::White))
+		    && ((global.board[global.en_passant_square + 9] != 'p')
+			|| (global.en_passant_square == 23)
+			|| (global.side_to_move == PieceColor::White))) {
 
-	    } else if (EGTBProbe(global.side_to_move == PieceColor::White, global.board,
-				 global.en_passant_square == ILLEGAL_POSITION ? -1 : global.en_passant_square, &score) == 1) {
-		if (score > 0) {
-		    return ((65536-4)/2)-score+2;
-		} else if (score < 0) {
-		    return -(((65536-4)/2)+score)-1;
-		} else {
-		    return 0;
+		    global.en_passant_square = ILLEGAL_POSITION;
 		}
-	    } else {
-		/* Nalimov says illegal */
-		throw std::runtime_error("Nalimov says illegal");
+
+		if (EGTBProbe(global.side_to_move == PieceColor::White, global.board,
+			      global.en_passant_square == ILLEGAL_POSITION ? -1 : global.en_passant_square, &score) == 1) {
+		    if (score > 0) {
+			return ((65536-4)/2)-score+2;
+		    } else if (score < 0) {
+			return -(((65536-4)/2)+score)-1;
+		    } else {
+			return 0;
+		    }
+		} else {
+		    /* Nalimov says illegal */
+		    throw std::runtime_error("Nalimov says illegal");
+		}
 	    }
 	}
     }
