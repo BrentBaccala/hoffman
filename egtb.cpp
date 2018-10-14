@@ -6007,15 +6007,16 @@ static int TB_FASTCALL TbtProbeTable
 #if defined (SMP)
         // Find free decode block
         decode_block    **pBlock;
-	int             i;
+	int             iBlock;
 
         Lock (lockDecode);
-	for (i = 0, pBlock = rgpdbDecodeBlocks; i < rgpdbDecodeBlocksCnt; i ++, pBlock ++) {
+	for (iBlock = 0; iBlock < rgpdbDecodeBlocksCnt; iBlock ++) {
+	  pBlock = rgpdbDecodeBlocks + iBlock;
 	  if (*pBlock != NULL) {
 	    break;
 	  }
 	}
-	if (i == rgpdbDecodeBlocksCnt) {
+	if (iBlock == rgpdbDecodeBlocksCnt) {
 	  rgpdbDecodeBlocksCnt ++;
 	  rgpdbDecodeBlocks = (decode_block **) realloc(rgpdbDecodeBlocks, sizeof(decode_block *) * rgpdbDecodeBlocksCnt);
 	  if (rgpdbDecodeBlocks == NULL)
@@ -6024,13 +6025,13 @@ static int TB_FASTCALL TbtProbeTable
 	      exit (1);
 	    }
 
-	  int iResult = comp_alloc_block (&rgpdbDecodeBlocks[i], TB_CB_CACHE_CHUNK);
+	  pBlock = rgpdbDecodeBlocks + iBlock;
+	  int iResult = comp_alloc_block (pBlock, TB_CB_CACHE_CHUNK);
 	  if (0 != iResult)
 	    {
 	      printf ("*** Cannot allocate decode block: error code %d\n", iResult);
 	      exit (1);
 	    }
-	  pBlock = rgpdbDecodeBlocks + i;
 	}
 	block = *pBlock;
 	*pBlock = NULL;
@@ -6053,7 +6054,7 @@ static int TB_FASTCALL TbtProbeTable
         // Release block
 #if defined (SMP)
         Lock (lockDecode);
-        *pBlock = block;
+        rgpdbDecodeBlocks[iBlock] = block;
         Unlock (lockDecode);
 #endif
 
@@ -6680,8 +6681,8 @@ extern "C" int IInitializeTb
 	      }
 	  }
 	free(rgpdbDecodeBlocks);
-	rgpdbDecodeBlocksCnt = 0;	
-	rgpdbDecodeBlocks = NULL;	
+	rgpdbDecodeBlocksCnt = 0;
+	rgpdbDecodeBlocks = NULL;
       }
 
     if(pszPath == NULL)
