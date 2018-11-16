@@ -96,6 +96,8 @@
 
 <!ATTLIST pawngen
 	  offset CDATA #IMPLIED
+	  start CDATA #IMPLIED
+	  end CDATA #IMPLIED
 	  legal-white-squares CDATA #IMPLIED
 	  legal-black-squares CDATA #IMPLIED
 	  white-pawn-locations	CDATA	#REQUIRED

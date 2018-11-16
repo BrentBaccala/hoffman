@@ -710,7 +710,7 @@ public:
     bool valid;
     index_t index;
     int pawngen_index;
-    index_t pawngen_base_index;
+    index_t pawngen_base_index;		/* (pawngen_index - pawngen_start) * (size of pawngen block) */
     int reflection;
 
     ReadOnly<uint64_t> board_vector;
@@ -946,11 +946,12 @@ bimap<Glib::ustring, Index, casefold_compare> index_types =
      {"combinadic3", Index::Combinadic3}, {"combinadic4", Index::Combinadic4},
      {"pawngen", Index::Combinadic4}, {"combinadic5", Index::Combinadic5}};
 
-enum class FuturebaseType { Capture, Promotion, CapturePromotion, Normal };
+enum class FuturebaseType { Capture, Promotion, CapturePromotion, Normal, Pawngen };
 
 bimap<Glib::ustring, FuturebaseType, casefold_compare> futurebase_types =
     {{"capture", FuturebaseType::Capture}, {"promotion", FuturebaseType::Promotion},
-     {"capture-promotion", FuturebaseType::CapturePromotion}, {"normal", FuturebaseType::Normal}};
+     {"capture-promotion", FuturebaseType::CapturePromotion}, {"normal", FuturebaseType::Normal},
+     {"pawngen", FuturebaseType::Pawngen}};
 
 struct piece {
 
@@ -1001,6 +1002,12 @@ struct piece {
 	: color(color), piece_type(type), legal_squares(legal_squares) {}
     piece(xmlpp::Node *);
 };
+
+bool operator==(const piece& A, const piece& B)
+{
+    return ((A.color == B.color) && (A.piece_type == B.piece_type)
+	    && (A.legal_squares == B.legal_squares) && (A.semilegal_squares == B.semilegal_squares));
+}
 
 int eval_to_number_or_zero(xmlpp::Node *node, std::string xpath);
 unsigned long eval_to_uint64(xmlpp::Node *node, std::string xpath);
@@ -1801,6 +1808,10 @@ public:
     uint8_t position[MAX_PIECES];
     int en_passant_pawn;
 
+    /* For each pawn, what square on the board results from moving it one rank backwards, and what
+     * is the delta to the corresponding pawngen index?
+     */
+
     uint8_t prev_position[MAX_PIECES];
     int delta_pawngen_index[MAX_PIECES];
 
@@ -2018,6 +2029,8 @@ struct pawngen {
     std::vector<pawn_position> pawn_positions_by_index;
 
     off_t offset;  /* Offset in file for pre-computed tables */
+    int start;     /* Start and end pawngen indices */
+    int end;
 };
 
 void process_pawn_position(class pawn_position position)
@@ -2209,6 +2222,8 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
     pawngen->initial_black_pawns = initial_position.black_pawns;
 
     pawngen->offset = eval_to_number_or_zero(xml, "@offset");
+    pawngen->start = eval_to_number_or_zero(xml, "@start");
+    pawngen->end = eval_to_number_or_zero(xml, "@end");
 
     white_pawns_required = eval_to_number_or_zero(xml, "@white-pawns-required");
     black_pawns_required = eval_to_number_or_zero(xml, "@black-pawns-required");
@@ -2303,6 +2318,12 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 
 void tablebase_t::finalize_pawngen_initialization(void)
 {
+    // info("%zd pawngen positions\n", pawngen->pawn_positions_by_index.size());
+
+    if (pawngen->end == 0) {
+	pawngen->end = pawngen->pawn_positions_by_index.size() - 1;
+    }
+
     pawngen->pawn_positions_by_position.resize(pawngen->pawn_positions_by_index.size());
 
     /* Figure which pawn positions arise from moving each pawn one step backwards, and save the
@@ -2312,20 +2333,24 @@ void tablebase_t::finalize_pawngen_initialization(void)
     for (unsigned int index = 0; index < pawngen->pawn_positions_by_index.size(); index ++) {
 	for (int piece = 0; piece < num_pieces; piece ++) {
 	    pawngen->pawn_positions_by_index[index].prev_position[piece] = ILLEGAL_POSITION;
+	    pawngen->pawn_positions_by_index[index].delta_pawngen_index[piece] = 0;
 	    if (pieces[piece].piece_type == PieceType::Pawn) {
 		pawn_position prev_pp = pawngen->pawn_positions_by_index[index];
+		uint8_t prev_position;
 		if (pieces[piece].color == PieceColor::White) {
+		    prev_position = prev_pp.position[piece] - 8;
 		    prev_pp.remove_white_pawn(prev_pp.position[piece]);
-		    prev_pp.add_white_pawn(prev_pp.position[piece] - 8);
+		    prev_pp.add_white_pawn(prev_position);
 		} else {
+		    prev_position = prev_pp.position[piece] + 8;
 		    prev_pp.remove_black_pawn(prev_pp.position[piece]);
-		    prev_pp.add_black_pawn(prev_pp.position[piece] + 8);
+		    prev_pp.add_black_pawn(prev_position);
 		}
 		auto it = std::find(pawngen->pawn_positions_by_index.begin(),
 				    pawngen->pawn_positions_by_index.end(),
 				    prev_pp);
 		if (it != pawngen->pawn_positions_by_index.end()) {
-		    pawngen->pawn_positions_by_index[index].prev_position[piece] = prev_pp.position[piece];
+		    pawngen->pawn_positions_by_index[index].prev_position[piece] = prev_position;
 		    pawngen->pawn_positions_by_index[index].delta_pawngen_index[piece]
 			= it->index - pawngen->pawn_positions_by_index[index].index;
 		}
@@ -4158,8 +4183,10 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 	    return INVALID_INDEX;
 	} else if (*it != pawns) {
 	    return INVALID_INDEX;
+	} else if ((it->index < tb->pawngen->start) || (it->index > tb->pawngen->end)) {
+	    return INVALID_INDEX;
 	} else {
-	    index += tb->encoding->size * it->index;
+	    index += tb->encoding->size * (it->index - tb->pawngen->start);
 	}
 
     }
@@ -4302,8 +4329,8 @@ bool index_to_local_position(const tablebase_t *tb, index_t index, int reflectio
 	bool pawngen_update_needed = false;
 
 	if ((! decoded) || (index < position->pawngen_base_index)) {
-	    position->pawngen_index = index / tb->encoding->size;
-	    position->pawngen_base_index = position->pawngen_index * tb->encoding->size;
+	    position->pawngen_index = (index / tb->encoding->size) + tb->pawngen->start;
+	    position->pawngen_base_index = (position->pawngen_index - tb->pawngen->start) * tb->encoding->size;
 	    pawngen_update_needed = true;
 	} else {
 	    while (index >= position->pawngen_base_index + tb->encoding->size) {
@@ -4701,6 +4728,9 @@ void local_position_t::move_piece(int piece, int destination_square) {
 	    pawngen_index += pp.delta_pawngen_index[piece];
 	    pawngen_base_index += pp.delta_pawngen_index[piece] * tb->encoding->size;
 	    index += pp.delta_pawngen_index[piece] * tb->encoding->size * (tb->encode_stm ? 2 : 1);
+	    if (index >= tb->num_indices) {
+		decoded = false;
+	    }
 	} else {
 	    decoded = false;
 	}
@@ -5681,7 +5711,7 @@ void tablebase_t::finalize_initialization(void)
     }
 
     if (pawngen) {
-	num_indices *= pawngen->pawn_positions_by_index.size();
+	num_indices *= (pawngen->end - pawngen->start + 1);
     }
 
 }
@@ -6774,7 +6804,14 @@ FuturebaseType autodetect_futurebase_type(tablebase_t & futurebase)
 {
     if (futurebase.extra_piece == -1) {
 	if ((futurebase.missing_pawn == -1) && (futurebase.missing_non_pawn == -1)) {
-	    return FuturebaseType::Normal;
+	    if ((futurebase.variant == current_tb->variant)
+		&& (futurebase.index_type == current_tb->index_type)
+		&& (futurebase.num_pieces == current_tb->num_pieces)
+		&& equal(futurebase.pieces.begin(), futurebase.pieces.end(), current_tb->pieces.begin())) {
+		return FuturebaseType::Pawngen;
+	    } else {
+		return FuturebaseType::Normal;
+	    }
 	} else if ((futurebase.missing_pawn != -1) && (futurebase.missing_non_pawn != -1)) {
 	    throw std::runtime_error("unknown futurebase type");
 	} else {
@@ -11595,6 +11632,11 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
 							       current_tb, &current_position,
 							       futurebase->invert_colors);
 
+    if (future_index == debug_futuremove) {
+	info("normal backprop; reflection=%d; translation=%x\n",
+	     reflections[reflection], translation);
+    }
+
     if (translation != invalid_translation) {
 
 	if ((translation.missing_piece1 != NONE) || (translation.missing_piece2 != NONE)
@@ -11709,6 +11751,90 @@ void propagate_moves_from_normal_futurebase(index_t future_index, int reflection
     }
 }
 
+/* A "pawngen" futurebase is one that's identical to our own, except that it uses a different range
+ * of pawngen indices.  Its local positions can just be copied into our own local position
+ * structure, eliminating the need for the time-consuming translation function.
+ */
+
+void propagate_moves_from_pawngen_futurebase(index_t future_index, int reflection)
+{
+    local_position_t foreign_position(futurebase);
+    local_position_t current_position(current_tb);
+
+    if (! index_to_local_position(futurebase, future_index, reflections[reflection],
+				  &foreign_position)) return;
+
+    if (future_index == debug_futuremove) {
+	info("normal backprop; reflection=%d\n", reflections[reflection]);
+    }
+
+    int pawngen_index = foreign_position.pawngen_index;
+
+    for (int piece = 0; piece < current_tb->num_pieces; piece ++) {
+
+	/* We only consider pawn moves, since they're the only things that change the pawngen index */
+
+	if (current_tb->pieces[piece].piece_type != PieceType::Pawn) continue;
+
+	/* We've moving BACKWARDS in the game, so this has to be a piece of the player who is NOT TO
+	 * PLAY here - this is the LAST move we're considering, not the next move.
+	 */
+
+	if (current_tb->pieces[piece].color == foreign_position.side_to_move) continue;
+
+	/* XXX big assumption here - that we can just copy a position from foreign to current */
+	current_position = foreign_position;
+	current_position.tb = current_tb;
+	current_position.flip_side_to_move();
+
+	/* can we move the pawn backwards and get a position in this tablebase? */
+
+	int delta_pawngen_index = current_tb->pawngen->pawn_positions_by_index[pawngen_index].delta_pawngen_index[piece];
+	uint8_t prev_position = current_tb->pawngen->pawn_positions_by_index[pawngen_index].prev_position[piece];
+
+	if (future_index == debug_futuremove) {
+	    info("pawngen backprop; delta_pawngen_index=%d; prev_position=%d\n", delta_pawngen_index, prev_position);
+	}
+
+	if ((prev_position != ILLEGAL_POSITION) && (! (current_position.board_vector & BITVECTOR(prev_position)))) {
+	    int new_pawngen_index = pawngen_index + delta_pawngen_index;
+
+	    /* move_piece's pawngen optimization makes this quick */
+	    current_position.move_piece(piece, prev_position);
+
+	    if ((new_pawngen_index >= current_tb->pawngen->start) && (new_pawngen_index <= current_tb->pawngen->end)) {
+		/* back prop */
+		propagate_local_position_from_futurebase(current_position, foreign_position, HANDLED_FUTUREMOVE, false);
+	    }
+
+	    /* is a double pawn move possible? */
+
+	    if (((current_position.side_to_move == PieceColor::White) && (ROW(prev_position) == 2))
+		|| ((current_position.side_to_move == PieceColor::Black) && (ROW(prev_position) == 5))) {
+
+		int delta2_pawngen_index = current_tb->pawngen->pawn_positions_by_index[new_pawngen_index].delta_pawngen_index[piece];
+		int prev_position2 = current_tb->pawngen->pawn_positions_by_index[new_pawngen_index].prev_position[piece];
+
+		if (future_index == debug_futuremove) {
+		    info("pawngen backprop; delta2_pawngen_index=%d; prev_position2=%d\n", delta2_pawngen_index, prev_position2);
+		}
+		if ((prev_position2 != ILLEGAL_POSITION) && (! (current_position.board_vector & BITVECTOR(prev_position2)))) {
+		    int new2_pawngen_index = new_pawngen_index + delta2_pawngen_index;
+
+		    if ((new2_pawngen_index >= current_tb->pawngen->start) && (new2_pawngen_index <= current_tb->pawngen->end)) {
+
+			/* move_piece's pawngen optimization makes this quick */
+			current_position.move_piece(piece, prev_position2);
+
+			/* back prop */
+			propagate_local_position_from_futurebase(current_position, foreign_position, HANDLED_FUTUREMOVE, false);
+		    }
+		}
+	    }
+	}
+    }
+}
+
 /* Back propagates from all the futurebases.
  *
  * Should be called after the tablebase has been initialized, but before intra-table propagation.
@@ -11813,6 +11939,16 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    if (fatal_errors == 0) {
 		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = propagate_moves_from_normal_futurebase;
+		doing_capture_backprop = false;
+	    }
+
+	    break;
+
+	case FuturebaseType::Pawngen:
+
+	    if (fatal_errors == 0) {
+		info("Back propagating (pawngen) from '%s'\n", (char *) futurebase->filename.c_str());
+		backprop_function = propagate_moves_from_pawngen_futurebase;
 		doing_capture_backprop = false;
 	    }
 
