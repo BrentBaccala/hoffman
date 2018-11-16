@@ -1809,11 +1809,14 @@ public:
     int en_passant_pawn;
 
     /* For each pawn, what square on the board results from moving it one rank backwards, and what
-     * is the delta to the corresponding pawngen index?
+     * is the delta to the corresponding pawngen index?  Double moves?
      */
 
     uint8_t prev_position[MAX_PIECES];
     int delta_pawngen_index[MAX_PIECES];
+
+    uint8_t prev_position2[MAX_PIECES];
+    int delta_pawngen_index2[MAX_PIECES];
 
     bool valid(void) const
     {
@@ -2334,6 +2337,8 @@ void tablebase_t::finalize_pawngen_initialization(void)
 	for (int piece = 0; piece < num_pieces; piece ++) {
 	    pawngen->pawn_positions_by_index[index].prev_position[piece] = ILLEGAL_POSITION;
 	    pawngen->pawn_positions_by_index[index].delta_pawngen_index[piece] = 0;
+	    pawngen->pawn_positions_by_index[index].prev_position2[piece] = ILLEGAL_POSITION;
+	    pawngen->pawn_positions_by_index[index].delta_pawngen_index2[piece] = 0;
 	    if (pieces[piece].piece_type == PieceType::Pawn) {
 		pawn_position prev_pp = pawngen->pawn_positions_by_index[index];
 		uint8_t prev_position;
@@ -2353,6 +2358,29 @@ void tablebase_t::finalize_pawngen_initialization(void)
 		    pawngen->pawn_positions_by_index[index].prev_position[piece] = prev_position;
 		    pawngen->pawn_positions_by_index[index].delta_pawngen_index[piece]
 			= it->index - pawngen->pawn_positions_by_index[index].index;
+		}
+
+		if (((pieces[piece].color == PieceColor::White) && (ROW(prev_position) == 2))
+		    || ((pieces[piece].color == PieceColor::Black) && (ROW(prev_position) == 5))) {
+
+		    if (pieces[piece].color == PieceColor::White) {
+			prev_pp.remove_white_pawn(prev_position);
+			prev_position -= 8;
+			prev_pp.add_white_pawn(prev_position);
+		    } else {
+			prev_pp.remove_black_pawn(prev_position);
+			prev_position += 8;
+			prev_pp.add_black_pawn(prev_position);
+		    }
+
+		    auto it = std::find(pawngen->pawn_positions_by_index.begin(),
+					pawngen->pawn_positions_by_index.end(),
+					prev_pp);
+		    if (it != pawngen->pawn_positions_by_index.end()) {
+			pawngen->pawn_positions_by_index[index].prev_position2[piece] = prev_position;
+			pawngen->pawn_positions_by_index[index].delta_pawngen_index2[piece]
+			    = it->index - pawngen->pawn_positions_by_index[index].index;
+		    }
 		}
 	    }
 	}
@@ -11809,26 +11837,23 @@ void propagate_moves_from_pawngen_futurebase(index_t future_index, int reflectio
 
 	    /* is a double pawn move possible? */
 
-	    if (((current_position.side_to_move == PieceColor::White) && (ROW(prev_position) == 2))
-		|| ((current_position.side_to_move == PieceColor::Black) && (ROW(prev_position) == 5))) {
+	    int delta_pawngen_index2 = current_tb->pawngen->pawn_positions_by_index[pawngen_index].delta_pawngen_index2[piece];
+	    int prev_position2 = current_tb->pawngen->pawn_positions_by_index[pawngen_index].prev_position2[piece];
 
-		int delta2_pawngen_index = current_tb->pawngen->pawn_positions_by_index[new_pawngen_index].delta_pawngen_index[piece];
-		int prev_position2 = current_tb->pawngen->pawn_positions_by_index[new_pawngen_index].prev_position[piece];
+	    if (future_index == debug_futuremove) {
+		info("pawngen backprop; delta_pawngen_index2=%d; prev_position2=%d\n", delta_pawngen_index2, prev_position2);
+	    }
 
-		if (future_index == debug_futuremove) {
-		    info("pawngen backprop; delta2_pawngen_index=%d; prev_position2=%d\n", delta2_pawngen_index, prev_position2);
-		}
-		if ((prev_position2 != ILLEGAL_POSITION) && (! (current_position.board_vector & BITVECTOR(prev_position2)))) {
-		    int new2_pawngen_index = new_pawngen_index + delta2_pawngen_index;
+	    if ((prev_position2 != ILLEGAL_POSITION) && (! (current_position.board_vector & BITVECTOR(prev_position2)))) {
+		int new2_pawngen_index = pawngen_index + delta_pawngen_index2;
 
-		    if ((new2_pawngen_index >= current_tb->pawngen->start) && (new2_pawngen_index <= current_tb->pawngen->end)) {
+		if ((new2_pawngen_index >= current_tb->pawngen->start) && (new2_pawngen_index <= current_tb->pawngen->end)) {
 
-			/* move_piece's pawngen optimization makes this quick */
-			current_position.move_piece(piece, prev_position2);
+		    /* move_piece's pawngen optimization makes this quick */
+		    current_position.move_piece(piece, prev_position2);
 
-			/* back prop */
-			propagate_local_position_from_futurebase(current_position, foreign_position, HANDLED_FUTUREMOVE, false);
-		    }
+		    /* back prop */
+		    propagate_local_position_from_futurebase(current_position, foreign_position, HANDLED_FUTUREMOVE, false);
 		}
 	    }
 	}
