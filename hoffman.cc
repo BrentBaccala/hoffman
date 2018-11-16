@@ -2032,8 +2032,8 @@ struct pawngen {
     std::vector<pawn_position> pawn_positions_by_index;
 
     off_t offset;  /* Offset in file for pre-computed tables */
-    int start;     /* Start and end pawngen indices */
-    int end;
+    int start;     /* Starting pawngen index in this tablebase */
+    int count;     /* Number of pawngen indices in this tablebase */
 };
 
 void process_pawn_position(class pawn_position position)
@@ -2226,7 +2226,7 @@ void tablebase_t::parse_pawngen_element(xmlpp::Node * xml)
 
     pawngen->offset = eval_to_number_or_zero(xml, "@offset");
     pawngen->start = eval_to_number_or_zero(xml, "@start");
-    pawngen->end = eval_to_number_or_zero(xml, "@end");
+    pawngen->count = eval_to_number_or_zero(xml, "@count");
 
     white_pawns_required = eval_to_number_or_zero(xml, "@white-pawns-required");
     black_pawns_required = eval_to_number_or_zero(xml, "@black-pawns-required");
@@ -2323,8 +2323,8 @@ void tablebase_t::finalize_pawngen_initialization(void)
 {
     // info("%zd pawngen positions\n", pawngen->pawn_positions_by_index.size());
 
-    if (pawngen->end == 0) {
-	pawngen->end = pawngen->pawn_positions_by_index.size() - 1;
+    if (pawngen->count == 0) {
+	pawngen->count = pawngen->pawn_positions_by_index.size() - pawngen->start;
     }
 
     pawngen->pawn_positions_by_position.resize(pawngen->pawn_positions_by_index.size());
@@ -4211,7 +4211,7 @@ index_t normalized_position_to_index(const tablebase_t *tb, local_position_t *po
 	    return INVALID_INDEX;
 	} else if (*it != pawns) {
 	    return INVALID_INDEX;
-	} else if ((it->index < tb->pawngen->start) || (it->index > tb->pawngen->end)) {
+	} else if ((it->index < tb->pawngen->start) || (it->index >= tb->pawngen->start + tb->pawngen->count)) {
 	    return INVALID_INDEX;
 	} else {
 	    index += tb->encoding->size * (it->index - tb->pawngen->start);
@@ -5739,7 +5739,7 @@ void tablebase_t::finalize_initialization(void)
     }
 
     if (pawngen) {
-	num_indices *= (pawngen->end - pawngen->start + 1);
+	num_indices *= pawngen->count;
     }
 
 }
@@ -11830,7 +11830,8 @@ void propagate_moves_from_pawngen_futurebase(index_t future_index, int reflectio
 	    /* move_piece's pawngen optimization makes this quick */
 	    current_position.move_piece(piece, prev_position);
 
-	    if ((new_pawngen_index >= current_tb->pawngen->start) && (new_pawngen_index <= current_tb->pawngen->end)) {
+	    if ((new_pawngen_index >= current_tb->pawngen->start)
+		&& (new_pawngen_index < current_tb->pawngen->start + current_tb->pawngen->count)) {
 		/* back prop */
 		propagate_local_position_from_futurebase(current_position, foreign_position, HANDLED_FUTUREMOVE, false);
 	    }
@@ -11847,7 +11848,8 @@ void propagate_moves_from_pawngen_futurebase(index_t future_index, int reflectio
 	    if ((prev_position2 != ILLEGAL_POSITION) && (! (current_position.board_vector & BITVECTOR(prev_position2)))) {
 		int new2_pawngen_index = pawngen_index + delta_pawngen_index2;
 
-		if ((new2_pawngen_index >= current_tb->pawngen->start) && (new2_pawngen_index <= current_tb->pawngen->end)) {
+		if ((new2_pawngen_index >= current_tb->pawngen->start)
+		    && (new2_pawngen_index < current_tb->pawngen->start + current_tb->pawngen->count)) {
 
 		    /* move_piece's pawngen optimization makes this quick */
 		    current_position.move_piece(piece, prev_position2);
