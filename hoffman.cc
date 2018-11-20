@@ -9196,7 +9196,7 @@ EntriesTablePtr entriesTable;
 
 struct UnpropagatedIndexTable {
     size_t size;
-    std::vector<index_t> * unpropagated_indices;
+    index_t * unpropagated_indices;
     size_t count = 0;
     size_t last_pass_count = 0;
     size_t next_pop = 0;
@@ -9210,7 +9210,7 @@ struct UnpropagatedIndexTable {
 	size_t bytes = size * sizeof(index_t);
 
 	try {
-	    unpropagated_indices = new std::vector<index_t>(size);
+	    unpropagated_indices = new index_t[size];
 
 	    if (bytes < 1024*1024) {
 		info("Malloced %zdKB for unpropagated index table\n", bytes/1024);
@@ -9243,9 +9243,9 @@ struct UnpropagatedIndexTable {
 
 	    if (count + last_pass_count < size) {
 		if (direction) {
-		    unpropagated_indices->at(count) = index;
+		    unpropagated_indices[count] = index;
 		} else {
-		    unpropagated_indices->at(size - count - 1) = index;
+		    unpropagated_indices[size - count - 1] = index;
 		}
 		count ++;
 	    } else {
@@ -9266,9 +9266,9 @@ struct UnpropagatedIndexTable {
 	// XXX not thread safe (but not currently used in threaded code)
 	index_t retval;
 	if (direction) {
-	    retval = unpropagated_indices->at(size - next_pop - 1);
+	    retval = unpropagated_indices[size - next_pop - 1];
 	} else {
-	    retval = unpropagated_indices->at(next_pop);
+	    retval = unpropagated_indices[next_pop];
 	}
 	next_pop ++;
 	return retval;
