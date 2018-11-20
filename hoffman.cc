@@ -9276,7 +9276,7 @@ struct UnpropagatedIndexTable {
 };
 
 UnpropagatedIndexTable * unpropagated_index_table = NULL;
-int unpropagated_index_table_MBs = 0;
+size_t unpropagated_index_table_MBs = 0;
 
 /* finalize_update()
  *
