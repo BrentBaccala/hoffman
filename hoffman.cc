@@ -9192,16 +9192,34 @@ EntriesTablePtr entriesTable;
  * done with locks.
  */
 
-struct unpropagated_index_table {
-    static const int size = 1024*1024;
-    index_t unpropagated_indices[size];
-    int count = 0;
-    int last_pass_count = 0;
-    int next_pop = 0;
+struct UnpropagatedIndexTable {
+    size_t size;
+    std::vector<index_t> * unpropagated_indices;
+    size_t count = 0;
+    size_t last_pass_count = 0;
+    size_t next_pop = 0;
     bool tracking = false;
     bool last_pass_optimized = false;
     bool direction = false;
     std::mutex lock;
+
+    UnpropagatedIndexTable(size_t size) : size(size)
+    {
+	size_t bytes = size * sizeof(index_t);
+
+	try {
+	    unpropagated_indices = new std::vector<index_t>(size);
+
+	    if (bytes < 1024*1024) {
+		info("Malloced %zdKB for unpropagated index table\n", bytes/1024);
+	    } else {
+		info("Malloced %zdMB for unpropagated index table\n", bytes/(1024*1024));
+	    }
+	} catch (std::bad_alloc ex) {
+	    fatal("Can't malloc %zdMB for unpropagated index table: %s\n", bytes/(1024*1024), ex.what());
+	}
+
+    }
 
     void start_new_pass(void)
     {
@@ -9223,9 +9241,9 @@ struct unpropagated_index_table {
 
 	    if (count + last_pass_count < size) {
 		if (direction) {
-		    unpropagated_indices[count] = index;
+		    unpropagated_indices->at(count) = index;
 		} else {
-		    unpropagated_indices[size - count - 1] = index;
+		    unpropagated_indices->at(size - count - 1) = index;
 		}
 		count ++;
 	    } else {
@@ -9246,16 +9264,19 @@ struct unpropagated_index_table {
 	// XXX not thread safe (but not currently used in threaded code)
 	index_t retval;
 	if (direction) {
-	    retval = unpropagated_indices[size - next_pop - 1];
+	    retval = unpropagated_indices->at(size - next_pop - 1);
 	} else {
-	    retval = unpropagated_indices[next_pop];
+	    retval = unpropagated_indices->at(next_pop);
 	}
 	next_pop ++;
 	return retval;
     }
 
 
-} unpropagated_index_table;
+};
+
+UnpropagatedIndexTable * unpropagated_index_table = NULL;
+int unpropagated_index_table_MBs = 0;
 
 /* finalize_update()
  *
@@ -9316,7 +9337,9 @@ inline void PTM_wins(index_t index, int dtm)
     } while (!entriesTable->compare_exchange_weak(index, expected, desired));
 
     if ((! tracking_dtm) && expected.is_normal_movecnt() && desired.is_unpropagated()) {
-	unpropagated_index_table.track(index);
+	if (unpropagated_index_table) {
+	    unpropagated_index_table->track(index);
+	}
     }
 }
 
@@ -9366,7 +9389,9 @@ inline void add_one_to_PNTM_wins(index_t index, int dtm)
     } while (!entriesTable->compare_exchange_weak(index, expected, desired));
 
     if ((! tracking_dtm) && expected.is_normal_movecnt() && desired.is_unpropagated()) {
-	unpropagated_index_table.track(index);
+	if (unpropagated_index_table) {
+	    unpropagated_index_table->track(index);
+	}
     }
 }
 
@@ -9519,13 +9544,13 @@ void back_propagate_section(index_t start_index, index_t end_index, int target_d
 
 void non_proptable_pass(int target_dtm)
 {
-    if (! tracking_dtm) {
+    if ((! tracking_dtm) && unpropagated_index_table) {
 
-	unpropagated_index_table.start_new_pass();
+	unpropagated_index_table->start_new_pass();
 
-	if (unpropagated_index_table.last_pass_optimized) {
-	    while (unpropagated_index_table.indices_available()) {
-		back_propagate_index(unpropagated_index_table.next_index(), target_dtm);
+	if (unpropagated_index_table->last_pass_optimized) {
+	    while (unpropagated_index_table->indices_available()) {
+		back_propagate_index(unpropagated_index_table->next_index(), target_dtm);
 	    }
 
 	    return;
@@ -14999,6 +15024,10 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	    entriesTable = new MemoryEntriesTable;
 	} else {
 	    entriesTable = new CompactMemoryEntriesTable;
+	    if (unpropagated_index_table_MBs > 0) {
+		size_t size = unpropagated_index_table_MBs * 1024*1024 / sizeof(index_t);
+		unpropagated_index_table = new UnpropagatedIndexTable(size);
+	    }
 	}
 
 	/* tb->futurevectors = (futurevector_t *) calloc(tb->num_indices + 1, sizeof(futurevector_t)); */
@@ -15799,6 +15828,7 @@ void usage(char *program_name)
     fprintf(stderr, "Possible GENERATING-OPTIONS are:\n");
     fprintf(stderr, "   -o OUTPUT-FILENAME    set output filename (overrides control file)\n");
     fprintf(stderr, "   -P PROPTABLE-SIZE     enable proptables and sets size in MBs\n");
+    fprintf(stderr, "   -U UNPROP-TBL-SIZE    enable unpropagated index table and sets size in MBs\n");
     fprintf(stderr, "   -t NUM-THREADS        sets number of threads to use (default 1)\n");
     fprintf(stderr, "   -q                    quiet mode; suppress informational messages\n");
     fprintf(stderr, "   --compress-files      compress intermediate files in proptable mode\n");
@@ -15886,7 +15916,7 @@ int main(int argc, char *argv[])
     initialize_board_masks();
 
     while (1) {
-	c = getopt_long (argc, argv, "hiqgpsvo:n:P:t:d:", options, NULL);
+	c = getopt_long (argc, argv, "hiqgpsvo:n:P:U:t:d:", options, NULL);
 
 	if (c == -1) break;
 
@@ -15940,6 +15970,10 @@ int main(int argc, char *argv[])
 	    break;
 	case 't':
 	    num_threads = strtol(optarg, nullptr, 0);
+	    break;
+	case 'U':
+	    /* set size of unpropagated index table in megabytes */
+	    unpropagated_index_table_MBs = strtol(optarg, nullptr, 0);
 	    break;
 	case 1:
 	    compress_proptables = true;
