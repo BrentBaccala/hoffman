@@ -9190,6 +9190,8 @@ EntriesTablePtr entriesTable;
  * So we fix its size at compile time, and if it overflows, then we fall back on sweeping
  * through the entire tablebase.  Plus, we're running multithreaded, so it all has to be
  * done with locks.
+ *
+ * Default table size is 1 MB, though this can be adjusted with the "-U" option.
  */
 
 struct UnpropagatedIndexTable {
@@ -9276,7 +9278,7 @@ struct UnpropagatedIndexTable {
 };
 
 UnpropagatedIndexTable * unpropagated_index_table = NULL;
-size_t unpropagated_index_table_MBs = 0;
+size_t unpropagated_index_table_MBs = 1;
 
 /* finalize_update()
  *
@@ -15828,7 +15830,7 @@ void usage(char *program_name)
     fprintf(stderr, "Possible GENERATING-OPTIONS are:\n");
     fprintf(stderr, "   -o OUTPUT-FILENAME    set output filename (overrides control file)\n");
     fprintf(stderr, "   -P PROPTABLE-SIZE     enable proptables and sets size in MBs\n");
-    fprintf(stderr, "   -U UNPROP-TBL-SIZE    enable unpropagated index table and sets size in MBs\n");
+    fprintf(stderr, "   -U UNPROP-TBL-SIZE    set size of unpropagated index table in MBs (default 1)\n");
     fprintf(stderr, "   -t NUM-THREADS        sets number of threads to use (default 1)\n");
     fprintf(stderr, "   -q                    quiet mode; suppress informational messages\n");
     fprintf(stderr, "   --compress-files      compress intermediate files in proptable mode\n");
@@ -15842,6 +15844,7 @@ void usage(char *program_name)
 #ifdef USE_NALIMOV
     fprintf(stderr, "   -n NALIMOV-PATH       sets path to find Nalimov tablebases\n");
 #endif
+    fprintf(stderr, "   -S SYZYGY-PATH        sets path to find Syzygy tablebases\n");
     fprintf(stderr, "   -h                    display this help message and exit\n");
 }
 
@@ -15916,7 +15919,7 @@ int main(int argc, char *argv[])
     initialize_board_masks();
 
     while (1) {
-	c = getopt_long (argc, argv, "hiqgpsvo:n:P:U:t:d:", options, NULL);
+	c = getopt_long (argc, argv, "hiqgpsvo:n:S:P:U:t:d:", options, NULL);
 
 	if (c == -1) break;
 
@@ -15960,6 +15963,9 @@ int main(int argc, char *argv[])
 	    nalimov_path = optarg;
 	    break;
 #endif
+	case 'S':
+	    syzygy_search_path.insert(optarg);
+	    break;
 	case 'o':
 	    output_filename = optarg;
 	    break;
