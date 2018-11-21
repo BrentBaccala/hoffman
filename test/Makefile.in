@@ -181,5 +181,13 @@ endef
 	$(HOFFMAN) -g -v $<
 	$(if $(wildcard $(NALIMOV)/$(strip_options, $*).nbb.emd), $(HOFFMAN) -v -n $(NALIMOV) $@)
 
+# For testing back-propagation from Syzygy tablebases, we download
+# them from the Internet.  sesse.net is currently (2018) a good
+# source, that also archives 6- and 7- piece tablebases in separate
+# directories, but we don't use them in any tests.
+
+%.rtbw:
+	wget http://tablebase.sesse.net/syzygy/3-4-5/$@
+
 clean:
 	-rm $(wildcard *.xml) $(wildcard *.htb)

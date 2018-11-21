@@ -9,6 +9,6 @@
    <piece color="black" type="king"/>
    <piece color="white" type="queen"/>
    <piece color="black" type="queen"/>
-   <futurebase filename="../KQvK.rtbw"/>
+   <futurebase filename="KQvK.rtbw"/>
    <output filename="kqkq_syzygy.htb"/>
 </tablebase>
