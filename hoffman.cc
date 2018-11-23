@@ -8171,7 +8171,7 @@ Basic tablebase_t::get_basic(index_t index)
 	     * position.  I'm not sure about Syzygy tablebases, but treat them the same way.
 	     */
 
-	    throw std::runtime_error("PNTM in check in Syzygy base lookup");
+	    return Basic::Illegal;
 	}
 
 	uint64_t white = 0;
