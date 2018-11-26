@@ -11,31 +11,8 @@
    <piece color="black" type="pawn"/>
    <futurebase filename="KPvK.rtbw"/>
    <futurebase filename="KQvKP.rtbw"/>
-<!--
-   <futurebase filename="KQvKQ.rtbw"/>
-   <futurebase filename="KQvKR.rtbw"/>
-   <futurebase filename="KQvKB.rtbw"/>
-   <futurebase filename="KQvKN.rtbw"/>
-
-   <futurebase filename="KQvK.rtbw"/>
-   <futurebase filename="KRvK.rtbw"/>
-   <futurebase filename="KBvK.rtbw"/>
-   <futurebase filename="KNvK.rtbw"/>
--->
    <futurebase filename="KRvKP.rtbw"/>
-<!--
-   <futurebase filename="KRvKR.rtbw"/>
-   <futurebase filename="KRvKB.rtbw"/>
-   <futurebase filename="KRvKN.rtbw"/>
--->
    <futurebase filename="KBvKP.rtbw"/>
-<!--
-   <futurebase filename="KBvKB.rtbw"/>
-   <futurebase filename="KBvKN.rtbw"/>
--->
    <futurebase filename="KNvKP.rtbw"/>
-<!--
-   <futurebase filename="KNvKN.rtbw"/>
--->
    <output filename="kpkp_syzygy.htb"/>
 </tablebase>
