@@ -16,9 +16,16 @@ my $XMLparser = XML::LibXML->new();
 #$XMLparser->validation(1);
 $XMLparser->load_ext_dtd(0);
 
-# B > N
-# RP > BN
-# RP > NN
+# This hash tracks the tablebases.  It's really a set (a unique list);
+# the values are largely unimportant; only the keys are used.
+
+my %seen;
+
+# %values is used both to sort the pieces on one side into a definite
+# order and to compare the pieces on opposite sides to decide when to
+# invert colors when naming a tablebase.
+#
+# B > N;  RP > BN;  RP > NN
 
 my %values = (K => 100000,
 	      Q => 10000,
@@ -27,27 +34,16 @@ my %values = (K => 100000,
 	      N => 10,
 	      P => 1);
 
-
-my @sort_order = ('K', 'Q', 'R', 'B', 'N', 'P');
-
-# from https://stackoverflow.com/a/3222157
-
-use List::Util qw(first);
-sub sortfunc {
-    return first { $sort_order[$_] eq $_ } 0..$#sort_order;
-}
+# "normalize" the name of a Syzygy tablebase by sorting its pieces
+# into a standard order and ensuring that the superior side is always
+# white.
 
 sub normalize_Syzygy_tablebase {
     my ($tb) = @_;
     $tb =~ /([KQRBNP]+)v([KQRBNP]+)(.rtb[wz])/;
 
-    #print $tb, "\n";
-
     my $whites = join('', sort { $values{$b} <=> $values{$a} } split(//, $1));
     my $blacks = join('', sort { $values{$b} <=> $values{$a} } split(//, $2));
-
-    #my $whites = join '', sort sortfunc split('', $1);
-    #my $blacks = join '', sort sortfunc split('', $2);
 
     my $white_value = 0;
     for my $white_piece (split(//, $whites)) {
@@ -59,58 +55,83 @@ sub normalize_Syzygy_tablebase {
 	$black_value += $values{$black_piece};
     }
 
-    #print $whites . 'v' . $blacks . $3, "\n";
+    my $normed;
+
     if (length($blacks) > length($whites)) {
-	return $blacks . 'v' . $whites . $3;
+	$normed = $blacks . 'v' . $whites . $3;
     } elsif (length($whites) > length($blacks)) {
-	return $whites . 'v' . $blacks . $3;
+	$normed = $whites . 'v' . $blacks . $3;
     } elsif ($white_value > $black_value) {
-	return $whites . 'v' . $blacks . $3;
+	$normed = $whites . 'v' . $blacks . $3;
     } else {
-	return $blacks . 'v' . $whites . $3;
+	$normed = $blacks . 'v' . $whites . $3;
+    }
+
+    return $normed;
+}
+
+# Add a tablebase to %seen hash and, if this is the first time we've
+# "seen" it and it's a Syzygy tablebase, recurse on all possible
+# decendants.
+
+sub add_tablebase {
+    my ($tb) = @_;
+
+    if ((! $seen{$tb} ++) and ($tb =~ '.rtb[wz]')) {
+	# consider all possible captures
+	while ($tb =~ /([QRBNP])/g) {
+	    &add_tablebase(&normalize_Syzygy_tablebase(substr($tb, 0, pos($tb)-1) . substr($tb,pos($tb))));
+	}
+	# consider a possible white pawn promotion
+	if ($tb =~ /PvK/g) {
+	    foreach my $promotion ('Q', 'R', 'B', 'N') {
+		&add_tablebase(&normalize_Syzygy_tablebase(substr($tb, 0, pos($tb)-3) . $promotion . substr($tb,pos($tb)-2)));
+	    }
+	}
+	# consider a possible black pawn promotion
+	if ($tb =~ /P\.r/g) {
+	    foreach my $promotion ('Q', 'R', 'B', 'N') {
+		&add_tablebase(&normalize_Syzygy_tablebase(substr($tb, 0, pos($tb)-3) . $promotion . substr($tb,pos($tb)-2)));
+	    }
+	}
     }
 }
 
-sub expand_Syzygy_tablebase {
-    if ($_ =~ '.rtbw') {
-	my @result = ($_);
-	while ($_ =~ /([QRBNP])/g) {
-	    push @result, &normalize_Syzygy_tablebase(substr($_, 0, pos()-1) . substr($_,pos()));
+
+
+if ($ARGV[0] eq '-t') {
+
+    # We want to ensure that our normalization matches Roland De Man's normalization!
+    #
+    # Test Syzygy normalization code, like this:
+    #
+    # for dir in 3-4-5 6-WDL 6-DTZ 7-WDL 7-DTZ; do
+    #   ./futurebases.pl -t $(GET http://tablebase.sesse.net/syzygy/$dir/ |
+    #      xidel --input-format=html --xpath2 'string-join(.//a[matches(@href, "K.*rt")], " ")' -s -)
+    # done
+
+    shift;
+    foreach my $tb (@ARGV) {
+	if ($tb ne &normalize_Syzygy_tablebase($tb)) {
+	    print "$tb ne " . &normalize_Syzygy_tablebase($tb) . "\n";
 	}
-	if ($_ =~ /PvK/g) {
-	    foreach my $promotion ('Q', 'R', 'B', 'N') {
-		push @result, &normalize_Syzygy_tablebase(substr($_, 0, pos()-3) . $promotion . substr($_,pos()-2));
-	    }
-	}
-	if ($_ =~ /P\.r/g) {
-	    foreach my $promotion ('Q', 'R', 'B', 'N') {
-		push @result, &normalize_Syzygy_tablebase(substr($_, 0, pos()-3) . $promotion . substr($_,pos()-2));
-	    }
-	}
-	return @result;
-    } else {
-	return $_;
     }
-}
+    print $#ARGV, " tested\n";
 
-sub extract_futurebase {
-    return $_->findvalue('@filename');
-}
+} else {
 
-# From perlfaq4, via https://stackoverflow.com/a/7657
+    # Extract any futurebases from the input control file and print them out.
 
-sub uniq {
-    my %seen;
-    grep !$seen{$_}++, @_;
-}
+    foreach my $control_file (@ARGV) {
 
-# Extract any futurebases from the input control file and assign them to any positions that they
-# match.
+	my $XMLdocument = $XMLparser->parse_file($control_file);
+	my $XMLcontrolFile = $XMLdocument->getDocumentElement();
 
-foreach my $control_file (@ARGV) {
+	map { &add_tablebase($_->findvalue('@filename')) } $XMLcontrolFile->findnodes("futurebase");
 
-    my $XMLdocument = $XMLparser->parse_file($control_file);
-    my $XMLcontrolFile = $XMLdocument->getDocumentElement();
+	delete $seen{"KvK.rtbw"};
+	delete $seen{"KvK.rtbz"};
 
-    print join ' ', uniq(map(expand_Syzygy_tablebase, map(extract_futurebase, $XMLcontrolFile->findnodes("futurebase")))), "\n";
+	print join ' ', keys %seen, "\n";
+    }
 }

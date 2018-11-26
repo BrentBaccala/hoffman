@@ -104,7 +104,8 @@ ba8c06b99e8865c14f160477f06f230a 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-simple.htb
 1f9d2d82414a812f1a86a267bf26ca75 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-basic.htb
 
 # check backprop (and probe) from Syzygy tablebase
-5756307c621a2c539819284c4b2a14a7 258856\\nc1xd2 kqkq_syzygy.htb ../KQvK.rtbw
+19f6951867965ef622d2862e317dad9e 258856\\nc1xd2 kqkq_syzygy.htb KQvK.rtbw
+c41e8c92291684426cd4d5a5096dddd9 8/8/K3P2k/8/8/3p4/8/8\ b kpkp_syzygy.htb
 
 # bug test r981
 154dc9243d90a19e081b0ca737b25a74 8/3k4/8/8/8/4B3/8/1K1Q4\ b kqbk-basic.htb

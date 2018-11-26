@@ -127,23 +127,9 @@ endef
 #
 # Example: $(call futurebases, kpkp.xml) might return
 #    "kk.htb kqk.htb krk.htb kbk.htb knk.htb"
-#
-# This next version doesn't work because XPath 'string' only uses the
-# first item in the node set and xmllint doesn't support XPath 2.0's
-# 'string-join'
-#
-# define futurebases
-#    $(shell xmllint --xpath "string(//futurebase/@filename)" $(1))
-# endef
-#
-# If you don't have xmllint you can use this version:
-#
-# define futurebases
-#    $(shell grep futurebase $(1) | cut -d \" -f 2)
-# endef
 
 define futurebases
-   $(shell xmllint --xpath "//futurebase/@filename" $(1) | sed -e 's/[^"]*"//' -e ':a' -e 's/"[^"]*"/ /' -e 'ta' -e 's/".*/\n/')
+   $(shell ../futurebases.pl $(1) )
 endef
 
 # This target builds all the futurebases that a given xml file depends
