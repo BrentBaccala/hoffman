@@ -1,0 +1,13 @@
+<?xml version="1.0"?>
+<!DOCTYPE tablebase SYSTEM "http://www.freesoft.org/software/hoffman/tablebase.dtd">
+<!-- Created by genctlfile.pl -->
+
+<tablebase>
+   <dtm/>
+   <piece color="white" type="king"/>
+   <piece color="black" type="king"/>
+   <piece color="white" type="queen"/>
+   <piece color="black" type="queen"/>
+   <futurebase filename="kqk.nbw.emd"/>
+   <output filename="kqkq_nalimov.htb"/>
+</tablebase>

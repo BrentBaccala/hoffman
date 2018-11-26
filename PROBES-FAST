@@ -103,6 +103,9 @@ ba8c06b99e8865c14f160477f06f230a 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-simple.htb
 # check alternate formats
 1f9d2d82414a812f1a86a267bf26ca75 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-basic.htb
 
+# check backprop (and probe) from Nalimov tablebases
+31b50ac52798f8474dffe89e4b4cc37a 258856\\nc1xd2 kqkq_nalimov.htb kqk.nbw.emd
+
 # check backprop (and probe) from Syzygy tablebase
 19f6951867965ef622d2862e317dad9e 258856\\nc1xd2 kqkq_syzygy.htb KQvK.rtbw
 c41e8c92291684426cd4d5a5096dddd9 8/8/K3P2k/8/8/3p4/8/8\ b kpkp_syzygy.htb

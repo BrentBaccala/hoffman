@@ -15793,7 +15793,7 @@ void probe_tablebases(tablebase_t **tbs) {
 #ifdef USE_NALIMOV
 	    if ((global_position.variant == Variant::Normal) && (nalimov_num > 0)
 		&& EGTBProbe(global_position.side_to_move == PieceColor::White, global_position.board, -1, &score) == 1) {
-		printf("\nNalimov score: ");
+		printf("Nalimov score: ");
 		if (score > 0) {
 		    printf("%s wins in %d.5\n", ptm, ((65536-4)/2)-score+1);
 		} else if (score < 0) {

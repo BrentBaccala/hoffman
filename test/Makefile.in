@@ -59,6 +59,7 @@ check-fast: $(PROBES-FAST)
 			fi;										\
 			/bin/echo -e $$input								\
 				| TERM=dumb $(HOFFMAN) -p $$files 2>&1 | tee /dev/stderr		\
+				| grep -v "Nalimov"							\
 				| tail -n +2								\
 				| md5sum | ( read md5actual junk;					\
 					if [ "$$md5expected" != "$$md5actual" ]; then			\
@@ -78,6 +79,7 @@ check-slow: $(PROBES-SLOW)
 			fi;										\
 			/bin/echo -e $$input								\
 				| TERM=dumb $(HOFFMAN) -p $$files 2>&1 | tee /dev/stderr		\
+				| grep -v "Nalimov"							\
 				| tail -n +2								\
 				| md5sum | ( read md5actual junk;					\
 					if [ "$$md5expected" != "$$md5actual" ]; then			\
@@ -174,6 +176,13 @@ endef
 
 %.rtbw:
 	wget http://tablebase.sesse.net/syzygy/3-4-5/$@
+
+# Nalimov tablebases only refer to the .nbw.emd file, but we also need
+# the .nbb.emd file as well.
+
+%.emd:
+	wget http://tablebase.sesse.net/3-4-5/$@
+	wget http://tablebase.sesse.net/3-4-5/$(subst .nbw,.nbb,$@)
 
 clean:
 	-rm $(wildcard *.xml) $(wildcard *.htb)
