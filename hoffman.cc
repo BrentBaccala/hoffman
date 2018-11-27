@@ -11949,7 +11949,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FuturebaseType::Capture:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
+		info("Back propagating (capture) from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = &propagate_moves_from_capture_futurebase;
 		doing_capture_backprop = true;
 	    }
@@ -11959,7 +11959,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FuturebaseType::Promotion:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
+		info("Back propagating (promotion) from '%s'\n", (char *) futurebase->filename.c_str());
 
 		promotion_color = tb->pieces[futurebase->missing_pawn].color;
 		first_back_rank_square = ((promotion_color == PieceColor::White) ? 56 : 0);
@@ -11975,7 +11975,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FuturebaseType::CapturePromotion:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
+		info("Back propagating (capture-promotion) from '%s'\n", (char *) futurebase->filename.c_str());
 
 		promotion_color = tb->pieces[futurebase->missing_pawn].color;
 		first_back_rank_square = ((promotion_color == PieceColor::White) ? 56 : 0);
@@ -11991,7 +11991,7 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FuturebaseType::Normal:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating from '%s'\n", (char *) futurebase->filename.c_str());
+		info("Back propagating (normal) from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = propagate_moves_from_normal_futurebase;
 		doing_capture_backprop = false;
 	    }
