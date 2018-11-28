@@ -6890,6 +6890,9 @@ bool preload_all_futurebases(tablebase_t *tb)
 	} catch (const char * msg) {
 	    fatal("%s: futurebase preload failed: %s\n", filename.c_str(), msg);
 	    return false;
+	} catch (std::exception& ex) {
+	    fatal("%s: futurebase preload failed: %s\n", filename.c_str(), ex.what());
+	    return false;
 	}
 
 	if (futurebases[fbnum].variant != tb->variant) {
