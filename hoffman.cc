@@ -591,6 +591,7 @@ std::map<PieceColor, futurevector_t> pruned_futuremoves;
 std::map<PieceColor, futurevector_t> unpruned_futuremoves;
 std::map<PieceColor, futurevector_t> conceded_futuremoves;
 std::map<PieceColor, futurevector_t> discarded_futuremoves;
+std::map<PieceColor, futurevector_t> handled_futuremoves;
 
 /* position - the data structures that represents a board position
  *
@@ -12602,8 +12603,8 @@ void print_futuremoves(void)
 {
     unsigned int i;
 
-    info("%d unpruned WHITE futuremoves\n", num_futuremoves[PieceColor::White]);
-    if (current_tb->encode_stm) info("%d unpruned BLACK futuremoves\n", num_futuremoves[PieceColor::Black]);
+    info("%d unpruned and unhandled WHITE futuremoves\n", num_futuremoves[PieceColor::White]);
+    if (current_tb->encode_stm) info("%d unpruned and unhandled BLACK futuremoves\n", num_futuremoves[PieceColor::Black]);
 
     for (i=0; i < num_futuremoves[PieceColor::White]; i ++) {
 	info("WHITE Futuremove %i: %s\n", i, movestr[PieceColor::White][i]);
@@ -13110,6 +13111,7 @@ bool check_pruning(tablebase_t *tb)
 			    return false;
 			}
 			if (futurecaptures[capturing_piece][captured_piece] >= 0) {
+			    handled_futuremoves[tb->pieces[capturing_piece].color] |= FUTUREVECTOR(futurecaptures[capturing_piece][captured_piece]);
 			    futurecaptures[capturing_piece][captured_piece] = HANDLED_FUTUREMOVE;
 			}
 			break;
@@ -13204,6 +13206,7 @@ bool check_pruning(tablebase_t *tb)
 				return false;
 			    }
 			    if (promotion_captures[pawn][captured_piece][promotion] >= 0) {
+				handled_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotion_captures[pawn][captured_piece][promotion]);
 				promotion_captures[pawn][captured_piece][promotion] = HANDLED_FUTUREMOVE;
 			    }
 			    break;
@@ -13253,6 +13256,7 @@ bool check_pruning(tablebase_t *tb)
 			    return false;
 			}
 			if (promotions[pawn][promotion] >= 0) {
+			    handled_futuremoves[tb->pieces[pawn].color] |= FUTUREVECTOR(promotions[pawn][promotion]);
 			    promotions[pawn][promotion] = HANDLED_FUTUREMOVE;
 			}
 			break;
@@ -13420,12 +13424,19 @@ void optimize_futuremoves(tablebase_t *tb)
 		    }
 		}
 
+		if (pruned_futuremoves[color] & FUTUREVECTOR(fm)) {
+		    info("Pruned %s futuremove %s\n", colors.at(color).c_str(), movestr[color][fm]);
+		} else if (handled_futuremoves[color] & FUTUREVECTOR(fm)) {
+		    info("%s futuremove %s completely handled by futurebases\n", colors.at(color).c_str(), movestr[color][fm]);
+		} else {
+		    info("Optimized %s futuremove %s, but not sure how!\n", colors.at(color).c_str(), movestr[color][fm]);
+		}
+
 		remove_futuremove(&(pruned_futuremoves[color]), fm);
 		remove_futuremove(&(unpruned_futuremoves[color]), fm);
 		remove_futuremove(&(conceded_futuremoves[color]), fm);
 		remove_futuremove(&(discarded_futuremoves[color]), fm);
-
-		info("Pruned %s futuremove %s\n", colors.at(color).c_str(), movestr[color][fm]);
+		remove_futuremove(&(handled_futuremoves[color]), fm);
 
 		// free(movestr[color][fm]);
 
