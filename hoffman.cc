@@ -15771,10 +15771,17 @@ void probe_tablebases(tablebase_t **tbs) {
 	    }
 #endif
 
-	    if (global_position_valid && parse_move_in_global_position(buffer, &global_position))
+	    if (global_position_valid && parse_move_in_global_position(buffer, &global_position)) {
+		index_valid = false;
 		break;
-	    if (parse_FEN_to_global_position(buffer, &global_position))
+	    }
+
+	    if (parse_FEN_to_global_position(buffer, &global_position)) {
+		global_position.variant = tbs[0]->variant;
+		global_position_valid = true;
+		index_valid = false;
 		break;
+	    }
 
 	    /* Check to see if the entire string parses as an integer.  Otherwise, a corrupt FEN
 	     * might parse as something like "8", and that's very confusing.
@@ -15785,6 +15792,7 @@ void probe_tablebases(tablebase_t **tbs) {
 		if (index >= tbs[0]->num_indices) {
 		    printf("Index out of range (%" PRIindex " max)\n", tbs[0]->num_indices - 1);
 		} else {
+		    global_position_valid = false;
 		    index_valid = true;
 		    break;
 		}
@@ -15793,14 +15801,20 @@ void probe_tablebases(tablebase_t **tbs) {
 	    printf("Bad input\n\n");
 	}
 
-	global_position.variant = tbs[0]->variant;
-	global_position_valid = true;
+	assert(index_valid || global_position_valid);
+	assert(!(index_valid && global_position_valid));
 
-	if (! index_valid) {
+	if (global_position_valid) {
 	    result = search_tablebases_for_global_position(tbs, &global_position);
 	} else {
-	    result = search_result(tbs[0], index, false);
-	    index_to_global_position(tbs[0], index, &global_position);
+	    /* index_valid */
+	    if (index_to_global_position(tbs[0], index, &global_position)) {
+		global_position_valid = true;
+		result = search_result(tbs[0], index, false);
+	    } else {
+		printf("Illegal position\n\n");
+		result = search_result();
+	    }
 	}
 
 	if (result) {

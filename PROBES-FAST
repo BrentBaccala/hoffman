@@ -13,6 +13,9 @@
 # attempt to probe an index larger than the valid range (tests 1.812)
 27cc4a87b20e7b6a1db3d678c14f761f 5677889 kqkq.htb kqk.htb
 
+# attempt to probe an index corresponding to an illegal position
+fd5ee8b787a04a3a0e716eff4b34a179 0 kpk-naive.htb
+
 # Some basic probes
 0f56531789bae988ab35ce39d58be26c 8/8/K6k/8/3pP3/8/8/8\ w kpkp.htb kpk.htb kqk.htb
 3e668b9c57c8b82f54210058e9ee51a9 8/8/K6k/8/4Q3/8/8/8\ w kqk.htb
