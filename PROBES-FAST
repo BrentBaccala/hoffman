@@ -16,6 +16,7 @@
 # Some basic probes
 0f56531789bae988ab35ce39d58be26c 8/8/K6k/8/3pP3/8/8/8\ w kpkp.htb kpk.htb kqk.htb
 3e668b9c57c8b82f54210058e9ee51a9 8/8/K6k/8/4Q3/8/8/8\ w kqk.htb
+980f7697be0d7d8baa74f8357d0f771a 8/8/K6k/8/4P3/8/8/8\ w kpk.htb
 
 # Probe an en passant position and capture
 3bfd755a85246c8394e7cf59c4e07707 8/8/K6k/8/3pP3/8/8/8\ b\ -\ e3\\nd4xe3 kpkp.htb kpk.htb
@@ -88,6 +89,10 @@ c21a2a5a49963fdf0d274300762c4c20 8/6k1/6p1/8/q7/4R3/5PK1/8\ w fortress.htb
 
 # check basic proptable operation (tests bug fixed in 1.888)
 3927572dd046022feb53b2795845ec36 8/8/K6k/8/4Q3/8/8/8\ w kqk-prop1.htb
+
+# additional proptable tests
+3c36f90982a5e79a4549b80d195ed957 8/8/K6k/8/4P3/8/8/8\ w kpk-prop1.htb
+972ba97ce4bcb8d3e7f2fc3567b16d5f 8/8/K6k/8/3pP3/8/8/8\ w kpkp-prop1.htb kpk-prop1.htb kqk-prop1.htb
 
 # check pawngen operation
 6e2ca854365273cee470fdfa507687a5 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8\ w fine67-3-3.htb

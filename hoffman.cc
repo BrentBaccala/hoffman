@@ -9666,7 +9666,7 @@ struct proptable_format {
 	    dtm_bits = 0;
 	}
 
-	for (futuremove_bits = 0; (1 << futuremove_bits) < max_futuremoves; futuremove_bits ++);
+	for (futuremove_bits = 0; (1 << futuremove_bits) < (max_futuremoves + 1); futuremove_bits ++);
 
 	/* Ordering is significant, since we may sort by directly comparing the marshaled values to
 	 * each other.  Therefore, index has to be the most significant field.
@@ -10161,7 +10161,11 @@ public:
 	index(value >> format->index_offset), dtm(value_to_dtm(format, value)),
 	movecnt(((value >> format->movecnt_offset) & format->movecnt_mask) + 1),
 	futuremove((value >> format->futuremove_offset) & format->futuremove_mask)
-    {}
+    {
+	if (static_cast<uint64_t>(futuremove) == format->futuremove_mask) {
+	    futuremove = NO_FUTUREMOVE;
+	}
+    }
 #endif
 
     template<typename T>
@@ -10188,10 +10192,9 @@ public:
 
 template<typename T>
 class typed_proptable : public priority_queue<T> {
-private:
-    proptable_format format;
 
 public:
+    proptable_format format;
 
     /* priority_queue<T>'s constructor passes all of its arguments to its MemoryContainer's
      * constructor (remember?), and priority_queue<T>'s default MemoryContainer is std::vector<T>,
@@ -10260,12 +10263,7 @@ class proptable_ptr {
  public:
 
     operator proptable_entry() {
-	int dtm = (value >> format->dtm_offset) & format->dtm_mask;
-	if (dtm > (int) (format->dtm_mask >> 1)) dtm |= (~ (format->dtm_mask >> 1));
-
-	return proptable_entry(value >> format->index_offset, dtm,
-			       ((value >> format->movecnt_offset) & format->movecnt_mask) + 1,
-			       (value >> format->futuremove_offset) & format->futuremove_mask);
+	return proptable_entry(format, value);
     }
 
     proptable_ptr & operator=(proptable_entry other) {
@@ -10542,18 +10540,18 @@ void proptable_pass_thread(int target_dtm)
 
 	for (auto pt_entry = current_pt_entries.begin(); pt_entry != current_pt_entries.end(); pt_entry ++) {
 
-	    if (index == debug_move) {
-		info("Commiting proptable entry: index %" PRIindex ", dtm %d, movecnt %u, futuremove %d\n",
-		     pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
-	    }
-
 	    if (target_dtm != 0) {
 
 		/* Intra-table case: always update */
 
+		if (index == debug_move) {
+		    info("Committing proptable entry: index %" PRIindex "\n", pt_entry->index);
+		}
+
 		finalize_update(pt_entry->index, target_dtm, 1, 0);
 
-	    } else if (FUTUREVECTOR(pt_entry->futuremove) & futurevector) {
+	    } else if ((pt_entry->futuremove == NO_FUTUREMOVE)
+		       || (FUTUREVECTOR(pt_entry->futuremove) & futurevector)) {
 
 		/* Futurebase case: only update if move is possible and hasn't been handled yet
 		 *
@@ -10575,13 +10573,20 @@ void proptable_pass_thread(int target_dtm)
 		 * generated in the intra-table case, and notice that dtm=0 implies movecnt=0.
 		 */
 
+		if (index == debug_move) {
+		    info("Committing proptable entry: index %" PRIindex ", dtm %d, movecnt %u, futuremove %d\n",
+			 pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
+		}
+
 		if (pt_entry->dtm != 0) {
 		    finalize_update(pt_entry->index, pt_entry->dtm, pt_entry->movecnt, pt_entry->futuremove);
 		} else {
 		    finalize_update(pt_entry->index, 0, 0, pt_entry->futuremove);
 		}
 
-		futurevector &= ~FUTUREVECTOR(pt_entry->futuremove);
+		if (pt_entry->futuremove != NO_FUTUREMOVE) {
+		    futurevector &= ~FUTUREVECTOR(pt_entry->futuremove);
+		}
 
 	    }
 
@@ -10697,6 +10702,11 @@ void reconstruct_proptable(int target_dtm)
 void insert_new_propentry(index_t index, int dtm, unsigned int movecnt, int futuremove)
 {
     class proptable_entry pt_entry;
+
+    if (futuremove != NO_FUTUREMOVE) {
+	assert(futuremove >= 0);
+	assert(static_cast<uint64_t>(futuremove) < output_proptable->format.futuremove_mask);
+    }
 
     pt_entry.index = index;
     pt_entry.dtm = dtm;
@@ -15146,13 +15156,16 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	 *   movecnt - 0 (DTM 0 only), 1, or 2 for 8-way symmetry conversion
 	 *   futuremove - figure out from total_futuremoves
 	 *
+	 * We add one to max(num_futuremoves) to ensure that we've got enough room to store
+	 * NO_FUTUREMOVE (futuremove -1).
+	 *
 	 * Note: movecnt 0 / DTM 0 is handled as a special case in proptable_pass_thread()
 	 *
 	 * XXX turn off movecnt if we don't have 8-way symmetry
 	 */
 
 	proptable_format format(tb->num_indices, min_tracked_dtm, max_tracked_dtm,
-				1, std::max(num_futuremoves[PieceColor::White], num_futuremoves[PieceColor::Black]));
+				1, std::max(num_futuremoves[PieceColor::White], num_futuremoves[PieceColor::Black]) + 1);
 
 	info("Initial proptable format: %d bits index; %d bits dtm; %d bit movecnt; %d bits futuremove\n",
 	     format.index_bits, format.dtm_bits, format.movecnt_bits, format.futuremove_bits);
