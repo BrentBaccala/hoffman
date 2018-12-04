@@ -728,7 +728,7 @@ public:
     local_position_t(const tablebase_t *tb) : tb(tb) { }
 
     // XXX change this to operator std::string
-    char * FEN() const;
+    const char * FEN() const;
 
     /* I go to the trouble to update board_vector here so we can check en passant legality in
      * propagate_one_move_within_table().
@@ -4709,11 +4709,11 @@ void local_position_t::flip_side_to_move(void)
 
 // XXX change this to operator std::string
 
-char * index_to_FEN(const tablebase_t *tb, index_t index);
+const char * index_to_FEN(const tablebase_t *tb, index_t index);
 void local_position_to_global_position(const tablebase_t *tb, const local_position_t& local, global_position_t *global);
 char * global_position_to_FEN(global_position_t *position);
 
-char * local_position_t::FEN() const {
+const char * local_position_t::FEN() const {
     if (decoded && valid) {
 	return index_to_FEN(tb, index);
     } else {
@@ -7800,11 +7800,14 @@ char * global_position_to_FEN(global_position_t *position)
     return buffer[which_buffer];
 }
 
-char * index_to_FEN(const tablebase_t *tb, index_t index)
+const char * index_to_FEN(const tablebase_t *tb, index_t index)
 {
     global_position_t global;
-    index_to_global_position(tb, index, &global);
-    return global_position_to_FEN(&global);
+    if (index_to_global_position(tb, index, &global)) {
+	return global_position_to_FEN(&global);
+    } else {
+	return "ILLEGAL POSITION";
+    }
 }
 
 /* This routine looks at "movestr" to try and figure out if it is a valid move from this global
