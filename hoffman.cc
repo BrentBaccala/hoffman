@@ -15189,6 +15189,7 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	finalize_pass_statistics();
 	total_passes ++;
 
+	reset_progress_dots(current_tb);
 	info("Initializing tablebase\n");
 	pass_type[total_passes] = "initialization";
 	propagation_pass(0);
