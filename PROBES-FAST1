@@ -64,6 +64,9 @@ c301a041297d70291106c9efad735fb5 1q6/P7/K6k/8/8/8/8/8\ w\\na7xb8=Q kqk?.htb k[qr
 # Check error return if no tablebases specified
 059249cae1c1afe0d9d8e7d27c4a9277 ignored
 
+# check pawngen operation
+6e2ca854365273cee470fdfa507687a5 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8\ w fine67-3-3.htb
+
 # test various bugs
 6ff1d8e170f972b66ac3f25ec63d4736 234 r779a.htb kqpk.htb
 8601d924b2624a814cd6fac46bed83d2 21499040 r779e.htb r779c.htb
