@@ -2,13 +2,24 @@
 	   Hoffman - retrograde analysis for chess endgames
 
 Hoffman is a very compute-intensive program that uses 64-bit integer
-operations extensively.  If you're running on a 64-bit processor,
-something like an Intel Core 2, I'd suggesting configuring with an
-appropriate CFLAGS to take advantage of your processor's features:
+operations extensively.
 
-	CFLAGS="-march=core2 -O3" ./configure
+Before compiling the program, make sure you've installed the various
+packages used by the program.  On Ubuntu, you need:
 
-or something similar (assuming that you're using GCC).
+   - autoconf-archive (to avoid weird autoconf message https://stackoverflow.com/questions/8811381#comment72663526_9024469
+
+   - g++
+   - libboost-all-dev
+   - zlib1g-dev
+   - libxml++2.6-dev
+   - libreadline-dev
+   - libxml2-utils (for xmllint)
+   - libxml-libxml-perl (for genctlfile.pl)
+
+Next, if you're compiling from a tar file, running 'configure' and
+then 'make' to build the program.  If you're compiling from the git
+repository, run 'autoreconf -i' before 'configure'.
 
 To get started, I recommend reading the following:
 
@@ -17,12 +28,13 @@ reference.pdf - The Hoffman Reference
 
 and then experimenting with the program.
 
-Most developer documentation is in the source code; also read
-proptables.pdf and TODO.
+http://tablebase.sesse.net/ is currently a good place to get pre-built
+tablebases, in both Nalimov and Syzygy formats.
+
+Most developer documentation is in the source code; also read TODO.
+
 
 				Brent Baccala
 				<cosine@freesoft.org>
 
-				24 May 2008
-
-http://tablebase.sesse.net/ is a good place to get tablebases, both Nalimov and Syzygy
+				5 Dec 2018

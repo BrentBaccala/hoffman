@@ -1,9 +1,0 @@
-autoconf-archive (to avoid weird autoconf message https://stackoverflow.com/questions/8811381#comment72663526_9024469
-
-libboost-all-dev
-zlib1g-dev
-libxml++2.6-dev
-libreadline-dev
-g++
-libxml2-utils (for xmllint)
-libxml-libxml-perl (for genctlfile.pl)

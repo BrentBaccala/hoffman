@@ -9,17 +9,16 @@ CXXFLAGS= @CXXFLAGS@ @READLINE_CPPFLAGS@ @libxml_CFLAGS@ @BOOST_CPPFLAGS@
 
 hoffman_LDADD =  -lboost_iostreams -lboost_filesystem -lboost_system @libxml_LIBS@
 
-configure_SRCS = configure configure.ac Makefile.in Makefile.am config.h.in config.guess config.sub install-sh
 hoffman_SOURCES = hoffman.cc probe.c egtb.cpp lock.h tbdecode.h bitlib.h version.h Fathom/src/tbprobe.c
 hoffman_DTD = tablebase.dtd
-hoffman_TESTS = test/Makefile.in PROBES-FAST PROBES-SLOW
-hoffman_OTHER = pawngen genctlfile.pl hoffman.nsi md5htb cgi-bin/*
-hoffman_DOCS = README COPYING ChangeLog TODO tutorial.pdf reference.pdf
+hoffman_TESTS = PROBES-FAST PROBES-SLOW
+hoffman_OTHER = pawngen genctlfile.pl hoffman.nsi md5htb
+hoffman_DOCS = tutorial.pdf reference.pdf
 hoffman_DOCSRC = tutorial.tex reference.tex
-hoffman_XMLS = xml/*.xml
+
 Fathom_SRCS = Fathom/LICENSE Fathom/README.md Fathom/src/*.[ch]
 
-hoffman_DIST = $(configure_SRCS) $(hoffman_SOURCES) $(hoffman_DTD) $(hoffman_OTHER) $(hoffman_DOCS) $(hoffman_DOCSRC) $(hoffman_XMLS) $(hoffman_TESTS) $(Fathom_SRCS)
+EXTRA_DIST = xml $(Fathom_SRCS) $(hoffman_DTD) $(hoffman_TESTS) $(hoffman_OTHER) $(hoffman_DOCS) $(hoffman_DOCSRC)
 
 hoffman.o: tablebase_dtd.h config.h bitlib.h version.h
 
@@ -44,9 +43,6 @@ check:
 
 check-%:
 	make -C test $@
-
-tarball: docs
-	tar -czh -f hoffman-@PACKAGE_VERSION@.tgz --transform='s|^|hoffman-@PACKAGE_VERSION@/|' $(hoffman_DIST)
 
 docs: $(hoffman_DOCS) ChangeLog
 
