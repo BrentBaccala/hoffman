@@ -1,0 +1,19 @@
+
+language: g++
+
+addons:
+  apt:
+    packages:
+    - autoconf-archive
+    - libboost-all-dev
+    - zlib1g-dev
+    - libxml++2.6-dev
+    - libreadline-dev
+    - libxml2-utils
+    - libxml-libxml-perl
+
+script:
+   - autoreconf -fi
+   - ./configure
+   - make
+   - make check-fast
