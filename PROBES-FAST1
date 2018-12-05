@@ -8,9 +8,6 @@
 # that will be fed to hoffman (escape spaces as '\ ' and newlines as '\\n'),
 # then a list of tablebases to be probed, which can include wildcards.
 
-# Open a non-existent tablebase
-92512a58a45a635b99123de0b18943d5 1 doesNotExist.htb
-
 # Probe an index
 80ffb5db2bcfd5e9cf437958c63b9a43 258856\\nc1xd2 kqkq.htb kqk.htb
 
@@ -61,11 +58,11 @@ dc6593ec0a6ab7b06315b8372a86698d 8/8/K6k/8/8/8/5p2/8\ b\\nf2f1=b k[qrbnp]k.htb
 # Check a capture promotion move
 c301a041297d70291106c9efad735fb5 1q6/P7/K6k/8/8/8/8/8\ w\\na7xb8=Q kqk?.htb k[qrbnp]k.htb
 
-# Check error return if no tablebases specified
-059249cae1c1afe0d9d8e7d27c4a9277 ignored
-
 # check pawngen operation
 6e2ca854365273cee470fdfa507687a5 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8\ w fine67-3-3.htb
+
+# problem position in Freezer fortress construction
+c21a2a5a49963fdf0d274300762c4c20 8/6k1/6p1/8/q7/4R3/5PK1/8\ w fortress.htb
 
 # test various bugs
 6ff1d8e170f972b66ac3f25ec63d4736 234 r779a.htb kqpk.htb
