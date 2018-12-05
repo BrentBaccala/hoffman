@@ -52,27 +52,10 @@ check-negative:
 	@echo Negative build tests all failed as expected
 
 check-fast: $(PROBES-FAST)
-	@cat $(PROBES-FAST) | while read md5expected input files; do					\
-		if [ "$$md5expected" != "" -a "$$md5expected" != "#" ]; then				\
-			if [ "$$files" != "" -a "$$files" != "doesNotExist.htb" ]; then			\
-				make $$files || exit 1;							\
-			fi;										\
-			/bin/echo -e $$input								\
-				| TERM=dumb $(HOFFMAN) -p $$files 2>&1 | tee /dev/stderr		\
-				| grep -v "Nalimov"							\
-				| tail -n +2								\
-				| md5sum | ( read md5actual junk;					\
-					if [ "$$md5expected" != "$$md5actual" ]; then			\
-						echo $$md5expected != $$md5actual; exit 1;		\
-					fi								\
-				) || exit 1;								\
-		fi;											\
-	done
-	@echo
-	@echo All tests completed successfully
-
 check-slow: $(PROBES-SLOW)
-	@cat $(PROBES-SLOW) | while read md5expected input files; do					\
+
+check-fast check-slow:
+	@cat $^ | while read md5expected input files; do						\
 		if [ "$$md5expected" != "" -a "$$md5expected" != "#" ]; then				\
 			if [ "$$files" != "" -a "$$files" != "doesNotExist.htb" ]; then			\
 				make $$files || exit 1;							\
