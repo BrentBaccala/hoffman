@@ -11,6 +11,7 @@ config.status
 config.sub
 configure
 install-sh
+Makefile.in
 Makefile
 
 # auto-generated source, objects, and executable

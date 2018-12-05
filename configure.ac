@@ -2,6 +2,8 @@ dnl Process this file with autoconf to produce a configure script.
 
 AC_INIT([hoffman],[1.7])
 
+AM_INIT_AUTOMAKE([foreign subdir-objects])
+
 if test x"$CXXFLAGS" = x; then
         CXXFLAGS="-O3 -march=native"
 fi
