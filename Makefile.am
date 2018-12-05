@@ -11,7 +11,7 @@ hoffman_LDADD =  -lboost_iostreams -lboost_filesystem -lboost_system @libxml_LIB
 
 hoffman_SOURCES = hoffman.cc probe.c egtb.cpp lock.h tbdecode.h bitlib.h version.h Fathom/src/tbprobe.c
 hoffman_DTD = tablebase.dtd
-hoffman_TESTS = PROBES-FAST PROBES-SLOW
+hoffman_TESTS = PROBES-FAST1 PROBES-FAST2 PROBES-SLOW
 hoffman_OTHER = pawngen genctlfile.pl hoffman.nsi md5htb
 hoffman_DOCS = tutorial.pdf reference.pdf
 hoffman_DOCSRC = tutorial.tex reference.tex
@@ -43,7 +43,7 @@ tablebase_dtd.h: tablebase.dtd
 	echo "\";" >> $@
 
 check:
-	@echo "Please choose between check-fast (an hour) or check-slow (days)"
+	@echo "Please choose between check-fast1, check-fast2 (an hour) or check-slow (days)"
 
 check-%:
 	make -C test $@

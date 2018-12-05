@@ -1,6 +1,11 @@
 
 language: g++
 
+env:
+  - TEST_SUITE=fast1
+  - TEST_SUITE=fast2
+  - TEST_SUITE=negative
+
 addons:
   apt:
     packages:
@@ -16,4 +21,4 @@ script:
    - autoreconf -fi
    - ./configure
    - make
-   - make check-fast
+   - make check-$TEST_SUITE

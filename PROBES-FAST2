@@ -1,0 +1,75 @@
+# Tablebase probe tests - FAST2
+#
+# "FAST2" is mostly tests on tablebases of non-default type.
+#
+# FAST1 and FAST2 are separate so that Travis doesn't time out.
+#
+# Each line starts with the MD5 hash of the expected output, then a string
+# that will be fed to hoffman (escape spaces as '\ ' and newlines as '\\n'),
+# then a list of tablebases to be probed, which can include wildcards.
+
+
+# attempt to probe an index corresponding to an illegal position
+fd5ee8b787a04a3a0e716eff4b34a179 0 kpk-naive.htb
+
+# Check probing bitbases
+fa27698ab86d803937a45c33e916d736 8/8/K6k/8/4Q3/8/8/8\ w kqk-basic.htb
+cc05a37b7f6c0b7f9992d6fd8611d0b3 8/8/K6k/8/4Q3/8/8/8\ w kqk-whitewins.htb
+
+# Check probing inverted bitbases
+a75473f6df21f08a2c92028056dcfe45 8/8/K6k/8/4q3/8/8/8\ w kqk-basic.htb
+4141a8d3f16a723121ca540d05713681 8/8/K6k/8/4q3/8/8/8\ w kqk-whitewins.htb
+
+# Verify a tablebase with a 'normal' futurebase
+817457fab6899ebeac623d04a6072986 8/8/K6k/8/8/3P4/8/8\ w kpk23.htb kpk4+.htb
+
+# Probe a suicide tablebase
+f1b03d7bedb122391df12f2f48858f43 KRq5/8/8/8/8/8/8/8\ w krvq.htb
+03da94741406062e0535d55f7e6e4f7e KRq5/8/8/8/8/8/8/8\ b krvq.htb kvq.htb
+26449dde89dabb075a56d7e03f5ad4d9 1Rq5/8/8/K7/8/8/8/8\ b krvq.htb kvq.htb
+ac014a021a61cd874ef0cb793241bbaf 2Q5/8/8/8/8/8/4p3/3Q4\ b qqvp.htb qqv[kqrbn].htb qv[qrbnp].htb kvq.htb
+cbdb2e66f095887304769a65828a73f1 K1q5/1P6/8/8/8/8/8/8\ w kpvq.htb
+
+# Illegally attempt to probe suicide and normal tablebases together
+41540d597c127e959ac99ed604ce3260 ignored krvq.htb kqk.htb
+
+# problem position in Lasker's 1901 construction
+27a7c23e02add3fb00db7c16be353d6d 8/k7/3p4/p2P1p2/P2P1P2/8/8/K7\ w lasker1901.htb
+
+# problem position in Freezer fortress construction
+c21a2a5a49963fdf0d274300762c4c20 8/6k1/6p1/8/q7/4R3/5PK1/8\ w fortress.htb
+
+# check basic proptable operation (tests bug fixed in 1.888)
+3927572dd046022feb53b2795845ec36 8/8/K6k/8/4Q3/8/8/8\ w kqk-prop1.htb
+
+# additional proptable tests
+3c36f90982a5e79a4549b80d195ed957 8/8/K6k/8/4P3/8/8/8\ w kpk-prop1.htb
+972ba97ce4bcb8d3e7f2fc3567b16d5f 8/8/K6k/8/3pP3/8/8/8\ w kpkp-prop1.htb kpk-prop1.htb kqk-prop1.htb
+
+# check pawngen operation
+6e2ca854365273cee470fdfa507687a5 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8\ w fine67-3-3.htb
+50ddd1dea9f27f941daad985c9b4b263 8/2p5/3k4/1p1p1K2/8/1P1P4/2P5/8\ w fine67n-3-3.htb
+
+# check alternate index types
+3e3f8dffb6c277d04ae6209bfd4da52a 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-naive.htb
+ba8c06b99e8865c14f160477f06f230a 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-simple.htb
+254b28060524ea0caf42ee3f2c90cdfa 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-compact.htb
+515098ff1682b68b5116eaa6805ac6c4 8/3k4/8/8/8/4Q3/8/1K1Q4\ b kqqk-naive2.htb
+7aa0639fd632d01cd0c1eae03d61a667 8/8/K6k/8/3pP3/8/8/8\ w kpkp-naive.htb kpk-naive.htb kqk-naive.htb
+
+# check alternate formats
+1f9d2d82414a812f1a86a267bf26ca75 8/3k4/8/8/8/4q3/8/1K1Q4\ b kqkq-basic.htb
+
+# check backprop (and probe) from Nalimov tablebases
+31b50ac52798f8474dffe89e4b4cc37a 258856\\nc1xd2 kqkq_nalimov.htb kqk.nbw.emd
+e400ad62a2d4c340c0b3391024cee88a 8/8/K3P2k/8/8/3p4/8/8\ b kpkp_nalimov.htb
+
+# check backprop (and probe) from Syzygy tablebase
+19f6951867965ef622d2862e317dad9e 258856\\nc1xd2 kqkq_syzygy.htb KQvK.rtbw
+c41e8c92291684426cd4d5a5096dddd9 8/8/K3P2k/8/8/3p4/8/8\ b kpkp_syzygy.htb
+
+# bug test r981
+154dc9243d90a19e081b0ca737b25a74 8/3k4/8/8/8/4B3/8/1K1Q4\ b kqbk-basic.htb
+
+# bug test r982
+87bca4763df2a28559aa1109f608ec62 8/3k4/8/8/8/8/8/1Kb5\ w kkb-whitewins.htb kk-whitewins.htb

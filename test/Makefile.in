@@ -35,7 +35,8 @@ GENCTLFILE ?= ../genctlfile.pl
 
 NALIMOV ?= ~/Nalimov
 
-PROBES-FAST = ../PROBES-FAST
+PROBES-FAST1 = ../PROBES-FAST1
+PROBES-FAST2 = ../PROBES-FAST2
 PROBES-SLOW = ../PROBES-SLOW
 
 NEGATIVE_BUILD_TESTS = $(notdir $(subst xml,htb,$(shell grep -l "NEGATIVE BUILD" ../xml/*.xml)))
@@ -51,7 +52,8 @@ check-negative:
 	@echo
 	@echo Negative build tests all failed as expected
 
-check-fast: $(PROBES-FAST)
+check-fast1: $(PROBES-FAST1)
+check-fast2: $(PROBES-FAST2)
 check-slow: $(PROBES-SLOW)
 
 check-fast check-slow:
