@@ -66,3 +66,8 @@ c41e8c92291684426cd4d5a5096dddd9 8/8/K3P2k/8/8/3p4/8/8\ b kpkp_syzygy.htb
 
 # bug test r982
 87bca4763df2a28559aa1109f608ec62 8/3k4/8/8/8/8/8/1Kb5\ w kkb-whitewins.htb kk-whitewins.htb
+
+# test various bugs
+6217fe76dd882826da28d3de9fee7ce1 8/7K/8/8/k7/8/p7/8\ b r796.htb
+b410e6913b004034028da85887c78292 1234 r804.htb
+745ea23c49f7ee974ce5021dd2d59874 0 r1045.htb
