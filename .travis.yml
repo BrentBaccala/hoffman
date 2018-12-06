@@ -4,6 +4,7 @@ language: g++
 env:
   - TEST_SUITE=fast1
   - TEST_SUITE=fast2
+  - TEST_SUITE=fast3
   - TEST_SUITE=negative
 
 addons:
