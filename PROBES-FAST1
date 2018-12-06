@@ -2,7 +2,7 @@
 #
 # "FAST1" is mostly tests on tablebases of default type.
 #
-# FAST1 and FAST2 are separate so that Travis doesn't time out.
+# FAST1, FAST2, and FAST3 are separate so that Travis doesn't time out.
 #
 # Each line starts with the MD5 hash of the expected output, then a string
 # that will be fed to hoffman (escape spaces as '\ ' and newlines as '\\n'),
