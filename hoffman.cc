@@ -16073,6 +16073,9 @@ int main(int argc, char *argv[])
 	tablebase_t * tb = parse_XML_control_file(argv[optind]);
 	if (tb != nullptr) {
 	    std::cout << "Total indices: " << tb->num_indices << std::endl;
+	    if (tb->pawngen != nullptr) {
+		info("%zd pawngen positions\n", tb->pawngen->pawn_positions_by_index.size());
+	    }
 	}
 	terminate();
     }
