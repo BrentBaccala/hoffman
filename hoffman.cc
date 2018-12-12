@@ -1241,7 +1241,17 @@ void info (const char * format, ...)
  * called once for every index in a tablebase.  Since this happens a lot, we keep a thread local
  * counter to avoid thread contention over a global counter, then commit our local counter into a
  * global counter every time the progress printing thread increments a progress timer.
+ *
+ * To handshake this operation with the progress printing thread would require a lot of thread
+ * synchronization, made more difficult by the fact that threads can just exit when they're
+ * done and stop calling mark_progress().  We'd probably have to add a function notifying
+ * this code when a thread exited, so we'd no longer wait on it to call mark_progress().
+ *
+ * Instead of all that, I've just opted to update the progress ten times a second, so the user can
+ * hardly notice that our progress percentage is actually a tenth of a second behind.
  */
+
+const auto progress_update_time = std::chrono::milliseconds(100);
 
 thread_local index_t local_indices_processed(0);
 std::atomic<index_t> global_indices_processed(0);
@@ -1273,7 +1283,7 @@ void printer(const char * label, const index_t total_indices)
 
     fputs(label, stderr);
 
-    while (! printer_cond.wait_for(lock, std::chrono::seconds(1), [] () {return all_threads_done;})) {
+    while (! printer_cond.wait_for(lock, progress_update_time, [] () {return all_threads_done;})) {
 	global_progress_timer ++;
 	fprintf(stderr, "\r%s %8.4f%%", label,
 		static_cast<float>(global_indices_processed)/static_cast<float>(total_indices) * 100.0);

@@ -29,7 +29,7 @@
 # GNU Make is required to process this makefile, along with xmllint
 # (part of libxml2) to extract dependencies from the control files.
 
-HOFFMAN ?= ../hoffman
+HOFFMAN ?= ../hoffman -t 2
 PAWNGEN ?= ../pawngen
 GENCTLFILE ?= ../genctlfile.pl
 
