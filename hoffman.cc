@@ -120,8 +120,11 @@
 #include <condition_variable>
 #include <type_traits>
 
+#include <chrono>
+
 #include <fstream>
 #include <iostream>
+#include <iomanip>
 
 #include <boost/lexical_cast.hpp>
 
@@ -466,8 +469,6 @@ char options_string[256];
 
 struct timeval program_start_time;
 struct timeval program_end_time;
-
-unsigned int progress_dots = 100;
 
 /* per-pass statistics */
 
@@ -1166,15 +1167,15 @@ index_t debug_move = INVALID_INDEX;
 index_t debug_futuremove = INVALID_INDEX;
 
 
-/***** UTILITY FUNCTIONS *****/
+/***** STATUS PRINTING FUNCTIONS *****/
 
-/* printing_progress_dots is used to indicate that we're in the middle of printing a line of progress
- * dots, so a text message of any kind should be prefixed with a newline.
+/* in_middle_of_line is used to indicate that we're in the middle of printing a progress line, so a
+ * text message of any kind should be prefixed with a newline.
  */
 
 int fatal_errors = 0;
 
-std::atomic<bool> printing_progress_dots(false);
+std::atomic<bool> in_middle_of_line(false);
 
 #define MAX_FATAL_ERRORS 10
 
@@ -1195,9 +1196,9 @@ void fatal (const char * format, ...)
     /* BREAKPOINT */
     if (index(format, '\n')) fatal_errors ++;
 
-    if (printing_progress_dots) {
+    if (in_middle_of_line) {
 	fputc('\n', stderr);
-	printing_progress_dots = false;
+	in_middle_of_line = false;
     }
 
     va_start(va, format);
@@ -1211,9 +1212,9 @@ void warning (const char * format, ...)
 {
     va_list va;
 
-    if (printing_progress_dots) {
+    if (in_middle_of_line) {
 	fputc('\n', stderr);
-	printing_progress_dots = false;
+	in_middle_of_line = false;
     }
 
     va_start(va, format);
@@ -1226,9 +1227,9 @@ void info (const char * format, ...)
 {
     va_list va;
 
-    if (printing_progress_dots) {
+    if (in_middle_of_line) {
 	fputc('\n', stderr);
-	printing_progress_dots = false;
+	in_middle_of_line = false;
     }
 
     va_start(va, format);
@@ -1236,53 +1237,75 @@ void info (const char * format, ...)
     va_end(va);
 }
 
-/* We aim to print progress_dots progress dots as we move through a tablebase.  That means one
- * progress dot every tb->num_indices/progress_dots indices.  We keep an internal count of how many
- * times this routine gets called, expecting it to be called once for each index in the tablebase.
- * I also take care to precompute next_target_index to avoid division every time this routine gets
- * called.
+/* We aim to print our progress as we move through a tablebase.  We expect mark_progress() to be
+ * called once for every index in a tablebase.  Since this happens a lot, we keep a thread local
+ * counter to avoid thread contention over a global counter, then commit our local counter into a
+ * global counter every time the progress printing thread increments a progress timer.
  */
 
-void print_progress_dot(tablebase_t *tb, bool reset)
+thread_local index_t local_indices_processed(0);
+std::atomic<index_t> global_indices_processed(0);
+
+thread_local int local_progress_timer(0);
+std::atomic<int> global_progress_timer(0);
+
+void mark_progress(void)
 {
-    static std::atomic<unsigned int> progress_dots_printed(0);
-    static std::atomic<index_t> indices_processed(0);
-    static std::atomic<index_t> next_target_index(0);
+    local_indices_processed ++;
 
-    if (progress_dots > 0) {
+    if (local_progress_timer != global_progress_timer) {
+	global_indices_processed += local_indices_processed;
+	local_indices_processed = 0;
+	local_progress_timer = global_progress_timer;
+    }
+}
 
-	if (reset) {
-	    progress_dots_printed = 0;
-	    indices_processed = 0;
-	    next_target_index = tb->num_indices / progress_dots;
-	    return;
-	}
+bool all_threads_done = false;
 
-	if ((++ indices_processed) == next_target_index) {
+std::mutex printer_mutex;
+std::condition_variable printer_cond;
 
-	    if (! printing_progress_dots) {
-		for (auto i=1U; i <= progress_dots_printed; i++) {
-		    fputc(' ', stderr);
-		}
-	    }
-	    fputc('.', stderr);
-	    printing_progress_dots = true;
-	    progress_dots_printed ++;
+std::thread printer_thread;
 
-	    next_target_index = tb->num_indices * (progress_dots_printed + 1) / progress_dots;
-	}
+void printer(const char * label, const index_t total_indices)
+{
+    std::unique_lock<std::mutex> lock(printer_mutex);
+
+    fputs(label, stderr);
+
+    while (! printer_cond.wait_for(lock, std::chrono::seconds(1), [] () {return all_threads_done;})) {
+	global_progress_timer ++;
+	fprintf(stderr, "\r%s %8.4f%%", label,
+		static_cast<float>(global_indices_processed)/static_cast<float>(total_indices) * 100.0);
+	in_middle_of_line = true;
     }
 
+    fputs("\r", stderr);
+    fputs(label, stderr);
 }
 
-void print_progress_dot(tablebase_t *tb)
+void reset_progress_indicator(const char * label, const index_t total_indices)
 {
-    print_progress_dot(tb, false);
+    global_indices_processed = 0;
+    global_progress_timer = 0;
+    all_threads_done = false;
+
+    printer_thread = std::thread(printer, label, total_indices);
 }
 
-void reset_progress_dots(tablebase_t *tb)
+void end_progress_indicator(const uint64_t number = 0, const char * string = nullptr)
 {
-    print_progress_dot(tb, true);
+    all_threads_done = true;
+    printer_cond.notify_all();
+    printer_thread.join();
+
+    if (string != nullptr) {
+	fprintf(stderr, "; %lu %s\n", number, string);
+    } else {
+	fputs("           \n", stderr);
+    }
+
+    in_middle_of_line = false;
 }
 
 void sigaction_user_interrupt (int signal, siginfo_t * siginfo, void * ucontext)
@@ -1296,6 +1319,8 @@ void sigaction_internal_error (int signal, siginfo_t * siginfo, void * ucontext)
     fatal("Internal error: %s at 0x%08x\n", strsignal(signal), siginfo->si_addr);
     terminate();
 }
+
+/***** UTILITY FUNCTIONS *****/
 
 int ROW(int square) {
     return square / 8;
@@ -9546,7 +9571,7 @@ void back_propagate_section(index_t start_index, index_t end_index, int target_d
     index_t index;
 
     for (index = start_index; index <= end_index; index++) {
-	print_progress_dot(current_tb);
+	mark_progress();
 	back_propagate_index(index, target_dtm);
     }
 }
@@ -9572,7 +9597,10 @@ void non_proptable_pass(int target_dtm)
 
     entriesTable->set_threads(num_threads);
 
-    reset_progress_dots(current_tb);
+    std::stringstream label;
+    label << "Pass " << std::setw(4) << target_dtm;
+
+    reset_progress_indicator(label.str().c_str(), current_tb->num_indices);
 
     for (thread = 0; thread < num_threads; thread ++) {
 	index_t start_index = thread*block_size;
@@ -9590,6 +9618,8 @@ void non_proptable_pass(int target_dtm)
     for (thread = 0; thread < num_threads; thread ++) {
 	t[thread].join();
     }
+
+    end_progress_indicator(positions_finalized_this_pass.load(), "positions finalized");
 
     entriesTable->set_threads(1);
 }
@@ -9942,6 +9972,8 @@ private:
     Iterator tail;
     bool sorted;
 
+    size_t item_count;
+
     size_t remaining_space;
     size_t block_size;
     unsigned int blocks_dumped_to_disk;
@@ -10008,7 +10040,8 @@ public:
 	in_memory_queue(new MemoryContainer(args...)),
 	head(in_memory_queue->begin()),
 	tail(head),
-	sorted(true)
+	sorted(true),
+	item_count(0)
     {
 	block_size = (in_memory_queue->end() - in_memory_queue->begin()) / num_threads;
 
@@ -10029,6 +10062,7 @@ public:
 
 	if (in_memory_queue == nullptr) throw std::runtime_error("priority_queue: push attempted after retrieval started");
 
+	item_count ++;
 	*(tail ++) = x;
 	remaining_space --;
 	sorted = false;
@@ -10079,7 +10113,12 @@ public:
     }
 
     bool empty(void) {
+	// XXX use item_count here?
 	return disk_ques.empty() ? (head == tail) : snetwork.empty();
+    }
+
+    size_t count(void) {
+	return item_count;
     }
 
     const T front(void) {
@@ -10093,6 +10132,7 @@ public:
 
     T pop_front(void) {
 	prepare_to_retrieve();
+	item_count --;
 	if (disk_ques.empty()) {
 	    return *(head++);
 	} else {
@@ -10534,8 +10574,14 @@ void proptable_pass_thread(int target_dtm)
 	    }
 	}
 
+	/* initialize_tablebase_entry() calls mark_progress(), so we only need to mark our progress
+	 * here if we're not calling initialize_tablebase_entry().
+	 */
+
 	if (target_dtm == 0) {
 	    futurevector = initialize_tablebase_entry(current_tb, index);
+	} else {
+	    mark_progress();
 	}
 
 	for (auto pt_entry = current_pt_entries.begin(); pt_entry != current_pt_entries.end(); pt_entry ++) {
@@ -10644,6 +10690,14 @@ void proptable_pass(int target_dtm)
 
     proptable_shared_index = 0;
 
+    if (target_dtm == 0) {
+	reset_progress_indicator("Initializing tablebase", current_tb->num_indices);
+    } else {
+	std::stringstream label;
+	label << "Pass " << std::setw(4) << target_dtm;
+	reset_progress_indicator(label.str().c_str(), current_tb->num_indices);
+    }
+
     entriesTable->set_threads(num_threads);
 
     for (thread = 0; thread < num_threads; thread ++) {
@@ -10655,6 +10709,12 @@ void proptable_pass(int target_dtm)
     }
 
     entriesTable->set_threads(1);
+
+    if (target_dtm == 0) {
+	end_progress_indicator();
+    } else {
+	end_progress_indicator(positions_finalized_this_pass.load(), "positions finalized");
+    }
 
     delete input_proptable;
 }
@@ -10820,9 +10880,6 @@ uint64_t propagation_pass(int target_dtm)
     }
 
     finalize_pass_statistics();
-    if (target_dtm != 0) {
-	info("Pass %3d complete; %lu positions finalized\n", target_dtm, positions_finalized_this_pass.load());
-    }
 
     total_passes ++;
     if (total_passes == max_passes) expand_per_pass_statistics();
@@ -11937,7 +11994,7 @@ void back_propagate_futurebase_thread(void (* backprop_function)(index_t, int))
 		 * to do that is to run this loop even for draws.
 		 */
 
-		print_progress_dot(futurebase);
+		mark_progress();
 
 		for (reflection = 0; reflection < max_reflection; reflection ++) {
 		    (*backprop_function)(future_index + i, reflection);
@@ -11966,7 +12023,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FuturebaseType::Capture:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating (capture) from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = &propagate_moves_from_capture_futurebase;
 		doing_capture_backprop = true;
 	    }
@@ -11976,7 +12032,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FuturebaseType::Promotion:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating (promotion) from '%s'\n", (char *) futurebase->filename.c_str());
 
 		promotion_color = tb->pieces[futurebase->missing_pawn].color;
 		first_back_rank_square = ((promotion_color == PieceColor::White) ? 56 : 0);
@@ -11992,7 +12047,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FuturebaseType::CapturePromotion:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating (capture-promotion) from '%s'\n", (char *) futurebase->filename.c_str());
 
 		promotion_color = tb->pieces[futurebase->missing_pawn].color;
 		first_back_rank_square = ((promotion_color == PieceColor::White) ? 56 : 0);
@@ -12008,7 +12062,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FuturebaseType::Normal:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating (normal) from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = propagate_moves_from_normal_futurebase;
 		doing_capture_backprop = false;
 	    }
@@ -12018,7 +12071,6 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	case FuturebaseType::Pawngen:
 
 	    if (fatal_errors == 0) {
-		info("Back propagating (pawngen) from '%s'\n", (char *) futurebase->filename.c_str());
 		backprop_function = propagate_moves_from_pawngen_futurebase;
 		doing_capture_backprop = false;
 	    }
@@ -12037,7 +12089,13 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    std::thread t[num_threads];
 	    unsigned int thread;
 
-	    reset_progress_dots(futurebase);
+	    std::string status_message("Back propagating (");
+	    status_message += futurebase_types[futurebase->futurebase_type];
+	    status_message += ") from '";
+	    status_message += futurebase->filename;
+	    status_message += "'";
+
+	    reset_progress_indicator(status_message.c_str(), futurebase->num_indices);
 
 	    for (thread = 0; thread < num_threads; thread ++) {
 		t[thread] = std::thread(back_propagate_futurebase_thread, backprop_function);
@@ -12046,6 +12104,8 @@ bool back_propagate_all_futurebases(tablebase_t *tb) {
 	    for (thread = 0; thread < num_threads; thread ++) {
 		t[thread].join();
 	    }
+
+	    end_progress_indicator();
 	}
     }
 
@@ -14610,7 +14670,7 @@ futurevector_t initialize_tablebase_entry(const tablebase_t *tb, const index_t i
 	info("Initializing %" PRIindex "\n", index);
     }
 
-    print_progress_dot(current_tb);
+    mark_progress();
 
     if (! index_to_local_position(tb, index, REFLECTION_NONE, &position)) {
 
@@ -14661,7 +14721,7 @@ void initialize_tablebase(void)
     unsigned int thread;
     index_t block_size = current_tb->num_indices /num_threads;
 
-    reset_progress_dots(current_tb);
+    reset_progress_indicator("Initializing tablebase", current_tb->num_indices);
 
     for (thread = 0; thread < num_threads; thread ++) {
 	index_t start_index = thread*block_size;
@@ -14679,6 +14739,8 @@ void initialize_tablebase(void)
     for (thread = 0; thread < num_threads; thread ++) {
 	t[thread].join();
     }
+
+    end_progress_indicator();
 }
 
 /* Intra-table propagation is (almost) trivial.  Keep making passes over the tablebase first until
@@ -15114,7 +15176,6 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 
 	pass_type[total_passes] = "initialization";
 
-	info("Initializing tablebase\n");
 	initialize_tablebase();
 
 	finalize_pass_statistics();
@@ -15189,8 +15250,6 @@ bool generate_tablebase_from_control_file(char *control_filename, Glib::ustring 
 	finalize_pass_statistics();
 	total_passes ++;
 
-	reset_progress_dots(current_tb);
-	info("Initializing tablebase\n");
 	pass_type[total_passes] = "initialization";
 	propagation_pass(0);
 
@@ -15246,7 +15305,7 @@ void verify_tablebase_internally_thread(void)
 
 	if (index >= current_tb->num_indices) break;
 
-	print_progress_dot(current_tb);
+	mark_progress();
 
 	if (!index_to_local_position(current_tb, index, REFLECTION_NONE, &position)) continue;
 
@@ -15329,10 +15388,9 @@ bool verify_tablebase_internally(void)
     /* XXX this routine doesn't work on suicide */
     if (current_tb->variant != Variant::Normal) return false;
 
-    info("Verifying internal consistency of tablebase\n");
+    reset_progress_indicator("Verifying internal consistency of tablebase", current_tb->num_indices);
 
     entriesTable->set_threads(num_threads);
-    reset_progress_dots(current_tb);
     next_verify_index = 0;
 
     for (thread = 0; thread < num_threads; thread ++) {
@@ -15345,7 +15403,7 @@ bool verify_tablebase_internally(void)
 
     entriesTable->set_threads(1);
 
-    info("");
+    end_progress_indicator();
     
     return (fatal_errors == 0);
 }
