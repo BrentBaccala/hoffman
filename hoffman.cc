@@ -8358,8 +8358,6 @@ template <typename T, bool isAtomic> class entry;
  * I sometimes change this type to uint8_t and recompile hoffman for large bitbase calculations.
  *
  * XXX automatically select uint8_t or uint16_t, probably using templates
- *
- * XXX allow packed bitfields to minimize memory footprint
  */
 
 typedef uint16_t entry_t;
@@ -8689,6 +8687,19 @@ class EntriesTable {
 	}
     }
 
+    /* These two functions are here because they are called for every index in a back propagation
+     * pass (unless the unpropagated index table is in use), so they can be overriden by more
+     * efficient implementations in specific derived classes.
+     */
+
+    virtual bool is_unpropagated(index_t index) {
+	return (*this)[index].is_unpropagated();
+    }
+
+    virtual int get_DTM(index_t index) {
+	return (*this)[index].get_DTM();
+    }
+
     /* Seven possible ways we can initialize a tablebase entry for a position:
      *  - it's illegal
      *  - PNTM's mated
@@ -8822,15 +8833,20 @@ class EntriesTable {
     }
 };
 
+template <typename EntriesTableType>
 class EntriesTablePtr {
-    EntriesTable * entriesTable;
-
 public:
+    EntriesTableType * entriesTable;
+
     EntriesTablePtr(void) {
 	entriesTable = nullptr;
     }
 
-    EntriesTablePtr & operator=(EntriesTable * table) {
+    EntriesTablePtr(EntriesTableType * table) {
+	entriesTable = table;
+    }
+
+    EntriesTablePtr & operator=(EntriesTableType * table) {
 	entriesTable = table;
 	return *this;
     }
@@ -8839,11 +8855,11 @@ public:
 	return (*entriesTable)[index];
     }
 
-    EntriesTable * operator->() const {
+    EntriesTableType * operator->() const {
 	return entriesTable;
     }
 
-    operator EntriesTable * () const {
+    operator EntriesTableType * () const {
 	return entriesTable;
     }
 
@@ -8875,6 +8891,22 @@ class MemoryEntriesTable: public EntriesTable {
 
     const nonatomic_entry operator[](index_t index) {
 	return entries[index];
+    }
+
+    bool is_unpropagated(index_t index) final {
+	unsigned int movecnt = entries[index].get_movecnt();
+	return (movecnt == MOVECNT_PTM_WINS_UNPROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
+    }
+
+    int get_DTM(index_t index) final {
+	unsigned int movecnt = entries[index].get_movecnt();
+
+	if ((movecnt == MOVECNT_PTM_WINS_UNPROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED)
+	    || (movecnt == MOVECNT_PTM_WINS_PROPED) || (movecnt == MOVECNT_PNTM_WINS_PROPED)) {
+	    return entries[index].get_DTM();
+	} else {
+	    return 0;
+	}
     }
 
     virtual void set(const index_t index, const nonatomic_entry & value) {
@@ -8927,6 +8959,24 @@ class CompactMemoryEntriesTable: public EntriesTable {
     const nonatomic_entry operator[](index_t index) {
 	size_t bits = index * used_bits;
 	return nonatomic_entry((*(uint16_t *)(entries + bits/8) >> bits%8) & mask);
+    }
+
+    bool is_unpropagated(index_t index) final {
+	size_t bits = index * used_bits;
+	unsigned int movecnt = get_unsigned_int_field(entries, bits + movecnt_offset, movecnt_bits);
+	return (movecnt == MOVECNT_PTM_WINS_UNPROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED);
+    }
+
+    int get_DTM(index_t index) final {
+	size_t bits = index * used_bits;
+	unsigned int movecnt = get_unsigned_int_field(entries, bits + movecnt_offset, movecnt_bits);
+
+	if ((movecnt == MOVECNT_PTM_WINS_UNPROPED) || (movecnt == MOVECNT_PNTM_WINS_UNPROPED)
+	    || (movecnt == MOVECNT_PTM_WINS_PROPED) || (movecnt == MOVECNT_PNTM_WINS_PROPED)) {
+	    return get_int_field(entries, bits + dtm_offset, dtm_bits);
+	} else {
+	    return 0;
+	}
     }
 
     virtual void set(const index_t index, const nonatomic_entry & value) {
@@ -9218,7 +9268,7 @@ class DiskEntriesTable: public EntriesTable {
 /***** INTRA-TABLE BACK PROPAGATION *****/
 
 
-EntriesTablePtr entriesTable;
+EntriesTablePtr<EntriesTable> entriesTable;
 
 /* Unpropagated index tracker.
  *
@@ -9510,12 +9560,11 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 
 void back_propagate_index_within_table(index_t index, int reflection);
 
-void back_propagate_index(index_t index, int target_dtm)
+template <typename EntriesTableType>
+void back_propagate_index(index_t index, int target_dtm, EntriesTableType entriesTable)
 {
-    nonatomic_entry expected = entriesTable[index];
-
-    if (((! tracking_dtm) && expected.is_unpropagated())
-	|| (tracking_dtm && (expected.get_DTM() == target_dtm))) {
+    if (((! tracking_dtm) && entriesTable->is_unpropagated(index))
+	|| (tracking_dtm && (entriesTable->get_DTM(index) == target_dtm))) {
 
 	/* What could another processor change?  Well, it's not going to flip the propagated flag,
 	 * because next_backprop_index (below) is atomic, so it's not going to attempt a back prop.
@@ -9523,6 +9572,7 @@ void back_propagate_index(index_t index, int target_dtm)
 	 * XXX Could the DTM change (don't think so)
 	 */
 
+	nonatomic_entry expected = entriesTable[index];
 	nonatomic_entry desired;
 
 	do {
@@ -9568,6 +9618,12 @@ void back_propagate_index(index_t index, int target_dtm)
     }
 }
 
+void back_propagate_index(index_t index, int target_dtm)
+{
+    back_propagate_index(index, target_dtm, entriesTable);
+}
+
+
 /* If we're not using proptables, then this section of code spawns off a number of threads to run
  * through the entries table, intra-table backpropagating to a single target DTM.  We could go
  * though the table sequentially, each thread picking the next available entry for processing, but
@@ -9586,10 +9642,28 @@ void back_propagate_section(index_t start_index, index_t end_index, int target_d
 {
     index_t index;
 
-    for (index = start_index; index <= end_index; index++) {
-	mark_progress();
-	back_propagate_index(index, target_dtm);
+    CompactMemoryEntriesTable * cmet = dynamic_cast<CompactMemoryEntriesTable *>(entriesTable.entriesTable);
+    MemoryEntriesTable * met = dynamic_cast<MemoryEntriesTable *>(entriesTable.entriesTable);
+
+    if (cmet != nullptr) {
+	auto etable = EntriesTablePtr<CompactMemoryEntriesTable>(cmet);
+	for (index = start_index; index <= end_index; index++) {
+	    mark_progress();
+	    back_propagate_index(index, target_dtm, etable);
+	}
+    } else if (met != nullptr) {
+	auto etable = EntriesTablePtr<MemoryEntriesTable>(met);
+	for (index = start_index; index <= end_index; index++) {
+	    mark_progress();
+	    back_propagate_index(index, target_dtm, etable);
+	}
+    } else {
+	for (index = start_index; index <= end_index; index++) {
+	    mark_progress();
+	    back_propagate_index(index, target_dtm);
+	}
     }
+
 }
 
 void non_proptable_pass(int target_dtm)
