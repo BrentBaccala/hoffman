@@ -9237,7 +9237,7 @@ EntriesTablePtr entriesTable;
  */
 
 struct UnpropagatedIndexTable {
-    size_t size;
+    size_t total_size;
     index_t * unpropagated_indices;
     size_t count = 0;
     size_t last_pass_count = 0;
@@ -9247,12 +9247,12 @@ struct UnpropagatedIndexTable {
     bool direction = false;
     std::mutex lock;
 
-    UnpropagatedIndexTable(size_t size) : size(size)
+    UnpropagatedIndexTable(size_t size) : total_size(size)
     {
-	size_t bytes = size * sizeof(index_t);
+	size_t bytes = total_size * sizeof(index_t);
 
 	try {
-	    unpropagated_indices = new index_t[size];
+	    unpropagated_indices = new index_t[total_size];
 
 	    if (bytes < 1024*1024) {
 		info("Malloced %zdKB for unpropagated index table\n", bytes/1024);
@@ -9283,11 +9283,11 @@ struct UnpropagatedIndexTable {
 	if (tracking) {
 	    std::unique_lock<std::mutex> _(lock);
 
-	    if (count + last_pass_count < size) {
+	    if (count + last_pass_count < total_size) {
 		if (direction) {
 		    unpropagated_indices[count] = index;
 		} else {
-		    unpropagated_indices[size - count - 1] = index;
+		    unpropagated_indices[total_size - count - 1] = index;
 		}
 		count ++;
 	    } else {
@@ -9297,18 +9297,24 @@ struct UnpropagatedIndexTable {
 	}
     }
 
-    bool indices_available(void)
+    bool empty(void)
     {
 	// XXX not thread safe (but not currently used in threaded code)
-	return (next_pop < last_pass_count);
+	return (next_pop == last_pass_count);
+    }
+
+    size_t size(void)
+    {
+	return (last_pass_count - next_pop);
     }
 
     index_t next_index(void)
     {
 	// XXX not thread safe (but not currently used in threaded code)
+	// XXX should through exception if empty()
 	index_t retval;
 	if (direction) {
-	    retval = unpropagated_indices[size - next_pop - 1];
+	    retval = unpropagated_indices[total_size - next_pop - 1];
 	} else {
 	    retval = unpropagated_indices[next_pop];
 	}
@@ -9588,14 +9594,23 @@ void back_propagate_section(index_t start_index, index_t end_index, int target_d
 
 void non_proptable_pass(int target_dtm)
 {
+    std::stringstream label;
+    label << "Pass " << std::setw(4) << target_dtm;
+
     if ((! tracking_dtm) && unpropagated_index_table) {
 
 	unpropagated_index_table->start_new_pass();
 
 	if (unpropagated_index_table->last_pass_optimized) {
-	    while (unpropagated_index_table->indices_available()) {
+
+	    reset_progress_indicator(label.str().c_str(), unpropagated_index_table->size());
+
+	    while (! unpropagated_index_table->empty()) {
+		mark_progress();
 		back_propagate_index(unpropagated_index_table->next_index(), target_dtm);
 	    }
+
+	    end_progress_indicator(positions_finalized_this_pass.load(), "positions finalized");
 
 	    return;
 	}
@@ -9606,9 +9621,6 @@ void non_proptable_pass(int target_dtm)
     index_t block_size = current_tb->num_indices / num_threads;
 
     entriesTable->set_threads(num_threads);
-
-    std::stringstream label;
-    label << "Pass " << std::setw(4) << target_dtm;
 
     reset_progress_indicator(label.str().c_str(), current_tb->num_indices);
 
