@@ -9560,9 +9560,11 @@ void finalize_update(index_t index, short dtm, short movecnt, int futuremove)
 
 void back_propagate_index_within_table(index_t index, int reflection);
 
-template <typename EntriesTableType>
+template <bool use_templated_tracking_dtm, bool templated_tracking_dtm, typename EntriesTableType>
 void back_propagate_index(index_t index, int target_dtm, EntriesTableType entriesTable)
 {
+    const bool tracking_dtm = use_templated_tracking_dtm ? templated_tracking_dtm : ::tracking_dtm;
+
     if (((! tracking_dtm) && entriesTable->is_unpropagated(index))
 	|| (tracking_dtm && (entriesTable->get_DTM(index) == target_dtm))) {
 
@@ -9620,7 +9622,7 @@ void back_propagate_index(index_t index, int target_dtm, EntriesTableType entrie
 
 void back_propagate_index(index_t index, int target_dtm)
 {
-    back_propagate_index(index, target_dtm, entriesTable);
+    back_propagate_index<false, false>(index, target_dtm, entriesTable);
 }
 
 
@@ -9645,17 +9647,17 @@ void back_propagate_section(index_t start_index, index_t end_index, int target_d
     CompactMemoryEntriesTable * cmet = dynamic_cast<CompactMemoryEntriesTable *>(entriesTable.entriesTable);
     MemoryEntriesTable * met = dynamic_cast<MemoryEntriesTable *>(entriesTable.entriesTable);
 
-    if (cmet != nullptr) {
+    if ((cmet != nullptr) && !tracking_dtm) {
 	auto etable = EntriesTablePtr<CompactMemoryEntriesTable>(cmet);
 	for (index = start_index; index <= end_index; index++) {
 	    mark_progress();
-	    back_propagate_index(index, target_dtm, etable);
+	    back_propagate_index<true, false>(index, target_dtm, etable);
 	}
-    } else if (met != nullptr) {
+    } else if ((met != nullptr) && tracking_dtm) {
 	auto etable = EntriesTablePtr<MemoryEntriesTable>(met);
 	for (index = start_index; index <= end_index; index++) {
 	    mark_progress();
-	    back_propagate_index(index, target_dtm, etable);
+	    back_propagate_index<true, true>(index, target_dtm, etable);
 	}
     } else {
 	for (index = start_index; index <= end_index; index++) {
