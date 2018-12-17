@@ -8367,14 +8367,8 @@ typedef entry<entry_t, false> nonatomic_entry;
 
 template <typename T, bool isAtomic> class entry {
 
-//private:
 public:
     T e;
-
-    /* nonatomic_entry needs to expose 'e' to atomic_entry */
-    friend atomic_entry;
-
-public:
 
     entry(entry_t e = 0): e(e) {
     }
@@ -8409,7 +8403,9 @@ public:
 	return e.compare_exchange_weak(expected.e, desired.e);
     }
 
-    /* Bitfields can be accessed for both types.  Atomic access requires a bit more work, though. */
+    /* Bitfields can be read for both types, but only written for nonatomic.  The only way to write
+     * atomic entries is to use the compare_exchange_weak() function above.
+     */
 
     unsigned int get_unsigned_bitfield(int offset, int bitmask) const {
 	return (e >> offset) & bitmask;
@@ -8421,17 +8417,6 @@ public:
 	e |= (val & bitmask) << offset;
     }
 
-    template <bool A=isAtomic>
-    typename std::enable_if<A, void>::type set_unsigned_bitfield(int offset, int bitmask, unsigned int val) {
-	entry_t expected = e;
-	entry_t desired;
-
-	do {
-	    desired = expected;
-	    desired &= ~(bitmask << offset);
-	    desired |= (val & bitmask) << offset;
-	} while (! e.compare_exchange_weak(expected, desired));
-    }
 
     /* Signed bitfields need to be sign-extended when we read from them. */
 
@@ -8441,12 +8426,14 @@ public:
 	return val;
     }
 
+    template <bool A=!isAtomic, typename = typename std::enable_if<A>::type>
     void set_signed_bitfield(int offset, int bitmask, int val) {
 	set_unsigned_bitfield(offset, bitmask, val);
     }
 
     /* Now we have method functions that access specific bitfields. */
 
+    template <bool A=!isAtomic, typename = typename std::enable_if<A>::type>
     void set_raw_DTM(int dtm) {
 	set_signed_bitfield(dtm_offset, dtm_bitmask, dtm);
     }
@@ -8455,6 +8442,7 @@ public:
 	return get_signed_bitfield(dtm_offset, dtm_bitmask);
     }
 
+    template <bool A=!isAtomic, typename = typename std::enable_if<A>::type>
     void set_movecnt(unsigned int movecnt) {
 	set_unsigned_bitfield(movecnt_offset, movecnt_bitmask, movecnt);
     }
@@ -8486,10 +8474,12 @@ public:
 	return (get_movecnt() > MOVECNT_PNTM_WINS_UNPROPED) && (get_movecnt() <= MOVECNT_MAX);
     }
 
+    template <bool A=!isAtomic, typename = typename std::enable_if<A>::type>
     void set_PTM_wins_unpropagated(void) {
 	set_movecnt(MOVECNT_PTM_WINS_UNPROPED);
     }
 
+    template <bool A=!isAtomic, typename = typename std::enable_if<A>::type>
     void flag_as_propagated(void) {
 	if (does_PTM_win()) {
 	    set_movecnt(MOVECNT_PTM_WINS_PROPED);
@@ -8851,7 +8841,7 @@ public:
 	return *this;
     }
 
-    const nonatomic_entry operator[](index_t index) const {
+    const nonatomic_entry operator[](const index_t index) {
 	return (*entriesTable)[index];
     }
 
@@ -8889,7 +8879,7 @@ class MemoryEntriesTable: public EntriesTable {
 	print_current_format();
     }
 
-    const nonatomic_entry operator[](index_t index) {
+    const nonatomic_entry operator[](const index_t index) {
 	return entries[index];
     }
 
@@ -8956,7 +8946,7 @@ class CompactMemoryEntriesTable: public EntriesTable {
 	print_current_format();
     }
 
-    const nonatomic_entry operator[](index_t index) {
+    const nonatomic_entry operator[](const index_t index) {
 	size_t bits = index * used_bits;
 	return nonatomic_entry((*(uint16_t *)(entries + bits/8) >> bits%8) & mask);
     }
