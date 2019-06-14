@@ -49,6 +49,24 @@ simultaneously on an analysis.  This is accomplished by breaking the
 analysis up into smaller pieces, each with its own XML configuration
 file.
 
+
+
+There are two primary techniques to do this.  The {\tt <pawngen>}
+element (which generates pawn positions) accepts optional {\tt start}
+and {\tt count} attributes to restrict the range of the pawngen
+portion of the index.  Since pawns can not move backwards, and Hoffman
+is designed so that pawn moves always decrease the pawngen index, a
+pawngen analysis can be broken into an almost arbitrary number of
+sub-analyses, starting with the lower numbered pawngen indices and
+each analysis feeding its results into the higher numbered analyses
+as they run.
+
+The other technique is proptables...
+
+Another optimization is the ``unpropagated index table''.  Bitbase
+calculations do not require distances to be tracked;
+
+
 %The primary support provided by the program is the ability to
 %use URLs instead of filenames to reference tablebases, allowing
 %tablebases to be stored on a server accessable over a network.  A
@@ -258,7 +276,7 @@ possible.  This can be used, for example, to locate a black pawn on
 {\tt "a7+} and a white pawn on {\tt "a2+"}, indicating that both can
 move forward, but they can not ``pass'' each other.
 
-\subsection{\tt <pawngen white-pawn-locations="{\it string}" black-pawn-locations="{\it string}" \hfil\break\hbox{\qquad} white-pawns-required="{\it number}" black-pawns-required="{\it number}" \hfil\break\hbox{\qquad} white-queens-required="{\it number}" black-queens-required="{\it number}" \hfil\break\hbox{\qquad} white-captures-allowed="{\it number}" black-captures-allowed="{\it number}"/>}
+\subsection{\tt <pawngen start="{\it number}" count="{\it number}" offset="{\it number}" \hfil\break\hbox{\qquad} white-pawn-locations="{\it string}" black-pawn-locations="{\it string}" \hfil\break\hbox{\qquad} white-pawns-required="{\it number}" black-pawns-required="{\it number}" \hfil\break\hbox{\qquad} white-queens-required="{\it number}" black-queens-required="{\it number}" \hfil\break\hbox{\qquad} white-captures-allowed="{\it number}" black-captures-allowed="{\it number}"/>}
 
 Pawn configurations can be specified using a {\tt pawngen} element
 instead of {\tt piece} elements.  A set of starting pawn locations is
@@ -276,6 +294,15 @@ have been captured (pawn captures are already considered).
 The auxiliary Perl script {\tt pawngen} can accept control files
 without {\tt *-pawns-required} attributes, and generates new,
 interlinked control files with the required attributes added.
+
+The optional {\tt start} and {\tt count} attributes restrict the
+range of pawngen indices present in the tablebase, and are used
+to reduce the tablebase size, since pawngen indices are always
+encoded in the most significant bits of the index.
+
+The {\tt offset} attribute is added by the program, should not
+be supplied by the user, and gives a byte-offset into the file
+where a precomputed pawngen table is stored.
 
 \subsection{\tt <futurebase filename="{\it string}" colors="invert"/>}
 
