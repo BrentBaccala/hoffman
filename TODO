@@ -437,3 +437,7 @@ terminate called after throwing an instance of 'std::runtime_error'
 - look at r1045a.xml and figure how to print its results better
 
 - pawngen generation can take a while.  Multi-thread it?
+
+- add an option to calculate and print RAM usage estimate
+
+- implement backprop between pawngen TBs with start/count attributes
