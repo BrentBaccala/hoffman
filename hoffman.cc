@@ -16275,7 +16275,10 @@ int main(int argc, char *argv[])
 	    fatal("Error loading tablebase '%s': %s\n", argv[argi], ex.what());
 	}
 
-	if (dump_info) tbs[i]->xml->write_to_stream(std::cout);
+	if (dump_info) {
+	    tbs[i]->xml->write_to_stream(std::cout);
+	    info("%" PRIindex " total indices\n", tbs[i]->num_indices);
+	}
 #ifdef USE_NALIMOV
 	if (verify) verify_tablebase_against_nalimov(tbs[i]);
 #endif
